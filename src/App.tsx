@@ -1055,9 +1055,21 @@ export default function App() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const textarea = textareaRef.current;
+      const focusedInComposer =
+        textarea != null && document.activeElement === textarea;
+
+      if (focusedInComposer) {
+        return;
+      }
+
+      const insideComposer =
+        inputContainerRef.current?.contains(target) ||
+        commandPaletteRef.current?.contains(target);
+
       if (
-        inputContainerRef.current &&
-        !inputContainerRef.current.contains(event.target as Node) &&
+        !insideComposer &&
         value.trim().length === 0 &&
         attachments.length === 0 &&
         !selectedCommand &&
@@ -3774,7 +3786,7 @@ Keep the response concise, accurate, and easy to read.`
                             }}
                             className={cn(
                               "clyra-composer-transition w-full shrink-0 relative transition-all duration-300 max-w-3xl mx-auto",
-                              showCommandPalette ? "z-[80]" : "z-20",
+                              showCommandPalette ? "z-[200]" : "z-20",
                               showWorkspaceLivePreview
                                 ? "px-3 sm:px-4"
                                 : "px-5 sm:px-8",
@@ -3783,21 +3795,17 @@ Keep the response concise, accurate, and easy to read.`
                                 : "pb-4 sm:pb-6 mb-3",
                             )}
                           >
-                            <motion.div
-                              layout
-                              transition={composerExpandTransition}
-                              className="clyra-composer-field relative flex w-full flex-col gap-2.5"
-                            >
+                            <div className="clyra-composer-field relative w-full">
                             <AnimatePresence initial={false}>
                               {commandPaletteEnabled && showCommandPalette && (
                                 <motion.div
                                   ref={commandPaletteRef}
-                                  layout
-                                  className="clyra-command-palette z-[200] w-full max-h-[200px] shrink-0 overflow-y-auto rounded-[20px] border border-slate-200/55 bg-white/92 py-1 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl scrollbar-none transform-gpu pointer-events-auto"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  className="clyra-command-palette pointer-events-auto absolute bottom-[calc(100%+10px)] left-0 right-0 z-[260] max-h-[200px] w-full overflow-y-auto rounded-[20px] border border-slate-200/55 bg-white/92 py-1 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl scrollbar-none transform-gpu"
                                   variants={{
                                     hidden: {
                                       opacity: 0,
-                                      y: 6,
+                                      y: 8,
                                       transition: CLYRA_SURFACE_CLOSE_TRANSITION,
                                     },
                                     visible: {
@@ -3914,7 +3922,6 @@ Keep the response concise, accurate, and easy to read.`
                               )}
                             </AnimatePresence>
                             <motion.div
-                              layout
                               className={cn(
                                 "input-wrapper relative mx-auto cursor-text border backdrop-blur-xl z-[3] overflow-visible",
                                 isVibeWorkspace && "clyra-vibe-composer",
@@ -4144,9 +4151,17 @@ Keep the response concise, accurate, and easy to read.`
                                         !selectedCommand &&
                                         attachments.length === 0
                                       ) {
-                                        setIsInputExpanded(
-                                          nextValue.trim().length > 0,
-                                        );
+                                        if (nextValue.trim().length > 0) {
+                                          setIsInputExpanded(true);
+                                        } else {
+                                          const textarea = textareaRef.current;
+                                          const stillFocused =
+                                            textarea != null &&
+                                            document.activeElement === textarea;
+                                          if (!stillFocused) {
+                                            setIsInputExpanded(false);
+                                          }
+                                        }
                                       }
                                       if (
                                         activeSkeletonText &&
@@ -4164,6 +4179,28 @@ Keep the response concise, accurate, and easy to read.`
                                         setIsInputExpanded(true);
                                       }
                                       adjustHeight();
+                                    }}
+                                    onBlur={(e) => {
+                                      const nextTarget = e.relatedTarget as Node | null;
+                                      if (
+                                        nextTarget &&
+                                        (commandPaletteRef.current?.contains(
+                                          nextTarget,
+                                        ) ||
+                                          inputContainerRef.current?.contains(
+                                            nextTarget,
+                                          ))
+                                      ) {
+                                        return;
+                                      }
+                                      if (
+                                        !isVibeWorkspace &&
+                                        !selectedCommand &&
+                                        attachments.length === 0 &&
+                                        value.trim().length === 0
+                                      ) {
+                                        setIsInputExpanded(false);
+                                      }
                                     }}
                                     spellCheck
                                     placeholder={
@@ -4401,7 +4438,7 @@ Keep the response concise, accurate, and easy to read.`
                                 </AnimatePresence>
                               </div>
                             </motion.div>
-                            </motion.div>
+                            </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
