@@ -75,6 +75,27 @@ import { buildLocalVibeFallbackResponse } from "./lib/buildLocalVibeFallback";
 import { VIBE_CURSOR_AGENT_SYSTEM_PROMPT } from "./lib/vibeAgentConstants";
 import { extractVibeFilesFromContent } from "./lib/parseVibeAgentContent";
 
+const CLYRA_SURFACE_EASE_OPEN = [0.18, 1, 0.25, 1] as const;
+const CLYRA_SURFACE_EASE_CLOSE = [0.22, 1, 0.36, 1] as const;
+
+const CLYRA_SURFACE_OPEN_TRANSITION = {
+  type: "tween" as const,
+  duration: 0.58,
+  ease: CLYRA_SURFACE_EASE_OPEN,
+};
+
+const CLYRA_SURFACE_CLOSE_TRANSITION = {
+  type: "tween" as const,
+  duration: 0.34,
+  ease: CLYRA_SURFACE_EASE_CLOSE,
+};
+
+function clyraSurfaceTransition(isOpening: boolean) {
+  return isOpening
+    ? CLYRA_SURFACE_OPEN_TRANSITION
+    : CLYRA_SURFACE_CLOSE_TRANSITION;
+}
+
 type WorkspaceTabId = "chat" | "vibe" | "browser";
 const WORKSPACE_TAB_ORDER: WorkspaceTabId[] = ["chat", "vibe", "browser"];
 const ORB_COLOR_THEMES: OrbColorTheme[] = [
@@ -710,8 +731,8 @@ export default function App() {
 
   const composerExpandTransition =
     introState !== "complete"
-      ? { type: "tween" as const, duration: 0.72, ease: [0.22, 1, 0.36, 1] as const }
-      : { type: "tween" as const, duration: 0.44, ease: [0.22, 1, 0.36, 1] as const };
+      ? CLYRA_SURFACE_OPEN_TRANSITION
+      : clyraSurfaceTransition(isExpanded);
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 40,
@@ -3284,12 +3305,7 @@ Keep the response concise, accurate, and easy to read.`
           <motion.div
             className="clyra-screen-stage relative flex min-h-0 min-w-0 flex-1 flex-col"
             animate={{ x: sidebarAvoidShift }}
-            transition={{
-              type: "spring",
-              stiffness: 220,
-              damping: 34,
-              mass: 0.9,
-            }}
+            transition={clyraSurfaceTransition(isSidebarOpen)}
             style={{
               willChange: "transform",
             }}
@@ -3767,21 +3783,32 @@ Keep the response concise, accurate, and easy to read.`
                                 : "pb-4 sm:pb-6 mb-3",
                             )}
                           >
-                            <div className="clyra-composer-field relative w-full">
-                            <AnimatePresence>
+                            <motion.div
+                              layout
+                              transition={composerExpandTransition}
+                              className="clyra-composer-field relative flex w-full flex-col gap-2.5"
+                            >
+                            <AnimatePresence initial={false}>
                               {commandPaletteEnabled && showCommandPalette && (
                                 <motion.div
                                   ref={commandPaletteRef}
-                                  className="clyra-command-palette absolute bottom-[calc(100%+10px)] left-0 right-0 z-[200] w-full max-h-[200px] overflow-y-auto rounded-[20px] border border-slate-200/55 bg-white/92 py-1 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl scrollbar-none transform-gpu origin-bottom pointer-events-auto"
-                                  initial={{ opacity: 0, y: 18, scale: 0.985, filter: "blur(6px)" }}
-                                  animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-                                  exit={{ opacity: 0, y: 12, scale: 0.99, filter: "blur(4px)" }}
-                                  transition={{
-                                    type: "spring",
-                                    stiffness: 300,
-                                    damping: 32,
-                                    mass: 0.9,
+                                  layout
+                                  className="clyra-command-palette z-[200] w-full max-h-[200px] shrink-0 overflow-y-auto rounded-[20px] border border-slate-200/55 bg-white/92 py-1 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl scrollbar-none transform-gpu pointer-events-auto"
+                                  variants={{
+                                    hidden: {
+                                      opacity: 0,
+                                      y: 6,
+                                      transition: CLYRA_SURFACE_CLOSE_TRANSITION,
+                                    },
+                                    visible: {
+                                      opacity: 1,
+                                      y: 0,
+                                      transition: CLYRA_SURFACE_OPEN_TRANSITION,
+                                    },
                                   }}
+                                  initial="hidden"
+                                  animate="visible"
+                                  exit="hidden"
                                 >
                                   <div className="px-1.5 py-1">
                                     {filteredSuggestions.map(
@@ -3792,17 +3819,9 @@ Keep the response concise, accurate, and easy to read.`
                                               c.prefix === suggestion.prefix,
                                           );
                                         return (
-                                          <motion.button
+                                          <button
                                             type="button"
                                             key={suggestion.prefix}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            transition={{
-                                              delay: 0.05 + index * 0.035,
-                                              type: "spring",
-                                              stiffness: 360,
-                                              damping: 30,
-                                            }}
                                             className={cn(
                                               "flex w-full items-center gap-2.5 rounded-[14px] px-3 py-2 text-left transition-colors duration-200",
                                               activeSuggestion === index
@@ -3870,7 +3889,7 @@ Keep the response concise, accurate, and easy to read.`
                                                 {suggestion.description}
                                               </div>
                                             </div>
-                                          </motion.button>
+                                          </button>
                                         );
                                       },
                                     )}
@@ -3881,47 +3900,31 @@ Keep the response concise, accurate, and easy to read.`
                             <AnimatePresence>
                               {isTemporaryChat && (
                                 <motion.div
-                                  initial={{
-                                    opacity: 0,
-                                    scale: 0.9,
-                                    y: 15,
-                                    filter: "blur(4px)",
-                                  }}
-                                  animate={{
-                                    opacity: 1,
-                                    scale: 1,
-                                    y: 0,
-                                    filter: "blur(0px)",
-                                  }}
-                                  exit={{
-                                    opacity: 0,
-                                    scale: 0.9,
-                                    y: 15,
-                                    filter: "blur(4px)",
-                                  }}
-                                  transition={{
-                                    type: "spring",
-                                    stiffness: 220,
-                                    damping: 20,
-                                    mass: 1,
-                                  }}
-                                  className="absolute bottom-[calc(100%+16px)] left-1/2 -translate-x-1/2 z-10 pointer-events-none"
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: 6 }}
+                                  transition={CLYRA_SURFACE_OPEN_TRANSITION}
+                                  className="pointer-events-none absolute bottom-[calc(100%+16px)] left-1/2 z-10 -translate-x-1/2"
                                 >
-                                  <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100/90 text-slate-600 font-medium text-xs backdrop-blur-md border border-slate-200/60 shadow-sm">
-                                    <MessageCircleDashed className="w-3.5 h-3.5 stroke-[2.2]" />
+                                  <span className="inline-flex items-center gap-2 rounded-full border border-slate-200/60 bg-slate-100/90 px-3.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur-md">
+                                    <MessageCircleDashed className="h-3.5 w-3.5 stroke-[2.2]" />
                                     Temporary Chat Enabled
                                   </span>
                                 </motion.div>
                               )}
                             </AnimatePresence>
                             <motion.div
+                              layout
                               className={cn(
-                                "input-wrapper relative mx-auto cursor-text border backdrop-blur-xl transition-[background-color,border-color,padding,box-shadow] duration-300 z-[3] overflow-visible",
+                                "input-wrapper relative mx-auto cursor-text border backdrop-blur-xl z-[3] overflow-visible",
                                 isVibeWorkspace && "clyra-vibe-composer",
                                 theme === "Dark"
                                   ? "bg-slate-200/90 border-slate-400/50"
                                   : "bg-white/80 border-slate-200/60",
                                 isExpanded ? "p-2 sm:p-3" : "p-1.5 sm:p-2",
+                                isExpanded
+                                  ? "transition-[background-color,border-color,padding,box-shadow,border-radius] duration-[580ms] ease-[cubic-bezier(0.18,1,0.25,1)]"
+                                  : "transition-[background-color,border-color,padding,box-shadow,border-radius] duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                 introState === "booting" ||
                                   introState === "progress" ||
                                   introState === "progress_complete"
@@ -4178,7 +4181,10 @@ Keep the response concise, accurate, and easy to read.`
                                       isExpanded
                                         ? "min-h-[50px] max-h-[96px] py-2.5 px-1"
                                         : "min-h-[40px] max-h-[96px] py-0 px-1",
-                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform]",
+                                      isExpanded
+                                        ? "duration-[580ms] ease-[cubic-bezier(0.18,1,0.25,1)]"
+                                        : "duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
                                         : introState !== "complete"
@@ -4246,7 +4252,27 @@ Keep the response concise, accurate, and easy to read.`
                                   )}
                                 </AnimatePresence>
 
+                                <AnimatePresence initial={false}>
                                 {isExpanded && (
+                                  <motion.div
+                                    key="composer-footer"
+                                    variants={{
+                                      closed: {
+                                        opacity: 0,
+                                        height: 0,
+                                        transition: CLYRA_SURFACE_CLOSE_TRANSITION,
+                                      },
+                                      open: {
+                                        opacity: 1,
+                                        height: "auto",
+                                        transition: CLYRA_SURFACE_OPEN_TRANSITION,
+                                      },
+                                    }}
+                                    initial="closed"
+                                    animate="open"
+                                    exit="closed"
+                                    className="overflow-hidden"
+                                  >
                                   <div
                                     className={cn(
                                       "flex items-center justify-between p-2 pt-0",
@@ -4269,26 +4295,10 @@ Keep the response concise, accurate, and easy to read.`
                                         {activeInputCommand && (
                                           <motion.div
                                             layout
-                                            initial={{
-                                              opacity: 0,
-                                              scale: 0.9,
-                                              filter: "blur(4px)",
-                                            }}
-                                            animate={{
-                                              opacity: 1,
-                                              scale: 1,
-                                              filter: "blur(0px)",
-                                            }}
-                                            exit={{
-                                              opacity: 0,
-                                              scale: 0.9,
-                                              filter: "blur(4px)",
-                                            }}
-                                            transition={{
-                                              type: "spring",
-                                              bounce: 0,
-                                              duration: 0.3,
-                                            }}
+                                            initial={{ opacity: 0, y: 6 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: 4 }}
+                                            transition={CLYRA_SURFACE_OPEN_TRANSITION}
                                             className={cn(
                                               "flex items-center gap-1.5 text-slate-700 px-2.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold ml-1 transition-colors cursor-default border",
                                               selectedCommand?.id === "research"
@@ -4386,10 +4396,12 @@ Keep the response concise, accurate, and easy to read.`
                                       </motion.button>
                                     </div>
                                   </div>
+                                  </motion.div>
                                 )}
+                                </AnimatePresence>
                               </div>
                             </motion.div>
-                            </div>
+                            </motion.div>
                           </motion.div>
                         )}
                       </AnimatePresence>
