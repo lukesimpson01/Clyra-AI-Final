@@ -1321,56 +1321,31 @@
   position: relative;
   overflow: hidden;
   opacity: 0;
-  transform: translateY(10px) scale(0.96);
-  border-color: rgba(148, 163, 184, 0.22) !important;
-  background-image:
-    radial-gradient(
-      circle at 12% 0%,
-      rgba(255, 255, 255, 0.76),
-      transparent 34%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.42),
-      rgba(255, 255, 255, 0.18)
-    );
-  box-shadow: none !important;
+  transform: translateY(6px) scale(0.992);
+  border-color: rgba(148, 163, 184, 0.28) !important;
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.28),
+    rgba(255, 255, 255, 0.08)
+  );
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
   filter: none;
-  backdrop-filter: blur(8px) saturate(1.03);
-  -webkit-backdrop-filter: blur(8px) saturate(1.03);
-  animation: clyra-user-bubble-appear 0.65s calc(var(--delay, 0.04) * 1s) both
-    cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  backdrop-filter: blur(6px) saturate(1.02);
+  -webkit-backdrop-filter: blur(6px) saturate(1.02);
+  animation: clyra-user-bubble-appear 0.48s calc(var(--delay, 0.03) * 1s) both
+    cubic-bezier(0.25, 0.46, 0.45, 0.94);
   transform-origin: bottom right;
 }
 
 .clyra-chat-user-bubble--first {
   animation-name: clyra-first-user-bubble-rise;
-  animation-duration: 1.02s;
-  animation-delay: 0.03s;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-duration: 0.72s;
+  animation-delay: 0.02s;
+  animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .clyra-chat-user-bubble--first::after {
-  position: absolute;
-  inset: -45%;
-  pointer-events: none;
-  content: "";
-  background:
-    radial-gradient(
-      circle at 70% 76%,
-      rgba(255, 255, 255, 0.68),
-      transparent 20%
-    ),
-    linear-gradient(
-      115deg,
-      transparent 34%,
-      rgba(255, 255, 255, 0.48) 48%,
-      transparent 62%
-    );
-  opacity: 0;
-  transform: translate3d(-18%, 22%, 0) rotate(8deg);
-  animation: clyra-first-user-glass-impact 0.86s 0.1s both
-    cubic-bezier(0.16, 1, 0.3, 1);
+  display: none;
 }
 
 .clyra-chat-user-text {
@@ -1415,16 +1390,8 @@
 @keyframes clyra-first-user-bubble-rise {
   0% {
     opacity: 0;
-    transform: translateY(96px) scale(0.93);
-    filter: blur(12px);
-  }
-  46% {
-    opacity: 1;
-    transform: translateY(-7px) scale(1.018);
-    filter: blur(0px);
-  }
-  68% {
-    transform: translateY(2px) scale(0.996);
+    transform: translateY(18px) scale(0.985);
+    filter: blur(4px);
   }
   100% {
     opacity: 1;
@@ -1448,6 +1415,10 @@
 }
 
 @keyframes clyra-user-bubble-appear {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.992);
+  }
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);

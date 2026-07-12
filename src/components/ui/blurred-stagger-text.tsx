@@ -1,10 +1,21 @@
 "use client";
 
 import * as React from "react";
-import gsap from "gsap";
+import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
-/** Smooth character-by-character reveal using GSAP. */
+const letterVariants = {
+  hidden: {
+    opacity: 0,
+    filter: "blur(10px)",
+  },
+  show: {
+    opacity: 1,
+    filter: "blur(0px)",
+    transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] },
+  },
+};
+
 export function BlurredStaggerStream({
   text,
   isStreaming,
@@ -14,61 +25,55 @@ export function BlurredStaggerStream({
   isStreaming?: boolean;
   className?: string;
 }) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const tl = React.useRef(gsap.timeline());
+  const prevLengthRef = React.useRef(0);
 
-  React.useLayoutEffect(() => {
-    if (!containerRef.current) return;
-
+  React.useEffect(() => {
     if (!isStreaming) {
-      const chars = containerRef.current.querySelectorAll("span.char");
-      gsap.set(chars, { opacity: 1, y: 0, filter: "blur(0px)" });
-      return;
+      prevLengthRef.current = text.length;
     }
-
-    const chars = containerRef.current.querySelectorAll("span.char:not(.animated)");
-    if (chars.length === 0) return;
-
-    chars.forEach((char) => char.classList.add("animated"));
-    gsap.set(chars, { opacity: 0, y: 10, filter: "blur(8px)" });
-
-    tl.current.to(
-      chars,
-      {
-        opacity: 1,
-        y: 0,
-        filter: "blur(0px)",
-        duration: 0.25,
-        ease: "power2.out",
-        stagger: 0.015,
-        onComplete: () => {
-          gsap.set(chars, { clearProps: "filter" });
-        },
-      },
-      ">"
-    );
-  }, [text, isStreaming]);
+  }, [text.length, isStreaming]);
 
   if (!text) return null;
 
+  const chars = text.split("");
+  const animateFrom = isStreaming ? prevLengthRef.current : chars.length;
+
+  React.useLayoutEffect(() => {
+    prevLengthRef.current = text.length;
+  }, [text.length]);
+
   return (
     <div
-      className={cn("whitespace-pre-wrap font-medium leading-relaxed inline-block", className)}
-      ref={containerRef}
+      className={cn(
+        "whitespace-pre-wrap font-medium leading-relaxed inline-block",
+        className,
+      )}
     >
-      {text.split("").map((char, i) =>
-        char === "\n" ? (
-          <br key={`line-${i}`} />
-        ) : (
-          <span
-            key={i}
-            className={`char inline-block ${!isStreaming ? "animated" : ""}`}
-            style={{ whiteSpace: "pre" }}
+      {chars.map((char, index) => {
+        const isNew = index >= animateFrom;
+        if (char === "\n") {
+          return <br key={`nl-${index}`} />;
+        }
+        if (!isNew) {
+          return (
+            <span key={`ch-${index}`} style={{ whiteSpace: "pre" }}>
+              {char === " " ? "\u00A0" : char}
+            </span>
+          );
+        }
+        return (
+          <motion.span
+            key={`ch-${index}`}
+            variants={letterVariants}
+            initial="hidden"
+            animate="show"
+            transition={{ delay: (index - animateFrom) * 0.015 }}
+            style={{ display: "inline-block", whiteSpace: "pre" }}
           >
             {char === " " ? "\u00A0" : char}
-          </span>
-        ),
-      )}
+          </motion.span>
+        );
+      })}
     </div>
   );
 }

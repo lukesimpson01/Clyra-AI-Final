@@ -1,0 +1,5 @@
+httpx[http2]>=0.27.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+trafilatura>=1.12.0
+ddgs>=9.0.0

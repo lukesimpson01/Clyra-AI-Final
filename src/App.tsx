@@ -45,12 +45,18 @@ import { SettingsModal } from "./components/SettingsModal";
 import { ChatSearchModal } from "./components/ChatSearchModal";
 import { ShiningText } from "./components/ShiningText";
 import { BlurredStaggerStream } from "@/components/ui/blurred-stagger-text";
+import { ResearchStatusBar } from "@/components/chat/ResearchStatusBar";
+import { needsWebResearch } from "@/lib/researchDetect";
+import {
+  formatResearchContext,
+  runResearch,
+  type ResearchSite,
+} from "@/lib/researchClient";
 import { MarkdownMessageContent } from "./components/MarkdownMessageContent";
 import {
   DocumentCardUI,
   type DocumentRewriteRequest,
 } from "./components/ui/document-card";
-import { GradientWaveText } from "./components/GradientWaveText";
 import AIClipper from "./components/AIClipper";
 import VibeCoderWorkspace from "./components/VibeCoderWorkspace";
 import { AiOrb, type OrbColorTheme } from "./components/AiOrb";
@@ -126,21 +132,7 @@ function ChatThinkingLabel({
 }
 
 function UserMessageText({ text }: { text: string }) {
-  return (
-    <p className="clyra-chat-user-text">
-      <GradientWaveText
-        align="left"
-        speed={1.55}
-        bottomOffset={8}
-        bandGap={4}
-        bandCount={8}
-        className="clyra-chat-user-gradient"
-        ariaLabel={text}
-      >
-        {text}
-      </GradientWaveText>
-    </p>
-  );
+  return <p className="clyra-chat-user-text">{text}</p>;
 }
 
 const AnimatedMessage = ({
@@ -156,6 +148,8 @@ const AnimatedMessage = ({
   onVibePreviewReady,
   onDocumentRewriteRequest,
   onContentChange,
+  isResearching,
+  researchSites = [],
 }: {
   messageId?: string;
   content: string;
@@ -168,6 +162,8 @@ const AnimatedMessage = ({
   codeHighlighting?: boolean;
   assistantKind?: "chat" | "vibe";
   isLastAssistant?: boolean;
+  isResearching?: boolean;
+  researchSites?: ResearchSite[];
   onVibePreviewReady?: (
     messageId: string,
     filesByPath: Record<string, string>,
@@ -243,6 +239,14 @@ const AnimatedMessage = ({
         fontSizeClass,
       )}
     >
+      {isResearching ? <ResearchStatusBar sites={researchSites} /> : null}
+      {!isResearching && content.length === 0 && (isThinking || isStreaming) ? (
+        <ChatThinkingLabel
+          isThinking={!!isThinking}
+          isStreaming={!!isStreaming}
+          content={content}
+        />
+      ) : null}
       {content.length > 0 && !suppressVibeAnswerBody ? (
         <div
           className={cn("markdown-body mt-1", isVibe && "markdown-body--vibe")}
@@ -310,7 +314,8 @@ interface UseAutoResizeTextareaProps {
 function useAutoResizeTextarea({
   minHeight,
   maxHeight,
-}: UseAutoResizeTextareaProps) {
+  lineThreshold = 18,
+}: UseAutoResizeTextareaProps & { lineThreshold?: number }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(
@@ -319,29 +324,26 @@ function useAutoResizeTextarea({
       if (!textarea) return;
 
       if (reset) {
-        textarea.style.height = "auto";
+        textarea.style.height = `${minHeight}px`;
+        textarea.style.overflowY = "hidden";
+        return;
       }
 
       window.requestAnimationFrame(() => {
-        textarea.style.height = "auto";
-        if (textarea.value.length === 0) {
-          textarea.style.height = `${minHeight}px`;
-          textarea.style.overflowY = "hidden";
-          return;
-        }
-        const newHeight = Math.max(
-          minHeight,
-          Math.min(
-            textarea.scrollHeight,
-            maxHeight ?? Number.POSITIVE_INFINITY,
-          ),
-        );
-        textarea.style.height = `${newHeight}px`;
+        textarea.style.height = `${minHeight}px`;
+        const needsSecondLine =
+          textarea.value.length > 0 &&
+          textarea.scrollHeight > minHeight + lineThreshold;
+        const targetHeight = needsSecondLine
+          ? Math.min(textarea.scrollHeight, maxHeight ?? Number.POSITIVE_INFINITY)
+          : minHeight;
+
+        textarea.style.height = `${targetHeight}px`;
         textarea.style.overflowY =
           maxHeight && textarea.scrollHeight > maxHeight ? "auto" : "hidden";
       });
     },
-    [minHeight, maxHeight],
+    [minHeight, maxHeight, lineThreshold],
   );
 
   useEffect(() => {
@@ -477,6 +479,8 @@ export default function App() {
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
     vibeUserPrompt?: string;
+    isResearching?: boolean;
+    researchSites?: ResearchSite[];
   }
 
   interface ChatSession {
@@ -703,7 +707,7 @@ export default function App() {
   const [markdownSupport, setMarkdownSupport] = useState(true);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [temperature, setTemperature] = useState(0.7);
-  const [userBubbleColor, setUserBubbleColor] = useState("#F4F4F4");
+  const [userBubbleColor, setUserBubbleColor] = useState("#E4E7EC");
   const [orbColorTheme, setOrbColorTheme] = useState<OrbColorTheme>(
     readStoredOrbColorTheme,
   );
@@ -1990,6 +1994,61 @@ Please analyze the code you just wrote and fix this error.`;
           return;
         }
 
+        const shouldResearch = needsWebResearch(userText);
+        let researchContext = "";
+
+        if (shouldResearch) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === aiMsgId
+                ? { ...msg, isResearching: true, researchSites: [], isThinking: true }
+                : msg,
+            ),
+          );
+
+          try {
+            const researchResult = await runResearch(userText, (event) => {
+              if (event.type === "site") {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id !== aiMsgId) return msg;
+                    const existing = msg.researchSites ?? [];
+                    const alreadySeen = existing.some(
+                      (site) => site.url === event.url || site.host === event.host,
+                    );
+                    if (alreadySeen) return msg;
+                    return {
+                      ...msg,
+                      researchSites: [
+                        ...existing,
+                        {
+                          host: event.host,
+                          title: event.title,
+                          url: event.url,
+                        },
+                      ],
+                    };
+                  }),
+                );
+              }
+            });
+
+            if (researchResult) {
+              researchContext = formatResearchContext(researchResult);
+            }
+          } catch (error) {
+            console.warn("Web research failed:", error);
+            researchContext =
+              "Web research could not be completed. Say you could not verify facts online and avoid guessing.";
+          } finally {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId ? { ...msg, isResearching: false } : msg,
+              ),
+            );
+          }
+        }
+
         const contents = currentMessages.map((msg) => ({
           role: msg.role === "user" ? "user" : "model",
           parts: [{ text: msg.content }],
@@ -2009,9 +2068,19 @@ Please analyze the code you just wrote and fix this error.`;
               ? systemPrompt.trim()
               : "Your name is Clyra, an AI assistant. Give helpful and appropriately detailed responses.";
 
-          const finalPrompt =
-            basePrompt +
-            `\n\nNOTES MODE CONTRACT
+          const researchPrompt = researchContext
+            ? `\n\nWEB RESEARCH CONTEXT (verified sources — do not invent facts beyond this):\n${researchContext}`
+            : shouldResearch
+              ? "\n\nNo verified web research was available. Say you could not confirm facts online and avoid guessing."
+              : "";
+
+          const wantsNotes =
+            /\b(?:notes?|summary|study\s+notes|meeting\s+notes|class\s+notes|tutorial\s+notes)\b/i.test(
+              userText,
+            );
+
+          const notesContract = wantsNotes
+            ? `\n\nNOTES MODE CONTRACT
 Create clean, easy-to-read notes from the information I give you. If the user asks for notes, a summary, study notes, meeting notes, class notes, tutorial notes, or anything note-like, you must output polished Markdown notes that follow this contract.
 
 The notes must adapt to the topic and user's request. Keep it short unless the topic needs detail. Do not force sections that are not useful. Make the notes feel custom-made, not like a generic template.
@@ -2026,82 +2095,22 @@ Formatting contract:
 * Use > quote boxes for important takeaways.
 * Use Markdown tables only when they make the information easier to read.
 * Use - [ ] checklists only when there are real actions or next steps.
-* Add bracket labels showing the format style when helpful, like **[Big heading]**, **[Medium heading]**, **[Small heading]**, **[bold]**, **[divider]**, **[table]**, or **[quote box]**. Do not label every line.
-
-Preferred adaptive layout:
-
----
-
-# 📘 {Topic Title} **[Big heading]**
-
----
-
-> **Quick overview:** **[Quote box + bold label]**
-> {Explain the topic in 1-3 simple sentences.}
-
----
-
-## 🔷 Key Points **[Medium heading]**
-
-* **{Point 1}:** {Simple explanation} **[Bold keyword + bullet point]**
-* **{Point 2}:** {Simple explanation}
-* **{Point 3}:** {Simple explanation}
-
----
-
-## 🧠 Main Notes **[Medium heading]**
-
-### {Subtopic} **[Small heading]**
-
-{Explain clearly using short paragraphs or bullet points.}
-
-> **Remember:** {Main takeaway} **[Quote box]**
-
----
-
-## ✨ Examples / Evidence **[Medium heading]**
-
-Only include this section if useful.
-
-* **Example:** {Example and explanation}
-* **Evidence:** {Quote, fact, or detail}
-
-Use a markdown table only if it improves readability.
-
----
-
-## 🔁 Quick Summary **[Medium heading]**
-
-* {Summary point 1}
-* {Summary point 2}
-* {Summary point 3}
-
-> **Final takeaway:** {One sentence summary} **[Quote box]**
-
----
-
-## ✅ Actions / Next Steps **[Medium heading]**
-
-Only include this section if useful.
-
-* [ ] {Task 1}
-* [ ] {Task 2}
-
-Rules:
-* Keep it clean, scan-friendly, and custom-made.
-* Remove unnecessary sections.
-* Use tables only when they help.
-* Match the layout to the topic: school, business, coding, science, English, meeting, tutorial, or general notes.
-* Do not use "--" as a divider; use markdown dividers (---).
-* Do not output raw template placeholders. Replace every placeholder with useful content.
-* Preserve markdown formatting so headings, tables, quote boxes, checklists, and bold text render properly.
-* Never flatten notes into one paragraph.
-* Always include at least one # heading, one > quote overview or takeaway, and bullets for notes.
-* If a comparison, timeline, schedule, rubric, pros/cons list, meeting agenda, or data summary would be clearer as a table, include a compact Markdown table.
-* If the user asks for email instead of notes, ignore this notes layout and write a clean email with normal line breaks.
 
 Information to turn into notes:
-${userText}`;
+${userText}`
+            : "";
+
+          const researchAnswerContract = shouldResearch
+            ? `\n\nRESEARCH ANSWER MODE
+Answer the user's factual question in clear, conversational prose.
+Use only verified web research provided above.
+Cite sources inline like [1] or [2] when stating facts.
+If research is incomplete, say what you could not verify instead of guessing.
+Keep the response concise, accurate, and easy to read.`
+            : "";
+
+          const finalPrompt =
+            basePrompt + researchPrompt + researchAnswerContract + notesContract;
 
           await streamOpenAI(
             finalPrompt,
@@ -3396,13 +3405,17 @@ ${userText}`;
                                   initial={
                                     isWorkspaceSwitching
                                       ? false
-                                      : { opacity: 0, y: 15, scale: 0.98 }
+                                      : {
+                                          opacity: 0,
+                                          y: message.role === "user" ? 8 : 6,
+                                          scale: 0.995,
+                                        }
                                   }
                                   animate={{ opacity: 1, y: 0, scale: 1 }}
                                   transition={{
                                     type: "tween",
-                                    ease: [0.22, 1, 0.36, 1],
-                                    duration: 0.6,
+                                    ease: [0.25, 0.46, 0.45, 0.94],
+                                    duration: message.role === "user" ? 0.42 : 0.38,
                                   }}
                                   className={cn(
                                     "flex w-full",
@@ -3452,6 +3465,8 @@ ${userText}`;
                                           content={message.content}
                                           isThinking={message.isThinking}
                                           isStreaming={message.isStreaming}
+                                          isResearching={message.isResearching}
+                                          researchSites={message.researchSites}
                                           reasoningContent={
                                             message.reasoningContent
                                           }
@@ -3951,7 +3966,7 @@ ${userText}`;
                                       isExpanded
                                         ? "min-h-[50px] max-h-[96px] py-3 px-1"
                                         : "min-h-[40px] max-h-[96px] py-2 px-1",
-                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-300 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] will-change-[height,transform]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
                                         : introState !== "complete"
