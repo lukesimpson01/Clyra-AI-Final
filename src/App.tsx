@@ -10,6 +10,8 @@ import React, {
   useRef,
   useCallback,
   useState,
+  lazy,
+  Suspense,
 } from "react";
 import {
   motion,
@@ -39,6 +41,8 @@ import {
   X,
   XIcon,
   Edit2,
+  Globe,
+  Youtube,
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import { SettingsModal } from "./components/SettingsModal";
@@ -46,7 +50,7 @@ import { ChatSearchModal } from "./components/ChatSearchModal";
 import { ShiningText } from "./components/ShiningText";
 import { BlurredStaggerStream } from "@/components/ui/blurred-stagger-text";
 import { ResearchStatusBar } from "@/components/chat/ResearchStatusBar";
-import { detectResearchIntent } from "@/lib/researchDetect";
+import { resolveResearchIntent } from "@/lib/researchDetect";
 import {
   formatResearchContext,
   runResearch,
@@ -62,8 +66,8 @@ import {
   DocumentCardUI,
   type DocumentRewriteRequest,
 } from "./components/ui/document-card";
-import AIClipper from "./components/AIClipper";
-import VibeCoderWorkspace from "./components/VibeCoderWorkspace";
+const AIClipper = lazy(() => import("./components/AIClipper"));
+const VibeCoderWorkspace = lazy(() => import("./components/VibeCoderWorkspace"));
 import { AiOrb, type OrbColorTheme } from "./components/AiOrb";
 import { VibeAgentMessageBody } from "./components/vibe/VibeAgentMessageBody";
 import { VibeLivePreviewPanel } from "./components/vibe/VibeLivePreviewPanel";
@@ -493,7 +497,10 @@ export const FullscreenContext = React.createContext({
   setIsFullscreen: (v: boolean) => {},
 });
 
-export default function App() {
+export default function App({ onReady }: { onReady?: () => void } = {}) {
+  useEffect(() => {
+    onReady?.();
+  }, [onReady]);
   interface Message {
     id: string;
     role: "user" | "assistant";
@@ -685,8 +692,8 @@ export default function App() {
       activeWorkspaceTab === "vibe");
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
-    minHeight: 40,
-    maxHeight: 96,
+    minHeight: 34,
+    maxHeight: 68,
     onMultilineChange: setIsComposerMultiline,
   });
 
@@ -737,7 +744,7 @@ export default function App() {
   const [markdownSupport, setMarkdownSupport] = useState(true);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [temperature, setTemperature] = useState(0.7);
-  const [userBubbleColor, setUserBubbleColor] = useState("#D1D5DB");
+  const [userBubbleColor, setUserBubbleColor] = useState("#EBEBEB");
   const [orbColorTheme, setOrbColorTheme] = useState<OrbColorTheme>(
     readStoredOrbColorTheme,
   );
@@ -1085,9 +1092,31 @@ export default function App() {
       description: "Render cinematic 720p clips with timed subtitles",
       prefix: "/clip",
     },
+    {
+      id: "research",
+      icon: () => (
+        <div className="relative flex items-center justify-center w-full h-full text-slate-700">
+          <Globe className="w-4 h-4" />
+        </div>
+      ),
+      label: "Web Research",
+      description: "Search the web for verified facts before answering",
+      prefix: "/research",
+    },
+    {
+      id: "youtube",
+      icon: () => (
+        <div className="relative flex items-center justify-center w-full h-full text-red-600">
+          <Youtube className="w-4 h-4" />
+        </div>
+      ),
+      label: "YouTube Analysis",
+      description: "Analyse a YouTube video with transcript and metadata",
+      prefix: "/youtube",
+    },
   ];
 
-  const commandPaletteEnabled = false;
+  const commandPaletteEnabled = true;
   const isCommandMode =
     commandPaletteEnabled && value.startsWith("/") && !value.includes(" ");
   const commandQuery = isCommandMode ? value.substring(1).toLowerCase() : "";
@@ -1112,8 +1141,11 @@ export default function App() {
   );
 
   const filteredSuggestions = isCommandMode
-    ? commandSuggestions.filter((cmd) =>
-        cmd.label.toLowerCase().includes(commandQuery),
+    ? commandSuggestions.filter(
+        (cmd) =>
+          cmd.label.toLowerCase().includes(commandQuery) ||
+          cmd.prefix.toLowerCase().includes(`/${commandQuery}`) ||
+          cmd.description.toLowerCase().includes(commandQuery),
       )
     : [];
 
@@ -1130,7 +1162,7 @@ export default function App() {
       ) {
         setActiveSuggestion(0);
       }
-    } else {
+    } else if (!isCommandMode) {
       setShowCommandPalette(false);
       setActiveSuggestion(-1);
     }
@@ -1899,6 +1931,8 @@ Please analyze the code you just wrote and fix this error.`;
       const rawUserText = value.trim();
       const vibeCommand = rawUserText.match(/^\/vibe(?:\s+(.+))?$/i);
       const clipCommand = rawUserText.match(/^\/clip(?:\s+(.+))?$/i);
+      const researchCommand = rawUserText.match(/^\/research(?:\s+(.+))?$/i);
+      const youtubeCommand = rawUserText.match(/^\/youtube(?:\s+(.+))?$/i);
       if (userCommandId === "clip" || clipCommand) {
         const clipCommandSource = clipCommand?.[1]?.trim() ?? rawUserText;
         setClipInitialUrl(
@@ -1917,6 +1951,8 @@ Please analyze the code you just wrote and fix this error.`;
         return;
       }
       const userText =
+        researchCommand?.[1]?.trim() ||
+        youtubeCommand?.[1]?.trim() ||
         vibeCommand?.[1]?.trim() ||
         rawUserText ||
         (userCommandLabel ? `Execute ${userCommandLabel}` : "");
@@ -2024,7 +2060,10 @@ Please analyze the code you just wrote and fix this error.`;
           return;
         }
 
-        const researchIntent = detectResearchIntent(userText);
+        const researchIntent = resolveResearchIntent(userText, {
+          forceWeb: userCommandId === "research" || Boolean(researchCommand),
+          forceYoutube: userCommandId === "youtube" || Boolean(youtubeCommand),
+        });
         const shouldResearch = researchIntent.kind === "web";
         const shouldYoutube = researchIntent.kind === "youtube";
         let researchContext = "";
@@ -2295,7 +2334,7 @@ Keep the response concise, accurate, and easy to read.`
       setActiveWorkspaceTab("vibe");
     } else if (selectedCmd?.id === "clip") {
       setActiveWorkspaceTab("browser");
-    } else if (selectedCmd?.id !== "clip") {
+    } else {
       setActiveWorkspaceTab("chat");
     }
     setClipInitialUrl("");
@@ -2336,10 +2375,18 @@ Keep the response concise, accurate, and easy to read.`
       ? "vibe"
       : "chat";
   const activeInputCommand =
-    selectedCommand && selectedCommand.id !== "vibe" ? selectedCommand : null;
+    selectedCommand &&
+    selectedCommand.id !== "vibe" &&
+    selectedCommand.id !== "clip"
+      ? selectedCommand
+      : null;
   const inputPlaceholder = isVibeWorkspace
     ? "Tell the coding agent what to build..."
-    : "Ask Clyra anything...";
+    : selectedCommand?.id === "research"
+      ? "Ask a factual question to research on the web..."
+      : selectedCommand?.id === "youtube"
+        ? "Paste a YouTube URL or describe the video to analyse..."
+        : "Ask Clyra anything...";
   const firstUserMessageId = messages.find(
     (message) => message.role === "user",
   )?.id;
@@ -3315,9 +3362,24 @@ Keep the response concise, accurate, and easy to read.`
                       }}
                     >
                       {isVibeWorkspace ? (
-                        <VibeCoderWorkspace orbColorTheme={orbColorTheme} />
+                        <Suspense
+                          fallback={
+                            <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                              Loading Vibe Coder...
+                            </div>
+                          }
+                        >
+                          <VibeCoderWorkspace orbColorTheme={orbColorTheme} />
+                        </Suspense>
                       ) : isClipWorkspace ? (
-                        <AIClipper
+                        <Suspense
+                          fallback={
+                            <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                              Loading Clipper...
+                            </div>
+                          }
+                        >
+                          <AIClipper
                           embedded
                           initialUrl={clipInitialUrl}
                           onClose={() => {
@@ -3326,6 +3388,7 @@ Keep the response concise, accurate, and easy to read.`
                             setActiveWorkspaceTab("chat");
                           }}
                         />
+                        </Suspense>
                       ) : messages.length === 0 ? (
                         <motion.div
                           initial={
@@ -3519,7 +3582,7 @@ Keep the response concise, accurate, and easy to read.`
                                     <div
                                       data-invert-ignore="true"
                                       className={cn(
-                                        "clyra-chat-user-bubble px-5 py-3.5 rounded-[24px] max-w-[85%] sm:max-w-[75%] border border-slate-300/50 whitespace-pre-wrap",
+                                        "clyra-chat-user-bubble px-4 py-2.5 rounded-[20px] max-w-[85%] sm:max-w-[75%] border-0 whitespace-pre-wrap shadow-none",
                                         message.id === firstUserMessageId &&
                                           "clyra-chat-user-bubble--first",
                                         fontClass,
@@ -3680,7 +3743,7 @@ Keep the response concise, accurate, and easy to read.`
                                 theme === "Dark"
                                   ? "bg-slate-200/90 border-slate-400/50"
                                   : "bg-white/80 border-slate-200/60",
-                                isExpanded ? "p-2 sm:p-3" : "p-1.5 sm:p-2",
+                                isExpanded ? "p-2" : "p-1.5",
                               )}
                               initial={
                                 isWorkspaceSwitching
@@ -3978,9 +4041,9 @@ Keep the response concise, accurate, and easy to read.`
 
                                 <div
                                   className={cn(
-                                    isExpanded
-                                      ? "px-3 py-1"
-                                      : "flex items-center gap-1 px-2 py-0.5",
+                                    isComposerMultiline
+                                      ? "px-2 py-1"
+                                      : "flex items-center gap-1 px-1.5 py-0",
                                   )}
                                 >
                                   <input
@@ -4044,21 +4107,19 @@ Keep the response concise, accurate, and easy to read.`
                                     containerClassName="w-full"
                                     className={cn(
                                       "resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none disabled:opacity-50",
-                                      "text-[15px] leading-relaxed sm:text-lg",
+                                      "text-[15px] leading-[1.35] py-1.5 px-1",
                                       theme === "Dark"
                                         ? "placeholder:text-slate-500"
                                         : "placeholder:text-slate-400",
-                                      isExpanded
-                                        ? "min-h-[40px] max-h-[96px] py-2 px-1"
-                                        : "min-h-[40px] max-h-[96px] py-2 px-1",
-                                      "clyra-visible-scrollbar transition-[height] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[height]",
+                                      "min-h-[34px] max-h-[68px]",
+                                      "clyra-visible-scrollbar transition-[height] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
                                         : introState !== "complete"
                                           ? "opacity-0 translate-y-2 scale-[0.98]"
                                           : "opacity-100 translate-y-0 scale-100",
                                     )}
-                                    style={{ maxHeight: "96px" }}
+                                    style={{ maxHeight: "68px" }}
                                   />
                                   {!isExpanded && (
                                     <motion.button
@@ -4162,7 +4223,14 @@ Keep the response concise, accurate, and easy to read.`
                                               bounce: 0,
                                               duration: 0.3,
                                             }}
-                                            className="flex items-center gap-1.5 text-slate-700 px-2.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold ml-1 hover:bg-slate-100/80 transition-colors cursor-default"
+                                            className={cn(
+                                              "flex items-center gap-1.5 text-slate-700 px-2.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold ml-1 transition-colors cursor-default border",
+                                              selectedCommand?.id === "research"
+                                                ? "bg-slate-100 border-slate-200"
+                                                : selectedCommand?.id === "youtube"
+                                                  ? "bg-red-50 border-red-100 text-red-700"
+                                                  : "hover:bg-slate-100/80 border-transparent",
+                                            )}
                                           >
                                             <span className="opacity-70">
                                               {activeInputCommand.icon(false)}

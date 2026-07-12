@@ -2,6 +2,7 @@ import { detectResearchIntent } from "../src/lib/researchDetect.ts";
 
 const cases = [
   ["what is fable 5 ai", "web"],
+  ["/research what is openai gpt 5", "web"],
   ["what is 25 + 17", "none"],
   ["solve for x: 2x + 5 = 15", "none"],
   ["how are you?", "none"],

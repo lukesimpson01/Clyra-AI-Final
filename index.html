@@ -4,10 +4,54 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Clyra AI</title>
+    <style>
+      #clyra-boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #fafafa;
+        z-index: 9999;
+        transition: opacity 0.35s ease;
+      }
+      #clyra-boot.clyra-boot--hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #clyra-boot-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      #clyra-boot-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #0f172a;
+        animation: clyra-boot-pulse 1.4s ease-in-out infinite;
+      }
+      #clyra-boot-label {
+        font: 500 14px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        color: #64748b;
+        letter-spacing: 0.02em;
+      }
+      @keyframes clyra-boot-pulse {
+        0%, 100% { opacity: 0.35; transform: scale(0.92); }
+        50% { opacity: 1; transform: scale(1); }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="clyra-boot" aria-hidden="true">
+        <div id="clyra-boot-inner">
+          <div id="clyra-boot-dot"></div>
+          <div id="clyra-boot-label">Clyra</div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

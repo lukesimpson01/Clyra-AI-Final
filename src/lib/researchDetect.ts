@@ -84,7 +84,9 @@ function looksLikeFactualWhatIs(query: string): boolean {
   }
   if (/\d/.test(tail)) return true;
   if (hasProperNounSignal(query)) return true;
-  return tail.split(/\s+/).length >= 2;
+  if (tail.split(/\s+/).filter(Boolean).length >= 2) return true;
+  if (tail.length >= 4 && !/^\d+$/.test(tail)) return true;
+  return false;
 }
 
 export function detectResearchIntent(query: string): ResearchIntent {
@@ -140,6 +142,14 @@ export function needsWebResearch(query: string): boolean {
   return detectResearchIntent(query).kind === "web";
 }
 
-export function needsYoutubeResearch(query: string): boolean {
-  return detectResearchIntent(query).kind === "youtube";
+export function resolveResearchIntent(
+  query: string,
+  options?: { forceWeb?: boolean; forceYoutube?: boolean },
+): ResearchIntent {
+  if (options?.forceWeb) return { kind: "web" };
+  if (options?.forceYoutube) {
+    const detected = detectResearchIntent(query);
+    return detected.kind === "youtube" ? detected : { kind: "youtube" };
+  }
+  return detectResearchIntent(query);
 }

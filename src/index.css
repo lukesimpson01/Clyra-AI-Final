@@ -1320,8 +1320,8 @@
 .clyra-chat-user-bubble {
   position: relative;
   overflow: hidden;
-  border-color: rgba(148, 163, 184, 0.35) !important;
-  background: #d1d5db !important;
+  border: none !important;
+  background: #ebebeb !important;
   background-image: none !important;
   box-shadow: none !important;
   filter: none;
@@ -1856,22 +1856,12 @@ body,
   scrollbar-width: none;
 }
 
-/* First message premium entry */
+/* First message — smooth rise only, no bounce */
 .clyra-chat-user-bubble--first {
-  animation: clyra-first-message-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes clyra-first-message-up {
-  0% {
-    opacity: 0;
-    transform: translateY(16px) scale(0.98);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  animation: none;
 }
 
-/* Smooth chat deletion */
+#chat-container {
 .clyra-chat-item-exit {
   animation: clyra-chat-delete 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
@@ -1890,40 +1880,12 @@ body,
   }
 }
 
-@keyframes clyra-first-msg-up {
-  0% {
-    opacity: 0;
-    transform: translateY(32px) scale(0.94);
-  }
-  55% {
-    opacity: 1;
-    transform: translateY(-6px) scale(1.02);
-  }
-  75% {
-    transform: translateY(2px) scale(0.99);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-.clyra-chat-user-bubble--first {
-  animation: clyra-first-msg-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-#chat-container {
+/* Smooth chat deletion */
   padding-bottom: 80px;
 }
 .clyra-composer-glass {
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-}
-
-.clyra-chat-user-bubble {
-  box-shadow:
-    0 0 18px rgba(59, 130, 246, 0.15),
-    0 2px 6px rgba(0, 0, 0, 0.04) !important;
-  transition: box-shadow 0.3s ease;
 }
 
 /* Animated Workspace Backgrounds */

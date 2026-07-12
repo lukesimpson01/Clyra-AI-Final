@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npm run build && NODE_ENV=production tsx server.ts",
+    "dev": "tsx server.ts",
+    "dev:prod": "npm run build && NODE_ENV=production tsx server.ts",
     "dev:source": "tsx server.ts",
     "vibe-server": "tsx vibe-server.ts",
     "start": "node dist/server.cjs",
