@@ -331,6 +331,8 @@
 
 .clyra-command-palette {
   will-change: transform, opacity, filter;
+  -webkit-backdrop-filter: blur(20px) saturate(1.04);
+  backdrop-filter: blur(20px) saturate(1.04);
 }
 
 .clyra-command-palette::-webkit-scrollbar {
