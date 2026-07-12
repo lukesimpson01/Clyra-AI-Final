@@ -641,67 +641,6 @@ export default function App() {
       window.visualViewport?.removeEventListener("resize", updateViewportWidth);
     };
   }, []);
-  type IntroState =
-    | "booting"
-    | "orb_up"
-    | "progress"
-    | "input_circle"
-    | "input_expand"
-    | "progress_complete"
-    | "complete";
-  const [introState, setIntroState] = useState<IntroState>("booting");
-  const [introProgressText, setIntroProgressText] = useState("INITIALIZING");
-  const [progressDuration] = useState(() => 3 + Math.random() * 3);
-
-  useEffect(() => {
-    if (introState === "complete") {
-      return;
-    }
-
-    if (
-      typeof document !== "undefined" &&
-      document.visibilityState === "hidden"
-    ) {
-      setIntroState("complete");
-      return;
-    }
-
-    const pdMs = progressDuration * 1000;
-    const texts = ["INITIALIZING", "LOADING WORKSPACE", "OPTIMIZING", "READY"];
-    let step = 0;
-    const textInterval = window.setInterval(() => {
-      step += 1;
-      if (step < texts.length) setIntroProgressText(texts[step]);
-    }, pdMs / texts.length);
-
-    const t1 = window.setTimeout(() => setIntroState("progress"), 600);
-    const t2 = window.setTimeout(
-      () => setIntroState("progress_complete"),
-      600 + pdMs,
-    );
-    const t3 = window.setTimeout(
-      () => setIntroState("input_circle"),
-      600 + pdMs + 800,
-    );
-    const t4 = window.setTimeout(
-      () => setIntroState("input_expand"),
-      600 + pdMs + 800 + 400,
-    );
-    const t5 = window.setTimeout(() => {
-      setIntroState("complete");
-      setIsSidebarOpen(true);
-    }, 600 + pdMs + 800 + 400 + 1000);
-
-    return () => {
-      window.clearInterval(textInterval);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.clearTimeout(t3);
-      window.clearTimeout(t4);
-      window.clearTimeout(t5);
-    };
-  }, [progressDuration]);
-
   useEffect(() => {
     return () => {
       if (workspaceSwitchTimeoutRef.current != null) {
@@ -729,10 +668,7 @@ export default function App() {
       selectedCommand !== null ||
       activeWorkspaceTab === "vibe");
 
-  const composerExpandTransition =
-    introState !== "complete"
-      ? CLYRA_SURFACE_OPEN_TRANSITION
-      : clyraSurfaceTransition(isExpanded);
+  const composerExpandTransition = clyraSurfaceTransition(isExpanded);
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 40,
@@ -744,7 +680,7 @@ export default function App() {
   }, [adjustHeight, isExpanded, value]);
 
   const pendingDocumentRewriteRef = useRef<DocumentRewriteRequest | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isRephrasingMode, setIsRephrasingMode] = useState(false);
   const [rewritePhase, setRewritePhase] = useState<"ready" | "applying">(
     "ready",
@@ -2740,38 +2676,28 @@ Keep the response concise, accurate, and easy to read.`
       )}
       <motion.div
         className="clyra-app-shell h-dvh flex min-w-0 bg-white text-slate-900 font-sans selection:bg-slate-200 overflow-hidden scalable-container relative"
-        initial={{ opacity: 0, scale: 0.97, filter: "blur(12px)", y: 12 }}
-        animate={{ opacity: 1, scale: 1, filter: "blur(0px)", y: 0 }}
-        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay: 0.05 }}
+        initial={false}
       >
         {showSidebarControls && (
         <motion.aside
           aria-hidden={!isSidebarOpen}
           initial={false}
           animate={
-            introState !== "complete"
+            isSidebarOpen
               ? {
                   x: 0,
-                  y: 18,
+                  y: 0,
                   scale: 1,
-                  opacity: 0,
+                  opacity: 1,
                   filter: "blur(0px)",
                 }
-              : isSidebarOpen
-                ? {
-                    x: 0,
-                    y: 0,
-                    scale: 1,
-                    opacity: 1,
-                    filter: "blur(0px)",
-                  }
-                : {
-                    x: -292,
-                    y: 0,
-                    scale: 1,
-                    opacity: 1,
-                    filter: "blur(0px)",
-                  }
+              : {
+                  x: -292,
+                  y: 0,
+                  scale: 1,
+                  opacity: 1,
+                  filter: "blur(0px)",
+                }
           }
           transition={{
             type: "tween",
@@ -3196,22 +3122,10 @@ Keep the response concise, accurate, and easy to read.`
                 aria-label="Open sidebar"
                 aria-expanded={false}
                 title="Open sidebar"
-                initial={
-                  introState !== "complete"
-                    ? { opacity: 0, scale: 0.96, y: 14 }
-                    : { opacity: 0, scale: 0.9, y: -8 }
-                }
-                animate={{
-                  opacity: introState === "complete" ? 1 : 0,
-                  scale: 1,
-                  y: introState === "complete" ? 0 : 14,
-                }}
+                initial={{ opacity: 0, scale: 0.9, y: -8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: -8 }}
-                transition={
-                  introState !== "complete"
-                    ? { duration: 0.7, ease: [0.16, 1, 0.3, 1] }
-                    : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
-                }
+                transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
                 className="clyra-sidebar-toggle group fixed left-4 top-4 z-[180] flex h-11 w-11 items-center justify-center rounded-full border border-transparent bg-transparent text-slate-600 shadow-none transition-[color,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-[1.05] hover:text-slate-900 active:scale-[0.94] sm:top-6 sm:left-6"
               >
                 <span className="pointer-events-none relative block h-[12px] w-[18px] opacity-95">
@@ -3223,16 +3137,10 @@ Keep the response concise, accurate, and easy to read.`
             )}
           </AnimatePresence>
           <div className="relative z-[90] h-[52px] w-full shrink-0">
-            <motion.div
-              className="absolute left-1/2 top-5 sm:top-6 -translate-x-1/2 z-50"
-              initial={introState !== "complete" ? { y: -50 } : false}
-              animate={{ y: introState === "complete" ? 0 : -50 }}
-              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-            >
+            <div className="absolute left-1/2 top-5 sm:top-6 -translate-x-1/2 z-50">
               <div
                 className={cn(
-                  "clyra-workflow-tabs relative transition-opacity duration-700",
-                  introState === "complete" ? "opacity-100" : "opacity-0",
+                  "clyra-workflow-tabs relative opacity-100",
                   theme === "Dark" && "dark-tabs",
                 )}
                 role="tablist"
@@ -3311,7 +3219,7 @@ Keep the response concise, accurate, and easy to read.`
                   );
                 })}
               </div>
-            </motion.div>
+            </div>
           </div>
           <AnimatePresence></AnimatePresence>
           <motion.div
@@ -3439,25 +3347,7 @@ Keep the response concise, accurate, and easy to read.`
                         />
                         </Suspense>
                       ) : messages.length === 0 ? (
-                        <motion.div
-                          initial={
-                            isWorkspaceSwitching
-                              ? false
-                              : {
-                                  opacity: 0,
-                                  y: 32,
-                                  scale: 0.982,
-                                }
-                          }
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                            scale: 1,
-                          }}
-                          transition={{
-                            duration: 0.82,
-                            ease: [0.18, 1, 0.25, 1],
-                          }}
+                        <div
                           className={cn(
                             "text-center space-y-3 mb-7 flex flex-col items-center max-w-3xl mx-auto w-full",
                             showWorkspaceLivePreview
@@ -3465,130 +3355,24 @@ Keep the response concise, accurate, and easy to read.`
                               : "px-5 sm:px-8",
                           )}
                         >
-                          <motion.div
-                            className="mb-2 flex w-full justify-center relative"
-                            initial={
-                              isWorkspaceSwitching
-                                ? false
-                                : introState !== "complete"
-                                  ? { y: 150 }
-                                  : false
-                            }
-                            animate={
-                              introState === "progress_complete" ||
-                              introState === "input_circle" ||
-                              introState === "input_expand" ||
-                              introState === "complete"
-                                ? { y: 0 }
-                                : { y: 150 }
-                            }
-                            transition={{
-                              duration: 0.8,
-                              ease: [0.16, 1, 0.3, 1],
-                            }}
-                          >
+                          <div className="mb-2 flex w-full justify-center relative">
                             <AiOrb colorTheme={orbColorTheme} />
-                            <AnimatePresence>
-                              {(introState === "progress" ||
-                                introState === "input_circle" ||
-                                introState === "input_expand") && (
-                                <motion.div
-                                  className="absolute top-full left-1/2 -translate-x-1/2 mt-10 flex flex-col items-center gap-4 w-56"
-                                  initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
-                                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                                  exit={{
-                                    opacity: 0,
-                                    y: -10,
-                                    scale: 0.95,
-                                    filter: "blur(4px)",
-                                  }}
-                                  transition={{ duration: 0.6 }}
-                                >
-                                  <div className="h-[3px] w-full bg-slate-200/60 rounded-full overflow-hidden shadow-inner">
-                                    <motion.div
-                                      className="h-full bg-slate-800 rounded-full shadow-[0_0_8px_rgba(30,41,59,0.5)]"
-                                      initial={{ width: "0%" }}
-                                      animate={{ width: "100%" }}
-                                      transition={{
-                                        duration: progressDuration,
-                                        ease: [0.25, 1, 0.5, 1],
-                                      }}
-                                    />
-                                  </div>
-                                  <motion.span
-                                    key={introProgressText}
-                                    initial={{ opacity: 0, y: 4 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="text-[11px] font-medium text-slate-400 tracking-widest uppercase font-mono"
-                                  >
-                                    {introProgressText}
-                                  </motion.span>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.div>
-                          <motion.h1
-                            className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-800"
-                            animate={{
-                              opacity: introState === "complete" ? 1 : 0,
-                              y: introState === "complete" ? 0 : 18,
-                              scale: introState === "complete" ? 1 : 0.96,
-                            }}
-                            transition={{
-                              duration: 0.74,
-                              ease: [0.18, 1, 0.28, 1],
-                            }}
-                          >
+                          </div>
+                          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-800">
                             {emptyStateTitle}
-                          </motion.h1>
-                          <motion.div className="flex flex-col items-center">
-                            <motion.p
-                              className="text-slate-500 text-sm sm:text-base font-medium font-sans z-10 relative"
-                              animate={{
-                                opacity: introState === "complete" ? 1 : 0,
-                                y: introState === "complete" ? 0 : 14,
-                              }}
-                              transition={{
-                                duration: 0.72,
-                                ease: [0.18, 1, 0.28, 1],
-                              }}
-                            >
+                          </h1>
+                          <div className="flex flex-col items-center">
+                            <p className="text-slate-500 text-sm sm:text-base font-medium font-sans z-10 relative">
                               {emptyStateSubtitle}
-                            </motion.p>
+                            </p>
 
                             {!isVibeWorkspace && (
-                              <motion.div
-                                className="clyra-chat-quick-actions mt-4"
-                                initial="hidden"
-                                animate="visible"
-                                variants={{
-                                  hidden: { opacity: 0 },
-                                  visible: {
-                                    opacity: 1,
-                                    transition: {
-                                      staggerChildren: 0.12,
-                                      delayChildren: 0.2,
-                                    },
-                                  },
-                                }}
-                              >
+                              <div className="clyra-chat-quick-actions mt-4">
                                 {chatQuickActions.map((action) => {
                                   const QuickIcon = action.icon;
 
                                   return (
-                                    <motion.button
-                                      variants={{
-                                        hidden: { opacity: 0, y: 20 },
-                                        visible: {
-                                          opacity:
-                                            introState === "complete" ? 1 : 0,
-                                          y: introState === "complete" ? 0 : 20,
-                                          transition: {
-                                            duration: 0.7,
-                                            ease: [0.16, 1, 0.3, 1],
-                                          },
-                                        },
-                                      }}
+                                    <button
                                       key={action.baseLabel}
                                       type="button"
                                       className="clyra-chat-chip group"
@@ -3601,13 +3385,13 @@ Keep the response concise, accurate, and easy to read.`
                                     >
                                       <QuickIcon className="h-3.5 w-3.5" />
                                       <span>{action.baseLabel}</span>
-                                    </motion.button>
+                                    </button>
                                   );
                                 })}
-                              </motion.div>
+                              </div>
                             )}
-                          </motion.div>
-                        </motion.div>
+                          </div>
+                        </div>
                       ) : (
                         <div
                           className={cn(
@@ -3618,12 +3402,7 @@ Keep the response concise, accurate, and easy to read.`
                           )}
                         >
                           <div
-                            className={cn(
-                              "clyra-visible-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden transition-opacity duration-700",
-                              introState === "complete"
-                                ? "opacity-100"
-                                : "opacity-0",
-                            )}
+                            className="clyra-visible-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden"
                             id="chat-container"
                           >
                             {messages.map((message) => {
@@ -3750,11 +3529,7 @@ Keep the response concise, accurate, and easy to read.`
                             key="composer"
                             ref={inputContainerRef}
                             onClick={() => {
-                              if (
-                                !isInputExpanded &&
-                                !isAiResponding &&
-                                introState === "complete"
-                              ) {
+                              if (!isInputExpanded && !isAiResponding) {
                                 setIsInputExpanded(true);
                                 window.requestAnimationFrame(() => {
                                   textareaRef.current?.focus();
@@ -3932,58 +3707,17 @@ Keep the response concise, accurate, and easy to read.`
                                 isExpanded
                                   ? "transition-[background-color,border-color,padding,box-shadow,border-radius] duration-[580ms] ease-[cubic-bezier(0.18,1,0.25,1)]"
                                   : "transition-[background-color,border-color,padding,box-shadow,border-radius] duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                                introState === "booting" ||
-                                  introState === "progress" ||
-                                  introState === "progress_complete"
-                                  ? "opacity-0"
-                                  : "opacity-100",
+                                "opacity-100",
                               )}
-                              initial={
-                                isWorkspaceSwitching
-                                  ? false
-                                  : introState !== "complete"
-                                    ? {
-                                        width: 48,
-                                        height: 48,
-                                        borderRadius: 24,
-                                      }
-                                    : false
-                              }
+                              initial={false}
                               animate={{
-                                width:
-                                  introState === "booting" ||
-                                  introState === "progress" ||
-                                  introState === "input_circle"
-                                    ? 48
-                                    : "100%",
-                                height:
-                                  introState === "booting" ||
-                                  introState === "progress" ||
-                                  introState === "input_circle"
-                                    ? 48
-                                    : "auto",
-                                borderRadius:
-                                  introState === "booting" ||
-                                  introState === "progress" ||
-                                  introState === "input_circle"
-                                    ? 24
-                                    : isExpanded
-                                      ? 32
-                                      : 40,
+                                width: "100%",
+                                height: "auto",
+                                borderRadius: isExpanded ? 32 : 40,
                               }}
                               transition={composerExpandTransition}
                             >
-                              <div
-                                className={cn(
-                                  "relative z-10 w-full h-full transition-opacity duration-700",
-                                  introState === "booting" ||
-                                    introState === "progress" ||
-                                    introState === "progress_complete" ||
-                                    introState === "input_circle"
-                                    ? "opacity-0 pointer-events-none"
-                                    : "opacity-100",
-                                )}
-                              >
+                              <div className="relative z-10 w-full h-full opacity-100">
                                 <AnimatePresence>
                                   {isRephrasingMode && (
                                     <motion.div
@@ -4124,12 +3858,7 @@ Keep the response concise, accurate, and easy to read.`
                                       onClick={handleAttachFile}
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
-                                      className={cn(
-                                        "p-2 text-slate-500 hover:text-slate-800 rounded-full transition-all duration-700 flex items-center justify-center shrink-0",
-                                        introState === "complete"
-                                          ? "opacity-100"
-                                          : "opacity-0",
-                                      )}
+                                      className="p-2 text-slate-500 hover:text-slate-800 rounded-full transition-all duration-700 flex items-center justify-center shrink-0 opacity-100"
                                       aria-label="Attach files"
                                       title="Attach files"
                                     >
@@ -4175,7 +3904,7 @@ Keep the response concise, accurate, and easy to read.`
                                     }}
                                     onKeyDown={handleKeyDown}
                                     onFocus={() => {
-                                      if (!isAiResponding && introState === "complete") {
+                                      if (!isAiResponding) {
                                         setIsInputExpanded(true);
                                       }
                                       adjustHeight();
@@ -4224,9 +3953,7 @@ Keep the response concise, accurate, and easy to read.`
                                         : "duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
-                                        : introState !== "complete"
-                                          ? "opacity-0 translate-y-2 scale-[0.98]"
-                                          : "opacity-100 translate-y-0 scale-100",
+                                        : "opacity-100 translate-y-0 scale-100",
                                     )}
                                     style={{ maxHeight: "96px" }}
                                   />
@@ -4243,10 +3970,7 @@ Keep the response concise, accurate, and easy to read.`
                                       }
                                       className={cn(
                                         "p-2 rounded-full transition-all duration-700 shrink-0",
-                                        "flex items-center justify-center",
-                                        introState === "complete"
-                                          ? "opacity-100"
-                                          : "opacity-0",
+                                        "flex items-center justify-center opacity-100",
                                         value.trim() || selectedCommand
                                           ? "bg-slate-900 text-white hover:bg-slate-800"
                                           : "bg-slate-100 text-slate-400 cursor-not-allowed",
