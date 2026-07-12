@@ -497,10 +497,14 @@ export const FullscreenContext = React.createContext({
   setIsFullscreen: (v: boolean) => {},
 });
 
-export default function App({ onReady }: { onReady?: () => void } = {}) {
+export default function App() {
   useEffect(() => {
-    onReady?.();
-  }, [onReady]);
+    const boot = document.getElementById("clyra-boot");
+    if (!boot) return;
+    boot.classList.add("clyra-boot--hide");
+    const timer = window.setTimeout(() => boot.remove(), 400);
+    return () => window.clearTimeout(timer);
+  }, []);
   interface Message {
     id: string;
     role: "user" | "assistant";
@@ -647,21 +651,41 @@ export default function App({ onReady }: { onReady?: () => void } = {}) {
       return;
     }
 
-    const t1 = setTimeout(() => setIntroState("orb_up"), 10);
-    const t2 = setTimeout(() => setIntroState("input_circle"), 1600);
-    const t3 = setTimeout(() => setIntroState("input_expand"), 1980);
-    const t4 = setTimeout(() => {
+    const pdMs = progressDuration * 1000;
+    const texts = ["INITIALIZING", "LOADING WORKSPACE", "OPTIMIZING", "READY"];
+    let step = 0;
+    const textInterval = window.setInterval(() => {
+      step += 1;
+      if (step < texts.length) setIntroProgressText(texts[step]);
+    }, pdMs / texts.length);
+
+    const t1 = window.setTimeout(() => setIntroState("progress"), 600);
+    const t2 = window.setTimeout(
+      () => setIntroState("progress_complete"),
+      600 + pdMs,
+    );
+    const t3 = window.setTimeout(
+      () => setIntroState("input_circle"),
+      600 + pdMs + 800,
+    );
+    const t4 = window.setTimeout(
+      () => setIntroState("input_expand"),
+      600 + pdMs + 800 + 400,
+    );
+    const t5 = window.setTimeout(() => {
       setIntroState("complete");
       setIsSidebarOpen(true);
-    }, 2850);
+    }, 600 + pdMs + 800 + 400 + 1000);
 
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
+      window.clearInterval(textInterval);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+      window.clearTimeout(t4);
+      window.clearTimeout(t5);
     };
-  }, []);
+  }, [progressDuration]);
 
   useEffect(() => {
     return () => {
@@ -3417,29 +3441,66 @@ Keep the response concise, accurate, and easy to read.`
                           )}
                         >
                           <motion.div
-                            className="mb-2 flex w-full justify-center relative transform-gpu"
+                            className="mb-2 flex w-full justify-center relative"
                             initial={
                               isWorkspaceSwitching
                                 ? false
                                 : introState !== "complete"
-                                  ? { y: 44, opacity: 0 }
+                                  ? { y: 150 }
                                   : false
                             }
                             animate={
-                              introState !== "booting"
-                                ? { y: 0, opacity: 1 }
-                                : { y: 44, opacity: 0 }
+                              introState === "progress_complete" ||
+                              introState === "input_circle" ||
+                              introState === "input_expand" ||
+                              introState === "complete"
+                                ? { y: 0 }
+                                : { y: 150 }
                             }
                             transition={{
-                              type: "tween",
-                              ease: [0.12, 0.78, 0.18, 1],
-                              duration: 1.26,
+                              duration: 0.8,
+                              ease: [0.16, 1, 0.3, 1],
                             }}
                           >
-                            <AiOrb
-                              colorTheme={orbColorTheme}
-                              introActive={introState !== "complete"}
-                            />
+                            <AiOrb colorTheme={orbColorTheme} />
+                            <AnimatePresence>
+                              {(introState === "progress" ||
+                                introState === "input_circle" ||
+                                introState === "input_expand") && (
+                                <motion.div
+                                  className="absolute top-full left-1/2 -translate-x-1/2 mt-10 flex flex-col items-center gap-4 w-56"
+                                  initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
+                                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                                  exit={{
+                                    opacity: 0,
+                                    y: -10,
+                                    scale: 0.95,
+                                    filter: "blur(4px)",
+                                  }}
+                                  transition={{ duration: 0.6 }}
+                                >
+                                  <div className="h-[3px] w-full bg-slate-200/60 rounded-full overflow-hidden shadow-inner">
+                                    <motion.div
+                                      className="h-full bg-slate-800 rounded-full shadow-[0_0_8px_rgba(30,41,59,0.5)]"
+                                      initial={{ width: "0%" }}
+                                      animate={{ width: "100%" }}
+                                      transition={{
+                                        duration: progressDuration,
+                                        ease: [0.25, 1, 0.5, 1],
+                                      }}
+                                    />
+                                  </div>
+                                  <motion.span
+                                    key={introProgressText}
+                                    initial={{ opacity: 0, y: 4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="text-[11px] font-medium text-slate-400 tracking-widest uppercase font-mono"
+                                  >
+                                    {introProgressText}
+                                  </motion.span>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </motion.div>
                           <motion.h1
                             className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-800"
@@ -3738,12 +3799,17 @@ Keep the response concise, accurate, and easy to read.`
                             </AnimatePresence>
                             <motion.div
                               className={cn(
-                                "input-wrapper relative backdrop-blur-xl border transition-[background-color,border-color,padding,box-shadow] duration-300 cursor-text overflow-visible mx-auto z-[3]",
+                                "input-wrapper relative backdrop-blur-xl border transition-[background-color,border-color,padding] duration-300 cursor-text overflow-hidden mx-auto z-[3]",
                                 isVibeWorkspace && "clyra-vibe-composer",
                                 theme === "Dark"
                                   ? "bg-slate-200/90 border-slate-400/50"
                                   : "bg-white/80 border-slate-200/60",
                                 isExpanded ? "p-2" : "p-1.5",
+                                introState === "booting" ||
+                                  introState === "progress" ||
+                                  introState === "progress_complete"
+                                  ? "opacity-0"
+                                  : "opacity-100",
                               )}
                               initial={
                                 isWorkspaceSwitching
@@ -3753,61 +3819,48 @@ Keep the response concise, accurate, and easy to read.`
                                         width: 48,
                                         height: 48,
                                         borderRadius: 24,
-                                        opacity: 0,
-                                        y: 20,
                                       }
                                     : false
                               }
                               animate={{
                                 width:
                                   introState === "booting" ||
-                                  introState === "orb_up" ||
+                                  introState === "progress" ||
                                   introState === "input_circle"
                                     ? 48
                                     : "100%",
                                 height:
                                   introState === "booting" ||
-                                  introState === "orb_up" ||
+                                  introState === "progress" ||
                                   introState === "input_circle"
                                     ? 48
                                     : "auto",
                                 borderRadius:
                                   introState === "booting" ||
-                                  introState === "orb_up" ||
+                                  introState === "progress" ||
                                   introState === "input_circle"
                                     ? 24
                                     : isExpanded
                                       ? 32
                                       : 40,
-                                opacity:
-                                  introState === "booting" ||
-                                  introState === "orb_up"
-                                    ? 0
-                                    : 1,
-                                y:
-                                  introState === "booting" ||
-                                  introState === "orb_up"
-                                    ? 20
-                                    : 0,
                               }}
                               transition={{
-                                type: "tween",
-                                ease: [0.22, 1, 0.36, 1],
-                                duration: 0.42,
+                                type: "spring",
+                                stiffness: 120,
+                                damping: 20,
+                                mass: 1,
                               }}
                             >
-                              <motion.div
-                                className="relative z-10 w-full h-full"
-                                initial={{ opacity: 0 }}
-                                animate={{
-                                  opacity:
-                                    introState === "booting" ||
-                                    introState === "orb_up" ||
+                              <div
+                                className={cn(
+                                  "relative z-10 w-full h-full transition-opacity duration-700",
+                                  introState === "booting" ||
+                                    introState === "progress" ||
+                                    introState === "progress_complete" ||
                                     introState === "input_circle"
-                                      ? 0
-                                      : 1,
-                                }}
-                                transition={{ duration: 0.6, ease: "easeOut" }}
+                                    ? "opacity-0 pointer-events-none"
+                                    : "opacity-100",
+                                )}
                               >
                                 <AnimatePresence>
                                   {isRephrasingMode && (
@@ -4321,7 +4374,7 @@ Keep the response concise, accurate, and easy to read.`
                                     </div>
                                   </div>
                                 )}
-                              </motion.div>
+                              </div>
                             </motion.div>
                           </motion.div>
                         )}

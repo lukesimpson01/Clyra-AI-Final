@@ -1,26 +1,7 @@
 import { StrictMode, lazy, Suspense, Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import App from "./App.tsx";
 import "./index.css";
-
-const App = lazy(() => import("./App.tsx"));
-
-function BootShell() {
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#fafafa]">
-      <div className="flex flex-col items-center gap-3">
-        <div className="h-2.5 w-2.5 rounded-full bg-slate-900 animate-pulse" />
-        <span className="text-sm font-medium text-slate-500">Clyra</span>
-      </div>
-    </div>
-  );
-}
-
-function hideBootShell() {
-  const boot = document.getElementById("clyra-boot");
-  if (!boot) return;
-  boot.classList.add("clyra-boot--hide");
-  window.setTimeout(() => boot.remove(), 400);
-}
 
 class RootErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -114,9 +95,7 @@ if (embedParams.get("vibe_embed") === "1") {
   root.render(
     <StrictMode>
       <RootErrorBoundary>
-        <Suspense fallback={<BootShell />}>
-          <App onReady={hideBootShell} />
-        </Suspense>
+        <App />
       </RootErrorBoundary>
     </StrictMode>,
   );
