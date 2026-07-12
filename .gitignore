@@ -12,3 +12,4 @@ tmp/
 output/
 *.mp4
 .claude/
+__pycache__/
