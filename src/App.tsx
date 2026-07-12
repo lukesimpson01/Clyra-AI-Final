@@ -407,6 +407,64 @@ function useAutoResizeTextarea({
   return { textareaRef, adjustHeight };
 }
 
+const ComposerKeyboardHints = ({
+  showCommandPalette,
+}: {
+  showCommandPalette: boolean;
+}) => {
+  const hintMotion = {
+    initial: { opacity: 0, x: 5 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: 5 },
+  };
+  const kbdClass =
+    "rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]";
+
+  return (
+    <AnimatePresence mode="wait">
+      {showCommandPalette ? (
+        <motion.div
+          key="palette-hints"
+          {...hintMotion}
+          className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-slate-400/80"
+        >
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <kbd className={kbdClass}>↑</kbd>
+            <kbd className={kbdClass}>↓</kbd>
+            to browse commands
+          </span>
+          <span className="text-slate-300">•</span>
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <kbd className={kbdClass}>↵</kbd>
+            to select command
+          </span>
+        </motion.div>
+      ) : (
+        <motion.div
+          key="default-hints"
+          {...hintMotion}
+          className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-slate-400/80"
+        >
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <kbd className={kbdClass}>Esc</kbd>
+            to clear
+          </span>
+          <span className="text-slate-300">•</span>
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <kbd className={kbdClass}>↵</kbd>
+            to send
+          </span>
+          <span className="text-slate-300">•</span>
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <kbd className={kbdClass}>/</kbd>
+            for commands
+          </span>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+};
+
 interface CommandSuggestion {
   id: string;
   icon: (isActive: boolean) => React.ReactNode;
@@ -658,12 +716,14 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [recentCommand, setRecentCommand] = useState<string | null>(null);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const inputContainerRef = useRef<HTMLDivElement>(null);
 
   const isAiResponding = messages.some((m) => m.isStreaming || m.isThinking);
   const isExpanded =
     !isAiResponding &&
-    (isInputExpanded ||
+    (isComposerFocused ||
+      isInputExpanded ||
       attachments.length > 0 ||
       selectedCommand !== null ||
       activeWorkspaceTab === "vibe");
@@ -1011,6 +1071,7 @@ export default function App() {
         !selectedCommand &&
         activeWorkspaceTab !== "vibe"
       ) {
+        setIsComposerFocused(false);
         setIsInputExpanded(false);
       }
     };
@@ -3527,6 +3588,7 @@ Keep the response concise, accurate, and easy to read.`
                             ref={inputContainerRef}
                             onClick={() => {
                               if (!isInputExpanded && !isAiResponding) {
+                                setIsComposerFocused(true);
                                 setIsInputExpanded(true);
                                 window.requestAnimationFrame(() => {
                                   textareaRef.current?.focus();
@@ -3872,6 +3934,7 @@ Keep the response concise, accurate, and easy to read.`
                                     onChange={(e) => {
                                       const nextValue = e.target.value;
                                       setValue(nextValue);
+                                      setIsComposerFocused(true);
                                       if (
                                         !isVibeWorkspace &&
                                         !selectedCommand &&
@@ -3892,6 +3955,7 @@ Keep the response concise, accurate, and easy to read.`
                                     }}
                                     onKeyDown={handleKeyDown}
                                     onFocus={() => {
+                                      setIsComposerFocused(true);
                                       if (!isAiResponding) {
                                         setIsInputExpanded(true);
                                       }
@@ -3910,14 +3974,37 @@ Keep the response concise, accurate, and easy to read.`
                                       ) {
                                         return;
                                       }
-                                      if (
-                                        !isVibeWorkspace &&
-                                        !selectedCommand &&
-                                        attachments.length === 0 &&
-                                        value.trim().length === 0
-                                      ) {
-                                        setIsInputExpanded(false);
-                                      }
+
+                                      window.requestAnimationFrame(() => {
+                                        const active = document.activeElement;
+                                        const stillInComposer =
+                                          active === textareaRef.current ||
+                                          (active != null &&
+                                            inputContainerRef.current?.contains(
+                                              active,
+                                            )) ||
+                                          (active != null &&
+                                            commandPaletteRef.current?.contains(
+                                              active,
+                                            ));
+
+                                        if (stillInComposer) {
+                                          return;
+                                        }
+
+                                        setIsComposerFocused(false);
+
+                                        const currentValue =
+                                          textareaRef.current?.value ?? value;
+                                        if (
+                                          !isVibeWorkspace &&
+                                          !selectedCommand &&
+                                          attachments.length === 0 &&
+                                          currentValue.trim().length === 0
+                                        ) {
+                                          setIsInputExpanded(false);
+                                        }
+                                      });
                                     }}
                                     spellCheck
                                     placeholder={
@@ -3949,55 +4036,10 @@ Keep the response concise, accurate, and easy to read.`
                                     style={{ maxHeight: "96px" }}
                                   />
                                   {!isExpanded && commandPaletteEnabled && (
-                                    <div className="hidden shrink-0 items-center justify-end gap-2 overflow-hidden sm:flex">
-                                      <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-slate-400/80">
-                                        <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
-                                          <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                            Esc
-                                          </kbd>
-                                          to clear
-                                        </span>
-                                        <span className="text-slate-300">•</span>
-                                        <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
-                                          <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                            ↵
-                                          </kbd>
-                                          to send
-                                        </span>
-                                        <span className="text-slate-300">•</span>
-                                        <AnimatePresence mode="wait">
-                                          {showCommandPalette ? (
-                                            <motion.span
-                                              key="palette-hint-collapsed"
-                                              initial={{ opacity: 0, x: 5 }}
-                                              animate={{ opacity: 1, x: 0 }}
-                                              exit={{ opacity: 0, x: 5 }}
-                                              className="flex shrink-0 items-center gap-1 whitespace-nowrap"
-                                            >
-                                              <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                ↑↓
-                                              </kbd>
-                                              <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                ↵
-                                              </kbd>
-                                              to select
-                                            </motion.span>
-                                          ) : (
-                                            <motion.span
-                                              key="cmd-hint-collapsed"
-                                              initial={{ opacity: 0, x: 5 }}
-                                              animate={{ opacity: 1, x: 0 }}
-                                              exit={{ opacity: 0, x: 5 }}
-                                              className="flex shrink-0 items-center gap-1 whitespace-nowrap"
-                                            >
-                                              <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                /
-                                              </kbd>
-                                              for commands
-                                            </motion.span>
-                                          )}
-                                        </AnimatePresence>
-                                      </div>
+                                    <div className="hidden shrink-0 items-center justify-end overflow-hidden sm:flex">
+                                      <ComposerKeyboardHints
+                                        showCommandPalette={showCommandPalette}
+                                      />
                                     </div>
                                   )}
                                   {!isExpanded && (
@@ -4136,59 +4178,10 @@ Keep the response concise, accurate, and easy to read.`
 
                                     <div className="flex items-center gap-2">
                                       {commandPaletteEnabled && (
-                                        <div className="hidden min-w-0 items-center gap-2 overflow-hidden sm:flex">
-                                          <motion.div
-                                            initial={{ opacity: 0, x: 5 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            className="flex shrink-0 items-center gap-2 text-[10px] font-medium text-slate-400/80"
-                                          >
-                                            <span className="flex items-center gap-1 whitespace-nowrap">
-                                              <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                Esc
-                                              </kbd>
-                                              to clear
-                                            </span>
-                                            <span className="text-slate-300">•</span>
-                                            <span className="flex items-center gap-1 whitespace-nowrap">
-                                              <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                ↵
-                                              </kbd>
-                                              to send
-                                            </span>
-                                            <span className="text-slate-300">•</span>
-                                            <AnimatePresence mode="wait">
-                                              {showCommandPalette ? (
-                                                <motion.span
-                                                  key="palette-hint-expanded"
-                                                  initial={{ opacity: 0, x: 5 }}
-                                                  animate={{ opacity: 1, x: 0 }}
-                                                  exit={{ opacity: 0, x: 5 }}
-                                                  className="flex items-center gap-1 whitespace-nowrap"
-                                                >
-                                                  <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                    ↑↓
-                                                  </kbd>
-                                                  <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                    ↵
-                                                  </kbd>
-                                                  to select
-                                                </motion.span>
-                                              ) : (
-                                                <motion.span
-                                                  key="cmd-hint-expanded"
-                                                  initial={{ opacity: 0, x: 5 }}
-                                                  animate={{ opacity: 1, x: 0 }}
-                                                  exit={{ opacity: 0, x: 5 }}
-                                                  className="flex items-center gap-1 whitespace-nowrap"
-                                                >
-                                                  <kbd className="rounded-sm border border-slate-200/50 bg-slate-100/50 px-1 py-[1.5px] font-sans text-slate-400 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)]">
-                                                    /
-                                                  </kbd>
-                                                  for commands
-                                                </motion.span>
-                                              )}
-                                            </AnimatePresence>
-                                          </motion.div>
+                                        <div className="hidden min-w-0 items-center overflow-hidden sm:flex">
+                                          <ComposerKeyboardHints
+                                            showCommandPalette={showCommandPalette}
+                                          />
                                         </div>
                                       )}
                                       <motion.button
