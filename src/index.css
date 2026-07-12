@@ -325,9 +325,22 @@
   display: none;
 }
 
+.clyra-composer-field {
+  isolation: isolate;
+}
+
+.clyra-command-palette {
+  will-change: transform, opacity, filter;
+}
+
+.clyra-command-palette::-webkit-scrollbar {
+  display: none;
+}
+
 .clyra-composer-transition {
   transform-origin: 50% 50%;
 }
+
 
 .clyra-sidebar-toggle,
 .clyra-sidebar-close {

@@ -429,11 +429,16 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     ref,
   ) => {
     return (
-      <div className={cn("relative flex items-center", containerClassName)}>
+      <div
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 items-center",
+          containerClassName,
+        )}
+      >
         {highlightOverlay && (
           <div
             className={cn(
-              "clyra-prompt-ghost-layer absolute inset-0 pointer-events-none break-words whitespace-pre-wrap flex w-full bg-transparent px-4 text-base transition-all duration-200 ease-in-out font-medium",
+              "clyra-prompt-ghost-layer pointer-events-none absolute inset-0 flex w-full break-words whitespace-pre-wrap bg-transparent font-medium transition-all duration-200 ease-in-out",
               className,
             )}
             aria-hidden="true"
@@ -446,9 +451,9 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         )}
         <textarea
           className={cn(
-            "flex w-full bg-transparent px-4 text-base",
+            "flex w-full min-h-0 bg-transparent font-medium",
             "transition-all duration-200 ease-in-out",
-            "placeholder:text-slate-400 font-medium",
+            "placeholder:text-slate-400",
             "disabled:cursor-not-allowed disabled:opacity-50",
             "focus-visible:outline-none focus:ring-0 focus-visible:ring-offset-0",
             className,
@@ -463,6 +468,58 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   },
 );
 Textarea.displayName = "Textarea";
+
+function ComposerKeyboardHints({
+  hasValue,
+  showCommandsHint,
+  compact = false,
+}: {
+  hasValue: boolean;
+  showCommandsHint: boolean;
+  compact?: boolean;
+}) {
+  if (!showCommandsHint) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 6 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 6 }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "flex shrink-0 items-center font-medium text-slate-400/90",
+        compact
+          ? "gap-1.5 text-[11px]"
+          : "mr-1 gap-2 text-[11px] sm:text-xs",
+      )}
+    >
+      {hasValue ? (
+        <>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <kbd className="rounded-md border border-slate-200/70 bg-slate-50/90 px-1.5 py-0.5 font-sans text-[10px] text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+              Esc
+            </kbd>
+            <span className="hidden sm:inline">to clear</span>
+          </span>
+          <span className="text-slate-300">·</span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <kbd className="rounded-md border border-slate-200/70 bg-slate-50/90 px-1.5 py-0.5 font-sans text-[10px] text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+              ↵
+            </kbd>
+            <span className="hidden sm:inline">to send</span>
+          </span>
+        </>
+      ) : (
+        <span className="flex items-center gap-1 whitespace-nowrap">
+          <kbd className="rounded-md border border-slate-200/70 bg-slate-50/90 px-1.5 py-0.5 font-sans text-[10px] text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+            /
+          </kbd>
+          <span className="hidden sm:inline">for commands</span>
+        </span>
+      )}
+    </motion.div>
+  );
+}
 
 const HighlightText = ({
   text,
@@ -718,8 +775,8 @@ export default function App() {
       activeWorkspaceTab === "vibe");
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
-    minHeight: 34,
-    maxHeight: 68,
+    minHeight: 24,
+    maxHeight: 72,
     onMultilineChange: setIsComposerMultiline,
   });
 
@@ -3764,21 +3821,24 @@ Keep the response concise, accurate, and easy to read.`
                                 : "pb-4 sm:pb-6 mb-3",
                             )}
                           >
+                            <div className="clyra-composer-field relative w-full">
                             <AnimatePresence>
                               {commandPaletteEnabled && showCommandPalette && (
                                 <motion.div
                                   ref={commandPaletteRef}
-                                  className="absolute left-0 right-0 bottom-[calc(100%+10px)] z-[200] max-h-[220px] overflow-y-auto rounded-2xl border border-slate-100 bg-white pb-1 shadow-[0_8px_32px_rgba(0,0,0,0.14)] scrollbar-none transform-gpu origin-bottom pointer-events-auto"
-                                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: 12, scale: 0.98 }}
+                                  className="clyra-command-palette absolute bottom-[calc(100%+12px)] left-0 right-0 z-[200] max-h-[240px] w-full overflow-y-auto rounded-[22px] border border-slate-200/70 bg-white/95 pb-1.5 shadow-[0_20px_48px_rgba(15,23,42,0.1),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-xl scrollbar-none transform-gpu origin-bottom pointer-events-auto"
+                                  initial={{ opacity: 0, y: 22, filter: "blur(8px)" }}
+                                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                                  exit={{ opacity: 0, y: 16, filter: "blur(6px)" }}
                                   transition={{
-                                    duration: 0.22,
-                                    ease: [0.22, 1, 0.36, 1],
+                                    type: "spring",
+                                    stiffness: 420,
+                                    damping: 34,
+                                    mass: 0.82,
                                   }}
                                 >
-                                  <div className="py-2">
-                                    <div className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                  <div className="px-2 py-2">
+                                    <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                                       Commands
                                     </div>
                                     {filteredSuggestions.map(
@@ -3789,13 +3849,21 @@ Keep the response concise, accurate, and easy to read.`
                                               c.prefix === suggestion.prefix,
                                           );
                                         return (
-                                          <motion.div
+                                          <motion.button
+                                            type="button"
                                             key={suggestion.prefix}
+                                            initial={{ opacity: 0, y: 8 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{
+                                              delay: index * 0.04,
+                                              duration: 0.24,
+                                              ease: [0.22, 1, 0.36, 1],
+                                            }}
                                             className={cn(
-                                              "flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm transition-colors",
+                                              "flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
                                               activeSuggestion === index
-                                                ? "bg-slate-100 text-slate-900"
-                                                : "text-slate-600 hover:bg-slate-50/50 hover:text-slate-900",
+                                                ? "bg-slate-100/90 text-slate-900"
+                                                : "text-slate-600 hover:bg-slate-50/80 hover:text-slate-900",
                                             )}
                                             onClick={() =>
                                               selectCommandSuggestion(
@@ -3808,17 +3876,17 @@ Keep the response concise, accurate, and easy to read.`
                                           >
                                             <div
                                               className={cn(
-                                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
+                                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors",
                                                 activeSuggestion === index
-                                                  ? "border border-slate-200 bg-slate-50 shadow-[0_1px_3px_rgba(0,0,0,0.05)]"
-                                                  : "border border-transparent bg-slate-50/50 text-slate-500",
+                                                  ? "border border-slate-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.05)]"
+                                                  : "border border-transparent bg-slate-50/80 text-slate-500",
                                               )}
                                             >
                                               {suggestion.icon(
                                                 activeSuggestion === index,
                                               )}
                                             </div>
-                                            <div className="flex flex-1 flex-col items-start truncate leading-snug">
+                                            <div className="flex min-w-0 flex-1 flex-col items-start leading-snug">
                                               <span className="w-full truncate font-medium">
                                                 {commandQuery ? (
                                                   <>
@@ -3854,11 +3922,11 @@ Keep the response concise, accurate, and easy to read.`
                                                   suggestion.label
                                                 )}
                                               </span>
-                                              <span className="hidden w-full truncate text-xs text-slate-400 sm:block">
+                                              <span className="w-full truncate text-xs text-slate-400">
                                                 {suggestion.description}
                                               </span>
                                             </div>
-                                          </motion.div>
+                                          </motion.button>
                                         );
                                       },
                                     )}
@@ -3912,7 +3980,7 @@ Keep the response concise, accurate, and easy to read.`
                                 theme === "Dark"
                                   ? "bg-slate-200/90 border-slate-400/50"
                                   : "bg-white/80 border-slate-200/60",
-                                isExpanded ? "p-2" : "p-1.5",
+                                isExpanded ? "p-1.5" : "h-12 px-2",
                                 introState === "booting" ||
                                   introState === "progress" ||
                                   introState === "progress_complete"
@@ -3942,7 +4010,9 @@ Keep the response concise, accurate, and easy to read.`
                                   introState === "progress" ||
                                   introState === "input_circle"
                                     ? 48
-                                    : "auto",
+                                    : isExpanded
+                                      ? "auto"
+                                      : 48,
                                 borderRadius:
                                   introState === "booting" ||
                                   introState === "progress" ||
@@ -4093,8 +4163,8 @@ Keep the response concise, accurate, and easy to read.`
                                 <div
                                   className={cn(
                                     isComposerMultiline && value.trim().length > 0
-                                      ? "px-2 py-1"
-                                      : "flex items-center gap-1 px-1.5 py-0",
+                                      ? "px-2 py-1.5"
+                                      : "flex h-full items-center gap-1.5",
                                   )}
                                 >
                                   <input
@@ -4111,7 +4181,7 @@ Keep the response concise, accurate, and easy to read.`
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
                                       className={cn(
-                                        "p-2 text-slate-500 hover:text-slate-800 rounded-full transition-all duration-700 flex items-center justify-center shrink-0",
+                                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-slate-500 transition-all duration-300 hover:text-slate-800",
                                         introState === "complete"
                                           ? "opacity-100"
                                           : "opacity-0",
@@ -4155,14 +4225,14 @@ Keep the response concise, accurate, and easy to read.`
                                         ? "Tell Clyra how to change the highlighted text..."
                                         : inputPlaceholder
                                     }
-                                    containerClassName="w-full"
+                                    containerClassName="min-w-0 flex-1"
                                     className={cn(
                                       "resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none disabled:opacity-50",
-                                      "text-[15px] leading-[1.35] py-1 px-1",
+                                      "text-base leading-6 py-0 px-1.5",
                                       theme === "Dark"
                                         ? "placeholder:text-slate-500"
                                         : "placeholder:text-slate-400",
-                                      "h-[34px] min-h-[34px] max-h-[68px]",
+                                      "max-h-[72px]",
                                       "clyra-visible-scrollbar transition-[height] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
@@ -4170,8 +4240,24 @@ Keep the response concise, accurate, and easy to read.`
                                           ? "opacity-0 translate-y-2 scale-[0.98]"
                                           : "opacity-100 translate-y-0 scale-100",
                                     )}
-                                    style={{ maxHeight: "68px" }}
+                                    style={{ maxHeight: "72px", height: "24px" }}
                                   />
+                                  {!isExpanded && (
+                                    <AnimatePresence mode="wait">
+                                      <ComposerKeyboardHints
+                                        key={
+                                          value.trim() || selectedCommand
+                                            ? "send-hint"
+                                            : "cmd-hint"
+                                        }
+                                        hasValue={
+                                          !!(value.trim() || selectedCommand)
+                                        }
+                                        showCommandsHint={commandPaletteEnabled}
+                                        compact
+                                      />
+                                    </AnimatePresence>
+                                  )}
                                   {!isExpanded && (
                                     <motion.button
                                       type="button"
@@ -4184,8 +4270,7 @@ Keep the response concise, accurate, and easy to read.`
                                         !selectedCommand
                                       }
                                       className={cn(
-                                        "p-2 rounded-full transition-all duration-700 shrink-0",
-                                        "flex items-center justify-center",
+                                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 transition-all duration-300",
                                         introState === "complete"
                                           ? "opacity-100"
                                           : "opacity-0",
@@ -4194,7 +4279,7 @@ Keep the response concise, accurate, and easy to read.`
                                           : "bg-slate-100 text-slate-400 cursor-not-allowed",
                                       )}
                                     >
-                                      <ArrowUpIcon className="w-4.5 h-4.5" />
+                                      <ArrowUpIcon className="h-4 w-4" />
                                     </motion.button>
                                   )}
                                 </div>
@@ -4307,47 +4392,17 @@ Keep the response concise, accurate, and easy to read.`
 
                                     <div className="flex items-center gap-2">
                                       <AnimatePresence mode="wait">
-                                        {commandPaletteEnabled &&
-                                        (value.trim() || selectedCommand) ? (
-                                          <motion.div
-                                            key="send-hint"
-                                            initial={{ opacity: 0, x: 5 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: 5 }}
-                                            className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400/80 font-medium mr-1"
-                                          >
-                                            <span className="flex items-center gap-1">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                Esc
-                                              </kbd>
-                                              to clear
-                                            </span>
-                                            <span className="text-slate-300">
-                                              •
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                ↵
-                                              </kbd>
-                                              to send
-                                            </span>
-                                          </motion.div>
-                                        ) : commandPaletteEnabled ? (
-                                          <motion.div
-                                            key="cmd-hint"
-                                            initial={{ opacity: 0, x: 5 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: 5 }}
-                                            className="hidden sm:flex items-center gap-1.5 text-[10px] text-slate-400/80 font-medium mr-1"
-                                          >
-                                            <span className="flex items-center gap-1">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                Ctrl/⌘K
-                                              </kbd>
-                                              for commands
-                                            </span>
-                                          </motion.div>
-                                        ) : null}
+                                        <ComposerKeyboardHints
+                                          key={
+                                            value.trim() || selectedCommand
+                                              ? "send-hint"
+                                              : "cmd-hint"
+                                          }
+                                          hasValue={
+                                            !!(value.trim() || selectedCommand)
+                                          }
+                                          showCommandsHint={commandPaletteEnabled}
+                                        />
                                       </AnimatePresence>
                                       <motion.button
                                         type="button"
@@ -4374,6 +4429,7 @@ Keep the response concise, accurate, and easy to read.`
                                 )}
                               </div>
                             </motion.div>
+                            </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
