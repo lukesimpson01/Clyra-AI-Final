@@ -329,6 +329,12 @@
   isolation: isolate;
 }
 
+.clyra-composer-field,
+.clyra-command-palette,
+.input-wrapper {
+  transform-origin: center bottom;
+}
+
 .clyra-command-palette {
   will-change: transform, opacity, filter;
   -webkit-backdrop-filter: blur(20px) saturate(1.04);
