@@ -8,19 +8,22 @@ type ShiningTextProps = {
   className?: string;
 };
 
+const SHINE_GRADIENT =
+  "linear-gradient(110deg, #404040 35%, #ffffff 50%, #404040 75%, #404040)";
+
 export function ShiningText({ text, className }: ShiningTextProps) {
   return (
     <motion.span
       className={[
-        "bg-[linear-gradient(110deg,#404040,35%,#fff,50%,#404040,75%,#404040)]",
-        "bg-[length:200%_100%]",
-        "bg-clip-text",
-        "inline-block whitespace-nowrap py-[1px]",
-        "text-base",
-        "font-regular",
-        "text-transparent",
-        className ?? "",
+        "inline-block whitespace-nowrap py-[1px] font-medium text-transparent",
+        className ?? "text-[15px] sm:text-[16px]",
       ].join(" ")}
+      style={{
+        backgroundImage: SHINE_GRADIENT,
+        backgroundSize: "200% 100%",
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+      }}
       initial={{ backgroundPosition: "200% 0" }}
       animate={{ backgroundPosition: "-200% 0" }}
       transition={{

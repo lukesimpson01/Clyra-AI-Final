@@ -46,12 +46,17 @@ import { ChatSearchModal } from "./components/ChatSearchModal";
 import { ShiningText } from "./components/ShiningText";
 import { BlurredStaggerStream } from "@/components/ui/blurred-stagger-text";
 import { ResearchStatusBar } from "@/components/chat/ResearchStatusBar";
-import { needsWebResearch } from "@/lib/researchDetect";
+import { detectResearchIntent } from "@/lib/researchDetect";
 import {
   formatResearchContext,
   runResearch,
   type ResearchSite,
 } from "@/lib/researchClient";
+import {
+  formatYoutubeResearchContext,
+  runYoutubeResearch,
+  type YouTubeVideoProgress,
+} from "@/lib/youtubeClient";
 import { MarkdownMessageContent } from "./components/MarkdownMessageContent";
 import {
   DocumentCardUI,
@@ -150,6 +155,9 @@ const AnimatedMessage = ({
   onContentChange,
   isResearching,
   researchSites = [],
+  researchMode = "web",
+  youtubeVideos = [],
+  messageTextClass = "text-[15px] sm:text-[16px]",
 }: {
   messageId?: string;
   content: string;
@@ -164,6 +172,9 @@ const AnimatedMessage = ({
   isLastAssistant?: boolean;
   isResearching?: boolean;
   researchSites?: ResearchSite[];
+  researchMode?: "web" | "youtube";
+  youtubeVideos?: YouTubeVideoProgress[];
+  messageTextClass?: string;
   onVibePreviewReady?: (
     messageId: string,
     filesByPath: Record<string, string>,
@@ -239,7 +250,14 @@ const AnimatedMessage = ({
         fontSizeClass,
       )}
     >
-      {isResearching ? <ResearchStatusBar sites={researchSites} /> : null}
+      {isResearching ? (
+        <ResearchStatusBar
+          mode={researchMode}
+          sites={researchSites}
+          videos={youtubeVideos}
+          messageTextClass={messageTextClass}
+        />
+      ) : null}
       {!isResearching && content.length === 0 && (isThinking || isStreaming) ? (
         <ChatThinkingLabel
           isThinking={!!isThinking}
@@ -309,13 +327,14 @@ const AnimatedMessage = ({
 interface UseAutoResizeTextareaProps {
   minHeight: number;
   maxHeight?: number;
+  onMultilineChange?: (isMultiline: boolean) => void;
 }
 
 function useAutoResizeTextarea({
   minHeight,
   maxHeight,
-  lineThreshold = 18,
-}: UseAutoResizeTextareaProps & { lineThreshold?: number }) {
+  onMultilineChange,
+}: UseAutoResizeTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(
@@ -326,24 +345,31 @@ function useAutoResizeTextarea({
       if (reset) {
         textarea.style.height = `${minHeight}px`;
         textarea.style.overflowY = "hidden";
+        onMultilineChange?.(false);
         return;
       }
 
       window.requestAnimationFrame(() => {
-        textarea.style.height = `${minHeight}px`;
-        const needsSecondLine =
-          textarea.value.length > 0 &&
-          textarea.scrollHeight > minHeight + lineThreshold;
+        const style = window.getComputedStyle(textarea);
+        const lineHeight = parseFloat(style.lineHeight) || 22;
+        const paddingY =
+          parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+        const singleLineHeight = Math.ceil(lineHeight + paddingY);
+
+        textarea.style.height = `${singleLineHeight}px`;
+        const needsSecondLine = textarea.scrollHeight > singleLineHeight + 2;
+        onMultilineChange?.(needsSecondLine);
+
         const targetHeight = needsSecondLine
           ? Math.min(textarea.scrollHeight, maxHeight ?? Number.POSITIVE_INFINITY)
-          : minHeight;
+          : singleLineHeight;
 
         textarea.style.height = `${targetHeight}px`;
         textarea.style.overflowY =
           maxHeight && textarea.scrollHeight > maxHeight ? "auto" : "hidden";
       });
     },
-    [minHeight, maxHeight, lineThreshold],
+    [minHeight, maxHeight, onMultilineChange],
   );
 
   useEffect(() => {
@@ -481,6 +507,8 @@ export default function App() {
     vibeUserPrompt?: string;
     isResearching?: boolean;
     researchSites?: ResearchSite[];
+    researchMode?: "web" | "youtube";
+    youtubeVideos?: YouTubeVideoProgress[];
   }
 
   interface ChatSession {
@@ -645,12 +673,13 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [recentCommand, setRecentCommand] = useState<string | null>(null);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [isComposerMultiline, setIsComposerMultiline] = useState(false);
   const inputContainerRef = useRef<HTMLDivElement>(null);
 
   const isAiResponding = messages.some((m) => m.isStreaming || m.isThinking);
   const isExpanded =
     !isAiResponding &&
-    (isInputExpanded ||
+    (isComposerMultiline ||
       attachments.length > 0 ||
       selectedCommand !== null ||
       activeWorkspaceTab === "vibe");
@@ -658,6 +687,7 @@ export default function App() {
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 40,
     maxHeight: 96,
+    onMultilineChange: setIsComposerMultiline,
   });
 
   useEffect(() => {
@@ -707,7 +737,7 @@ export default function App() {
   const [markdownSupport, setMarkdownSupport] = useState(true);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [temperature, setTemperature] = useState(0.7);
-  const [userBubbleColor, setUserBubbleColor] = useState("#E4E7EC");
+  const [userBubbleColor, setUserBubbleColor] = useState("#D1D5DB");
   const [orbColorTheme, setOrbColorTheme] = useState<OrbColorTheme>(
     readStoredOrbColorTheme,
   );
@@ -1994,52 +2024,100 @@ Please analyze the code you just wrote and fix this error.`;
           return;
         }
 
-        const shouldResearch = needsWebResearch(userText);
+        const researchIntent = detectResearchIntent(userText);
+        const shouldResearch = researchIntent.kind === "web";
+        const shouldYoutube = researchIntent.kind === "youtube";
         let researchContext = "";
 
-        if (shouldResearch) {
+        if (shouldResearch || shouldYoutube) {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === aiMsgId
-                ? { ...msg, isResearching: true, researchSites: [], isThinking: true }
+                ? {
+                    ...msg,
+                    isResearching: true,
+                    researchMode: shouldYoutube ? "youtube" : "web",
+                    researchSites: [],
+                    youtubeVideos: [],
+                    isThinking: true,
+                  }
                 : msg,
             ),
           );
 
           try {
-            const researchResult = await runResearch(userText, (event) => {
-              if (event.type === "site") {
-                setMessages((prev) =>
-                  prev.map((msg) => {
-                    if (msg.id !== aiMsgId) return msg;
-                    const existing = msg.researchSites ?? [];
-                    const alreadySeen = existing.some(
-                      (site) => site.url === event.url || site.host === event.host,
+            if (shouldYoutube) {
+              const youtubeResult = await runYoutubeResearch(
+                userText,
+                (event) => {
+                  if (event.type === "video") {
+                    setMessages((prev) =>
+                      prev.map((msg) => {
+                        if (msg.id !== aiMsgId) return msg;
+                        const existing = msg.youtubeVideos ?? [];
+                        const alreadySeen = existing.some(
+                          (video) => video.video_id === event.video_id,
+                        );
+                        if (alreadySeen) return msg;
+                        return {
+                          ...msg,
+                          youtubeVideos: [
+                            ...existing,
+                            {
+                              video_id: event.video_id,
+                              title: event.title,
+                              url: event.url,
+                            },
+                          ],
+                        };
+                      }),
                     );
-                    if (alreadySeen) return msg;
-                    return {
-                      ...msg,
-                      researchSites: [
-                        ...existing,
-                        {
-                          host: event.host,
-                          title: event.title,
-                          url: event.url,
-                        },
-                      ],
-                    };
-                  }),
-                );
+                  }
+                },
+                researchIntent.kind === "youtube"
+                  ? researchIntent.videoUrl
+                  : undefined,
+              );
+              if (youtubeResult) {
+                researchContext = formatYoutubeResearchContext(youtubeResult);
               }
-            });
+            } else {
+              const researchResult = await runResearch(userText, (event) => {
+                if (event.type === "site") {
+                  setMessages((prev) =>
+                    prev.map((msg) => {
+                      if (msg.id !== aiMsgId) return msg;
+                      const existing = msg.researchSites ?? [];
+                      const alreadySeen = existing.some(
+                        (site) => site.url === event.url || site.host === event.host,
+                      );
+                      if (alreadySeen) return msg;
+                      return {
+                        ...msg,
+                        researchSites: [
+                          ...existing,
+                          {
+                            host: event.host,
+                            title: event.title,
+                            url: event.url,
+                          },
+                        ],
+                      };
+                    }),
+                  );
+                }
+              });
 
-            if (researchResult) {
-              researchContext = formatResearchContext(researchResult);
+              if (researchResult) {
+                researchContext = formatResearchContext(researchResult);
+              }
             }
           } catch (error) {
-            console.warn("Web research failed:", error);
+            console.warn("Research failed:", error);
             researchContext =
-              "Web research could not be completed. Say you could not verify facts online and avoid guessing.";
+              shouldYoutube
+                ? "YouTube research could not be completed. Say you could not verify video details and avoid guessing."
+                : "Web research could not be completed. Say you could not verify facts online and avoid guessing.";
           } finally {
             setMessages((prev) =>
               prev.map((msg) =>
@@ -2069,9 +2147,13 @@ Please analyze the code you just wrote and fix this error.`;
               : "Your name is Clyra, an AI assistant. Give helpful and appropriately detailed responses.";
 
           const researchPrompt = researchContext
-            ? `\n\nWEB RESEARCH CONTEXT (verified sources — do not invent facts beyond this):\n${researchContext}`
-            : shouldResearch
-              ? "\n\nNo verified web research was available. Say you could not confirm facts online and avoid guessing."
+            ? shouldYoutube
+              ? `\n\nYOUTUBE RESEARCH CONTEXT (verified video data — do not invent facts beyond this):\n${researchContext}`
+              : `\n\nWEB RESEARCH CONTEXT (verified sources — do not invent facts beyond this):\n${researchContext}`
+            : shouldResearch || shouldYoutube
+              ? shouldYoutube
+                ? "\n\nNo verified YouTube research was available. Say you could not confirm video details and avoid guessing."
+                : "\n\nNo verified web research was available. Say you could not confirm facts online and avoid guessing."
               : "";
 
           const wantsNotes =
@@ -2100,14 +2182,21 @@ Information to turn into notes:
 ${userText}`
             : "";
 
-          const researchAnswerContract = shouldResearch
-            ? `\n\nRESEARCH ANSWER MODE
+          const researchAnswerContract =
+            shouldResearch || shouldYoutube
+              ? shouldYoutube
+                ? `\n\nYOUTUBE ANSWER MODE
+Answer the user's question about the YouTube video(s) in clear, conversational prose.
+Use only verified YouTube research provided above.
+Cite videos inline like [1] and include timestamps when available.
+If transcript or metadata is incomplete, say what you could not verify instead of guessing.`
+                : `\n\nRESEARCH ANSWER MODE
 Answer the user's factual question in clear, conversational prose.
 Use only verified web research provided above.
 Cite sources inline like [1] or [2] when stating facts.
 If research is incomplete, say what you could not verify instead of guessing.
 Keep the response concise, accurate, and easy to read.`
-            : "";
+              : "";
 
           const finalPrompt =
             basePrompt + researchPrompt + researchAnswerContract + notesContract;
@@ -3407,15 +3496,17 @@ Keep the response concise, accurate, and easy to read.`
                                       ? false
                                       : {
                                           opacity: 0,
-                                          y: message.role === "user" ? 8 : 6,
-                                          scale: 0.995,
+                                          y: message.role === "user" ? 10 : 6,
                                         }
                                   }
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  animate={{ opacity: 1, y: 0 }}
                                   transition={{
                                     type: "tween",
-                                    ease: [0.25, 0.46, 0.45, 0.94],
-                                    duration: message.role === "user" ? 0.42 : 0.38,
+                                    ease:
+                                      message.role === "user"
+                                        ? [0.18, 1, 0.25, 1]
+                                        : [0.22, 1, 0.36, 1],
+                                    duration: message.role === "user" ? 0.58 : 0.38,
                                   }}
                                   className={cn(
                                     "flex w-full",
@@ -3428,7 +3519,7 @@ Keep the response concise, accurate, and easy to read.`
                                     <div
                                       data-invert-ignore="true"
                                       className={cn(
-                                        "clyra-chat-user-bubble px-5 py-3.5 rounded-[24px] max-w-[85%] sm:max-w-[75%] border border-slate-200/60 whitespace-pre-wrap",
+                                        "clyra-chat-user-bubble px-5 py-3.5 rounded-[24px] max-w-[85%] sm:max-w-[75%] border border-slate-300/50 whitespace-pre-wrap",
                                         message.id === firstUserMessageId &&
                                           "clyra-chat-user-bubble--first",
                                         fontClass,
@@ -3467,6 +3558,9 @@ Keep the response concise, accurate, and easy to read.`
                                           isStreaming={message.isStreaming}
                                           isResearching={message.isResearching}
                                           researchSites={message.researchSites}
+                                          researchMode={message.researchMode}
+                                          youtubeVideos={message.youtubeVideos}
+                                          messageTextClass={fontClass}
                                           reasoningContent={
                                             message.reasoningContent
                                           }
@@ -3636,7 +3730,7 @@ Keep the response concise, accurate, and easy to read.`
                               transition={{
                                 type: "tween",
                                 ease: [0.22, 1, 0.36, 1],
-                                duration: 0.8,
+                                duration: 0.42,
                               }}
                             >
                               <motion.div
@@ -3925,15 +4019,6 @@ Keep the response concise, accurate, and easy to read.`
                                       const nextValue = e.target.value;
                                       setValue(nextValue);
                                       if (
-                                        !isVibeWorkspace &&
-                                        !selectedCommand &&
-                                        attachments.length === 0
-                                      ) {
-                                        setIsInputExpanded(
-                                          nextValue.trim().length > 0,
-                                        );
-                                      }
-                                      if (
                                         activeSkeletonText &&
                                         !nextValue.includes(
                                           activeSkeletonText,
@@ -3964,9 +4049,9 @@ Keep the response concise, accurate, and easy to read.`
                                         ? "placeholder:text-slate-500"
                                         : "placeholder:text-slate-400",
                                       isExpanded
-                                        ? "min-h-[50px] max-h-[96px] py-3 px-1"
+                                        ? "min-h-[40px] max-h-[96px] py-2 px-1"
                                         : "min-h-[40px] max-h-[96px] py-2 px-1",
-                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-300 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] will-change-[height,transform]",
+                                      "clyra-visible-scrollbar transition-[height] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[height]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
                                         : introState !== "complete"

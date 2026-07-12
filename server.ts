@@ -1705,6 +1705,72 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     });
   });
 
+  app.post("/api/youtube-research", async (req, res) => {
+    const query = String(req.body?.query ?? "").trim();
+    const videoUrl = String(req.body?.videoUrl ?? "").trim();
+    if (!query) {
+      res.status(400).json({ error: "query required" });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const send = (payload: Record<string, unknown>) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const scriptArgs = ["-m", "youtube_engine", query];
+    if (videoUrl) {
+      scriptArgs.push("--url", videoUrl);
+    }
+
+    const proc = spawn("python3", scriptArgs, {
+      cwd: process.cwd(),
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let buffer = "";
+    proc.stdout.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          send(JSON.parse(trimmed) as Record<string, unknown>);
+        } catch {
+          send({ type: "log", message: trimmed });
+        }
+      }
+    });
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      const message = chunk.toString().trim();
+      if (message) send({ type: "log", message });
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        send({
+          type: "error",
+          message: `YouTube research pipeline exited with code ${code}`,
+        });
+      }
+      res.end();
+    });
+
+    proc.on("error", (err) => {
+      send({ type: "error", message: err.message });
+      res.end();
+    });
+  });
+
   // AI Clipper
   app.post("/api/clipper/start", async (req, res) => {
     const { url, config: cfg } = req.body || {};
