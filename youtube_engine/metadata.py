@@ -4,6 +4,9 @@ import asyncio
 import re
 from typing import Any
 
+from youtube_engine.oembed import fetch_oembed_metadata
+from youtube_engine.search_fallback import search_youtube_ddgs
+
 
 def _format_timestamp(seconds: float) -> str:
     total = max(0, int(seconds))
@@ -15,7 +18,10 @@ def _format_timestamp(seconds: float) -> str:
 
 
 async def search_youtube(query: str, *, max_results: int = 5) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(_search_sync, query, max_results)
+    hits = await asyncio.to_thread(_search_sync, query, max_results)
+    if hits:
+        return hits
+    return await search_youtube_ddgs(query, max_results=max_results)
 
 
 def _search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
@@ -54,7 +60,11 @@ def _search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
 
 
 async def fetch_video_metadata(video_id: str) -> dict[str, Any] | None:
-    return await asyncio.to_thread(_metadata_sync, video_id)
+    metadata = await asyncio.to_thread(_metadata_sync, video_id)
+    if metadata:
+        metadata["source"] = "yt_dlp"
+        return metadata
+    return await fetch_oembed_metadata(video_id)
 
 
 def _metadata_sync(video_id: str) -> dict[str, Any] | None:

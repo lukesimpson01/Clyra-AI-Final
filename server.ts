@@ -1752,7 +1752,13 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
 
     proc.stderr.on("data", (chunk: Buffer) => {
       const message = chunk.toString().trim();
-      if (message) send({ type: "log", message });
+      if (
+        message &&
+        !message.includes("Sign in to confirm you") &&
+        !message.startsWith("ERROR: [youtube]")
+      ) {
+        send({ type: "log", message });
+      }
     });
 
     proc.on("close", (code) => {

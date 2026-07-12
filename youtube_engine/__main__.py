@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sys
 
 from youtube_engine.engine import YouTubeResearchEngine
-from youtube_engine.url_normalizer import extract_video_id
 
 
 def serialize_response(resp) -> dict:
@@ -61,16 +61,17 @@ def serialize_response(resp) -> dict:
 
 
 async def main() -> None:
-    query = " ".join(sys.argv[1:]).strip()
+    parser = argparse.ArgumentParser(description="Clyra YouTube research pipeline")
+    parser.add_argument("query", help="Research query or YouTube URL")
+    parser.add_argument("--url", dest="video_url", default=None, help="Direct YouTube URL")
+    args = parser.parse_args()
+
+    query = str(args.query or "").strip()
+    video_url = str(args.video_url or "").strip() or None
+
     if not query:
         print(json.dumps({"type": "error", "message": "query required"}))
         sys.exit(1)
-
-    video_url = None
-    if "--url" in sys.argv:
-        idx = sys.argv.index("--url")
-        if idx + 1 < len(sys.argv):
-            video_url = sys.argv[idx + 1]
 
     async def on_progress(event: dict) -> None:
         if event.get("type") == "complete":

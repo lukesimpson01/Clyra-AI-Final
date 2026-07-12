@@ -28,6 +28,8 @@ import {
   Check,
   ChevronRight,
   FileUp,
+  FileImage,
+  FileText,
   Folder,
   MessageCircleDashed,
   MousePointer2,
@@ -465,6 +467,25 @@ const ComposerKeyboardHints = ({
   );
 };
 
+type ComposerAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  previewUrl?: string;
+};
+
+const formatAttachmentSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getAttachmentExtension = (name: string): string => {
+  const parts = name.split(".");
+  return parts.length > 1 ? (parts.pop() ?? "file").slice(0, 4).toUpperCase() : "FILE";
+};
+
 interface CommandSuggestion {
   id: string;
   icon: (isActive: boolean) => React.ReactNode;
@@ -710,7 +731,7 @@ export default function App() {
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [value, setValue] = useState("");
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -735,9 +756,22 @@ export default function App() {
     maxHeight: 96,
   });
 
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+
   useEffect(() => {
     adjustHeight();
   }, [adjustHeight, isExpanded, value]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach((attachment) => {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      });
+    };
+  }, []);
 
   const pendingDocumentRewriteRef = useRef<DocumentRewriteRequest | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -2134,6 +2168,13 @@ Please analyze the code you just wrote and fix this error.`;
 
           try {
             if (shouldYoutube) {
+              const youtubeVideoUrl =
+                researchIntent.kind === "youtube"
+                  ? researchIntent.videoUrl ||
+                    userText.match(
+                      /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[\w-]{6,}[^\s]*/i,
+                    )?.[0]
+                  : undefined;
               const youtubeResult = await runYoutubeResearch(
                 userText,
                 (event) => {
@@ -2161,9 +2202,7 @@ Please analyze the code you just wrote and fix this error.`;
                     );
                   }
                 },
-                researchIntent.kind === "youtube"
-                  ? researchIntent.videoUrl
-                  : undefined,
+                youtubeVideoUrl,
               );
               if (youtubeResult) {
                 researchContext = formatYoutubeResearchContext(youtubeResult);
@@ -2365,14 +2404,30 @@ Keep the response concise, accurate, and easy to read.`
   const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length) {
-      setAttachments((prev) => [...prev, ...files.map((file) => file.name)]);
+      const nextAttachments = files.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : undefined,
+      }));
+      setAttachments((prev) => [...prev, ...nextAttachments]);
+      setIsComposerFocused(true);
       setIsInputExpanded(true);
     }
     event.target.value = "";
   };
 
-  const removeAttachment = (index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => {
+      const target = prev.find((attachment) => attachment.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((attachment) => attachment.id !== id);
+    });
   };
 
   const selectCommandSuggestion = (index: number) => {
@@ -4069,31 +4124,71 @@ Keep the response concise, accurate, and easy to read.`
                                 <AnimatePresence>
                                   {attachments.length > 0 && (
                                     <motion.div
-                                      className="clyra-attachments-row px-4 pb-3 flex gap-2 flex-wrap"
+                                      className="clyra-attachments-row px-3 pb-3 pt-1 sm:px-4"
                                       initial={{ opacity: 0, height: 0 }}
                                       animate={{ opacity: 1, height: "auto" }}
                                       exit={{ opacity: 0, height: 0 }}
                                     >
-                                      {attachments.map((file, index) => (
-                                        <motion.div
-                                          key={index}
-                                          className="clyra-file-chip flex items-center gap-2 text-xs font-medium py-1.5 px-3 rounded-xl text-slate-600"
-                                          initial={{ opacity: 0, scale: 0.9 }}
-                                          animate={{ opacity: 1, scale: 1 }}
-                                          exit={{ opacity: 0, scale: 0.9 }}
-                                        >
-                                          <FileUp className="w-3.5 h-3.5 text-slate-400" />
-                                          <span>{file}</span>
-                                          <button
-                                            onClick={() =>
-                                              removeAttachment(index)
-                                            }
-                                            className="text-slate-400 hover:text-slate-700 transition-colors ml-1"
+                                      <div className="flex flex-wrap gap-2.5">
+                                        {attachments.map((attachment, index) => (
+                                          <motion.div
+                                            key={attachment.id}
+                                            layout
+                                            className="clyra-attachment-card group"
+                                            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                                            exit={{ opacity: 0, scale: 0.94 }}
+                                            transition={{
+                                              duration: 0.28,
+                                              ease: [0.22, 1, 0.36, 1],
+                                              delay: index * 0.03,
+                                            }}
                                           >
-                                            <XIcon className="w-3.5 h-3.5" />
-                                          </button>
-                                        </motion.div>
-                                      ))}
+                                            <div className="clyra-attachment-card__preview">
+                                              {attachment.previewUrl ? (
+                                                <img
+                                                  src={attachment.previewUrl}
+                                                  alt={attachment.name}
+                                                  className="h-full w-full object-cover"
+                                                />
+                                              ) : attachment.mimeType.startsWith(
+                                                  "image/",
+                                                ) ? (
+                                                <FileImage className="h-4 w-4 text-slate-400" />
+                                              ) : (
+                                                <div className="flex flex-col items-center justify-center">
+                                                  <FileText className="h-4 w-4 text-slate-400" />
+                                                  <span className="mt-0.5 text-[8px] font-bold tracking-[0.08em] text-slate-400">
+                                                    {getAttachmentExtension(
+                                                      attachment.name,
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                              <p className="truncate text-[12px] font-semibold text-slate-700">
+                                                {attachment.name}
+                                              </p>
+                                              <p className="text-[10px] font-medium text-slate-400">
+                                                {formatAttachmentSize(
+                                                  attachment.size,
+                                                )}
+                                              </p>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                removeAttachment(attachment.id)
+                                              }
+                                              className="rounded-full p-1 text-slate-400 opacity-0 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+                                              aria-label={`Remove ${attachment.name}`}
+                                            >
+                                              <XIcon className="h-3.5 w-3.5" />
+                                            </button>
+                                          </motion.div>
+                                        ))}
+                                      </div>
                                     </motion.div>
                                   )}
                                 </AnimatePresence>

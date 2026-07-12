@@ -149,7 +149,9 @@ export function resolveResearchIntent(
   if (options?.forceWeb) return { kind: "web" };
   if (options?.forceYoutube) {
     const detected = detectResearchIntent(query);
-    return detected.kind === "youtube" ? detected : { kind: "youtube" };
+    if (detected.kind === "youtube") return detected;
+    const videoUrl = extractYoutubeUrl(query);
+    return { kind: "youtube", videoUrl };
   }
   return detectResearchIntent(query);
 }

@@ -8,6 +8,7 @@ from youtube_engine.chunker import chunk_transcript
 from youtube_engine.cleaner import clean_transcript_text, extract_entities, extract_keywords, extract_links
 from youtube_engine.config import YouTubeConfig
 from youtube_engine.metadata import fetch_video_metadata, search_youtube
+from youtube_engine.oembed import fetch_oembed_metadata
 from youtube_engine.models import TranscriptChunk, VideoChapter, YouTubeResearchResponse, YouTubeVideoResult
 from youtube_engine.query_generator import generate_youtube_queries
 from youtube_engine.ranker import score_video
@@ -66,11 +67,17 @@ class YouTubeResearchEngine:
 
         async def process_candidate(candidate: dict) -> YouTubeVideoResult | None:
             video_id = candidate["video_id"]
+            preview = await fetch_oembed_metadata(video_id)
+            progress_title = str(
+                (preview or {}).get("title")
+                or candidate.get("title")
+                or "YouTube video"
+            )
             await emit(
                 {
                     "type": "video",
                     "video_id": video_id,
-                    "title": candidate.get("title") or "YouTube video",
+                    "title": progress_title,
                     "url": candidate.get("url") or canonical_video_url(video_id),
                 }
             )
@@ -91,7 +98,7 @@ class YouTubeResearchEngine:
                         language=None,
                         views=None,
                         description=None,
-                        error="metadata unavailable",
+                        error="Could not load video metadata. The video may be unavailable or blocked from this server.",
                     )
 
                 segments, transcript_language = await fetch_transcript(
@@ -104,6 +111,9 @@ class YouTubeResearchEngine:
 
                 title = str(metadata.get("title") or candidate.get("title") or "")
                 description = str(metadata.get("description") or "")
+                snippet = str(candidate.get("snippet") or "").strip()
+                if not description and snippet:
+                    description = snippet
                 chunks = chunk_transcript(
                     segments,
                     video_id=video_id,
@@ -149,7 +159,24 @@ class YouTubeResearchEngine:
                     keywords=keywords,
                     entities=entities,
                     extracted_links=links,
-                    summary=f"Primary topic: {title}. Keywords: {', '.join(keywords[:6])}.",
+                    summary=(
+                        f"Primary topic: {title}. Keywords: {', '.join(keywords[:6])}."
+                        if transcript_text
+                        else (
+                            f"Video: {title}. "
+                            + (
+                                f"Channel: {metadata.get('channel')}. "
+                                if metadata.get("channel")
+                                else ""
+                            )
+                            + "Transcript could not be fetched from this server; answer using available metadata and description only."
+                        )
+                    ),
+                    error=(
+                        None
+                        if transcript_text
+                        else "Transcript unavailable from this server. Metadata was loaded, but timed captions were blocked or missing."
+                    ),
                 )
 
         fetched = await asyncio.gather(*(process_candidate(c) for c in candidates))

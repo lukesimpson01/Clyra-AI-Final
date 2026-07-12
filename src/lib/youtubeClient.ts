@@ -64,14 +64,19 @@ export function formatYoutubeResearchContext(payload: YouTubeCompletePayload): s
     sections.push(`URL: ${video.url}`);
     if (video.channel) sections.push(`Channel: ${video.channel}`);
     if (video.description) sections.push(`Description: ${video.description.slice(0, 600)}`);
-    for (const chunk of video.transcript_chunks.slice(0, 3)) {
-      sections.push(`[${chunk.start_timestamp}] ${chunk.text}`);
+    if (video.transcript_chunks.length > 0) {
+      for (const chunk of video.transcript_chunks.slice(0, 3)) {
+        sections.push(`[${chunk.start_timestamp}] ${chunk.text}`);
+      }
+    } else if (video.summary) {
+      sections.push(`Summary: ${video.summary}`);
     }
+    if (video.error) sections.push(`Note: ${video.error}`);
     sections.push("");
   });
 
   sections.push(
-    "Answer using only the YouTube research above. Cite videos by number and timestamps when stating facts.",
+    "Answer using only the YouTube research above. Cite videos by number and timestamps when stating facts. If transcript data is missing, say what could not be verified and avoid guessing.",
   );
   return sections.join("\n");
 }
