@@ -708,6 +708,11 @@ export default function App() {
       selectedCommand !== null ||
       activeWorkspaceTab === "vibe");
 
+  const composerExpandTransition =
+    introState !== "complete"
+      ? { type: "tween" as const, duration: 0.72, ease: [0.22, 1, 0.36, 1] as const }
+      : { type: "tween" as const, duration: 0.44, ease: [0.22, 1, 0.36, 1] as const };
+
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 40,
     maxHeight: 96,
@@ -3717,8 +3722,16 @@ Keep the response concise, accurate, and easy to read.`
                             key="composer"
                             ref={inputContainerRef}
                             onClick={() => {
-                              if (!isInputExpanded && isVibeWorkspace) {
+                              if (
+                                !isInputExpanded &&
+                                !isAiResponding &&
+                                introState === "complete"
+                              ) {
                                 setIsInputExpanded(true);
+                                window.requestAnimationFrame(() => {
+                                  textareaRef.current?.focus();
+                                  adjustHeight();
+                                });
                               }
                             }}
                             initial={false}
@@ -3948,12 +3961,7 @@ Keep the response concise, accurate, and easy to read.`
                                       ? 32
                                       : 40,
                               }}
-                              transition={{
-                                type: "spring",
-                                stiffness: 120,
-                                damping: 20,
-                                mass: 1,
-                              }}
+                              transition={composerExpandTransition}
                             >
                               <div
                                 className={cn(
@@ -4090,7 +4098,7 @@ Keep the response concise, accurate, and easy to read.`
                                   className={cn(
                                     isExpanded
                                       ? "px-3 py-1"
-                                      : "flex items-center gap-1 px-2 py-0.5",
+                                      : "flex items-center gap-1 px-2 py-1",
                                   )}
                                 >
                                   <input
@@ -4149,7 +4157,7 @@ Keep the response concise, accurate, and easy to read.`
                                     }}
                                     onKeyDown={handleKeyDown}
                                     onFocus={() => {
-                                      if (isVibeWorkspace) {
+                                      if (!isAiResponding && introState === "complete") {
                                         setIsInputExpanded(true);
                                       }
                                       adjustHeight();
@@ -4163,14 +4171,14 @@ Keep the response concise, accurate, and easy to read.`
                                     containerClassName="w-full"
                                     className={cn(
                                       "resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none disabled:opacity-50",
-                                      "text-[15px] leading-relaxed sm:text-lg",
+                                      "text-[15px] leading-[1.45] sm:text-lg sm:leading-[1.4]",
                                       theme === "Dark"
                                         ? "placeholder:text-slate-500"
                                         : "placeholder:text-slate-400",
                                       isExpanded
-                                        ? "min-h-[50px] max-h-[96px] py-3 px-1"
-                                        : "min-h-[40px] max-h-[96px] py-2 px-1",
-                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                                        ? "min-h-[50px] max-h-[96px] py-2.5 px-1"
+                                        : "min-h-[40px] max-h-[96px] py-0 px-1",
+                                      "clyra-visible-scrollbar transition-[height,min-height,max-height,padding,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
                                         : introState !== "complete"
