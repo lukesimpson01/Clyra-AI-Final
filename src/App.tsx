@@ -355,17 +355,19 @@ function useAutoResizeTextarea({
 
       window.requestAnimationFrame(() => {
         const style = window.getComputedStyle(textarea);
-        const lineHeight = parseFloat(style.lineHeight) || 22;
-        const paddingY =
-          parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-        const singleLineHeight = Math.ceil(lineHeight + paddingY);
+        const lineHeight = parseFloat(style.lineHeight) || 20;
+        const singleLineHeight = minHeight;
 
+        textarea.style.height = "0px";
         textarea.style.height = `${singleLineHeight}px`;
-        const needsSecondLine = textarea.scrollHeight > singleLineHeight + 2;
+        const needsSecondLine = textarea.scrollHeight > singleLineHeight + 1;
         onMultilineChange?.(needsSecondLine);
 
         const targetHeight = needsSecondLine
-          ? Math.min(textarea.scrollHeight, maxHeight ?? Number.POSITIVE_INFINITY)
+          ? Math.min(
+              Math.max(textarea.scrollHeight, singleLineHeight + lineHeight),
+              maxHeight ?? Number.POSITIVE_INFINITY,
+            )
           : singleLineHeight;
 
         textarea.style.height = `${targetHeight}px`;
@@ -710,9 +712,9 @@ export default function App() {
   const isAiResponding = messages.some((m) => m.isStreaming || m.isThinking);
   const isExpanded =
     !isAiResponding &&
-    (isComposerMultiline ||
-      attachments.length > 0 ||
+    (attachments.length > 0 ||
       selectedCommand !== null ||
+      (isComposerMultiline && value.trim().length > 0) ||
       activeWorkspaceTab === "vibe");
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -3752,7 +3754,8 @@ Keep the response concise, accurate, and easy to read.`
                               backfaceVisibility: "hidden",
                             }}
                             className={cn(
-                              "clyra-composer-transition w-full shrink-0 relative z-20 transition-all duration-300 max-w-3xl mx-auto",
+                              "clyra-composer-transition w-full shrink-0 relative transition-all duration-300 max-w-3xl mx-auto",
+                              showCommandPalette ? "z-[80]" : "z-20",
                               showWorkspaceLivePreview
                                 ? "px-3 sm:px-4"
                                 : "px-5 sm:px-8",
@@ -3761,6 +3764,108 @@ Keep the response concise, accurate, and easy to read.`
                                 : "pb-4 sm:pb-6 mb-3",
                             )}
                           >
+                            <AnimatePresence>
+                              {commandPaletteEnabled && showCommandPalette && (
+                                <motion.div
+                                  ref={commandPaletteRef}
+                                  className="absolute left-0 right-0 bottom-[calc(100%+10px)] z-[200] max-h-[220px] overflow-y-auto rounded-2xl border border-slate-100 bg-white pb-1 shadow-[0_8px_32px_rgba(0,0,0,0.14)] scrollbar-none transform-gpu origin-bottom pointer-events-auto"
+                                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  exit={{ opacity: 0, y: 12, scale: 0.98 }}
+                                  transition={{
+                                    duration: 0.22,
+                                    ease: [0.22, 1, 0.36, 1],
+                                  }}
+                                >
+                                  <div className="py-2">
+                                    <div className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                      Commands
+                                    </div>
+                                    {filteredSuggestions.map(
+                                      (suggestion, index) => {
+                                        const originalIndex =
+                                          commandSuggestions.findIndex(
+                                            (c) =>
+                                              c.prefix === suggestion.prefix,
+                                          );
+                                        return (
+                                          <motion.div
+                                            key={suggestion.prefix}
+                                            className={cn(
+                                              "flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm transition-colors",
+                                              activeSuggestion === index
+                                                ? "bg-slate-100 text-slate-900"
+                                                : "text-slate-600 hover:bg-slate-50/50 hover:text-slate-900",
+                                            )}
+                                            onClick={() =>
+                                              selectCommandSuggestion(
+                                                originalIndex,
+                                              )
+                                            }
+                                            onMouseEnter={() =>
+                                              setActiveSuggestion(index)
+                                            }
+                                          >
+                                            <div
+                                              className={cn(
+                                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
+                                                activeSuggestion === index
+                                                  ? "border border-slate-200 bg-slate-50 shadow-[0_1px_3px_rgba(0,0,0,0.05)]"
+                                                  : "border border-transparent bg-slate-50/50 text-slate-500",
+                                              )}
+                                            >
+                                              {suggestion.icon(
+                                                activeSuggestion === index,
+                                              )}
+                                            </div>
+                                            <div className="flex flex-1 flex-col items-start truncate leading-snug">
+                                              <span className="w-full truncate font-medium">
+                                                {commandQuery ? (
+                                                  <>
+                                                    {suggestion.label.substring(
+                                                      0,
+                                                      suggestion.label
+                                                        .toLowerCase()
+                                                        .indexOf(commandQuery),
+                                                    )}
+                                                    <span className="text-blue-500">
+                                                      {suggestion.label.substring(
+                                                        suggestion.label
+                                                          .toLowerCase()
+                                                          .indexOf(
+                                                            commandQuery,
+                                                          ),
+                                                        suggestion.label
+                                                          .toLowerCase()
+                                                          .indexOf(
+                                                            commandQuery,
+                                                          ) +
+                                                          commandQuery.length,
+                                                      )}
+                                                    </span>
+                                                    {suggestion.label.substring(
+                                                      suggestion.label
+                                                        .toLowerCase()
+                                                        .indexOf(commandQuery) +
+                                                        commandQuery.length,
+                                                    )}
+                                                  </>
+                                                ) : (
+                                                  suggestion.label
+                                                )}
+                                              </span>
+                                              <span className="hidden w-full truncate text-xs text-slate-400 sm:block">
+                                                {suggestion.description}
+                                              </span>
+                                            </div>
+                                          </motion.div>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                             <AnimatePresence>
                               {isTemporaryChat && (
                                 <motion.div
@@ -3799,7 +3904,10 @@ Keep the response concise, accurate, and easy to read.`
                             </AnimatePresence>
                             <motion.div
                               className={cn(
-                                "input-wrapper relative backdrop-blur-xl border transition-[background-color,border-color,padding] duration-300 cursor-text overflow-hidden mx-auto z-[3]",
+                                "input-wrapper relative mx-auto cursor-text border backdrop-blur-xl transition-[background-color,border-color,padding] duration-300 z-[3]",
+                                showCommandPalette
+                                  ? "overflow-visible"
+                                  : "overflow-hidden",
                                 isVibeWorkspace && "clyra-vibe-composer",
                                 theme === "Dark"
                                   ? "bg-slate-200/90 border-slate-400/50"
@@ -3948,116 +4056,6 @@ Keep the response concise, accurate, and easy to read.`
                                 </AnimatePresence>
 
                                 <AnimatePresence>
-                                  {commandPaletteEnabled &&
-                                    showCommandPalette && (
-                                      <motion.div
-                                        ref={commandPaletteRef}
-                                        className="absolute left-4 right-4 sm:left-6 sm:right-6 bottom-[calc(100%+8px)] max-h-[170px] overflow-y-auto bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] border border-slate-100 z-50 scrollbar-none transform-gpu origin-bottom pb-1"
-                                        initial={{ opacity: 0, y: 20 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: 20 }}
-                                        transition={{
-                                          duration: 0.25,
-                                          ease: "easeOut",
-                                        }}
-                                      >
-                                        <div className="py-2">
-                                          <div className="px-3 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                                            Commands
-                                          </div>
-                                          {filteredSuggestions.map(
-                                            (suggestion, index) => {
-                                              const originalIndex =
-                                                commandSuggestions.findIndex(
-                                                  (c) =>
-                                                    c.prefix ===
-                                                    suggestion.prefix,
-                                                );
-                                              return (
-                                                <motion.div
-                                                  key={suggestion.prefix}
-                                                  className={cn(
-                                                    "flex items-center gap-3 px-4 py-2.5 text-sm transition-colors cursor-pointer",
-                                                    activeSuggestion === index
-                                                      ? "bg-slate-100 text-slate-900"
-                                                      : "text-slate-600 hover:bg-slate-50/50 hover:text-slate-900",
-                                                  )}
-                                                  onClick={() =>
-                                                    selectCommandSuggestion(
-                                                      originalIndex,
-                                                    )
-                                                  }
-                                                  onMouseEnter={() =>
-                                                    setActiveSuggestion(index)
-                                                  }
-                                                >
-                                                  <div
-                                                    className={cn(
-                                                      "w-7 h-7 rounded-md flex items-center justify-center transition-colors shrink-0",
-                                                      activeSuggestion === index
-                                                        ? "bg-slate-50 shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-slate-200"
-                                                        : "bg-slate-50/50 text-slate-500 border border-transparent",
-                                                    )}
-                                                  >
-                                                    {suggestion.icon(
-                                                      activeSuggestion ===
-                                                        index,
-                                                    )}
-                                                  </div>
-                                                  <div className="flex-1 flex flex-col items-start leading-snug truncate">
-                                                    <span className="font-medium truncate w-full">
-                                                      {commandQuery ? (
-                                                        <>
-                                                          {suggestion.label.substring(
-                                                            0,
-                                                            suggestion.label
-                                                              .toLowerCase()
-                                                              .indexOf(
-                                                                commandQuery,
-                                                              ),
-                                                          )}
-                                                          <span className="text-blue-500">
-                                                            {suggestion.label.substring(
-                                                              suggestion.label
-                                                                .toLowerCase()
-                                                                .indexOf(
-                                                                  commandQuery,
-                                                                ),
-                                                              suggestion.label
-                                                                .toLowerCase()
-                                                                .indexOf(
-                                                                  commandQuery,
-                                                                ) +
-                                                                commandQuery.length,
-                                                            )}
-                                                          </span>
-                                                          {suggestion.label.substring(
-                                                            suggestion.label
-                                                              .toLowerCase()
-                                                              .indexOf(
-                                                                commandQuery,
-                                                              ) +
-                                                              commandQuery.length,
-                                                          )}
-                                                        </>
-                                                      ) : (
-                                                        suggestion.label
-                                                      )}
-                                                    </span>
-                                                    <span className="text-slate-400 text-xs hidden sm:block truncate w-full">
-                                                      {suggestion.description}
-                                                    </span>
-                                                  </div>
-                                                </motion.div>
-                                              );
-                                            },
-                                          )}
-                                        </div>
-                                      </motion.div>
-                                    )}
-                                </AnimatePresence>
-
-                                <AnimatePresence>
                                   {typingCorrection && (
                                     <motion.div
                                       className="clyra-writing-suggestions"
@@ -4094,7 +4092,7 @@ Keep the response concise, accurate, and easy to read.`
 
                                 <div
                                   className={cn(
-                                    isComposerMultiline
+                                    isComposerMultiline && value.trim().length > 0
                                       ? "px-2 py-1"
                                       : "flex items-center gap-1 px-1.5 py-0",
                                   )}
@@ -4160,11 +4158,11 @@ Keep the response concise, accurate, and easy to read.`
                                     containerClassName="w-full"
                                     className={cn(
                                       "resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none disabled:opacity-50",
-                                      "text-[15px] leading-[1.35] py-1.5 px-1",
+                                      "text-[15px] leading-[1.35] py-1 px-1",
                                       theme === "Dark"
                                         ? "placeholder:text-slate-500"
                                         : "placeholder:text-slate-400",
-                                      "min-h-[34px] max-h-[68px]",
+                                      "h-[34px] min-h-[34px] max-h-[68px]",
                                       "clyra-visible-scrollbar transition-[height] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                                       isFadingInText
                                         ? "opacity-0 translate-y-1 scale-[0.99]"
