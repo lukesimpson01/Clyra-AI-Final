@@ -518,6 +518,201 @@ function youtubeEmbedUrl(value: string) {
   }
 }
 
+/** Shared editor design tokens (desktop video-editor look). */
+const ED = {
+  text: "#17213A",
+  secondary: "#697790",
+  muted: "#8A96AA",
+  metaText: "#65748C",
+  label: "#53637D",
+  border: "#E3E8F0",
+  borderLight: "#E1E7F0",
+  sep: "#EDF0F5",
+  blue: "#1677FF",
+  selected: "#EAF2FF",
+  hover: "#F5F8FC",
+  panel: "#FBFCFE",
+} as const;
+const EDITOR_FONT = 'Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif';
+const EDITOR_MONO = '"SFMono-Regular", "Roboto Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, monospace';
+
+/** Accurate SVG progress ring driven by real pipeline percentages. */
+function ProgressRing({
+  value,
+  size = 108,
+  stroke = 5,
+  tint = ED.blue,
+  complete = false,
+}: {
+  value: number;
+  size?: number;
+  stroke?: number;
+  tint?: string;
+  complete?: boolean;
+}) {
+  const clamped = complete ? 100 : Math.max(0, Math.min(100, value));
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <div className="relative" style={{ width: size, height: size }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(clamped)}>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#EEF1F6" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={complete ? "#10b981" : tint}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - clamped / 100)}
+          style={{ transition: "stroke-dashoffset .4s ease, stroke .2s ease" }}
+        />
+      </svg>
+      <span className="absolute inset-0 grid place-items-center">
+        {complete ? (
+          <Check className="h-6 w-6 text-emerald-500" />
+        ) : (
+          <span className="text-[19px] font-semibold tabular-nums tracking-[-.02em]" style={{ color: ED.text }}>
+            {Math.round(clamped)}
+            <span className="text-[11px] font-medium" style={{ color: ED.muted }}>%</span>
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+type OverlayCue = { word: string; start: number; end: number; sourceIndex: number };
+
+/** Mirror the pipeline's normalise_caption_words so overlay timing matches the burn. */
+function normaliseOverlayWords(words: CaptionWord[]): OverlayCue[] {
+  const ordered = words
+    .map((item, sourceIndex) => ({ word: wordText(item), start: Number(item.start) || 0, end: Number(item.end) || 0, sourceIndex }))
+    .filter((item) => item.word)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  const cues: OverlayCue[] = [];
+  let previousEnd = 0;
+  for (let index = 0; index < ordered.length; index += 1) {
+    let start = Math.max(0, ordered[index].start);
+    const naturalEnd = Math.max(start + 0.05, ordered[index].end);
+    let nextStart = Number.POSITIVE_INFINITY;
+    for (let later = index + 1; later < ordered.length; later += 1) {
+      if (ordered[later].start > start + 0.005) {
+        nextStart = ordered[later].start;
+        break;
+      }
+    }
+    let end = Math.min(naturalEnd, start + 1.2, nextStart);
+    if (end <= start + 0.02) end = Math.max(start + 0.08, Math.min(naturalEnd, start + 0.35));
+    if (start < previousEnd - 0.01) start = previousEnd;
+    if (end <= start + 0.02) continue;
+    cues.push({ word: ordered[index].word, start, end, sourceIndex: ordered[index].sourceIndex });
+    previousEnd = end;
+  }
+  return cues;
+}
+
+type OverlayStyle = {
+  font: string;
+  fontSize: number;
+  colour: string;
+  position: CaptionPosition;
+  captionX: number;
+  captionY: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  activeColour: string;
+  mode: SubtitleStyle;
+};
+
+/**
+ * Detached caption layer rendered over the clean preview video. Visually
+ * mirrors the ASS burn-in (font, outline, position, phrase highlighting) and
+ * makes every word clickable for instant editing without a re-render.
+ */
+function SubtitleOverlay({
+  words,
+  timeMs,
+  style,
+  onWordClick,
+}: {
+  words: CaptionWord[];
+  timeMs: number;
+  style: OverlayStyle;
+  onWordClick?: (sourceIndex: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(0);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const measure = () => setScale(node.clientHeight / Math.max(1, style.canvasHeight));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [style.canvasHeight]);
+  const cues = useMemo(() => normaliseOverlayWords(words), [words]);
+  const time = timeMs / 1000;
+
+  let display: Array<{ cue: OverlayCue; active: boolean }> = [];
+  if (style.mode === "word") {
+    const cue = cues.find((item) => time >= item.start && time < Math.min(item.end, item.start + 0.72));
+    if (cue) display = [{ cue, active: false }];
+  } else {
+    for (let groupStart = 0; groupStart < cues.length; groupStart += 4) {
+      const group = cues.slice(groupStart, groupStart + 4);
+      const nextGroupStart = cues[groupStart + 4]?.start ?? Number.POSITIVE_INFINITY;
+      if (time >= group[0].start && time < nextGroupStart) {
+        display = group.map((cue, index) => {
+          const nextCueStart = cues[groupStart + index + 1]?.start ?? Number.POSITIVE_INFINITY;
+          return { cue, active: time >= cue.start && time < Math.min(cue.end, nextCueStart) };
+        });
+        break;
+      }
+    }
+  }
+
+  if (!scale || !display.length) {
+    return <div ref={containerRef} className="pointer-events-none absolute inset-0" aria-hidden />;
+  }
+  const x = Math.max(12, Math.min(88, style.captionX ?? 50));
+  const y = Math.max(8, Math.min(92, style.captionY ?? 78));
+  const anchorTransform = style.position === "top" ? "translate(-50%, 0)" : style.position === "centre" ? "translate(-50%, -50%)" : "translate(-50%, -100%)";
+  const fontSize = Math.max(8, style.fontSize * scale);
+  return (
+    <div ref={containerRef} className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="subtitle-overlay">
+      <div
+        className="absolute whitespace-nowrap text-center"
+        style={{ left: `${x}%`, top: `${y}%`, transform: anchorTransform }}
+      >
+        {display.map(({ cue, active }, index) => (
+          <span
+            key={`${cue.sourceIndex}-${index}`}
+            onClick={onWordClick ? () => onWordClick(cue.sourceIndex) : undefined}
+            className={cn("pointer-events-auto select-none uppercase", onWordClick && "cursor-pointer")}
+            style={{
+              fontFamily: `"${style.font}", "Arial Black", "Helvetica Neue", sans-serif`,
+              fontWeight: 700,
+              fontSize,
+              lineHeight: 1.16,
+              color: active ? style.activeColour : style.colour,
+              WebkitTextStroke: `${Math.max(1, 12 * scale)}px #000`,
+              paintOrder: "stroke fill",
+              textShadow: `0 ${Math.max(1, 2 * scale)}px ${Math.max(1, 2 * scale)}px rgba(0,0,0,.5)`,
+              marginRight: index < display.length - 1 ? `${Math.max(2, 16 * scale)}px` : 0,
+            }}
+          >
+            {cue.word}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function uploadVideo(file: File, signal: AbortSignal, onProgress: (progress: number) => void) {
   return new Promise<{ uploadId: string; name: string; size: number }>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -757,7 +952,6 @@ function ProcessingScreen({
     "Finalising",
   ];
   const loaderIcons = [Search, FileVideo2, WandSparkles, Check];
-  const LoaderIcon = loaderIcons[Math.min(loaderStage, loaderIcons.length - 1)];
   return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
@@ -774,7 +968,7 @@ function ProcessingScreen({
         className="w-full max-w-[460px] overflow-hidden rounded-[28px] border border-[#e7eaf0] bg-white shadow-[0_18px_52px_rgba(15,23,42,.08)]"
       >
         <div className="flex flex-col items-center px-8 pb-8 pt-10">
-          <div className="relative mb-7"><motion.svg viewBox="0 0 120 120" className="h-[108px] w-[108px]" animate={finishing ? { rotate: 0 } : { rotate: 360 }} transition={finishing ? { duration: .25 } : { duration: 1.8, ease: "linear", repeat: Infinity }}><circle cx="60" cy="60" r="52" fill="none" stroke="#f1f5f9" strokeWidth="5" /><circle cx="60" cy="60" r="52" fill="none" stroke={finishing ? "#10b981" : "#4F7CFF"} strokeWidth="5" strokeLinecap="round" strokeDasharray="92 235" /></motion.svg><motion.span animate={finishing ? { scale: 1 } : { scale: [1, 1.08, 1] }} transition={{ duration: .78, repeat: finishing ? 0 : Infinity, ease: "easeInOut" }} className="absolute inset-0 grid place-items-center rounded-full">{finishing ? <Check className="h-6 w-6 text-emerald-500" /> : <LoaderIcon className="h-6 w-6 text-[#4F7CFF]" />}</motion.span></div>
+          <div className="relative mb-7"><ProgressRing value={progress} size={108} stroke={5} complete={finishing && progress >= 100} /></div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-[#4F7CFF]">Clyra AI Clipper</p>
           <h2 className="text-[17px] font-semibold tracking-[-.02em] text-slate-900">{finishing ? "Finalising your clips" : "Creating your best clips"}</h2>
           <div className="mt-5 flex items-center gap-2 text-[12px] font-medium text-slate-400"><Clock3 className="h-3.5 w-3.5" /><span className="tabular-nums">{elapsed}s</span>{readyCount > 0 ? <><span className="text-slate-300">·</span><span>{readyCount} clip{readyCount !== 1 ? "s" : ""} ready</span></> : null}</div>
@@ -787,17 +981,15 @@ function ProcessingScreen({
   );
 }
 
-function ExportScreen({ state, mode = "export" }: { state: "exporting" | "done"; mode?: "export" | "subtitles" }) {
+function ExportScreen({ state, mode = "export", progress = 0 }: { state: "exporting" | "done"; mode?: "export" | "subtitles"; progress?: number }) {
   const complete = state === "done";
   const rerenderingSubtitles = mode === "subtitles";
   return createPortal(
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} className="fixed inset-0 z-[10000] grid place-items-center bg-[#f7f8fa]/92 px-5 backdrop-blur-sm">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} className="fixed inset-0 z-[10001] grid place-items-center bg-[#f7f8fa]/92 px-5 backdrop-blur-sm">
       <motion.section initial={{ opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .32, ease: [0.16, 1, .3, 1] }} className="w-full max-w-[360px] rounded-[26px] border border-slate-200/80 bg-white px-8 py-9 text-center shadow-[0_18px_52px_rgba(15,23,42,.10)]">
-        <motion.div className={cn("mx-auto grid h-14 w-14 place-items-center rounded-full", complete ? "bg-emerald-50 text-emerald-500" : "bg-[#eff4ff] text-[#4F7CFF]")} animate={complete ? { scale: [1, 1.08, 1] } : { rotate: 360 }} transition={complete ? { duration: .35 } : { duration: 1.5, ease: "linear", repeat: Infinity }}>
-          {complete ? <Check className="h-7 w-7" /> : <Loader2 className="h-6 w-6" />}
-        </motion.div>
-        <h2 className="mt-5 text-[17px] font-semibold tracking-[-.025em] text-slate-900">{complete ? "Export ready" : rerenderingSubtitles ? "Re-rendering subtitles" : "Exporting your clip"}</h2>
-        <p className="mt-2 text-[12px] leading-5 text-slate-500">{complete ? "Your MP4 download is starting now." : rerenderingSubtitles ? "Applying your exact word timing and subtitle style." : "Preparing a share-ready MP4."}</p>
+        <div className="mx-auto w-fit"><ProgressRing value={progress} size={88} stroke={5} complete={complete} /></div>
+        <h2 className="mt-5 text-[17px] font-semibold tracking-[-.025em] text-slate-900">{complete ? "Export ready" : rerenderingSubtitles ? "Updating your clip" : "Exporting your clip"}</h2>
+        <p className="mt-2 text-[12px] leading-5 text-slate-500">{complete ? "Your MP4 download is starting now." : rerenderingSubtitles ? "Applying your framing changes to the clip." : "Burning your exact captions into a share-ready MP4."}</p>
       </motion.section>
     </motion.div>,
     document.body,
@@ -861,6 +1053,7 @@ function WordCueEditor({
   onRegenerate,
   busy,
   canRegenerate,
+  totalSeconds,
 }: {
   words: CaptionWord[];
   activeIndex: number;
@@ -869,21 +1062,90 @@ function WordCueEditor({
   onRegenerate: () => void;
   busy: boolean;
   canRegenerate: boolean;
+  totalSeconds?: number;
 }) {
   const activeWord = words[activeIndex];
   const [allSelected, setAllSelected] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const copyTimestamp = async () => {
     const timestamp = formatTimelineTime(activeWord?.start || 0);
-    try { await navigator.clipboard?.writeText(timestamp); } catch { /* Clipboard access is optional. */ }
+    try {
+      await navigator.clipboard?.writeText(timestamp);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_100);
+    } catch { /* Clipboard access is optional. */ }
   };
-  return <div className="flex h-full min-h-0 flex-col bg-white px-4 pb-4 pt-3">
-    <div className="flex items-center gap-2 border-b border-slate-100 pb-3"><WandSparkles className="h-3.5 w-3.5 text-slate-800" /><p className="text-[12px] font-semibold tracking-[-.015em] text-slate-900">Word timing</p></div>
-    <button type="button" onClick={() => void copyTimestamp()} aria-label="Copy current timestamp" className="mt-3 flex h-9 items-center justify-between rounded-lg border border-slate-100 bg-[#fbfcfe] px-3 font-mono text-[11px] font-medium tabular-nums text-slate-700 transition-colors hover:border-blue-200 hover:bg-blue-50/40"><span>{formatTimelineTime(activeWord?.start || 0)}</span><Copy className="h-3.5 w-3.5 text-slate-400" /></button>
-    <div className="mt-3 flex items-center justify-between"><p className="text-[10px] text-slate-500">Edit each word and its timing.</p><button type="button" onClick={() => setAllSelected((value) => !value)} className="text-[10px] font-semibold text-[#4F7CFF] hover:text-blue-700">{allSelected ? "Clear" : "Select all"}</button></div>
-    <div className="clyra-visible-scrollbar mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">
-      {words.length ? words.map((word, index) => <button key={`${index}-${word.start}`} type="button" onClick={() => { setAllSelected(false); onSelect(index); }} className={cn("grid w-full grid-cols-[70px_minmax(0,1fr)_38px] items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-[background-color,border-color,box-shadow] duration-150", activeIndex === index ? "border-blue-300 bg-[#f4f8ff] shadow-[0_1px_2px_rgba(79,124,255,.08)]" : allSelected ? "border-blue-100 bg-blue-50/50" : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50")}><span className="font-mono text-[9px] font-medium tabular-nums text-[#4F7CFF]">{formatTimelineTime(word.start)}</span><span className="truncate text-center text-[10px] font-semibold uppercase tracking-[.02em] text-slate-700">{wordText(word) || "—"}</span><span className="text-right text-[9px] tabular-nums text-slate-400">{Math.max(0, word.end - word.start).toFixed(2)}s</span></button>) : <p className="px-2 py-3 text-[11px] text-slate-400">Timed subtitle words will appear here.</p>}
+  const totalLabel = formatTimelineTime(totalSeconds || words.at(-1)?.end || 0);
+  return <div className="flex h-full min-h-0 flex-col bg-white" style={{ paddingLeft: 22, paddingRight: 22 }}>
+    <div className="flex shrink-0 items-center gap-2" style={{ paddingTop: 34 }}>
+      <WandSparkles className="h-[15px] w-[15px]" style={{ color: ED.text }} strokeWidth={1.8} />
+      <p className="text-[14px] font-semibold tracking-[-.01em]" style={{ color: ED.text }}>Word timing</p>
     </div>
-    <div className="mt-3 shrink-0 border-t border-slate-100 pt-3"><label className="block"><span className="sr-only">Selected subtitle word</span><input value={wordText(activeWord)} onChange={(event) => onChange(event.target.value)} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-center text-[11px] font-semibold uppercase tracking-[.02em] text-slate-700 outline-none transition-[border-color,box-shadow] focus:border-blue-400 focus:ring-2 focus:ring-blue-100" aria-label="Selected subtitle word" /></label><p className="mt-1 text-center font-mono text-[9px] text-slate-400">{formatTimelineTime(activeWord?.start || 0)} – {formatTimelineTime(activeWord?.end || 0)}</p><button type="button" onClick={onRegenerate} disabled={busy || !canRegenerate} className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-blue-100 bg-white text-[11px] font-semibold text-[#4F7CFF] transition-colors hover:bg-blue-50 active:scale-[.99] disabled:opacity-40"><WandSparkles className="h-3.5 w-3.5" />{busy ? "Regenerating…" : "Regenerate subtitles"}</button></div>
+    <button
+      type="button"
+      onClick={() => void copyTimestamp()}
+      aria-label="Copy current timestamp"
+      className="relative flex h-[45px] w-full shrink-0 items-center justify-center rounded-[9px] transition-colors duration-150"
+      style={{ marginTop: 17, background: "#FAFBFD", border: "1px solid #F1F4F8" }}
+    >
+      <span className="text-[14px] font-medium tabular-nums" style={{ fontFamily: EDITOR_MONO, color: ED.text }}>{formatTimelineTime(activeWord?.start || 0)}</span>
+      <span className="absolute right-3.5 top-1/2 -translate-y-1/2">{copied ? <Check className="h-[15px] w-[15px] text-emerald-500" strokeWidth={1.8} /> : <Copy className="h-[15px] w-[15px]" style={{ color: ED.muted }} strokeWidth={1.7} />}</span>
+    </button>
+    <div className="flex shrink-0 items-center justify-between" style={{ marginTop: 15 }}>
+      <p className="text-[12px]" style={{ color: ED.metaText }}>Edit each word and its timing.</p>
+      <button type="button" onClick={() => setAllSelected((value) => !value)} className="text-[12px] font-medium transition-colors duration-150 hover:opacity-80" style={{ color: ED.blue }}>{allSelected ? "Clear" : "Select all"}</button>
+    </div>
+    <div ref={listRef} className="clyra-hidden-scrollbar min-h-0 flex-1 space-y-[3px] overflow-y-auto" style={{ marginTop: 16 }}>
+      {words.length ? words.map((word, index) => {
+        const active = activeIndex === index;
+        return (
+          <div
+            key={`${index}-${word.start}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => { setAllSelected(false); onSelect(index); }}
+            onKeyDown={(event) => { if (event.key === "Enter") { setAllSelected(false); onSelect(index); } }}
+            className="grid h-[37px] w-full cursor-pointer grid-cols-[97px_minmax(0,1fr)_46px] items-center rounded-[8px] px-2.5 text-left transition-[background-color,border-color] duration-150"
+            style={{
+              border: `1px solid ${active ? "#B7D3FF" : allSelected ? "#CFE2FF" : ED.border}`,
+              background: active ? ED.selected : allSelected ? "#F3F8FF" : "#FFFFFF",
+            }}
+            onMouseEnter={(event) => { if (!active && !allSelected) event.currentTarget.style.background = ED.hover; }}
+            onMouseLeave={(event) => { if (!active && !allSelected) event.currentTarget.style.background = "#FFFFFF"; }}
+          >
+            <span className="text-[11px] font-medium tabular-nums" style={{ fontFamily: EDITOR_MONO, color: ED.blue }}>{formatTimelineTime(word.start)}</span>
+            {active ? (
+              <input
+                autoFocus={false}
+                value={wordText(word)}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => onChange(event.target.value)}
+                aria-label="Edit subtitle word"
+                className="h-[26px] min-w-0 rounded-[5px] bg-transparent text-center text-[12px] font-semibold uppercase tracking-[.01em] outline-none focus:bg-white"
+                style={{ color: ED.text }}
+              />
+            ) : (
+              <span className="truncate text-center text-[12px] font-semibold uppercase tracking-[.01em]" style={{ color: ED.text }}>{wordText(word) || "—"}</span>
+            )}
+            <span className="text-right text-[10.5px] tabular-nums" style={{ color: ED.muted }}>{Math.max(0, word.end - word.start).toFixed(2)}s</span>
+          </div>
+        );
+      }) : <p className="px-2 py-3 text-[12px]" style={{ color: ED.muted }}>Timed subtitle words will appear here.</p>}
+    </div>
+    <div className="shrink-0" style={{ paddingBottom: 20 }}>
+      <p className="text-left text-[12px]" style={{ marginTop: 17, color: ED.muted }}>{words.length} words · {totalLabel} total</p>
+      <button
+        type="button"
+        onClick={onRegenerate}
+        disabled={busy || !canRegenerate}
+        className="flex h-[47px] w-full items-center justify-center gap-2 rounded-[10px] bg-white transition-colors duration-150 hover:bg-[#F5F8FC] active:scale-[.995] disabled:opacity-40"
+        style={{ marginTop: 18, border: `1px solid ${ED.borderLight}` }}
+      >
+        <WandSparkles className="h-[15px] w-[15px]" style={{ color: ED.blue }} strokeWidth={1.8} />
+        <span className="text-[13px] font-semibold" style={{ color: ED.blue }}>{busy ? "Regenerating…" : "Regenerate subtitles"}</span>
+      </button>
+    </div>
   </div>;
 }
 
