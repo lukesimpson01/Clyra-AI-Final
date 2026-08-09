@@ -38,7 +38,7 @@ record("image-resize:returns-buffer", Buffer.isBuffer(out) && out.length > 0, `b
 
 record("files:start-opencluely-electron.mjs", fs.existsSync(path.join(ROOT, "scripts/start-opencluely-electron.mjs")));
 record("files:clone-opencluely.mjs", fs.existsSync(path.join(ROOT, "scripts/clone-opencluely.mjs")));
-record("files:entitlements.mac.plist", fs.existsSync(path.join(ROOT, "build/entitlements.mac.plist")));
+record("files:entitlements.mac.plist", fs.existsSync(path.join(ROOT, "resources/entitlements.mac.plist")));
 record("files:platform-support-doc", fs.existsSync(path.join(ROOT, "docs/PLATFORM-SUPPORT.md")));
 record("files:desktop-control.mjs", fs.existsSync(path.join(ROOT, "electron/desktop-control.mjs")));
 
@@ -46,7 +46,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
 record("npm:opencluely:start-is-node", String(pkg.scripts["opencluely:start"] || "").startsWith("node "));
 record("npm:opencluely:clone-is-node", String(pkg.scripts["opencluely:clone"] || "").startsWith("node "));
 record("npm:clean-is-node", String(pkg.scripts.clean || "").includes("rmSync"));
-record("npm:mac-entitlements", pkg.build?.mac?.entitlements === "build/entitlements.mac.plist");
+record("npm:mac-entitlements", pkg.build?.mac?.entitlements === "resources/entitlements.mac.plist");
 
 loadEnvFile(path.join(ROOT, ".env.example"));
 record("loadEnvFile:env-example", true);

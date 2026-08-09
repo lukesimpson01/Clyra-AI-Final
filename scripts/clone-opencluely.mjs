@@ -53,8 +53,8 @@ function patchOpencluelyPackageJson() {
   pkg.build = pkg.build || {};
   pkg.build.mac = pkg.build.mac || {};
   pkg.build.mac.hardenedRuntime = true;
-  pkg.build.mac.entitlements = path.join(ROOT, "build", "entitlements.mac.plist");
-  pkg.build.mac.entitlementsInherit = path.join(ROOT, "build", "entitlements.mac.plist");
+  pkg.build.mac.entitlements = path.join(ROOT, "resources", "entitlements.mac.plist");
+  pkg.build.mac.entitlementsInherit = path.join(ROOT, "resources", "entitlements.mac.plist");
   pkg.build.mac.extendInfo = {
     ...(pkg.build.mac.extendInfo || {}),
     NSMicrophoneUsageDescription:

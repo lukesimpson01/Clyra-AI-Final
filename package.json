@@ -163,8 +163,8 @@
         "zip"
       ],
       "hardenedRuntime": true,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Clyra needs microphone access for Cmd+Shift+K dictation and Voice Call.",
         "NSCameraUsageDescription": "Clyra needs camera access for Voice Call camera vision.",
