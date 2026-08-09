@@ -30,12 +30,18 @@ the browser bundle.
 - `npm run dev`: start Clyra's Vite-middleware server plus OpenPencil.
 - `npm run dev:source`: start Clyra with Vite middleware for frontend work.
 - `npm run dev:openpencil`: start only the local design canvas.
+- `npm run desktop:dev`: start the Clyra Electron desktop app.
+- `npm run opencluely:clone` / `npm run opencluely:start`: install and run OpenCluely (macOS / Windows / Linux).
+- `npm run test:platform`: offline cross-platform compatibility smoke checks.
 - `npm run build`: build the frontend and Node server.
 - `npm run lint`: run TypeScript checks.
 - `npm run test:creator`: test creator project, gameplay, timing, and migration logic.
 - `npm run test:browser`: test the real Playwright browser runtime against local fixtures.
 - `npm run test:voice`: test speech normalization, phrase segmentation, PCM packets, and microphone cleanup.
 - `npm run test:clipper`: test candidate extraction and clip diversity.
+
+See [docs/PLATFORM-SUPPORT.md](docs/PLATFORM-SUPPORT.md) for macOS / Windows / Linux setup
+(Screen Recording, Accessibility, PowerShell Take Control, Gemini + Async keys).
 
 See [docs/openpencil-integration.md](docs/openpencil-integration.md) for the
 design canvas architecture, setup, security boundaries, and limitations.
