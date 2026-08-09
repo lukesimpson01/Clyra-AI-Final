@@ -228,7 +228,7 @@ class ApplicationController {
         ? "development"
         : "production",
       platform: process.platform,
-      stack: "clyra-api + moondream vision",
+      stack: "clyra-api + gemini vision",
     });
 
     try {
