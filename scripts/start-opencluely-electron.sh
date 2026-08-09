@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# Start OpenCluely Electron with Clyra API + lightweight local vision (gemma3:4b).
+# Start OpenCluely Electron with Clyra API + Gemini vision + Async speech.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${ROOT}/apps/opencluely"
 export CLYRA_API_BASE="${CLYRA_API_BASE:-http://127.0.0.1:31415}"
-export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-export OPENCLUELY_VISION_MODEL="${OPENCLUELY_VISION_MODEL:-gemma3:4b}"
 export CLYRA_CONTROL_PORT="${CLYRA_CONTROL_PORT:-3847}"
+export OPENCLUELY_VISION_PROVIDER="${OPENCLUELY_VISION_PROVIDER:-gemini}"
+export OPENCLUELY_VISION_MODEL="${OPENCLUELY_VISION_MODEL:-gemini-2.0-flash}"
+export GEMINI_VISION_MODEL="${GEMINI_VISION_MODEL:-gemini-2.0-flash}"
+export SPEECH_PROVIDER="${SPEECH_PROVIDER:-async}"
 export ELECTRON_DISABLE_SECURITY_WARNINGS=1
 
-# Ensure Ollama is up
-if ! curl -sf "${OLLAMA_BASE_URL}/api/tags" >/dev/null; then
-  echo "Starting ollama serve..."
-  ollama serve >/tmp/ollama-serve.log 2>&1 &
-  sleep 2
-fi
-
-# Ensure vision model is present (non-blocking: warn and continue if pull is slow)
-VISION_MODEL="${OPENCLUELY_VISION_MODEL}"
-if ! ollama list 2>/dev/null | grep -qi "$(echo "$VISION_MODEL" | cut -d: -f1)"; then
-  echo "Vision model ${VISION_MODEL} missing — pulling in background (OpenCluely will start anyway)..."
-  ollama pull "${VISION_MODEL}" >/tmp/ollama-pull-opencluely.log 2>&1 &
+# Load Clyra local secrets into the Electron process when present (gitignored).
+if [[ -f "${ROOT}/.env.local" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT}/.env.local"
+  set +a
 fi
 
 # Ensure Clyra API is up
 if ! curl -sf "${CLYRA_API_BASE}/" >/dev/null; then
   echo "WARN: Clyra API not reachable at ${CLYRA_API_BASE}"
+fi
+
+if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+  echo "WARN: GEMINI_API_KEY is empty — image analysis will fail until it is set in apps/opencluely/.env or .env.local"
 fi
 
 cd "${APP}"

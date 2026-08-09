@@ -1,9 +1,15 @@
-# OpenCluely → Clyra + fast local vision (no Gemini, no stealth)
+# OpenCluely → Clyra text + Gemini vision + Async speech
 CLYRA_API_BASE=http://127.0.0.1:31415
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-# gemma3:4b — lightweight local Ollama model (~3GB)
-OPENCLUELY_VISION_MODEL=gemma3:4b
-SPEECH_PROVIDER=whisper
+
+# Vision: Gemini (offline Ollama / gemma3 removed)
+OPENCLUELY_VISION_PROVIDER=gemini
+OPENCLUELY_VISION_MODEL=gemini-2.0-flash
+GEMINI_API_KEY=
+GEMINI_VISION_MODEL=gemini-2.0-flash
+
+# Speech: Async API (sk_…) for TTS/STT; Whisper remains local fallback
+ASYNC_API_KEY=
+ASYNC_STT_ENABLED=true
+ASYNC_STT_MODEL=async_asr_v1.0
+SPEECH_PROVIDER=async
 WHISPER_MODEL=tiny
-# Gemini unused — local VLM + Clyra DeepSeek text
-GEMINI_API_KEY=unused-clyra-vision

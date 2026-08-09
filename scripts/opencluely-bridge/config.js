@@ -44,31 +44,41 @@ class ConfigManager {
           baseUrl: process.env.CLYRA_API_BASE || 'http://127.0.0.1:31415',
           askPath: '/api/companion/ask',
         },
-        // Free lightweight open-source vision model for ~8GB RAM
+        // Gemini multimodal vision (offline Ollama/gemma3 removed)
         vision: {
-          provider: 'ollama',
-          model: process.env.OPENCLUELY_VISION_MODEL || 'gemma3:4b',
+          provider: process.env.OPENCLUELY_VISION_PROVIDER || 'gemini',
+          model:
+            process.env.GEMINI_VISION_MODEL ||
+            process.env.OPENCLUELY_VISION_MODEL ||
+            'gemini-2.0-flash',
           ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
         },
-        // Legacy Gemini block kept empty — not used (stealth interview path rejected)
         gemini: {
-          model: 'unused',
-          fallbackModels: [],
-          maxRetries: 1,
-          timeout: 30000,
-          fallbackEnabled: false,
-          enableFallbackMethod: false,
+          model:
+            process.env.GEMINI_VISION_MODEL ||
+            process.env.OPENCLUELY_VISION_MODEL ||
+            'gemini-2.0-flash',
+          fallbackModels: ['gemini-2.0-flash', 'gemini-1.5-flash'],
+          maxRetries: 3,
+          timeout: 60000,
+          fallbackEnabled: true,
+          enableFallbackMethod: true,
           generation: {
             temperature: 0.3,
             topK: 32,
             topP: 0.9,
             maxOutputTokens: 1024,
-          }
-        }
+          },
+        },
       },
 
       speech: {
-        provider: 'azure',
+        // Prefer Async.com when ASYNC_API_KEY is set; Whisper remains fallback.
+        provider: process.env.SPEECH_PROVIDER || (process.env.ASYNC_API_KEY ? 'async' : 'whisper'),
+        async: {
+          model: process.env.ASYNC_STT_MODEL || 'async_asr_v1.0',
+          sampleRate: Number(process.env.ASYNC_STT_SAMPLE_RATE || 16000),
+        },
         azure: {
           language: 'en-US',
           enableDictation: true,

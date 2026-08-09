@@ -1,9 +1,8 @@
 /**
  * Clyra-bridged LLM service for OpenCluely.
- * - Vision: local open VLM via Ollama (default gemma3:4b — lightweight ~3GB)
+ * - Vision: Gemini multimodal (GEMINI_API_KEY) — offline Ollama/gemma3 removed
  * - Text / chat: Clyra /api/companion/ask (project DeepSeek stack)
  * Uses Node http (not Electron fetch) so localhost calls stay reliable.
- * Stealth / Gemini are intentionally not used.
  */
 const http = require('http');
 const https = require('https');
@@ -78,7 +77,7 @@ function sanitizeModelText(text) {
 
 class LLMService {
   constructor() {
-    this.client = { provider: 'clyra+gemma3' };
+    this.client = { provider: 'clyra+gemini' };
     this.model = null;
     this.isInitialized = false;
     this.requestCount = 0;
@@ -87,18 +86,22 @@ class LLMService {
   }
 
   initializeClient() {
-    this.model = config.get('llm.vision.model') || process.env.OPENCLUELY_VISION_MODEL || 'gemma3:4b';
+    this.model =
+      config.get('llm.vision.model') ||
+      process.env.GEMINI_VISION_MODEL ||
+      process.env.OPENCLUELY_VISION_MODEL ||
+      'gemini-2.0-flash';
+    this.geminiApiKey = String(
+      process.env.GEMINI_API_KEY || config.get('llm.gemini.apiKey') || '',
+    ).trim();
     this.clyraBase = String(
       process.env.CLYRA_API_BASE || config.get('llm.clyra.baseUrl') || 'http://127.0.0.1:31415',
     ).replace(/\/$/, '');
-    this.ollamaBase = String(
-      process.env.OLLAMA_BASE_URL || config.get('llm.vision.ollamaBaseUrl') || 'http://127.0.0.1:11434',
-    ).replace(/\/$/, '');
     this.isInitialized = true;
-    logger.info('Clyra + local vision LLM bridge ready', {
+    logger.info('Clyra + Gemini vision LLM bridge ready', {
       model: this.model,
       clyraBase: this.clyraBase,
-      ollamaBase: this.ollamaBase,
+      geminiConfigured: Boolean(this.geminiApiKey),
     });
   }
 
@@ -110,24 +113,29 @@ class LLMService {
     return {
       isInitialized: this.isInitialized,
       model: this.model,
-      provider: 'clyra+local-vision',
+      provider: 'clyra+gemini-vision',
       requestCount: this.requestCount,
       errorCount: this.errorCount,
       visionModel: this.model,
+      visionProvider: 'gemini',
       textEndpoint: `${this.clyraBase}/api/companion/ask`,
     };
   }
 
   async checkNetworkConnectivity() {
     try {
-      const ollama = await httpJson(`${this.ollamaBase}/api/tags`, { timeoutMs: 4000 });
+      const geminiOk = Boolean(this.geminiApiKey);
       const clyra = await httpJson(`${this.clyraBase}/api/companion/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: 'ping' }),
         timeoutMs: 4000,
       }).catch(() => null);
-      return { ok: ollama.ok, ollama: ollama.ok, clyra: Boolean(clyra && (clyra.ok || clyra.status < 500)) };
+      return {
+        ok: geminiOk,
+        gemini: geminiOk,
+        clyra: Boolean(clyra && (clyra.ok || clyra.status < 500)),
+      };
     } catch (error) {
       return { ok: false, error: error.message };
     }
@@ -136,7 +144,7 @@ class LLMService {
   async testConnection() {
     try {
       const connectivity = await this.checkNetworkConnectivity();
-      if (!connectivity.ollama) throw new Error(`Ollama not reachable at ${this.ollamaBase}`);
+      if (!connectivity.gemini) throw new Error('GEMINI_API_KEY is not configured');
       return { ok: true, ...connectivity, model: this.model };
     } catch (error) {
       return { ok: false, error: error.message };
@@ -185,12 +193,16 @@ class LLMService {
   }
 
   async callVision(imageBuffer, prompt) {
+    if (!this.geminiApiKey) {
+      throw new Error('GEMINI_API_KEY is required for image analysis');
+    }
+
     let buffer = imageBuffer;
     try {
       const tmpIn = path.join(os.tmpdir(), `oc-vision-in-${process.pid}.png`);
-      const tmpOut = path.join(os.tmpdir(), `oc-vision-out-${process.pid}.png`);
+      const tmpOut = path.join(os.tmpdir(), `oc-vision-out-${process.pid}.jpg`);
       fs.writeFileSync(tmpIn, imageBuffer);
-      execFileSync('convert', [tmpIn, '-resize', '768x768>', '-quality', '85', tmpOut], {
+      execFileSync('convert', [tmpIn, '-resize', '1280x1280>', '-quality', '85', tmpOut], {
         timeout: 15000,
       });
       buffer = fs.readFileSync(tmpOut);
@@ -205,47 +217,71 @@ class LLMService {
     }
 
     const base64 = buffer.toString('base64');
-    const body = {
-      model: this.model,
-      prompt: prompt || 'What is on this screen? Summarise the main title and key text.',
-      images: [base64],
-      stream: false,
-    };
-    let lastError = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const response = await httpJson(`${this.ollamaBase}/api/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          timeoutMs: 180000,
-        });
-        if (!response.ok) {
-          throw new Error(`Vision failed (${response.status}): ${String(response.text || '').slice(0, 200)}`);
-        }
-        const text = sanitizeModelText(String(response.json?.response || '').trim());
-        if (text) return text;
+    const models = [
+      this.model,
+      ...(config.get('llm.gemini.fallbackModels') || ['gemini-2.0-flash', 'gemini-1.5-flash']),
+    ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
-        const chatRes = await httpJson(`${this.ollamaBase}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: this.model,
-            messages: [{ role: 'user', content: body.prompt, images: [base64] }],
-            stream: false,
-          }),
-          timeoutMs: 180000,
-        });
-        const chatText = sanitizeModelText(String(chatRes.json?.message?.content || '').trim());
-        if (chatText) return chatText;
-        lastError = new Error('Vision model returned an empty reply');
-      } catch (error) {
-        lastError = error;
-        logger.warn('Vision attempt failed', { attempt, error: error.message });
-        await new Promise((r) => setTimeout(r, 800 * attempt));
+    const question =
+      prompt || 'What is on this screen? Summarise the main title and key text.';
+    const body = JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: question },
+            { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: Number(config.get('llm.gemini.generation.temperature') ?? 0.3),
+        topK: Number(config.get('llm.gemini.generation.topK') ?? 32),
+        topP: Number(config.get('llm.gemini.generation.topP') ?? 0.9),
+        maxOutputTokens: Number(config.get('llm.gemini.generation.maxOutputTokens') ?? 1024),
+      },
+    });
+
+    let lastError = null;
+    for (const model of models) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.geminiApiKey)}`;
+          const response = await httpJson(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': this.geminiApiKey,
+            },
+            body,
+            timeoutMs: 90000,
+          });
+          if (!response.ok) {
+            throw new Error(
+              `Gemini vision failed (${response.status}): ${String(response.text || '').slice(0, 240)}`,
+            );
+          }
+          const parts = response.json?.candidates?.[0]?.content?.parts || [];
+          const text = sanitizeModelText(
+            parts.map((p) => String(p?.text || '')).join(' ').trim(),
+          );
+          if (text) {
+            this.model = model;
+            return text;
+          }
+          lastError = new Error('Gemini returned an empty vision reply');
+        } catch (error) {
+          lastError = error;
+          logger.warn('Gemini vision attempt failed', {
+            model,
+            attempt,
+            error: error.message,
+          });
+          await new Promise((r) => setTimeout(r, 600 * attempt));
+        }
       }
     }
-    throw lastError || new Error('Vision failed');
+    throw lastError || new Error('Gemini vision failed');
   }
 
   async callClyraAsk({ question, visionSummary = '', ocrText = '' }) {
@@ -579,7 +615,7 @@ class LLMService {
 
   generateIntelligentFallbackResponse(text, activeSkill) {
     return {
-      response: `I heard: "${String(text || '').slice(0, 200)}". OpenCluely is connected to Clyra + local vision (skill: ${activeSkill || 'general'}). Ask me what's on your screen.`,
+      response: `I heard: "${String(text || '').slice(0, 200)}". OpenCluely is connected to Clyra + Gemini vision (skill: ${activeSkill || 'general'}). Ask me what's on your screen.`,
       metadata: { usedFallback: true, source: 'local-fallback' },
     };
   }

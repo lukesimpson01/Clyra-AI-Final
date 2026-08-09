@@ -5,16 +5,23 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+dotenv.config({ path: path.join(ROOT, ".env.local") });
+dotenv.config({ path: path.join(ROOT, "apps/opencluely/.env"), override: true });
+
 const OUT = process.env.SHOT_DIR || "/opt/cursor/artifacts/final-test";
 const SCREENSHOTS = "/opt/cursor/artifacts/screenshots";
 const CONTROL = process.env.CLYRA_CONTROL_PORT
   ? `http://127.0.0.1:${process.env.CLYRA_CONTROL_PORT}`
   : "http://127.0.0.1:3847";
 const CLYRA = process.env.CLYRA_API_BASE || "http://127.0.0.1:31415";
-const OLLAMA = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const GEMINI_KEY = String(process.env.GEMINI_API_KEY || "").trim();
+const GEMINI_MODEL =
+  process.env.GEMINI_VISION_MODEL || process.env.OPENCLUELY_VISION_MODEL || "gemini-2.0-flash";
+const ASYNC_KEY = String(process.env.ASYNC_API_KEY || "").trim();
 
 fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(SCREENSHOTS, { recursive: true });
@@ -139,12 +146,19 @@ async function main() {
   await shot("08-auto-done");
   record("auto-answer", auto.ok, JSON.stringify(auto.json).slice(0, 200));
 
-  // Backend sanity
-  try {
-    const tags = await fetch(`${OLLAMA}/api/tags`, { signal: AbortSignal.timeout(4000) });
-    record("ollama", tags.ok, `status=${tags.status}`);
-  } catch (e) {
-    record("ollama", false, e.message);
+  // Backend sanity — Gemini vision + Async speech (offline Ollama removed)
+  record("gemini-configured", Boolean(GEMINI_KEY), GEMINI_KEY ? `model=${GEMINI_MODEL}` : "missing GEMINI_API_KEY");
+  record("async-speech-configured", Boolean(ASYNC_KEY), ASYNC_KEY ? "ASYNC_API_KEY set" : "missing ASYNC_API_KEY");
+  if (GEMINI_KEY) {
+    try {
+      const g = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}?key=${encodeURIComponent(GEMINI_KEY)}`,
+        { signal: AbortSignal.timeout(15000) },
+      );
+      record("gemini-api", g.ok, `status=${g.status}`);
+    } catch (e) {
+      record("gemini-api", false, e.message);
+    }
   }
   try {
     const web = await fetch(`${CLYRA}/api/research/web-search`, {

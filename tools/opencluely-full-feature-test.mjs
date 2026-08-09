@@ -1,21 +1,28 @@
 /**
  * Exhaustive OpenCluely feature / launcher / tool smoke test.
- * Assumes Clyra (:31415), OpenCluely control (:3847), Ollama (:11434) are up.
+ * Assumes Clyra (:31415) and OpenCluely control (:3847) are up.
+ * Vision uses Gemini (GEMINI_API_KEY); speech uses Async (ASYNC_API_KEY).
  */
 import { chromium } from "playwright";
 import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+dotenv.config({ path: path.join(ROOT, ".env.local") });
+dotenv.config({ path: path.join(ROOT, "apps/opencluely/.env"), override: true });
+
 const OUT = process.env.SHOT_DIR || "/opt/cursor/artifacts/opencluely-full";
 const YT = process.env.OPENCLUELY_YT || "https://youtu.be/fhs7voB2eJQ?si=XQs0CCiUoch0Xosv";
 const CLYRA = process.env.CLYRA_API_BASE || "http://127.0.0.1:31415";
 const OC = process.env.CLYRA_CONTROL_BASE || "http://127.0.0.1:3847";
-const OLLAMA = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-const VISION = process.env.OPENCLUELY_VISION_MODEL || "gemma3:4b";
+const GEMINI_KEY = String(process.env.GEMINI_API_KEY || "").trim();
+const VISION =
+  process.env.GEMINI_VISION_MODEL || process.env.OPENCLUELY_VISION_MODEL || "gemini-2.0-flash";
+const ASYNC_KEY = String(process.env.ASYNC_API_KEY || "").trim();
 
 fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync("/opt/cursor/artifacts/screenshots", { recursive: true });
@@ -73,14 +80,22 @@ async function main() {
     jsonFetch(`${CLYRA}/`, {}, 5000).catch(() => ({ status: 0 })),
     oc("GET", "/health"),
     oc("GET", "/stealth"),
-    jsonFetch(`${OLLAMA}/api/tags`, {}, 5000),
   ]);
   record("launcher:clyra-api", healths[0].status > 0 && healths[0].status < 500, `status=${healths[0].status}`);
   record("launcher:oc-health", healths[1].body?.ok === true, JSON.stringify(healths[1].body));
   record("launcher:oc-stealth-get", healths[2].body?.ok === true, JSON.stringify(healths[2].body));
-  const models = healths[3].body?.models || [];
-  const hasVision = models.some((m) => String(m.name || "").includes(VISION.split(":")[0]));
-  record("launcher:ollama-vision-model", hasVision, models.map((m) => m.name).join(",") || "none");
+  record("launcher:gemini-key", Boolean(GEMINI_KEY), GEMINI_KEY ? `model=${VISION}` : "missing");
+  record("launcher:async-speech-key", Boolean(ASYNC_KEY), ASYNC_KEY ? "configured" : "missing");
+  if (GEMINI_KEY) {
+    const g = await jsonFetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION)}?key=${encodeURIComponent(GEMINI_KEY)}`,
+      {},
+      15000,
+    ).catch(() => ({ status: 0, body: {} }));
+    record("launcher:gemini-api", g.status === 200, `status=${g.status}`);
+  } else {
+    record("launcher:gemini-api", false, "no key");
+  }
 
   // Scripts exist
   for (const script of [
@@ -160,30 +175,39 @@ async function main() {
   await wait(25000);
   shotDisplay("07-after-vision");
 
-  // Direct Ollama vision on a frame
+  // Direct Gemini vision on a frame
   const framePath = path.join(OUT, "yt-frame.png");
   await page.screenshot({ path: framePath }).catch(() => {});
-  if (fs.existsSync(framePath)) {
+  if (fs.existsSync(framePath) && GEMINI_KEY) {
     const b64 = fs.readFileSync(framePath).toString("base64");
     const vision = await jsonFetch(
-      `${OLLAMA}/api/generate`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION)}:generateContent?key=${encodeURIComponent(GEMINI_KEY)}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
         body: JSON.stringify({
-          model: VISION,
-          prompt: "In one sentence: what website/app is this and what is the main content?",
-          images: [b64],
-          stream: false,
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: "In one sentence: what website/app is this and what is the main content?",
+                },
+                { inline_data: { mime_type: "image/png", data: b64 } },
+              ],
+            },
+          ],
         }),
       },
-      120000,
+      90000,
     );
-    const vtext = String(vision.body?.response || "");
-    record("tool:ollama-vision-direct", vision.status === 200 && vtext.length > 8, vtext.slice(0, 220));
+    const vtext = String(
+      (vision.body?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join(" "),
+    ).trim();
+    record("tool:gemini-vision-direct", vision.status === 200 && vtext.length > 8, vtext.slice(0, 220));
     fs.writeFileSync(path.join(OUT, "vision-direct.json"), JSON.stringify({ status: vision.status, text: vtext }, null, 2));
   } else {
-    record("tool:ollama-vision-direct", false, "no frame");
+    record("tool:gemini-vision-direct", false, GEMINI_KEY ? "no frame" : "missing GEMINI_API_KEY");
   }
 
   // ── 7) Auto Answer ─────────────────────────────────────────────────

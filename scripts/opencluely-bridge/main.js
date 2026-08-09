@@ -1700,23 +1700,7 @@ class ApplicationController {
     try {
       windowManager.showLLMLoading();
 
-      // Visual Intelligence scan once — before hide/capture so the wave is visible.
-      if (wantScan) {
-        try {
-          await this.visualScan.start({
-            reason: visionMode || "screenshot",
-            force: true,
-          });
-          // Let the centre pulse + first wave frames paint before we hide the bar.
-          await new Promise((r) => setTimeout(r, 180));
-        } catch (scanError) {
-          logger.warn("Visual scan failed to start", { error: scanError.message });
-        }
-      }
-
-      // Hide OpenCluely overlays briefly so capture sees the real app (Chrome),
-      // not our own glass windows — otherwise vision hallucinates.
-      // Keep the visual-scan overlay (separate BrowserWindow) visible.
+      // 1) Hide OpenCluely UI first so the vision screenshot never includes our bar.
       const hiddenForCapture = [];
       try {
         for (const [type, win] of windowManager.windows.entries()) {
@@ -1728,20 +1712,39 @@ class ApplicationController {
             }
           }
         }
-        await new Promise((r) => setTimeout(r, 100));
+        // Also stop any leftover scan overlay before capture.
+        try {
+          await this.visualScan.stop();
+        } catch (_) {
+          /* ignore */
+        }
+        await new Promise((r) => setTimeout(r, 120));
       } catch (_) {
         /* ignore */
       }
 
+      // 2) Capture the real desktop (OpenCluely not visible).
       let capture;
       try {
         capture = await captureService.captureAndProcess({ fullScreen: true });
       } finally {
+        // 3) Start Visual Intelligence scan AFTER the clean screenshot is taken.
+        if (wantScan) {
+          try {
+            void this.visualScan.start({
+              reason: visionMode || "screenshot",
+              force: true,
+            });
+          } catch (scanError) {
+            logger.warn("Visual scan failed to start", { error: scanError.message });
+          }
+        }
+        // 4) Restore OpenCluely UI (scan overlay stays on top while it runs).
         for (const win of hiddenForCapture) {
           try {
             if (!win.isDestroyed()) {
-            windowManager.showOnCurrentDesktop(win, { focus: false, inactive: true });
-          }
+              windowManager.showOnCurrentDesktop(win, { focus: false, inactive: true });
+            }
           } catch (_) {
             /* ignore */
           }

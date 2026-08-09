@@ -19,6 +19,12 @@ if [[ -d "${BRIDGE}" ]]; then
   cp "${BRIDGE}/capture.service.js" "${DEST}/src/services/capture.service.js"
   cp "${BRIDGE}/desktop-control.service.js" "${DEST}/src/services/desktop-control.service.js"
   cp "${BRIDGE}/control-safety.js" "${DEST}/src/services/control-safety.js"
+  if [[ -f "${BRIDGE}/async-stt.service.js" ]]; then
+    cp "${BRIDGE}/async-stt.service.js" "${DEST}/src/services/async-stt.service.js"
+  fi
+  if [[ -f "${BRIDGE}/speech.service.js" ]]; then
+    cp "${BRIDGE}/speech.service.js" "${DEST}/src/services/speech.service.js"
+  fi
   if [[ -f "${BRIDGE}/macos-input.py" ]]; then
     cp "${BRIDGE}/macos-input.py" "${DEST}/src/services/macos-input.py"
     chmod +x "${DEST}/src/services/macos-input.py"
@@ -52,6 +58,8 @@ fi
 echo "==> npm install"
 cd "${DEST}"
 npm install --omit=optional
+npm install ws --save --omit=optional
 
-echo "Ready. Vision=gemma3:4b (lightweight local)  Text=Clyra /api/companion/ask  Stealth=OFF"
+echo "Ready. Vision=Gemini  Speech=Async (when ASYNC_API_KEY set)  Text=Clyra /api/companion/ask  Stealth=OFF"
+echo "Set GEMINI_API_KEY + ASYNC_API_KEY in apps/opencluely/.env (template copied from bridge/env)."
 echo "Start: bash scripts/start-opencluely-electron.sh"

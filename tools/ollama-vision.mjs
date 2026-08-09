@@ -1,6 +1,6 @@
 /**
- * Shared OpenCluely-style Ollama vision helper for Clyra server + voice calls.
- * Uses OPENCLUELY_VISION_MODEL / OLLAMA_VISION_MODEL (default gemma3:4b).
+ * Shared Gemini vision helper for Clyra server + Electron companion calls.
+ * Offline Ollama/gemma3 path removed — requires GEMINI_API_KEY.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -12,18 +12,23 @@ const execFileAsync = promisify(execFile);
 
 export function visionModelName() {
   return (
+    process.env.GEMINI_VISION_MODEL ||
     process.env.OPENCLUELY_VISION_MODEL ||
-    process.env.OLLAMA_VISION_MODEL ||
-    "gemma3:4b"
+    "gemini-2.0-flash"
   );
 }
 
-export function ollamaBaseUrl() {
-  return String(process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
+export function geminiApiKey() {
+  return String(process.env.GEMINI_API_KEY || "").trim();
 }
 
-async function resizeImageBuffer(buffer, maxEdge = 1024) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clyra-ollama-vision-"));
+/** @deprecated Ollama removed — kept for import compatibility */
+export function ollamaBaseUrl() {
+  return "";
+}
+
+async function resizeImageBuffer(buffer, maxEdge = 1280) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clyra-gemini-vision-"));
   const input = path.join(dir, "in.png");
   const output = path.join(dir, "out.jpg");
   try {
@@ -31,7 +36,7 @@ async function resizeImageBuffer(buffer, maxEdge = 1024) {
     try {
       await execFileAsync(
         "convert",
-        [input, "-resize", `${maxEdge}x${maxEdge}>`, "-quality", "90", output],
+        [input, "-resize", `${maxEdge}x${maxEdge}>`, "-quality", "85", output],
         { timeout: 15_000 },
       );
       return await fs.readFile(output);
@@ -47,13 +52,21 @@ async function resizeImageBuffer(buffer, maxEdge = 1024) {
   }
 }
 
+function extractGeminiText(payload) {
+  const parts = payload?.candidates?.[0]?.content?.parts || [];
+  return parts.map((p) => String(p?.text || "")).join(" ").trim();
+}
+
 /**
  * @param {Buffer} imageBuffer
  * @param {string} [prompt]
  * @param {{ model?: string, timeoutMs?: number }} [opts]
  */
-export async function callOllamaVision(imageBuffer, prompt, opts = {}) {
+export async function callGeminiVision(imageBuffer, prompt, opts = {}) {
   if (!imageBuffer?.length) throw new Error("Image buffer is required");
+  const apiKey = geminiApiKey();
+  if (!apiKey) throw new Error("GEMINI_API_KEY is required for image analysis");
+
   const model = opts.model || visionModelName();
   const resized = await resizeImageBuffer(imageBuffer);
   const base64 = resized.toString("base64");
@@ -61,39 +74,62 @@ export async function callOllamaVision(imageBuffer, prompt, opts = {}) {
     prompt ||
     "Look at this image carefully. Describe what is visible and answer any clear question on screen. Be concise and literal.";
 
-  const generate = await fetch(`${ollamaBaseUrl()}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      prompt: question,
-      images: [base64],
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(opts.timeoutMs || 120_000),
-  });
-  const generateJson = await generate.json().catch(() => ({}));
-  let text = String(generateJson?.response || "").trim();
-  if (!text) {
-    const chat = await fetch(`${ollamaBaseUrl()}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: question, images: [base64] }],
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(opts.timeoutMs || 120_000),
-    });
-    const chatJson = await chat.json().catch(() => ({}));
-    text = String(chatJson?.message?.content || "").trim();
+  const models = [model, "gemini-2.0-flash", "gemini-1.5-flash"].filter(
+    (m, i, arr) => m && arr.indexOf(m) === i,
+  );
+
+  let lastError = null;
+  for (const candidate of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: question },
+                { inline_data: { mime_type: "image/jpeg", data: base64 } },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            topK: 32,
+            topP: 0.9,
+            maxOutputTokens: 1024,
+          },
+        }),
+        signal: AbortSignal.timeout(opts.timeoutMs || 90_000),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          `Gemini vision failed (${response.status}): ${String(json?.error?.message || JSON.stringify(json)).slice(0, 240)}`,
+        );
+      }
+      const text = extractGeminiText(json);
+      if (!text) throw new Error(`Vision model ${candidate} returned an empty reply`);
+      return { ok: true, summary: text, text, model: candidate, source: "gemini-vision" };
+    } catch (error) {
+      lastError = error;
+    }
   }
-  if (!text) throw new Error(`Vision model ${model} returned an empty reply`);
-  return { ok: true, summary: text, text, model, source: "ollama-vision" };
+  throw lastError || new Error("Gemini vision failed");
+}
+
+/** @deprecated Use callGeminiVision — kept so existing imports keep working */
+export async function callOllamaVision(imageBuffer, prompt, opts = {}) {
+  return callGeminiVision(imageBuffer, prompt, opts);
 }
 
 /**
- * Analyse a data-URL frame with OpenCluely vision, falling back to RapidOCR script.
+ * Analyse a data-URL frame with Gemini vision, falling back to RapidOCR script.
  */
 export async function analyseVisionFrame(dataUrl, question = "") {
   const match = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i.exec(String(dataUrl || ""));
@@ -107,18 +143,17 @@ export async function analyseVisionFrame(dataUrl, question = "") {
     "What is visible in this camera or screen share? Answer any question the user is asking about it. Be concise and helpful.";
 
   try {
-    const vlm = await callOllamaVision(buffer, prompt);
+    const vlm = await callGeminiVision(buffer, prompt);
     return {
       ok: true,
       summary: vlm.summary,
       text: vlm.summary,
       ocrText: vlm.summary,
       model: vlm.model,
-      source: "opencluely-ollama",
-      engine: "ollama",
+      source: "gemini-vision",
+      engine: "gemini",
     };
   } catch (vlmError) {
-    // Fallback: RapidOCR companion-vision.py
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clyra-vision-frame-"));
     const filePath = path.join(dir, `frame.${ext}`);
     try {

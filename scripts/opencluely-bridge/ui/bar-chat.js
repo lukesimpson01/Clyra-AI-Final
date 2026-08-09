@@ -585,18 +585,8 @@
     inputEl.value = '';
     autoGrow();
     showThinking();
-    // Kick Visual Intelligence scan immediately for screen questions (main also starts).
-    if (
-      /\b(what('?s| is) on (my )?screen|on my screen|see (my )?screen|look at (my )?screen|what do you see|screenshot|describe (the |my )?(screen|desktop))\b/i.test(
-        text,
-      )
-    ) {
-      try {
-        void window.electronAPI?.startVisualScan?.({ reason: 'screen-ask' });
-      } catch (_) {
-        /* ignore */
-      }
-    }
+    // Visual Intelligence scan starts in main AFTER a clean desktop capture
+    // (OpenCluely UI hidden). Do not start the overlay from the renderer.
     try {
       await window.electronAPI?.sendChatMessage?.(text);
     } catch (error) {
@@ -609,12 +599,7 @@
     await expandToChat('auto');
     addMessage('Auto Answer — reading your screen…', 'system');
     showThinking();
-    // One-shot Visual Intelligence scan while capturing
-    try {
-      void window.electronAPI?.startVisualScan?.({ reason: 'auto-answer' });
-    } catch (_) {
-      /* ignore */
-    }
+    // Scan overlay is started by main after capture (UI hidden during screenshot).
     try {
       // Prefer dedicated control endpoint when available
       const res = await fetch('http://127.0.0.1:3847/auto-answer', {
