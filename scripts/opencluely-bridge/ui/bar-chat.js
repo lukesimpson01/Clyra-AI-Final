@@ -394,28 +394,51 @@
     }
   }
 
+  let activateAnimating = false;
+
   async function runBootAnimation() {
-    // 1) Start squished + invisible (already in HTML)
-    shell.classList.add('is-boot-squish');
-    // Fit Electron window to thin pill first
-    if (window.electronAPI?.resizeWindow) {
-      window.electronAPI.resizeWindow(56, COLLAPSED_H);
+    if (activateAnimating) return;
+    activateAnimating = true;
+    try {
+      // Reset any prior reveal so re-activation can replay the sequence.
+      shell.classList.remove(
+        'is-boot-fade',
+        'is-boot-expand',
+        'is-boot-reveal',
+        'is-wide',
+        'is-chat-open',
+        'is-control-compose',
+      );
+      open = false;
+      wide = false;
+      taskPromptMode = false;
+      drawer.setAttribute('aria-hidden', 'true');
+      updateCloseIcon();
+
+      // 1) Start squished + invisible
+      shell.classList.add('is-boot-squish');
+      // Fit Electron window to thin pill first
+      if (window.electronAPI?.resizeWindow) {
+        await window.electronAPI.resizeWindow(56, COLLAPSED_H);
+      }
+      await wait(60);
+      // 2) Fade in while still thin / compressed
+      shell.classList.add('is-boot-fade');
+      await wait(360);
+      // 3) Expand horizontally into full pill
+      shell.classList.remove('is-boot-squish');
+      shell.classList.add('is-boot-expand');
+      await wait(50);
+      await measureAndResize({ recenter: 'x' });
+      await wait(520);
+      // 4) Reveal buttons / stealth / drag with stagger
+      unlockInteractiveTargets();
+      await wait(520);
+      shell.classList.remove('is-boot-fade', 'is-boot-expand');
+      await measureAndResize({ recenter: 'x' });
+    } finally {
+      activateAnimating = false;
     }
-    await wait(60);
-    // 2) Fade in while still thin / compressed
-    shell.classList.add('is-boot-fade');
-    await wait(360);
-    // 3) Expand horizontally into full pill
-    shell.classList.remove('is-boot-squish');
-    shell.classList.add('is-boot-expand');
-    await wait(50);
-    measureAndResize();
-    await wait(520);
-    // 4) Reveal buttons / stealth / drag with stagger
-    shell.classList.add('is-boot-reveal');
-    await wait(520);
-    shell.classList.remove('is-boot-fade', 'is-boot-expand');
-    measureAndResize();
   }
 
   function setControlButtonState(isControlling) {
@@ -652,13 +675,15 @@
   } catch (_) {
     /* ignore */
   }
-  // After boot, force interactive hit-targets even if a boot class was left behind.
-  shell.classList.add('is-boot-reveal');
-  for (const el of shell.querySelectorAll('.oc-boot-hide, .oc-stealth-wrap, .oc-actions, .oc-close')) {
-    try {
-      el.style.pointerEvents = 'auto';
-    } catch (_) {
-      /* ignore */
+  function unlockInteractiveTargets() {
+    shell.classList.add('is-boot-reveal');
+    for (const el of shell.querySelectorAll('.oc-boot-hide, .oc-stealth-wrap, .oc-actions, .oc-close')) {
+      try {
+        el.style.pointerEvents = 'auto';
+        el.style.webkitAppRegion = 'no-drag';
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
 
@@ -796,6 +821,15 @@
         measureAndResize();
       }
     });
+    api.onActivateOverlay?.(async () => {
+      // Clyra Cmd+/ / Voice Call / control API show path
+      await runBootAnimation();
+      window.electronAPI?.setChatDrawerOpen?.(false);
+    });
+    api.onDeactivateOverlay?.(() => {
+      shell.classList.remove('is-boot-reveal', 'is-boot-fade', 'is-boot-expand');
+      shell.classList.add('is-boot-squish');
+    });
   }
 
   // Fit collapsed pill on load + boot animation + stealth restore
@@ -809,6 +843,24 @@
   applyStealthUI(stealthOn, { persist: false, notifyMain: true });
 
   (async () => {
+    let defer = false;
+    try {
+      const flags = await window.electronAPI?.shouldDeferActivate?.();
+      defer = Boolean(flags?.defer);
+    } catch (_) {
+      defer = false;
+    }
+
+    if (defer) {
+      // Managed by Clyra: stay collapsed/invisible until Cmd+/ or Voice Call.
+      shell.classList.add('is-boot-squish');
+      if (window.electronAPI?.resizeWindow) {
+        await window.electronAPI.resizeWindow(56, COLLAPSED_H);
+      }
+      window.electronAPI?.notifyMainWindowReady?.();
+      return;
+    }
+
     await runBootAnimation();
     window.electronAPI?.setChatDrawerOpen?.(false);
     window.electronAPI?.notifyMainWindowReady?.();
@@ -826,5 +878,6 @@
     stopControlFromBar,
     setStealth: applyStealthUI,
     isStealth: () => stealthOn,
+    runBootAnimation,
   };
 })();

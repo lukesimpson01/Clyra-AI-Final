@@ -1034,7 +1034,8 @@ class WindowManager {
     }
   }
 
-  showAllWindows() {
+  showAllWindows(options = {}) {
+    const animate = options.animate !== false;
     if (this.isScreenBeingShared) {
       return;
     }
@@ -1052,18 +1053,41 @@ class WindowManager {
     } catch (_) {
       /* ignore */
     }
-    const activeWindow = this.windows.get(this.activeWindow);
-    if (activeWindow) {
-      activeWindow.focus();
+    const mainWindow = this.windows.get('main');
+    if (mainWindow && !mainWindow.isDestroyed() && animate) {
+      // Fade-in collapsed → expand → reveal buttons (renderer bar-chat.js).
+      try {
+        mainWindow.webContents.send('activate-overlay', { animate: true });
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    const activeWindow = this.windows.get(this.activeWindow) || mainWindow;
+    if (activeWindow && !activeWindow.isDestroyed()) {
+      // Keep focus inactive so we don't steal keystrokes from the user's app.
+      try {
+        if (typeof activeWindow.focus === 'function') activeWindow.focus({ steal: false });
+      } catch (_) {
+        try { activeWindow.focus(); } catch { /* ignore */ }
+      }
     }
     
     logger.info('All windows shown on current desktop', { 
       activeWindow: this.activeWindow,
-      windowCount: this.windows.size 
+      windowCount: this.windows.size,
+      animate,
     });
   }
 
   hideAllWindows() {
+    const mainWindow = this.windows.get('main');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send('deactivate-overlay', {});
+      } catch (_) {
+        /* ignore */
+      }
+    }
     this.windows.forEach((window, type) => {
       if (type !== 'llmResponse') {
         window.hide();
@@ -1074,7 +1098,7 @@ class WindowManager {
     logger.info('All windows hidden');
   }
 
-  toggleVisibility() {
+  toggleVisibility(options = {}) {
     if (this.isScreenBeingShared) {
       return this.isVisible;
     }
@@ -1082,7 +1106,7 @@ class WindowManager {
     if (this.isVisible) {
       this.hideAllWindows();
     } else {
-      this.showAllWindows();
+      this.showAllWindows({ animate: options.animate !== false });
     }
     
     return this.isVisible;

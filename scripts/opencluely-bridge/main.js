@@ -253,7 +253,11 @@ class ApplicationController {
       }
       const isFirstRun = false;
 
-      await windowManager.initializeWindows({ showMainWindow: !isFirstRun });
+      const startHidden = process.env.CLYRA_OPENCLUELY_START_HIDDEN === "1"
+        || process.env.CLYRA_MANAGED_BY_CLYRA === "1";
+      await windowManager.initializeWindows({
+        showMainWindow: !isFirstRun && !startHidden,
+      });
       this.setupGlobalShortcuts();
       try {
         await desktopControl.initialize();
@@ -268,6 +272,9 @@ class ApplicationController {
       } catch (_) {
         /* optional */
       }
+
+      // Native TCC prompts so Privacy → Camera / Microphone lists "OpenCluely".
+      void this.primeMacOsMediaAccess();
 
       this.starting = false;
       this.isReady = true;
@@ -549,8 +556,8 @@ class ApplicationController {
       });
     });
 
-    ipcMain.handle("show-all-windows", () => {
-      windowManager.showAllWindows();
+    ipcMain.handle("show-all-windows", (_event, payload = {}) => {
+      windowManager.showAllWindows({ animate: payload?.animate !== false });
       return windowManager.getWindowStats();
     });
 
@@ -558,6 +565,16 @@ class ApplicationController {
       windowManager.hideAllWindows();
       return windowManager.getWindowStats();
     });
+
+    ipcMain.handle("should-defer-activate", () => ({
+      defer:
+        process.env.CLYRA_OPENCLUELY_START_HIDDEN === "1"
+        || process.env.CLYRA_MANAGED_BY_CLYRA === "1",
+      managed: process.env.CLYRA_MANAGED_BY_CLYRA === "1",
+    }));
+
+    ipcMain.handle("ensure-camera-access", async () => this.ensureCameraAccess());
+    ipcMain.handle("ensure-microphone-access", async () => this.ensureMicrophoneAccess());
 
     ipcMain.handle("enable-window-interaction", () => {
       windowManager.setInteractive(true);
@@ -1044,42 +1061,72 @@ class ApplicationController {
     });
   }
 
-  async ensureMicrophoneAccess() {
-    if (process.platform !== "darwin") return { ok: true, status: "unknown" };
+  async primeMacOsMediaAccess() {
+    if (process.platform !== "darwin") return;
+    for (const kind of ["microphone", "camera"]) {
+      let status = "unknown";
+      try {
+        status = systemPreferences.getMediaAccessStatus(kind);
+      } catch {
+        status = "unknown";
+      }
+      if (status === "granted") continue;
+      try {
+        const granted = await systemPreferences.askForMediaAccess(kind);
+        logger.info("askForMediaAccess", { kind, granted, previous: status });
+      } catch (error) {
+        logger.warn(`askForMediaAccess(${kind}) failed`, { error: error.message });
+      }
+    }
+  }
+
+  async ensureMediaAccess(mediaType = "microphone") {
+    if (process.platform !== "darwin") return { ok: true, status: "unknown", mediaType };
+    const kind = mediaType === "camera" ? "camera" : "microphone";
     let status = "unknown";
     try {
-      status = systemPreferences.getMediaAccessStatus("microphone");
+      status = systemPreferences.getMediaAccessStatus(kind);
     } catch {
-      return { ok: true, status: "unknown" };
+      return { ok: true, status: "unknown", mediaType: kind };
     }
-    if (status === "granted") return { ok: true, status };
+    if (status === "granted") return { ok: true, status, mediaType: kind };
     try {
-      const granted = await systemPreferences.askForMediaAccess("microphone");
-      if (granted) return { ok: true, status: "granted" };
+      const granted = await systemPreferences.askForMediaAccess(kind);
+      if (granted) return { ok: true, status: "granted", mediaType: kind };
     } catch (error) {
-      logger.warn("askForMediaAccess(microphone) failed", { error: error.message });
+      logger.warn(`askForMediaAccess(${kind}) failed`, { error: error.message });
     }
-    // Open Privacy pane so the user can enable “OpenCluely”.
     try {
       const { shell } = require("electron");
       const { execFile } = require("child_process");
+      const pane = kind === "camera" ? "Privacy_Camera" : "Privacy_Microphone";
       execFile(
         "open",
-        ["x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"],
+        [`x-apple.systempreferences:com.apple.preference.security?${pane}`],
         () => undefined,
       );
       void shell.openExternal(
-        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone",
+        `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?${pane}`,
       ).catch(() => undefined);
     } catch {
       // ignore
     }
+    const label = kind === "camera" ? "Camera" : "Microphone";
     return {
       ok: false,
       status: "denied",
+      mediaType: kind,
       error:
-        'Microphone access is blocked. Enable “OpenCluely” under System Settings → Privacy & Security → Microphone.',
+        `${label} access is blocked. Enable “OpenCluely” under System Settings → Privacy & Security → ${label}.`,
     };
+  }
+
+  async ensureMicrophoneAccess() {
+    return this.ensureMediaAccess("microphone");
+  }
+
+  async ensureCameraAccess() {
+    return this.ensureMediaAccess("camera");
   }
 
   async toggleSpeechRecognition() {
@@ -2499,7 +2546,8 @@ class ApplicationController {
    * Lets us drive the real OpenCluely Electron UI over Chrome without fake cards.
    */
   startClyraControlServer() {
-    const port = Number(process.env.CLYRA_CONTROL_PORT || 0);
+    // Default 3847 so Clyra Cmd+/ / Voice Call always have a control plane.
+    const port = Number(process.env.CLYRA_CONTROL_PORT || 3847);
     if (!port) return;
     try {
       const http = require("http");
@@ -2624,7 +2672,8 @@ class ApplicationController {
           if (req.method === "POST" && req.url === "/show") {
             const body = await readBody().catch(() => ({}));
             const windows = Array.isArray(body.windows) ? body.windows : null;
-            windowManager.showAllWindows();
+            const animate = body.animate !== false;
+            windowManager.showAllWindows({ animate });
             windowManager.forceAlwaysOnTopForAllWindows?.();
             windowManager.hideSettings?.();
             // Never surface the legacy floating LLM / side chat panels
@@ -2633,14 +2682,15 @@ class ApplicationController {
             windowManager.centerMainWindowAtTop?.();
             // Expand chat only when explicitly requested; keep collapsed pill otherwise
             if (windows && windows.includes("chat")) {
-              windowManager.openChatDrawer?.();
+              // Let the activate animation finish, then expand chat smoothly.
+              setTimeout(() => windowManager.openChatDrawer?.(), animate ? 900 : 0);
             } else if (windows && windows.includes("main")) {
               // Soft-close drawer UI without hiding the overlay window
               windowManager.closeChatDrawer?.();
             } else if (!windows) {
-              windowManager.openChatDrawer?.();
+              setTimeout(() => windowManager.openChatDrawer?.(), animate ? 900 : 0);
             }
-            send(200, { ok: true, action: "show" });
+            send(200, { ok: true, action: "show", animate });
             return;
           }
           if (req.method === "POST" && req.url === "/hide") {
@@ -2649,8 +2699,10 @@ class ApplicationController {
             return;
           }
           if (req.method === "POST" && req.url === "/toggle") {
-            const visible = windowManager.toggleVisibility();
-            send(200, { ok: true, action: "toggle", visible: Boolean(visible) });
+            const body = await readBody().catch(() => ({}));
+            const animate = body.animate !== false;
+            const visible = windowManager.toggleVisibility({ animate });
+            send(200, { ok: true, action: "toggle", visible: Boolean(visible), animate });
             return;
           }
           if (req.method === "POST" && req.url === "/hide-settings") {

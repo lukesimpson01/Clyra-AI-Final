@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Start OpenCluely Electron with Clyra API + lightweight local vision (gemma3:4b).
+# Prefer launching via Clyra (Cmd+/ or Voice Call) — this script is the managed
+# child entrypoint and a manual fallback. No Terminal.app/.command required.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${ROOT}/apps/opencluely"
@@ -9,21 +11,21 @@ export OPENCLUELY_VISION_MODEL="${OPENCLUELY_VISION_MODEL:-gemma3:4b}"
 export CLYRA_CONTROL_PORT="${CLYRA_CONTROL_PORT:-3847}"
 export ELECTRON_DISABLE_SECURITY_WARNINGS=1
 
-# Ensure Ollama is up
+# Ensure Ollama is up (non-blocking for Clyra-managed boots)
 if ! curl -sf "${OLLAMA_BASE_URL}/api/tags" >/dev/null; then
   echo "Starting ollama serve..."
   ollama serve >/tmp/ollama-serve.log 2>&1 &
-  sleep 2
+  sleep 1
 fi
 
-# Ensure vision model is present
+# Pull vision model in the background so the overlay can appear immediately.
 VISION_MODEL="${OPENCLUELY_VISION_MODEL}"
 if ! ollama list 2>/dev/null | grep -qi "$(echo "$VISION_MODEL" | cut -d: -f1)"; then
-  echo "Pulling ${VISION_MODEL} (fast UI/screen vision model)..."
-  ollama pull "${VISION_MODEL}"
+  echo "Pulling ${VISION_MODEL} in background (fast UI/screen vision model)..."
+  (ollama pull "${VISION_MODEL}" >/tmp/ollama-pull-vision.log 2>&1 || true) &
 fi
 
-# Ensure Clyra API is up
+# Ensure Clyra API is up (warn only — Clyra may still be booting)
 if ! curl -sf "${CLYRA_API_BASE}/" >/dev/null; then
   echo "WARN: Clyra API not reachable at ${CLYRA_API_BASE}"
 fi

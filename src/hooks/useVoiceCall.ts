@@ -1026,6 +1026,9 @@ export function useVoiceCall(options: {
       setActive(false);
       return;
     }
+    // Voice Call activates the in-app OpenCluely bar (same path as Cmd+/).
+    // Fire-and-forget so mic/session setup is never blocked on overlay spawn.
+    void getElectronDesktop()?.opencluely?.activate?.({ expandChat: false }).catch(() => undefined);
     // This runs synchronously from the user's Start Call gesture. Keeping the
     // context active here avoids browser autoplay policies suspending valid
     // Async/Max PCM that arrives later over WebSocket.

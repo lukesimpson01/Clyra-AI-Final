@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSpeechAvailability: () => ipcRenderer.invoke('get-speech-availability'),
   
   // Window management
-  showAllWindows: () => ipcRenderer.invoke('show-all-windows'),
+  showAllWindows: (opts = {}) => ipcRenderer.invoke('show-all-windows', opts || {}),
   hideAllWindows: () => ipcRenderer.invoke('hide-all-windows'),
   enableWindowInteraction: () => ipcRenderer.invoke('enable-window-interaction'),
   disableWindowInteraction: () => ipcRenderer.invoke('disable-window-interaction'),
@@ -31,6 +31,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
       recenter: typeof open === 'object' ? open?.recenter : opts?.recenter,
     }),
   onToggleChatDrawer: (callback) => ipcRenderer.on('toggle-chat-drawer', callback),
+  shouldDeferActivate: () => ipcRenderer.invoke('should-defer-activate'),
+  ensureCameraAccess: () => ipcRenderer.invoke('ensure-camera-access'),
+  ensureMicrophoneAccess: () => ipcRenderer.invoke('ensure-microphone-access'),
+  onActivateOverlay: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('activate-overlay', listener);
+    return () => ipcRenderer.removeListener('activate-overlay', listener);
+  },
+  onDeactivateOverlay: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('deactivate-overlay', listener);
+    return () => ipcRenderer.removeListener('deactivate-overlay', listener);
+  },
   moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('move-window', { deltaX, deltaY }),
   getWindowStats: () => ipcRenderer.invoke('get-window-stats'),
   

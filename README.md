@@ -25,10 +25,18 @@ The application opens at `http://localhost:3000`. OpenPencil binds only to
 users never enter another provider key and the configured key is never added to
 the browser bundle.
 
+## Desktop (Electron)
+
+- `npm run desktop:dev`: launch the Clyra desktop app (patches macOS Camera/Mic identity to **Clyra**).
+- Activate OpenCluely in-app with **⌘/** or **Voice Call** (no separate Terminal launcher).
+- Vision default: local **gemma3:4b** via Ollama. See [docs/opencluely-electron.md](docs/opencluely-electron.md).
+
 ## Commands
 
 - `npm run dev`: start Clyra's Vite-middleware server plus OpenPencil.
 - `npm run dev:source`: start Clyra with Vite middleware for frontend work.
+- `npm run desktop:dev`: start the Electron desktop shell (manages OpenCluely).
+- `npm run opencluely:clone`: one-time OpenCluely clone + bridge apply.
 - `npm run dev:openpencil`: start only the local design canvas.
 - `npm run build`: build the frontend and Node server.
 - `npm run lint`: run TypeScript checks.

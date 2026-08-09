@@ -75,6 +75,11 @@ export type ClyraDesktopBridge = {
     }>;
     ask?: (text: string) => Promise<{ ok: boolean; reply?: { text?: string }; vision?: { summary?: string }; error?: string }>;
   };
+  opencluely?: {
+    activate?: (payload?: { toggle?: boolean; expandChat?: boolean }) => Promise<{ ok: boolean; error?: string; action?: string }>;
+    toggle?: () => Promise<{ ok: boolean; error?: string }>;
+    status?: () => Promise<{ ok: boolean; managed?: boolean; port?: number; ready?: boolean }>;
+  };
   seeScreen?: (question?: string) => Promise<{
     ok: boolean;
     vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };

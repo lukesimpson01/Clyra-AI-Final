@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, WebContentsView } from "electron";
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
@@ -58,6 +58,8 @@ let companionManager = null;
 let screenCaptureService = null;
 let desktopControlService = null;
 let serviceProcess = null;
+let opencluelyProcess = null;
+let opencluelyStartPromise = null;
 let serviceLaunchError = null;
 let serviceFallbackStarted = false;
 let bridgeServer = null;
@@ -66,6 +68,8 @@ let createWindowPromise = null;
 let bootPromise = null;
 let ipcRegistered = false;
 let nativeManagersDestroyed = false;
+let mediaAccessPrimed = false;
+const opencluelyControlPort = Number(process.env.CLYRA_CONTROL_PORT || 3847);
 
 function destroyNativeManagers() {
   if (nativeManagersDestroyed) return;
@@ -243,65 +247,243 @@ function isRunnableFile(candidate) {
   }
 }
 
+function openCluelyControlPorts() {
+  return [opencluelyControlPort, 3848, 3847].filter(
+    (port, index, all) => Number.isFinite(port) && port > 0 && all.indexOf(port) === index,
+  );
+}
+
+function openCluelyRequest(pathname, { method = "GET", body, timeoutMs = 1_500, port } = {}) {
+  const payload = body == null ? null : JSON.stringify(body);
+  const ports = port ? [port] : openCluelyControlPorts();
+  return (async () => {
+    for (const candidate of ports) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          const req = http.request(
+            {
+              host: "127.0.0.1",
+              port: candidate,
+              path: pathname,
+              method,
+              headers: payload
+                ? {
+                    "Content-Type": "application/json",
+                    "Content-Length": Buffer.byteLength(payload),
+                  }
+                : undefined,
+              timeout: timeoutMs,
+            },
+            (res) => {
+              const chunks = [];
+              res.on("data", (chunk) => chunks.push(chunk));
+              res.on("end", () => {
+                const raw = Buffer.concat(chunks).toString("utf8");
+                let parsed = null;
+                try {
+                  parsed = raw ? JSON.parse(raw) : null;
+                } catch {
+                  parsed = null;
+                }
+                resolve({
+                  ok: (res.statusCode || 500) < 400,
+                  status: res.statusCode || 0,
+                  port: candidate,
+                  body: raw,
+                  json: parsed,
+                });
+              });
+            },
+          );
+          req.on("timeout", () => {
+            req.destroy(new Error("timeout"));
+          });
+          req.on("error", reject);
+          if (payload) req.write(payload);
+          req.end();
+        });
+        if (result.ok) return result;
+      } catch {
+        // Try the next control port.
+      }
+    }
+    return null;
+  })();
+}
+
 /** POST JSON to OpenCluely's local control API; try current + legacy ports. */
 async function postOpenCluelyControl(pathname, body = {}) {
-  const ports = [
-    Number(process.env.CLYRA_CONTROL_PORT || 0),
-    3848,
-    3847,
-  ].filter((port, index, all) => Number.isFinite(port) && port > 0 && all.indexOf(port) === index);
+  return openCluelyRequest(pathname, { method: "POST", body });
+}
 
-  const payload = JSON.stringify(body);
-  for (const port of ports) {
-    try {
-      const result = await new Promise((resolve, reject) => {
-        const req = http.request(
-          {
-            host: "127.0.0.1",
-            port,
-            path: pathname,
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(payload),
-            },
-            timeout: 1_500,
-          },
-          (res) => {
-            const chunks = [];
-            res.on("data", (chunk) => chunks.push(chunk));
-            res.on("end", () => {
-              resolve({
-                ok: (res.statusCode || 500) < 400,
-                status: res.statusCode || 0,
-                port,
-                body: Buffer.concat(chunks).toString("utf8"),
-              });
-            });
-          },
-        );
-        req.on("timeout", () => {
-          req.destroy(new Error("timeout"));
-        });
-        req.on("error", reject);
-        req.write(payload);
-        req.end();
-      });
-      if (result.ok) return result;
-    } catch {
-      // Try the next control port.
-    }
+async function getOpenCluelyHealth() {
+  return openCluelyRequest("/health", { method: "GET", timeoutMs: 800 });
+}
+
+function openCluelyAppDir() {
+  const packaged = path.join(process.resourcesPath || "", "apps", "opencluely");
+  const development = path.join(projectRoot, "apps", "opencluely");
+  if (!isDevelopment && isRunnableFile(path.join(packaged, "main.js"))) return packaged;
+  return development;
+}
+
+function stopManagedOpenCluely() {
+  const child = opencluelyProcess;
+  opencluelyProcess = null;
+  opencluelyStartPromise = null;
+  if (!child || child.exitCode != null || child.killed) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // ignore
   }
-  return null;
+  setTimeout(() => {
+    try {
+      if (child.exitCode == null && !child.killed) child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+  }, 4_000);
+}
+
+/**
+ * Spawn OpenCluely as a Clyra-managed child (no Terminal.app / .command).
+ * Starts hidden; activation via Cmd+/ or Voice Call plays the bar animation.
+ */
+async function ensureOpenCluelyRunning() {
+  const healthy = await getOpenCluelyHealth();
+  if (healthy?.ok) return { ok: true, alreadyRunning: true, port: healthy.port };
+
+  if (opencluelyStartPromise) return opencluelyStartPromise;
+
+  opencluelyStartPromise = (async () => {
+    const appDir = openCluelyAppDir();
+    const startScript = path.join(projectRoot, "scripts", "start-opencluely-electron.sh");
+    if (!existsSync(path.join(appDir, "main.js"))) {
+      reportDesktopLifecycle("opencluely missing — run npm run opencluely:clone once");
+      console.warn("[opencluely] apps/opencluely missing. Run: npm run opencluely:clone");
+      return { ok: false, error: "OpenCluely is not installed. Run npm run opencluely:clone once." };
+    }
+
+    const env = {
+      ...process.env,
+      CLYRA_CONTROL_PORT: String(opencluelyControlPort),
+      CLYRA_API_BASE: `http://127.0.0.1:${appPort}`,
+      CLYRA_OPENCLUELY_START_HIDDEN: "1",
+      CLYRA_MANAGED_BY_CLYRA: "1",
+      OPENCLUELY_VISION_MODEL: process.env.OPENCLUELY_VISION_MODEL || "gemma3:4b",
+      OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+
+    reportDesktopLifecycle(`starting managed OpenCluely controlPort=${opencluelyControlPort}`);
+    const electronBin = path.join(
+      appDir,
+      "node_modules",
+      ".bin",
+      process.platform === "win32" ? "electron.cmd" : "electron",
+    );
+    // Prefer the shell helper (patches macOS identity + warms Ollama). Fall back
+    // to a direct Electron spawn for packaged layouts without the script.
+    const useScript = existsSync(startScript) && process.platform !== "win32";
+    const child = useScript
+      ? spawn("bash", [startScript], {
+          cwd: projectRoot,
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        })
+      : spawn(electronBin, ["."], {
+          cwd: appDir,
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+    opencluelyProcess = child;
+    child.stdout?.on("data", (chunk) => console.log(`[opencluely] ${String(chunk).trimEnd()}`));
+    child.stderr?.on("data", (chunk) => console.error(`[opencluely] ${String(chunk).trimEnd()}`));
+    child.once("exit", (code, signal) => {
+      reportDesktopLifecycle(`opencluely exited code=${code ?? "null"} signal=${signal ?? "none"}`);
+      if (opencluelyProcess === child) opencluelyProcess = null;
+    });
+    child.once("error", (error) => {
+      console.error("[opencluely] spawn failed:", error);
+      reportDesktopLifecycle(`opencluely spawn error: ${error.message}`);
+      if (opencluelyProcess === child) opencluelyProcess = null;
+    });
+
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline && !quitting) {
+      if (child.exitCode != null) {
+        return { ok: false, error: `OpenCluely exited early (${child.exitCode}).` };
+      }
+      const health = await getOpenCluelyHealth();
+      if (health?.ok) {
+        reportDesktopLifecycle(`opencluely ready port=${health.port}`);
+        return { ok: true, alreadyRunning: false, port: health.port };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    return { ok: false, error: "OpenCluely control API did not become ready." };
+  })();
+
+  try {
+    return await opencluelyStartPromise;
+  } finally {
+    opencluelyStartPromise = null;
+  }
+}
+
+async function activateOpenCluelyOverlay({ toggle = false, expandChat = false } = {}) {
+  const ensured = await ensureOpenCluelyRunning();
+  if (!ensured?.ok) {
+    console.warn("[opencluely] activation failed:", ensured?.error || "unknown");
+    return ensured;
+  }
+
+  if (toggle && ensured.alreadyRunning) {
+    const toggled = await postOpenCluelyControl("/toggle", { animate: true });
+    if (toggled?.ok) return { ...ensured, action: "toggle", ...toggled };
+  }
+
+  const windows = expandChat ? ["main", "chat"] : ["main"];
+  const shown = await postOpenCluelyControl("/show", { windows, animate: true });
+  if (shown?.ok) return { ...ensured, action: "show", ...shown };
+
+  console.warn("[opencluely] control API not reachable after spawn");
+  return { ok: false, error: "OpenCluely control API not reachable." };
 }
 
 async function toggleOpenCluelyOverlay() {
-  const toggled = await postOpenCluelyControl("/toggle");
-  if (toggled?.ok) return toggled;
-  const shown = await postOpenCluelyControl("/show", { windows: ["main"] });
-  if (shown?.ok) return shown;
-  console.warn("[opencluely] Cmd+/ — OpenCluely control API not reachable on 3848/3847");
-  return null;
+  return activateOpenCluelyOverlay({ toggle: true });
+}
+
+/**
+ * Force the native macOS Camera / Microphone TCC prompts so Clyra appears under
+ * System Settings → Privacy & Security. Must run from the Electron main process
+ * after the app identity is patched (desktop:dev) or packaged as Clyra.app.
+ */
+async function primeMacOsMediaAccess() {
+  if (mediaAccessPrimed || process.platform !== "darwin") return;
+  mediaAccessPrimed = true;
+  for (const kind of ["microphone", "camera"]) {
+    let status = "unknown";
+    try {
+      status = systemPreferences.getMediaAccessStatus(kind);
+    } catch {
+      status = "unknown";
+    }
+    if (status === "granted") {
+      reportDesktopLifecycle(`media ${kind}=granted`);
+      continue;
+    }
+    try {
+      const granted = await systemPreferences.askForMediaAccess(kind);
+      reportDesktopLifecycle(`media askForMediaAccess(${kind}) → ${granted ? "granted" : "denied"} (was ${status})`);
+    } catch (error) {
+      reportDesktopLifecycle(`media askForMediaAccess(${kind}) failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[media] askForMediaAccess(${kind}) failed:`, error);
+    }
+  }
 }
 
 function attachLocalService(child, label, { onSpawnError, onUnexpectedExit } = {}) {
@@ -716,6 +898,27 @@ function registerIpc() {
     return companionManager?.runDesktopAction(payload?.action || {});
   });
   // Main renderer may open the companion overlay.
+  ipcMain.handle("opencluely:activate", async (event, payload = {}) => {
+    authorize(event);
+    return activateOpenCluelyOverlay({
+      toggle: Boolean(payload?.toggle),
+      expandChat: Boolean(payload?.expandChat),
+    });
+  });
+  ipcMain.handle("opencluely:toggle", async (event) => {
+    authorize(event);
+    return toggleOpenCluelyOverlay();
+  });
+  ipcMain.handle("opencluely:status", async (event) => {
+    authorize(event);
+    const health = await getOpenCluelyHealth();
+    return {
+      ok: Boolean(health?.ok),
+      managed: Boolean(opencluelyProcess && opencluelyProcess.exitCode == null),
+      port: health?.port || opencluelyControlPort,
+      ready: Boolean(health?.json?.ready),
+    };
+  });
   ipcMain.handle("companion:toggle", async (event) => {
     authorize(event);
     await companionManager?.toggle();
@@ -911,8 +1114,13 @@ async function createWindow() {
   uiView.webContents.on("did-finish-load", () => {
     mainWindow?.show();
     mainWindow?.focus();
+    // Native TCC prompts after the window is visible so Clyra appears in
+    // System Settings → Privacy & Security → Camera / Microphone.
+    void primeMacOsMediaAccess();
   });
   await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`);
+  // Also prime immediately after create (covers race if did-finish-load is late).
+  void primeMacOsMediaAccess();
   return mainWindow;
   })();
 
@@ -974,6 +1182,7 @@ app.on("before-quit", (event) => {
   quitting = true;
   bridgeServer?.close();
   destroyNativeManagers();
+  stopManagedOpenCluely();
 
   const service = serviceProcess;
   if (!service || service.exitCode != null || service.killed) {

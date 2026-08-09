@@ -3,6 +3,11 @@
  * Give each Electron.dev binary a unique macOS identity so Privacy → Microphone
  * / Camera lists "Clyra" or "OpenCluely" instead of a shared "Electron" entry
  * that never appears or fights the other app for TCC.
+ *
+ * Optional ad-hoc codesign (macOS only):
+ *   CLYRA_ELECTRON_CODESIGN=1 node tools/patch-electron-macos-privacy.mjs
+ * Uses tools/electron-dev.entitlements (camera/mic + JIT). Deep-sign without
+ * those entitlements can break Electron — keep the entitlements file in sync.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -11,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+const DEV_ENTITLEMENTS = path.join(root, "tools", "electron-dev.entitlements");
 
 function plistBuddy(plist, args) {
   execFileSync("/usr/libexec/PlistBuddy", [...args, plist], { stdio: "pipe" });
@@ -21,6 +27,43 @@ function setOrAdd(plist, key, type, value) {
     plistBuddy(plist, ["-c", `Set :${key} ${value}`]);
   } catch {
     plistBuddy(plist, ["-c", `Add :${key} ${type} ${value}`]);
+  }
+}
+
+function maybeCodesign(appPath) {
+  if (process.env.CLYRA_ELECTRON_CODESIGN !== "1") {
+    return { codesigned: false, reason: "CLYRA_ELECTRON_CODESIGN unset" };
+  }
+  if (!fs.existsSync(appPath)) {
+    return { codesigned: false, reason: "missing-app" };
+  }
+  if (!fs.existsSync(DEV_ENTITLEMENTS)) {
+    return { codesigned: false, reason: "missing-entitlements", path: DEV_ENTITLEMENTS };
+  }
+  try {
+    // Ad-hoc sign with entitlements so TCC + hardened-runtime JIT stay intact.
+    // Avoid `--deep` alone without entitlements — that previously broke Electron.
+    execFileSync(
+      "codesign",
+      [
+        "--force",
+        "--sign",
+        "-",
+        "--entitlements",
+        DEV_ENTITLEMENTS,
+        "--options",
+        "runtime",
+        appPath,
+      ],
+      { stdio: "pipe" },
+    );
+    return { codesigned: true, entitlements: DEV_ENTITLEMENTS };
+  } catch (error) {
+    return {
+      codesigned: false,
+      reason: "codesign-failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -50,7 +93,8 @@ export function patchElectronApp({
     setOrAdd(plist, "NSScreenCaptureUsageDescription", "string", screenDescription);
   }
 
-  return { ok: true, appPath, bundleId, bundleName };
+  const sign = maybeCodesign(appPath);
+  return { ok: true, appPath, bundleId, bundleName, ...sign };
 }
 
 export function patchClyraElectron() {

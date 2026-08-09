@@ -160,11 +160,12 @@
         "zip"
       ],
       "hardenedRuntime": true,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "entitlements": "tools/entitlements.mac.plist",
+      "entitlementsInherit": "tools/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Clyra needs microphone access for Cmd+Shift+K dictation and Voice Call.",
-        "NSCameraUsageDescription": "Clyra needs camera access for Voice Call camera vision.",
+        "NSMicrophoneUsageDescription": "Clyra needs microphone access for Voice Call and Cmd+Shift+K dictation.",
+        "NSCameraUsageDescription": "Clyra needs camera access for Voice Call camera vision (local gemma3:4b).",
         "NSScreenCaptureUsageDescription": "Clyra needs screen recording access to share your screen in Voice Call.",
         "NSAppleEventsUsageDescription": "Clyra needs Accessibility / Apple Events access to paste dictation into other apps."
       }

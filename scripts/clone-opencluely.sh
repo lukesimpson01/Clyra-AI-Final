@@ -46,5 +46,6 @@ echo "==> npm install"
 cd "${DEST}"
 npm install --omit=optional
 
-echo "Ready. Vision=gemma3:4b (lightweight local)  Text=Clyra /api/companion/ask  Stealth=OFF"
-echo "Start: bash scripts/start-opencluely-electron.sh"
+echo "Ready. Vision=gemma3:4b (lightweight local)  Ask=Clyra /api/companion/ask  Stealth=OFF"
+echo "Launch via Clyra (in-app): npm run desktop:dev  →  Cmd+/ or Voice Call"
+echo "Manual fallback: bash scripts/start-opencluely-electron.sh"
