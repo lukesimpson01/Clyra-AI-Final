@@ -821,9 +821,8 @@
       });
     }
     api.onOcrError?.((_e, data) => {
-      // Main already routes vision errors through transcription-llm-response
-      // (showLLMResponse). Only clear thinking here to avoid duplicate bubbles.
       hideThinking();
+      addMessage(data?.error || 'Screenshot failed', 'error');
     });
     api.onSessionCleared?.(() => {
       history = [];

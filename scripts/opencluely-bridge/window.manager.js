@@ -344,18 +344,15 @@ class WindowManager {
         })
       };
   } else if (type === 'main') {
-      // Main window configuration - fit to content, completely frameless.
-      // Linux + --disable-gpu cannot composite transparent BrowserWindows (they
-      // paint blank). Use an opaque white surface so the collapsed bar is visible
-      // and matches the solid-white command pills.
-      const linuxOpaque = process.platform === 'linux';
+      // Main window configuration - fit to content, completely frameless
+      // Opaque on Linux so the original command bar stays visible over Chrome
       browserWindowOptions = {
         ...baseOptions,
         frame: false,
         titleBarStyle: 'hidden',
         titleBarOverlay: false,
-        transparent: !linuxOpaque,
-        backgroundColor: linuxOpaque ? '#ffffff' : '#00000000',
+        transparent: true,
+        backgroundColor: '#00000000',
   // Allow resizing so users can adjust width; we will lock height in handlers
   resizable: true,
     // Compact bar can collapse; expanded chat drawer needs room for all controls
@@ -364,7 +361,7 @@ class WindowManager {
         minimizable: false,
         maximizable: false,
         closable: false,
-        hasShadow: !linuxOpaque,
+        hasShadow: false,
         useContentSize: windowConfig.useContentSize || false,
         thickFrame: false,
         focusable: true,
