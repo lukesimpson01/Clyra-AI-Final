@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const { fileURLToPath } = require("url");
 const { app, BrowserWindow, globalShortcut, session, ipcMain, systemPreferences } = require("electron");
 
@@ -1707,7 +1708,7 @@ class ApplicationController {
           if (!win || win.isDestroyed()) continue;
           if (type === "main" || type === "chat" || type === "llmResponse" || type === "settings") {
             if (win.isVisible()) {
-              hiddenForCapture.push(win);
+              hiddenForCapture.push({ type, win });
               win.hide();
             }
           }
@@ -1718,15 +1719,28 @@ class ApplicationController {
         } catch (_) {
           /* ignore */
         }
-        await new Promise((r) => setTimeout(r, 120));
+        await new Promise((r) => setTimeout(r, 160));
+        logger.info("OpenCluely UI hidden for clean vision capture", {
+          hidden: hiddenForCapture.map((h) => h.type),
+        });
       } catch (_) {
         /* ignore */
       }
 
-      // 2) Capture the real desktop (OpenCluely not visible).
+      // 2) Capture the real desktop (OpenCluely not visible) BEFORE scan animation.
       let capture;
       try {
         capture = await captureService.captureAndProcess({ fullScreen: true });
+        // Persist the clean capture for debugging / tests (UI must not be visible).
+        try {
+          if (capture?.imageBuffer?.length) {
+            const dumpPath = path.join(os.tmpdir(), "opencluely-last-capture.png");
+            fs.writeFileSync(dumpPath, capture.imageBuffer);
+            this._lastCapturePath = dumpPath;
+          }
+        } catch (dumpError) {
+          logger.warn("Failed to dump last capture", { error: dumpError.message });
+        }
       } finally {
         // 3) Start Visual Intelligence scan AFTER the clean screenshot is taken.
         if (wantScan) {
@@ -1740,8 +1754,9 @@ class ApplicationController {
           }
         }
         // 4) Restore OpenCluely UI (scan overlay stays on top while it runs).
-        for (const win of hiddenForCapture) {
+        for (const item of hiddenForCapture) {
           try {
+            const win = item.win;
             if (!win.isDestroyed()) {
               windowManager.showOnCurrentDesktop(win, { focus: false, inactive: true });
             }
@@ -2701,7 +2716,23 @@ class ApplicationController {
               ready: this.isReady,
               skill: this.activeSkill,
               windows: Object.keys(windowManager.getWindowStats().windows || {}),
+              visionProvider: "gemini",
+              speechProvider: speechService.provider || process.env.SPEECH_PROVIDER || "async",
+              lastCapturePath: this._lastCapturePath || null,
             });
+            return;
+          }
+          if (req.method === "GET" && req.url === "/last-capture") {
+            const dumpPath = this._lastCapturePath || path.join(os.tmpdir(), "opencluely-last-capture.png");
+            if (!fs.existsSync(dumpPath)) {
+              send(404, { ok: false, error: "no capture yet" });
+              return;
+            }
+            res.writeHead(200, {
+              "Content-Type": "image/png",
+              "Cache-Control": "no-store",
+            });
+            fs.createReadStream(dumpPath).pipe(res);
             return;
           }
           if (req.method === "POST" && req.url === "/screenshot") {

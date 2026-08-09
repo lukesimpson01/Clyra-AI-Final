@@ -58,8 +58,13 @@ class ConfigManager {
             process.env.GEMINI_VISION_MODEL ||
             process.env.OPENCLUELY_VISION_MODEL ||
             'gemini-2.0-flash',
-          fallbackModels: ['gemini-2.0-flash', 'gemini-1.5-flash'],
-          maxRetries: 3,
+          fallbackModels: [
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-001',
+            'gemini-2.0-flash-lite',
+            'gemini-2.0-flash-lite-001',
+          ],
+          maxRetries: 2,
           timeout: 60000,
           fallbackEnabled: true,
           enableFallbackMethod: true,

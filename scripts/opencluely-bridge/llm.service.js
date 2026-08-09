@@ -219,7 +219,12 @@ class LLMService {
     const base64 = buffer.toString('base64');
     const models = [
       this.model,
-      ...(config.get('llm.gemini.fallbackModels') || ['gemini-2.0-flash', 'gemini-1.5-flash']),
+      ...(config.get('llm.gemini.fallbackModels') || [
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-001',
+        'gemini-2.0-flash-lite',
+        'gemini-2.0-flash-lite-001',
+      ]),
     ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
     const question =
@@ -243,8 +248,9 @@ class LLMService {
     });
 
     let lastError = null;
+    const maxAttempts = Number(config.get('llm.gemini.maxRetries') || 2);
     for (const model of models) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.geminiApiKey)}`;
           const response = await httpJson(url, {
@@ -257,9 +263,12 @@ class LLMService {
             timeoutMs: 90000,
           });
           if (!response.ok) {
-            throw new Error(
-              `Gemini vision failed (${response.status}): ${String(response.text || '').slice(0, 240)}`,
+            const status = response.status;
+            const err = new Error(
+              `Gemini vision failed (${status}): ${String(response.text || '').slice(0, 240)}`,
             );
+            err.status = status;
+            throw err;
           }
           const parts = response.json?.candidates?.[0]?.content?.parts || [];
           const text = sanitizeModelText(
@@ -277,7 +286,11 @@ class LLMService {
             attempt,
             error: error.message,
           });
-          await new Promise((r) => setTimeout(r, 600 * attempt));
+          // Quota / denied: skip remaining attempts for this model.
+          if (error.status === 429 || error.status === 403 || /quota|PERMISSION_DENIED/i.test(error.message)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 900 * attempt));
         }
       }
     }
