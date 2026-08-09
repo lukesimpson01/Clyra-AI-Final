@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 const children = [
-  spawn("npm", ["run", "dev:source"], { stdio: "inherit", env: process.env }),
-  spawn("npm", ["run", "dev:openpencil"], { stdio: "inherit", env: process.env }),
+  spawn(npmCmd, ["run", "dev:source"], { stdio: "inherit", env: process.env, shell: process.platform === "win32" }),
+  spawn(npmCmd, ["run", "dev:openpencil"], { stdio: "inherit", env: process.env, shell: process.platform === "win32" }),
 ];
 
 let stopping = false;

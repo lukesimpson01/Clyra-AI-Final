@@ -1206,6 +1206,7 @@ class ApplicationController {
   /**
    * Ask once so “OpenCluely” appears under Microphone / Camera without
    * opening System Settings on every launch when the user already denied.
+   * Also surface Screen Recording status (required for vision capture on macOS).
    */
   async primeMacOsMediaAccess() {
     if (process.platform !== "darwin") return;
@@ -1221,6 +1222,54 @@ class ApplicationController {
         });
       }
     }
+    try {
+      const screenStatus = systemPreferences.getMediaAccessStatus("screen");
+      logger.info("macOS screen recording access", { status: screenStatus });
+      if (screenStatus === "denied") {
+        windowManager.broadcastToAllWindows("speech-status", {
+          status:
+            "Screen Recording is blocked. Enable OpenCluely under System Settings → Privacy & Security → Screen Recording, then relaunch.",
+          available: this.speechAvailable,
+        });
+      }
+    } catch (error) {
+      logger.warn("could not read screen recording status", {
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  async ensureScreenRecordingAccess() {
+    if (process.platform !== "darwin") return { ok: true, status: "unknown" };
+    let status = "unknown";
+    try {
+      status = systemPreferences.getMediaAccessStatus("screen");
+    } catch {
+      return { ok: true, status: "unknown" };
+    }
+    if (status === "granted") return { ok: true, status };
+    try {
+      const { shell } = require("electron");
+      const { execFile } = require("child_process");
+      execFile(
+        "open",
+        ["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"],
+        () => undefined,
+      );
+      void shell
+        .openExternal(
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
+        )
+        .catch(() => undefined);
+    } catch {
+      /* ignore */
+    }
+    return {
+      ok: false,
+      status,
+      error:
+        'Screen Recording is blocked. Enable “OpenCluely” under System Settings → Privacy & Security → Screen Recording, then relaunch.',
+    };
   }
 
   async toggleSpeechRecognition() {

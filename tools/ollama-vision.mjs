@@ -33,16 +33,18 @@ async function resizeImageBuffer(buffer, maxEdge = 1280) {
   const output = path.join(dir, "out.jpg");
   try {
     await fs.writeFile(input, buffer);
-    try {
-      await execFileAsync(
-        "convert",
-        [input, "-resize", `${maxEdge}x${maxEdge}>`, "-quality", "85", output],
-        { timeout: 15_000 },
-      );
-      return await fs.readFile(output);
-    } catch {
-      return buffer;
+    const args = [input, "-resize", `${maxEdge}x${maxEdge}>`, "-quality", "85", output];
+    // Prefer IM7 `magick`. Never call bare `convert` on Windows (filesystem tool).
+    const bins = process.platform === "win32" ? ["magick"] : ["magick", "convert"];
+    for (const bin of bins) {
+      try {
+        await execFileAsync(bin, args, { timeout: 15_000, windowsHide: true });
+        return await fs.readFile(output);
+      } catch {
+        /* try next */
+      }
     }
+    return buffer;
   } finally {
     try {
       await fs.rm(dir, { recursive: true, force: true });
@@ -50,6 +52,26 @@ async function resizeImageBuffer(buffer, maxEdge = 1280) {
       /* ignore */
     }
   }
+}
+
+async function resolvePythonBin() {
+  const candidates =
+    process.platform === "win32"
+      ? ["py", "python", "python3"]
+      : ["python3", "python"];
+  for (const bin of candidates) {
+    try {
+      if (bin === "py") {
+        await execFileAsync("py", ["-3", "-c", "print(1)"], { timeout: 4_000, windowsHide: true });
+        return { command: "py", prefix: ["-3"] };
+      }
+      await execFileAsync(bin, ["-c", "print(1)"], { timeout: 4_000, windowsHide: true });
+      return { command: bin, prefix: [] };
+    } catch {
+      /* next */
+    }
+  }
+  return { command: process.platform === "win32" ? "python" : "python3", prefix: [] };
 }
 
 function extractGeminiText(payload) {
@@ -159,10 +181,11 @@ export async function analyseVisionFrame(dataUrl, question = "") {
     try {
       await fs.writeFile(filePath, buffer);
       const script = path.join(process.cwd(), "tools", "companion-vision.py");
+      const py = await resolvePythonBin();
       const { stdout } = await execFileAsync(
-        "python3",
-        [script, filePath, "--question", prompt],
-        { timeout: 45_000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+        py.command,
+        [...py.prefix, script, filePath, "--question", prompt],
+        { timeout: 45_000, maxBuffer: 4 * 1024 * 1024, env: process.env, windowsHide: true },
       );
       const payload = JSON.parse(String(stdout || "{}"));
       return {

@@ -1,6 +1,6 @@
 /**
  * OS-level desktop control for Clyra Screen Companion.
- * Linux: xdotool. macOS: AppleScript when present.
+ * Linux: xdotool | macOS: cliclick / AppleScript | Windows: PowerShell
  * Draws Atlas-style AI cursor — also used in Guide mode to point without clicking.
  */
 import { execFile } from "node:child_process";
@@ -11,12 +11,25 @@ const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function which(bin) {
+  const cmd = process.platform === "win32" ? "where" : "which";
   try {
-    const { stdout } = await execFileAsync("which", [bin], { timeout: 2_000 });
-    return String(stdout || "").trim() || null;
+    const { stdout } = await execFileAsync(cmd, [bin], { timeout: 2_000, windowsHide: true });
+    return (
+      String(stdout || "")
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .find(Boolean) || null
+    );
   } catch {
     return null;
   }
+}
+
+async function runPowerShell(script, timeout = 8_000) {
+  await execFileAsync("powershell", ["-NoProfile", "-Command", script], {
+    timeout,
+    windowsHide: true,
+  });
 }
 
 export class DesktopControlService {
@@ -26,12 +39,20 @@ export class DesktopControlService {
     this.active = false;
     this.guideOnly = false;
     this.xdotool = null;
+    this.cliclick = null;
+    this.driver = "none";
     this.lastPoint = { x: 0, y: 0 };
   }
 
   async initialize() {
     this.xdotool = await which("xdotool");
-    return { ok: true, driver: this.xdotool ? "xdotool" : process.platform === "darwin" ? "applescript" : "none" };
+    this.cliclick = process.platform === "darwin" ? await which("cliclick") : null;
+    if (this.xdotool) this.driver = "xdotool";
+    else if (this.cliclick) this.driver = "cliclick";
+    else if (process.platform === "darwin") this.driver = "applescript";
+    else if (process.platform === "win32") this.driver = "powershell";
+    else this.driver = "none";
+    return { ok: this.driver !== "none", driver: this.driver, platform: process.platform };
   }
 
   async ensureCursorOverlay() {
@@ -85,10 +106,6 @@ export class DesktopControlService {
     return { ok: true, point };
   }
 
-  /**
-   * Visual pointer only — does not move the OS mouse or click.
-   * Used when the AI is explaining where to press.
-   */
   async point(x, y, label = "Look here") {
     this.guideOnly = true;
     const point = { x: Math.round(x), y: Math.round(y) };
@@ -100,11 +117,33 @@ export class DesktopControlService {
   async move(x, y, label = "Moving") {
     const point = { x: Math.round(x), y: Math.round(y) };
     await this.setCursor({ ...point, label, kind: "move", guide: this.guideOnly });
-    if (this.manualControl || this.guideOnly) return { ok: true, skipped: this.guideOnly ? "guide" : "manualControl", point };
-    if (this.xdotool) {
-      await execFileAsync(this.xdotool, ["mousemove", "--sync", String(point.x), String(point.y)], { timeout: 3_000 });
-    } else if (process.platform === "darwin") {
-      await execFileAsync("osascript", ["-e", `tell application "System Events" to set position of mouse to {${point.x}, ${point.y}}`], { timeout: 3_000 }).catch(() => undefined);
+    if (this.manualControl || this.guideOnly) {
+      return { ok: true, skipped: this.guideOnly ? "guide" : "manualControl", point };
+    }
+    try {
+      if (this.xdotool) {
+        await execFileAsync(this.xdotool, ["mousemove", "--sync", String(point.x), String(point.y)], {
+          timeout: 3_000,
+        });
+      } else if (this.cliclick) {
+        await execFileAsync(this.cliclick, [`m:${point.x},${point.y}`], { timeout: 3_000 });
+      } else if (process.platform === "darwin") {
+        // CGEvent via osascript is unreliable for mouse position; try cliclick-less fallback.
+        await execFileAsync(
+          "osascript",
+          [
+            "-e",
+            `tell application "System Events" to set position of mouse to {${point.x}, ${point.y}}`,
+          ],
+          { timeout: 3_000 },
+        ).catch(() => undefined);
+      } else if (process.platform === "win32") {
+        await runPowerShell(
+          `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${point.x},${point.y})`,
+        );
+      }
+    } catch {
+      /* ignore move failures; cursor overlay still updates */
     }
     this.lastPoint = point;
     return { ok: true, point };
@@ -117,9 +156,37 @@ export class DesktopControlService {
     const point = { x: Math.round(x ?? this.lastPoint.x), y: Math.round(y ?? this.lastPoint.y) };
     await this.move(point.x, point.y, label);
     if (this.manualControl) return { ok: true, skipped: "manualControl", point };
-    if (this.xdotool) {
-      const btn = button === "right" ? "3" : button === "middle" ? "2" : "1";
-      await execFileAsync(this.xdotool, ["click", btn], { timeout: 3_000 });
+    try {
+      if (this.xdotool) {
+        const btn = button === "right" ? "3" : button === "middle" ? "2" : "1";
+        await execFileAsync(this.xdotool, ["click", btn], { timeout: 3_000 });
+      } else if (this.cliclick) {
+        await execFileAsync(this.cliclick, [`c:${point.x},${point.y}`], { timeout: 3_000 });
+      } else if (process.platform === "darwin") {
+        await execFileAsync(
+          "osascript",
+          [
+            "-e",
+            `tell application "System Events" to click at {${point.x}, ${point.y}}`,
+          ],
+          { timeout: 3_000 },
+        ).catch(() => undefined);
+      } else if (process.platform === "win32") {
+        const isRight = button === "right";
+        const down = isRight ? 0x0008 : 0x0002;
+        const up = isRight ? 0x0010 : 0x0004;
+        await runPowerShell(`
+Add-Type -AssemblyName System.Windows.Forms;
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${point.x},${point.y});
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class M { [DllImport("user32.dll")] public static extern void mouse_event(int f,int a,int b,int c,int d); }
+"@;
+[M]::mouse_event(${down},0,0,0,0); [M]::mouse_event(${up},0,0,0,0);
+`);
+      }
+    } catch {
+      /* ignore */
     }
     await this.setCursor({ ...point, label: "Clicked", kind: "click" });
     return { ok: true, point };
@@ -127,15 +194,41 @@ export class DesktopControlService {
 
   async typeText(text, label = "Typing") {
     if (this.guideOnly) {
-      await this.setCursor({ ...this.lastPoint, label: `Type: ${String(text || "").slice(0, 40)}`, kind: "point", guide: true });
+      await this.setCursor({
+        ...this.lastPoint,
+        label: `Type: ${String(text || "").slice(0, 40)}`,
+        kind: "point",
+        guide: true,
+      });
       return { ok: true, skipped: "guide" };
     }
     await this.setCursor({ ...this.lastPoint, label, kind: "type" });
     if (this.manualControl) return { ok: true, skipped: "manualControl" };
     const value = String(text || "");
     if (!value) return { ok: true };
-    if (this.xdotool) {
-      await execFileAsync(this.xdotool, ["type", "--clearmodifiers", "--delay", "12", "--", value], { timeout: 20_000 });
+    try {
+      if (this.xdotool) {
+        await execFileAsync(this.xdotool, ["type", "--clearmodifiers", "--delay", "12", "--", value], {
+          timeout: 20_000,
+        });
+      } else if (this.cliclick) {
+        await execFileAsync(this.cliclick, [`t:${value}`], { timeout: 20_000 });
+      } else if (process.platform === "darwin") {
+        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        await execFileAsync(
+          "osascript",
+          ["-e", `tell application "System Events" to keystroke "${escaped}"`],
+          { timeout: 20_000 },
+        );
+      } else if (process.platform === "win32") {
+        const escaped = value.replace(/'/g, "''");
+        await runPowerShell(
+          `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${escaped}')`,
+          20_000,
+        );
+      }
+    } catch {
+      /* ignore */
     }
     return { ok: true };
   }
@@ -147,8 +240,26 @@ export class DesktopControlService {
     }
     await this.setCursor({ ...this.lastPoint, label, kind: "key" });
     if (this.manualControl) return { ok: true, skipped: "manualControl" };
-    if (this.xdotool) {
-      await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
+    try {
+      if (this.xdotool) {
+        await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
+      } else if (this.cliclick) {
+        await execFileAsync(this.cliclick, [`kp:${key}`], { timeout: 3_000 });
+      } else if (process.platform === "darwin") {
+        await execFileAsync(
+          "osascript",
+          ["-e", `tell application "System Events" to key code 36`],
+          { timeout: 3_000 },
+        ).catch(() => undefined);
+      } else if (process.platform === "win32") {
+        const map = { Return: "{ENTER}", Enter: "{ENTER}", Tab: "{TAB}", Escape: "{ESC}" };
+        const send = map[key] || `{${key}}`;
+        await runPowerShell(
+          `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${send}')`,
+        );
+      }
+    } catch {
+      /* ignore */
     }
     return { ok: true };
   }

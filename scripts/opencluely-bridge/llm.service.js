@@ -7,13 +7,22 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const logger = require('../core/logger').createServiceLogger('LLM');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
+let resizeImageBuffer = null;
+try {
+  resizeImageBuffer = require('./image-resize.cjs').resizeImageBuffer;
+} catch (_) {
+  try {
+    resizeImageBuffer = require(path.join(__dirname, '../../../scripts/lib/image-resize.cjs')).resizeImageBuffer;
+  } catch (error) {
+    logger.warn('image-resize helper unavailable; using raw screenshots', { error: error.message });
+  }
+}
 
 function httpJson(url, { method = 'GET', headers = {}, body, timeoutMs = 60000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -197,20 +206,11 @@ class LLMService {
       throw new Error('GEMINI_API_KEY is required for image analysis');
     }
 
+    // Windows-safe resize (magick preferred; never bare convert.exe).
     let buffer = imageBuffer;
     try {
-      const tmpIn = path.join(os.tmpdir(), `oc-vision-in-${process.pid}.png`);
-      const tmpOut = path.join(os.tmpdir(), `oc-vision-out-${process.pid}.jpg`);
-      fs.writeFileSync(tmpIn, imageBuffer);
-      execFileSync('convert', [tmpIn, '-resize', '1280x1280>', '-quality', '85', tmpOut], {
-        timeout: 15000,
-      });
-      buffer = fs.readFileSync(tmpOut);
-      try {
-        fs.unlinkSync(tmpIn);
-        fs.unlinkSync(tmpOut);
-      } catch (_) {
-        /* ignore */
+      if (typeof resizeImageBuffer === 'function') {
+        buffer = resizeImageBuffer(imageBuffer, { maxEdge: 1280, quality: 85 }) || imageBuffer;
       }
     } catch (_) {
       buffer = imageBuffer;

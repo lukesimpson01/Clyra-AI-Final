@@ -441,14 +441,38 @@ function authorizeCompanion(event) {
   if (!companionManager?.isSender(event.sender)) throw new Error("Untrusted companion IPC sender.");
 }
 
+async function resolvePythonBin() {
+  const candidates =
+    process.platform === "win32" ? ["py", "python", "python3"] : ["python3", "python"];
+  for (const bin of candidates) {
+    try {
+      if (bin === "py") {
+        await execFileAsync("py", ["-3", "-c", "print(1)"], { timeout: 4_000, windowsHide: true });
+        return { command: "py", prefix: ["-3"] };
+      }
+      await execFileAsync(bin, ["-c", "print(1)"], { timeout: 4_000, windowsHide: true });
+      return { command: bin, prefix: [] };
+    } catch {
+      /* next */
+    }
+  }
+  return { command: process.platform === "win32" ? "python" : "python3", prefix: [] };
+}
+
 async function analyseCompanionVision(imagePath, question = "") {
   const script = path.join(projectRoot, "tools", "companion-vision.py");
   const runRapidOcr = async () => {
-    const { stdout } = await execFileAsync("python3", [script, imagePath, "--question", String(question || "")], {
-      timeout: 45_000,
-      maxBuffer: 4 * 1024 * 1024,
-      env: process.env,
-    });
+    const py = await resolvePythonBin();
+    const { stdout } = await execFileAsync(
+      py.command,
+      [...py.prefix, script, imagePath, "--question", String(question || "")],
+      {
+        timeout: 45_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: process.env,
+        windowsHide: true,
+      },
+    );
     return JSON.parse(String(stdout || "{}"));
   };
 

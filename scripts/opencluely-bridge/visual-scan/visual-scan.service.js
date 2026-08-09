@@ -29,18 +29,72 @@ class VisualScanService {
     if (process.platform === "darwin") {
       const script = path.join(__dirname, "macos-windows.py");
       if (fs.existsSync(script)) {
-        try {
-          const { stdout } = await execFileAsync("python3", [script], {
-            timeout: 2500,
-            maxBuffer: 2 * 1024 * 1024,
-          });
-          const parsed = JSON.parse(String(stdout || "{}"));
-          if (parsed?.ok && Array.isArray(parsed.windows)) {
-            return parsed.windows;
+        const pyBins = ["python3", "python", "/usr/bin/python3", "/opt/homebrew/bin/python3"];
+        for (const py of pyBins) {
+          try {
+            const { stdout } = await execFileAsync(py, [script], {
+              timeout: 2500,
+              maxBuffer: 2 * 1024 * 1024,
+            });
+            const parsed = JSON.parse(String(stdout || "{}"));
+            if (parsed?.ok && Array.isArray(parsed.windows)) {
+              return parsed.windows;
+            }
+            break;
+          } catch (error) {
+            this.logger.warn?.("[visual-scan] window enum failed", error?.message || error);
           }
-        } catch (error) {
-          this.logger.warn?.("[visual-scan] window enum failed", error?.message || error);
         }
+      }
+    }
+
+    if (process.platform === "win32") {
+      try {
+        const ps = `
+Add-Type @"
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public class W {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lp, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
+}
+"@
+$out = New-Object System.Collections.Generic.List[object]
+[W+EnumProc]$cb = {
+  param($h,$l)
+  if (-not [W]::IsWindowVisible($h)) { return $true }
+  $sb = New-Object System.Text.StringBuilder 512
+  [void][W]::GetWindowText($h, $sb, $sb.Capacity)
+  $title = $sb.ToString()
+  if ([string]::IsNullOrWhiteSpace($title)) { return $true }
+  if ($title -match 'opencluely|clyra visual|visual scan') { return $true }
+  $r = New-Object W+RECT
+  if (-not [W]::GetWindowRect($h, [ref]$r)) { return $true }
+  $w = $r.Right - $r.Left; $ht = $r.Bottom - $r.Top
+  if ($w -lt 80 -or $ht -lt 60) { return $true }
+  $out.Add([pscustomobject]@{ id="$h"; app=($title.Split(' ')[0..1] -join ' '); title=$title; frame=@{ x=$r.Left; y=$r.Top; w=$w; h=$ht } }) | Out-Null
+  return $true
+}
+[void][W]::EnumWindows($cb, [IntPtr]::Zero)
+@{ ok=$true; windows=$out } | ConvertTo-Json -Depth 6 -Compress
+`;
+        const { stdout } = await execFileAsync(
+          "powershell",
+          ["-NoProfile", "-Command", ps],
+          { timeout: 4000, maxBuffer: 2 * 1024 * 1024, windowsHide: true },
+        );
+        const parsed = JSON.parse(String(stdout || "{}"));
+        const windows = Array.isArray(parsed?.windows)
+          ? parsed.windows
+          : parsed?.windows
+            ? [parsed.windows]
+            : [];
+        if (windows.length) return windows.slice(0, 60);
+      } catch (error) {
+        this.logger.warn?.("[visual-scan] win32 window enum failed", error?.message || error);
       }
     }
 

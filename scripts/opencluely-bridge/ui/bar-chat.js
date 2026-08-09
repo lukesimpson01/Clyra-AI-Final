@@ -497,8 +497,10 @@
           status.platform === 'linux'
             ? 'Install xdotool to enable Take Control on Linux'
             : status.platform === 'darwin'
-              ? 'Enable Accessibility for OpenCluely in System Settings'
-              : 'Desktop control driver unavailable on this system';
+              ? 'Enable Accessibility (+ Apple Events) for OpenCluely in System Settings'
+              : status.platform === 'win32'
+                ? 'Take Control needs PowerShell — try running OpenCluely as your user account'
+                : 'Desktop control driver unavailable on this system';
       }
     } catch (_) {
       /* ignore */
