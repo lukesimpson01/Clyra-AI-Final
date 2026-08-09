@@ -353,7 +353,7 @@ $out = New-Object System.Collections.Generic.List[object]
       width: bounds.width,
       height: bounds.height,
       scale,
-      durationMs: opts.durationMs || 1850,
+      durationMs: opts.durationMs || 920,
       origin: { x: originX, y: originY },
       maxRadius: Math.hypot(bounds.width / 2, bounds.height / 2) * 1.08,
       elements: filtered,

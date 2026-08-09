@@ -7,6 +7,8 @@
     <link href="./src/styles/common.css" rel="stylesheet" />
     <style>
       :root {
+        /* Collapsed pill: fully opaque. Expanded shell fades to normal glass. */
+        --oc-bar-solid: #f8f9fb;
         --oc-glass: rgba(248, 249, 251, 0.82);
         --oc-glass-open: rgba(255, 255, 255, 0.90);
         --oc-border: rgba(15, 23, 42, 0.07);
@@ -22,9 +24,9 @@
         --oc-msg-bg: rgba(255, 255, 255, 0.86);
         --oc-ease: cubic-bezier(0.22, 1, 0.36, 1);
         --oc-ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
-        --oc-dur-w: 340ms;
-        --oc-dur-h: 320ms;
-        --oc-dur-fast: 160ms;
+        --oc-dur-w: 380ms;
+        --oc-dur-h: 380ms;
+        --oc-dur-fast: 180ms;
         --oc-accent: #4a7cff;
         --oc-accent-soft: rgba(74, 124, 255, 0.35);
         --oc-expanded-w: 600px;
@@ -37,6 +39,7 @@
 
       html.oc-stealth,
       html.oc-dark {
+        --oc-bar-solid: #161b22;
         --oc-glass: rgba(22, 27, 34, 0.86);
         --oc-glass-open: rgba(17, 24, 39, 0.94);
         --oc-border: rgba(148, 163, 184, 0.14);
@@ -55,6 +58,7 @@
       }
       @media (prefers-color-scheme: dark) {
         html:not(.oc-force-light) {
+          --oc-bar-solid: #161b22;
           --oc-glass: rgba(22, 27, 34, 0.86);
           --oc-glass-open: rgba(17, 24, 39, 0.94);
           --oc-border: rgba(148, 163, 184, 0.14);
@@ -149,15 +153,33 @@
       .oc-shell.is-boot-reveal .oc-stealth-wrap { transition-delay: 220ms; }
       .oc-shell.is-boot-reveal .oc-drag { transition-delay: 260ms; }
 
-      .oc-shell.is-wide,
+      .oc-shell.is-wide:not(.is-chat-open) {
+        width: var(--oc-expanded-w);
+        border-radius: 999px;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
       .oc-shell.is-chat-open {
         width: var(--oc-expanded-w);
         border-radius: 22px;
+        /* Smoothly fade from opaque collapsed surface into normal glass */
         background: var(--oc-glass-open);
         border: 1px solid var(--oc-border);
         box-shadow: var(--oc-shadow);
         backdrop-filter: blur(28px) saturate(1.2);
         -webkit-backdrop-filter: blur(28px) saturate(1.2);
+        transition:
+          width var(--oc-dur-w) var(--oc-ease),
+          min-width var(--oc-dur-w) var(--oc-ease),
+          border-radius var(--oc-dur-h) var(--oc-ease),
+          background 480ms var(--oc-ease),
+          box-shadow 420ms var(--oc-ease),
+          border-color 420ms var(--oc-ease),
+          opacity 380ms var(--oc-ease),
+          transform 520ms var(--oc-ease);
       }
 
       .command-tab {
@@ -168,21 +190,22 @@
         padding: 0 12px 0 10px;
         width: max-content;
         min-width: 420px;
-        background: var(--oc-glass);
-        border: 1px solid rgba(255, 255, 255, 0.78);
+        /* Collapsed: zero transparency (fully opaque pill) */
+        background: var(--oc-bar-solid);
+        border: 1px solid rgba(15, 23, 42, 0.08);
         border-radius: 999px;
         box-shadow: var(--oc-shadow);
-        backdrop-filter: blur(28px) saturate(1.25);
-        -webkit-backdrop-filter: blur(28px) saturate(1.25);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         -webkit-app-region: drag;
         transition:
           width var(--oc-dur-w) var(--oc-ease),
           min-width var(--oc-dur-w) var(--oc-ease),
-          border-radius var(--oc-dur-h) var(--oc-ease-soft),
-          background 420ms var(--oc-ease-soft),
-          box-shadow 420ms var(--oc-ease-soft),
-          border-color 420ms var(--oc-ease-soft),
-          opacity 280ms var(--oc-ease-soft);
+          border-radius var(--oc-dur-h) var(--oc-ease),
+          background 480ms var(--oc-ease),
+          box-shadow 420ms var(--oc-ease),
+          border-color 420ms var(--oc-ease),
+          opacity 320ms var(--oc-ease);
       }
       html.oc-stealth .command-tab {
         border-color: rgba(148, 163, 184, 0.22);
@@ -444,7 +467,7 @@
         background: currentColor;
       }
 
-      /* Chat drawer — height only (expand down). No vertical recentering. */
+      /* Chat drawer — height only (expand down / collapse up). Butter-smooth. */
       .chat-drawer {
         width: 100%;
         height: 0;
@@ -454,7 +477,7 @@
         transform-origin: top center;
         transition:
           height var(--oc-dur-h) var(--oc-ease),
-          opacity 200ms var(--oc-ease-soft);
+          opacity 320ms var(--oc-ease);
       }
       .oc-shell.is-chat-open .chat-drawer {
         height: var(--oc-drawer-h);

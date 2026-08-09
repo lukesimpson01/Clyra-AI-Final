@@ -37,43 +37,123 @@
   <img id="backdrop" alt="" />
   <canvas id="c"></canvas>
   <script>
+    /**
+     * Apple Visual Look Up–style desktop trace.
+     * Invisible radial wavefront times activation; each contour is traced by
+     * two luminous heads (CW + CCW) from the nearest boundary point.
+     */
     const canvas = document.getElementById("c");
     const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
     let raf = 0;
 
-    function roundedRectPath(c, x, y, w, h, r) {
-      const radius = Math.max(0, Math.min(r, w / 2, h / 2));
-      c.beginPath();
-      c.moveTo(x + radius, y);
-      c.arcTo(x + w, y, x + w, y + h, radius);
-      c.arcTo(x + w, y + h, x, y + h, radius);
-      c.arcTo(x, y + h, x, y, radius);
-      c.arcTo(x, y, x + w, y, radius);
-      c.closePath();
+    function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+    function smoothstep(e0, e1, x) {
+      const t = clamp((x - e0) / (e1 - e0), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+    function dist(ax, ay, bx, by) {
+      const dx = ax - bx, dy = ay - by;
+      return Math.hypot(dx, dy);
     }
 
-    function sampleRoundedRect(x, y, w, h, r, spacing) {
+    /** Build arc-length sampled rounded-rect contour (closed). */
+    function buildRoundedRectPath(x, y, w, h, r, spacing) {
       const radius = Math.max(0, Math.min(r, w / 2, h / 2));
       const pts = [];
-      const push = (px, py) => pts.push({ x: px, y: py });
-      const step = Math.max(6, spacing);
+      const push = (px, py) => {
+        const last = pts[pts.length - 1];
+        if (last && Math.abs(last.x - px) < 0.01 && Math.abs(last.y - py) < 0.01) return;
+        pts.push({ x: px, y: py });
+      };
+      const step = Math.max(5, spacing);
+
+      // Top edge L→R
       for (let i = radius; i <= w - radius; i += step) push(x + i, y);
-      for (let a = -Math.PI / 2; a <= 0; a += 0.14) {
+      push(x + w - radius, y);
+      // TR arc
+      for (let a = -Math.PI / 2; a <= 0; a += 0.12) {
         push(x + w - radius + Math.cos(a) * radius, y + radius + Math.sin(a) * radius);
       }
+      // Right T→B
       for (let i = radius; i <= h - radius; i += step) push(x + w, y + i);
-      for (let a = 0; a <= Math.PI / 2; a += 0.14) {
+      push(x + w, y + h - radius);
+      // BR
+      for (let a = 0; a <= Math.PI / 2; a += 0.12) {
         push(x + w - radius + Math.cos(a) * radius, y + h - radius + Math.sin(a) * radius);
       }
+      // Bottom R→L
       for (let i = w - radius; i >= radius; i -= step) push(x + i, y + h);
-      for (let a = Math.PI / 2; a <= Math.PI; a += 0.14) {
+      push(x + radius, y + h);
+      // BL
+      for (let a = Math.PI / 2; a <= Math.PI; a += 0.12) {
         push(x + radius + Math.cos(a) * radius, y + h - radius + Math.sin(a) * radius);
       }
+      // Left B→T
       for (let i = h - radius; i >= radius; i -= step) push(x, y + i);
-      for (let a = Math.PI; a <= (Math.PI * 3) / 2; a += 0.14) {
+      push(x, y + radius);
+      // TL
+      for (let a = Math.PI; a <= (Math.PI * 3) / 2 + 0.001; a += 0.12) {
         push(x + radius + Math.cos(a) * radius, y + radius + Math.sin(a) * radius);
       }
-      return pts;
+      // Close
+      if (pts.length) push(pts[0].x, pts[0].y);
+
+      // Arc-length table
+      const cum = new Float32Array(pts.length);
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) {
+        total += dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+        cum[i] = total;
+      }
+      return { pts, cum, length: total };
+    }
+
+    function pointAtArc(path, s) {
+      const L = path.length;
+      if (L <= 0 || path.pts.length < 2) return path.pts[0] || { x: 0, y: 0 };
+      let t = ((s % L) + L) % L;
+      const cum = path.cum;
+      // binary search
+      let lo = 0, hi = cum.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cum[mid] < t) lo = mid + 1;
+        else hi = mid;
+      }
+      const i = Math.max(1, lo);
+      const s0 = cum[i - 1], s1 = cum[i];
+      const u = s1 > s0 ? (t - s0) / (s1 - s0) : 0;
+      const a = path.pts[i - 1], b = path.pts[i];
+      return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+    }
+
+    function nearestArcOnPath(path, ox, oy) {
+      let bestS = 0, bestD = Infinity;
+      const pts = path.pts;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const abx = b.x - a.x, aby = b.y - a.y;
+        const apx = ox - a.x, apy = oy - a.y;
+        const ab2 = abx * abx + aby * aby || 1;
+        const u = clamp((apx * abx + apy * aby) / ab2, 0, 1);
+        const px = a.x + abx * u, py = a.y + aby * u;
+        const d = dist(ox, oy, px, py);
+        if (d < bestD) {
+          bestD = d;
+          bestS = path.cum[i] + Math.hypot(abx, aby) * u;
+        }
+      }
+      return { s: bestS, d: bestD };
+    }
+
+    function importanceBase(el) {
+      const role = el.role || "window";
+      const imp = el.importance || 0;
+      if (role === "window" || imp >= 0.95) return 1;
+      if (role === "tabStrip" || role === "sidebar" || role === "toolbar" || imp >= 0.75) return 0.82;
+      if (role === "tab" || role === "searchField" || role === "editor" || imp >= 0.55) return 0.68;
+      if (role === "button" || role === "input" || imp >= 0.35) return 0.48;
+      return 0.36;
     }
 
     window.__runVisualScan = function runVisualScan(scene) {
@@ -110,146 +190,230 @@
       const reduce =
         window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const duration = reduce ? 1000 : scene.durationMs || 1850;
-      const origin = scene.origin || { x: W / 2, y: H / 2 };
-      const maxRadius = scene.maxRadius || Math.hypot(W / 2, H / 2) * 1.08;
 
-      const elements = (scene.elements || []).map((el) => {
+      // ~650–1100 ms sweep scaled by display diagonal
+      const diag = Math.hypot(W, H);
+      const duration = reduce
+        ? 220
+        : scene.durationMs || clamp(Math.round(720 + diag * 0.18), 680, 1050);
+      const ignitionMs = reduce ? 40 : 140;
+      const origin = scene.origin || { x: W / 2, y: H / 2 };
+      const maxRadius = scene.maxRadius || Math.hypot(
+        Math.max(origin.x, W - origin.x),
+        Math.max(origin.y, H - origin.y),
+      ) * 1.02;
+
+      // Precompute contours
+      const contours = [];
+      const els = scene.elements || [];
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
         const f = el.frame;
+        if (!f || f.w < 10 || f.h < 10) continue;
         const r = el.cornerRadius || 10;
-        const spacing = Math.max(8, Math.min(f.w, f.h) * 0.04);
-        const samples = sampleRoundedRect(f.x, f.y, f.w, f.h, r, spacing).map((p, idx, arr) => ({
-          x: p.x,
-          y: p.y,
-          radial: Math.hypot(p.x - origin.x, p.y - origin.y),
-          pathT: arr.length > 1 ? idx / (arr.length - 1) : 0,
-        }));
-        const activationRadius = Math.min(...samples.map((s) => s.radial));
-        return { ...el, samples, activationRadius };
-      });
+        const spacing = Math.max(6, Math.min(f.w, f.h) * 0.035);
+        const path = buildRoundedRectPath(f.x, f.y, f.w, f.h, r, spacing);
+        if (path.length < 8) continue;
+        const near = nearestArcOnPath(path, origin.x, origin.y);
+        const base = importanceBase(el);
+        const half = path.length * 0.5;
+        // Trace duration along perimeter (arc-length constant speed)
+        const traceMs = clamp(half / 0.85, 180, 420);
+        contours.push({
+          path,
+          startS: near.s,
+          activateR: near.d,
+          base,
+          half,
+          traceMs,
+          afterglowMs: 90 + base * 50,
+          role: el.role,
+        });
+      }
+      // Sort by activation radius (nearby first) — render order only
+      contours.sort((a, b) => a.activateR - b.activateR);
 
       const start = performance.now();
-      // Wave stays subtle; UI traces carry the recognition (Linux needs stronger traces).
-      const WAVE = hasBackdrop ? 0.95 : 0.8;
-      const TRACE = hasBackdrop ? 2.05 : 1.7;
+      // Soft radial wavefront is nearly invisible; traces carry the recognition.
+      const WAVE_A = hasBackdrop ? 0.035 : 0.025;
+
+      function easeWave(t) {
+        // Confident early travel, soft settle near edge
+        if (t < 0.15) return (t / 0.15) * 0.18;
+        if (t < 0.85) return 0.18 + ((t - 0.15) / 0.7) * 0.72;
+        return 0.9 + ((t - 0.85) / 0.15) * 0.1;
+      }
+
+      function strokeTrail(path, headS, travel, baseAlpha, headBoost) {
+        // Draw short segments near head with falloff along arc length
+        const L = path.length;
+        if (L <= 0 || travel <= 0 || baseAlpha < 0.01) return;
+        const bright = Math.min(28, L * 0.08);
+        const soft = Math.min(90, L * 0.22);
+        const samples = Math.max(8, Math.ceil(Math.min(travel, soft) / 4));
+        for (let i = 0; i < samples; i++) {
+          const back = (i / samples) * Math.min(travel, soft);
+          const s0 = headS - (travel >= 0 ? back : -back);
+          // direction: travel is always positive along direction sign via headS update
+          const a0 = pointAtArc(path, s0);
+          const a1 = pointAtArc(path, s0 - (travel >= 0 ? 4 : -4) * Math.sign(1));
+          // Use directed samples from head backward
+        }
+      }
+
+      function drawDirectedTrail(path, headS, dir, traveled, baseAlpha) {
+        // dir: +1 or -1 along arc; traveled = how far head has moved from start
+        if (traveled <= 0.5 || baseAlpha < 0.02) return;
+        const brightLen = 22;
+        const softLen = 88;
+        const step = 3.2;
+        const n = Math.ceil(Math.min(traveled, softLen) / step);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        const vis = hasBackdrop ? 1.35 : 1.15;
+
+        for (let i = 0; i < n; i++) {
+          const back = i * step;
+          if (back > traveled) break;
+          const s = headS - dir * back;
+          const s2 = headS - dir * Math.min(back + step, traveled);
+          const p0 = pointAtArc(path, s);
+          const p1 = pointAtArc(path, s2);
+          const fall = back < brightLen
+            ? 1 - (back / brightLen) * 0.28
+            : Math.exp(-(back - brightLen) / (softLen * 0.42)) * 0.7;
+          const contact = Math.exp(-(back * back) / 22);
+          const alpha = Math.min(0.96, (baseAlpha * fall + contact * 0.4 * baseAlpha) * vis);
+          if (alpha < 0.03) continue;
+
+          // Soft bloom
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.strokeStyle = `rgba(205,228,255,${0.28 * alpha})`;
+          ctx.lineWidth = 3.6;
+          ctx.stroke();
+          // Crisp luminous centre ~1 physical px
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+
+        // Bright head tip
+        const tip = pointAtArc(path, headS);
+        const g = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 6);
+        g.addColorStop(0, `rgba(255,255,255,${Math.min(0.98, 0.95 * baseAlpha * vis)})`);
+        g.addColorStop(0.4, `rgba(237,246,255,${0.4 * baseAlpha * vis})`);
+        g.addColorStop(1, "rgba(205,228,255,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(tip.x, tip.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       function frame(now) {
         const elapsed = now - start;
         const t = Math.min(1, elapsed / duration);
-        const eased = t < 0.92 ? (t / 0.92) * 0.96 : 0.96 + ((t - 0.92) / 0.08) * 0.04;
-        const radius = eased * maxRadius;
+        const radius = easeWave(t) * maxRadius;
 
         ctx.clearRect(0, 0, W, H);
 
-        // Centre ignition
-        if (elapsed < 170) {
-          const p = Math.min(1, elapsed / 140);
-          const core = 2.2 + p * 3.2;
-          const halo = 8 + p * 18;
-          const a = (1 - p * 0.72) * 0.9 * WAVE;
+        // ── Centre ignition (recognition activate) ─────────────────
+        if (elapsed < ignitionMs + 40) {
+          const p = Math.min(1, elapsed / ignitionMs);
+          const core = 2 + p * 2.2;
+          const halo = 8 + p * 14;
+          const a = (1 - smoothstep(0.55, 1, p)) * 0.9;
           const g = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, halo);
-          g.addColorStop(0, `rgba(255,255,255,${Math.min(1, 0.95 * a)})`);
-          g.addColorStop(0.3, `rgba(237,246,255,${0.42 * a})`);
-          g.addColorStop(0.7, `rgba(205,228,255,${0.12 * a})`);
+          g.addColorStop(0, `rgba(255,255,255,${0.9 * a})`);
+          g.addColorStop(0.35, `rgba(237,246,255,${0.35 * a})`);
           g.addColorStop(1, "rgba(205,228,255,0)");
           ctx.fillStyle = g;
           ctx.beginPath();
           ctx.arc(origin.x, origin.y, halo, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = `rgba(255,255,255,${Math.min(1, 0.95 * a)})`;
+          ctx.fillStyle = `rgba(255,255,255,${0.92 * a})`;
           ctx.beginPath();
           ctx.arc(origin.x, origin.y, core, 0, Math.PI * 2);
           ctx.fill();
-        }
-
-        // Radial intelligence front — narrow, restrained (not a radar ring)
-        if (!reduce && elapsed > 110) {
-          const haze = ctx.createRadialGradient(
-            origin.x, origin.y, Math.max(0, radius - 18),
-            origin.x, origin.y, radius + 6,
-          );
-          haze.addColorStop(0, "rgba(255,255,255,0)");
-          haze.addColorStop(0.82, `rgba(237,246,255,${0.014 * WAVE})`);
-          haze.addColorStop(0.94, `rgba(255,255,255,${0.055 * WAVE})`);
-          haze.addColorStop(1, "rgba(255,255,255,0)");
-          ctx.fillStyle = haze;
-          ctx.beginPath();
-          ctx.arc(origin.x, origin.y, radius + 8, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Sharp core front (~1px)
-          ctx.beginPath();
-          ctx.arc(origin.x, origin.y, Math.max(0.5, radius), 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(255,255,255,${0.18 * WAVE})`;
-          ctx.lineWidth = 1.15;
-          ctx.stroke();
-
-          // Soft feather only
-          ctx.beginPath();
-          ctx.arc(origin.x, origin.y, Math.max(0.5, radius), 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(218,236,255,${0.07 * WAVE})`;
-          ctx.lineWidth = 4;
-          ctx.stroke();
-        }
-
-        // Contour traces (radial intersection)
-        for (let ei = 0; ei < elements.length; ei++) {
-          const el = elements[ei];
-          const samples = el.samples;
-          if (!samples || !samples.length) continue;
-
-          let base = 0.42;
-          const imp = el.importance || 0;
-          if (imp >= 0.95) base = 0.88;
-          else if (imp >= 0.78) base = 0.72;
-          else if (imp >= 0.6) base = 0.58;
-          else if (imp >= 0.45) base = 0.48;
-          else if (imp >= 0.35) base = 0.36;
-
-          if (el.role === "tab") base = Math.max(base, el.selected ? 0.78 : 0.62);
-
-          ctx.save();
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-
-          // Draw short segments with per-segment alpha (wave intersection).
-          for (let i = 0; i < samples.length - 1; i++) {
-            const s0 = samples[i];
-            const s1 = samples[i + 1];
-            const radial = (s0.radial + s1.radial) * 0.5;
-            const delta = radius - radial;
-            const frontSoft = 14;
-            const trailStart = 4;
-            const trailEnd = 220;
-            const reveal = delta < -frontSoft ? 0 : delta < 0 ? (delta + frontSoft) / frontSoft : 1;
-            const fade = delta <= trailStart ? 1 : Math.max(0, 1 - (delta - trailStart) / (trailEnd - trailStart));
-            const contact = Math.exp(-(delta * delta) / 60);
-            const alpha = Math.min(0.96, (base * reveal * fade + contact * 0.4) * TRACE);
-            if (alpha < 0.04) continue;
-
+          // Tiny expanding ring that vanishes
+          if (p > 0.25 && p < 1) {
+            const rr = 6 + (p - 0.25) * 22;
             ctx.beginPath();
-            ctx.moveTo(s0.x, s0.y);
-            ctx.lineTo(s1.x, s1.y);
-            // Soft bloom
-            ctx.strokeStyle = `rgba(205,228,255,${0.28 * alpha})`;
-            ctx.lineWidth = 5.5;
+            ctx.arc(origin.x, origin.y, rr, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255,255,255,${(1 - p) * 0.28})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
-            // Crisp edge
-            ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-            ctx.lineWidth = 1.4;
+          }
+        }
+
+        // Nearly invisible wavefront (timing cue only — not a radar)
+        if (!reduce && elapsed > ignitionMs * 0.7) {
+          ctx.beginPath();
+          ctx.arc(origin.x, origin.y, Math.max(0.5, radius), 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255,255,255,${WAVE_A})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        // ── Contour dual-head traces ───────────────────────────────
+        for (let ci = 0; ci < contours.length; ci++) {
+          const c = contours[ci];
+          const deltaR = radius - c.activateR;
+          if (deltaR < -8) continue;
+
+          // Time since this contour was reached by the wave
+          const scanVel = maxRadius / Math.max(1, duration - ignitionMs);
+          const since = Math.max(0, deltaR / Math.max(0.001, scanVel));
+          const progress = clamp(since / c.traceMs, 0, 1);
+          // Spatially even along perimeter
+          const traveled = progress * c.half;
+
+          // After both heads meet: faint complete outline, then fade
+          let after = 0;
+          if (progress >= 1) {
+            after = since - c.traceMs;
+          }
+          const afterFade = after <= 0
+            ? 1
+            : 1 - smoothstep(0, c.afterglowMs, after);
+          if (afterFade <= 0.01 && progress >= 1) continue;
+
+          const baseAlpha = c.base * (0.55 + 0.45 * smoothstep(-6, 10, deltaR)) * afterFade;
+          if (reduce) {
+            // Short static highlight
+            if (deltaR > 0 && after < 180) {
+              const pts = c.path.pts;
+              ctx.beginPath();
+              ctx.moveTo(pts[0].x, pts[0].y);
+              for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+              ctx.strokeStyle = `rgba(255,255,255,${0.35 * c.base * afterFade})`;
+              ctx.lineWidth = 1.1;
+              ctx.stroke();
+            }
+            continue;
+          }
+
+          // Extremely faint completed outline during afterglow only
+          if (progress >= 1 && after < c.afterglowMs) {
+            const pts = c.path.pts;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.strokeStyle = `rgba(237,246,255,${0.08 * c.base * afterFade})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
           }
 
-          const delta0 = radius - el.activationRadius;
-          if (delta0 > 0 && delta0 < 40) {
-            const f = el.frame;
-            const flash = Math.exp(-(delta0 * delta0) / 300) * base * 0.55 * TRACE;
-            roundedRectPath(ctx, f.x, f.y, f.w, f.h, el.cornerRadius || 10);
-            ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.9, flash)})`;
-            ctx.lineWidth = 1.25;
-            ctx.stroke();
+          if (traveled > 0.5 && progress < 1.001) {
+            const headCW = c.startS + traveled;
+            const headCCW = c.startS - traveled;
+            drawDirectedTrail(c.path, headCW, +1, traveled, baseAlpha);
+            drawDirectedTrail(c.path, headCCW, -1, traveled, baseAlpha);
           }
-          ctx.restore();
         }
 
         if (t < 1) {
