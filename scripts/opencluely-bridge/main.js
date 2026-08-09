@@ -1811,7 +1811,7 @@ class ApplicationController {
               force: true,
               liveBackdrop: true,
               forceBackdrop: process.platform === "linux",
-              durationMs: 920,
+              durationMs: 1850,
             });
           } catch (scanError) {
             logger.warn("Visual scan failed to start", { error: scanError.message });
