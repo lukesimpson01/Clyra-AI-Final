@@ -7,24 +7,25 @@
     <link href="./src/styles/common.css" rel="stylesheet" />
     <style>
       :root {
-        --oc-glass: rgba(248, 249, 251, 0.82);
-        --oc-glass-open: rgba(255, 255, 255, 0.90);
+        /* Collapsed bar is solid white (no glass). Glass only when Ask expands. */
+        --oc-glass: #ffffff;
+        --oc-glass-open: rgba(255, 255, 255, 0.94);
         --oc-border: rgba(15, 23, 42, 0.07);
         --oc-text: #3d4656;
         --oc-text-strong: #1f2937;
         --oc-shadow: 0 12px 32px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.05);
-        --oc-btn-bg: rgba(255, 255, 255, 0.72);
-        --oc-btn-border: rgba(15, 23, 42, 0.05);
+        --oc-btn-bg: #ffffff;
+        --oc-btn-border: rgba(15, 23, 42, 0.06);
         --oc-close-bg: #ffffff;
         --oc-close-fg: #5b6575;
         --oc-drag: #8b95a5;
-        --oc-input-bg: rgba(255, 255, 255, 0.92);
-        --oc-msg-bg: rgba(255, 255, 255, 0.86);
+        --oc-input-bg: #ffffff;
+        --oc-msg-bg: #ffffff;
         --oc-ease: cubic-bezier(0.22, 1, 0.36, 1);
         --oc-ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
-        --oc-dur-w: 340ms;
-        --oc-dur-h: 320ms;
-        --oc-dur-fast: 160ms;
+        --oc-dur-w: 380ms;
+        --oc-dur-h: 360ms;
+        --oc-dur-fast: 180ms;
         --oc-accent: #4a7cff;
         --oc-accent-soft: rgba(74, 124, 255, 0.35);
         --oc-expanded-w: 600px;
@@ -37,37 +38,37 @@
 
       html.oc-stealth,
       html.oc-dark {
-        --oc-glass: rgba(22, 27, 34, 0.86);
-        --oc-glass-open: rgba(17, 24, 39, 0.94);
+        --oc-glass: #161b22;
+        --oc-glass-open: rgba(17, 24, 39, 0.96);
         --oc-border: rgba(148, 163, 184, 0.14);
         --oc-text: #cbd5e1;
         --oc-text-strong: #f1f5f9;
         --oc-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.28);
-        --oc-btn-bg: rgba(30, 41, 59, 0.88);
+        --oc-btn-bg: #1e293b;
         --oc-btn-border: rgba(148, 163, 184, 0.14);
-        --oc-close-bg: rgba(30, 41, 59, 0.96);
+        --oc-close-bg: #1e293b;
         --oc-close-fg: #e2e8f0;
         --oc-drag: #94a3b8;
-        --oc-input-bg: rgba(15, 23, 42, 0.9);
-        --oc-msg-bg: rgba(30, 41, 59, 0.9);
+        --oc-input-bg: #0f172a;
+        --oc-msg-bg: #1e293b;
         --oc-accent: #7aa2ff;
         --oc-accent-soft: rgba(122, 162, 255, 0.4);
       }
       @media (prefers-color-scheme: dark) {
         html:not(.oc-force-light) {
-          --oc-glass: rgba(22, 27, 34, 0.86);
-          --oc-glass-open: rgba(17, 24, 39, 0.94);
+          --oc-glass: #161b22;
+          --oc-glass-open: rgba(17, 24, 39, 0.96);
           --oc-border: rgba(148, 163, 184, 0.14);
           --oc-text: #cbd5e1;
           --oc-text-strong: #f1f5f9;
           --oc-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.28);
-          --oc-btn-bg: rgba(30, 41, 59, 0.88);
+          --oc-btn-bg: #1e293b;
           --oc-btn-border: rgba(148, 163, 184, 0.14);
-          --oc-close-bg: rgba(30, 41, 59, 0.96);
+          --oc-close-bg: #1e293b;
           --oc-close-fg: #e2e8f0;
           --oc-drag: #94a3b8;
-          --oc-input-bg: rgba(15, 23, 42, 0.9);
-          --oc-msg-bg: rgba(30, 41, 59, 0.9);
+          --oc-input-bg: #0f172a;
+          --oc-msg-bg: #1e293b;
           --oc-accent: #7aa2ff;
           --oc-accent-soft: rgba(122, 162, 255, 0.4);
         }
@@ -87,6 +88,17 @@
         -webkit-app-region: no-drag;
         color-scheme: light;
         transition: color-scheme 420ms ease;
+      }
+      /* Linux opaque BrowserWindow: solid white page so the bar never paints blank */
+      html.oc-linux-opaque,
+      html.oc-linux-opaque body {
+        background: #ffffff !important;
+      }
+      html.oc-linux-opaque.oc-stealth,
+      html.oc-linux-opaque.oc-stealth body,
+      html.oc-linux-opaque.oc-dark,
+      html.oc-linux-opaque.oc-dark body {
+        background: #161b22 !important;
       }
       html.oc-stealth, html.oc-stealth body,
       html.oc-dark, html.oc-dark body { color-scheme: dark; }
@@ -149,7 +161,15 @@
       .oc-shell.is-boot-reveal .oc-stealth-wrap { transition-delay: 220ms; }
       .oc-shell.is-boot-reveal .oc-drag { transition-delay: 260ms; }
 
-      .oc-shell.is-wide,
+      .oc-shell.is-wide:not(.is-chat-open) {
+        width: var(--oc-expanded-w);
+        border-radius: 999px;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
       .oc-shell.is-chat-open {
         width: var(--oc-expanded-w);
         border-radius: 22px;
@@ -169,20 +189,21 @@
         width: max-content;
         min-width: 420px;
         background: var(--oc-glass);
-        border: 1px solid rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(15, 23, 42, 0.08);
         border-radius: 999px;
         box-shadow: var(--oc-shadow);
-        backdrop-filter: blur(28px) saturate(1.25);
-        -webkit-backdrop-filter: blur(28px) saturate(1.25);
+        /* Collapsed: solid surface — no glass / blur transparency */
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         -webkit-app-region: drag;
         transition:
           width var(--oc-dur-w) var(--oc-ease),
           min-width var(--oc-dur-w) var(--oc-ease),
-          border-radius var(--oc-dur-h) var(--oc-ease-soft),
-          background 420ms var(--oc-ease-soft),
-          box-shadow 420ms var(--oc-ease-soft),
-          border-color 420ms var(--oc-ease-soft),
-          opacity 280ms var(--oc-ease-soft);
+          border-radius var(--oc-dur-h) var(--oc-ease),
+          background 420ms var(--oc-ease),
+          box-shadow 420ms var(--oc-ease),
+          border-color 420ms var(--oc-ease),
+          opacity 320ms var(--oc-ease);
       }
       html.oc-stealth .command-tab {
         border-color: rgba(148, 163, 184, 0.22);
@@ -230,7 +251,8 @@
         pointer-events: auto;
       }
       html.oc-stealth .oc-close { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
-      .oc-close:hover { filter: brightness(1.04); transform: scale(1.04); }
+      .oc-close:hover { filter: brightness(1.03); transform: scale(1.05); }
+      .oc-close:active { transform: scale(0.97); }
       .oc-close svg {
         width: 12px;
         height: 12px;
@@ -283,27 +305,35 @@
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        transition: transform 180ms var(--oc-ease), background 220ms ease, box-shadow 180ms ease, color 220ms ease, border-color 220ms ease, opacity 360ms var(--oc-ease);
+        transition:
+          transform 220ms var(--oc-ease),
+          background 260ms var(--oc-ease),
+          box-shadow 240ms var(--oc-ease),
+          color 240ms var(--oc-ease),
+          border-color 240ms var(--oc-ease),
+          opacity 360ms var(--oc-ease),
+          filter 240ms var(--oc-ease);
         white-space: nowrap;
+        will-change: transform;
       }
       .oc-pill-btn .oc-btn-icon {
         width: 16px;
         height: 16px;
         flex-shrink: 0;
         display: block;
-        transition: transform 280ms var(--oc-ease), opacity 200ms ease;
+        transition: transform 280ms var(--oc-ease), opacity 220ms var(--oc-ease);
       }
       .oc-pill-btn .oc-btn-label { line-height: 1; }
       .oc-pill-btn:hover {
-        filter: brightness(1.04);
+        filter: brightness(1.03);
         color: var(--oc-text-strong);
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
       }
       .oc-pill-btn:hover .oc-btn-icon {
         transform: scale(1.08) translateY(-0.5px);
       }
-      .oc-pill-btn:active { transform: translateY(0); }
+      .oc-pill-btn:active { transform: translateY(0) scale(0.985); }
       .oc-pill-btn:active .oc-btn-icon { transform: scale(0.96); }
       .oc-pill-btn.is-active {
         background: rgba(243, 244, 246, 0.95);
@@ -454,7 +484,7 @@
         transform-origin: top center;
         transition:
           height var(--oc-dur-h) var(--oc-ease),
-          opacity 200ms var(--oc-ease-soft);
+          opacity 280ms var(--oc-ease);
       }
       .oc-shell.is-chat-open .chat-drawer {
         height: var(--oc-drawer-h);
@@ -942,6 +972,15 @@
       </div>
     </div>
 
+    <script>
+      // Linux Electron often runs with --disable-gpu where transparent windows
+      // paint blank — force an opaque page surface matching the solid white bar.
+      try {
+        if (/Linux/i.test(navigator.userAgent || "") || /linux/i.test(navigator.platform || "")) {
+          document.documentElement.classList.add("oc-linux-opaque");
+        }
+      } catch (_) { /* ignore */ }
+    </script>
     <script src="./src/ui/bar-chat.js"></script>
   </body>
 </html>

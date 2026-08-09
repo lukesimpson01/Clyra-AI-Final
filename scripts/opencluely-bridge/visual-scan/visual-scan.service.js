@@ -117,6 +117,15 @@ $out = New-Object System.Collections.Generic.List[object]
           const title = String(m[6] || "").trim();
           if (w < 80 || h < 60) continue;
           if (/opencluely|clyra visual|visual scan/i.test(title)) continue;
+          // Skip desktop chrome (panel/dock/plank) — tracing them creates full-width
+          // horizontal streaks that look like radar scanlines.
+          if (/^(xfce4-panel|plank|dock|panel|Desktop|gnome-shell|plasmashell|waybar|polybar)$/i.test(title)) {
+            continue;
+          }
+          if (/xfce4-panel|plank|gnome-panel|latte-dock/i.test(title)) continue;
+          // Skip near-fullscreen shell surfaces / ultra-wide thin bars
+          if (h < 80 && w > 800) continue;
+          if (w < 80 && h > 600) continue;
           windows.push({
             id: m[1],
             app: title.split(" ").slice(0, 2).join(" ") || "App",
@@ -146,63 +155,105 @@ $out = New-Object System.Collections.Generic.List[object]
     const els = [];
     const { x, y, w, h } = frame;
     if (w < 120 || h < 100) return els;
+    const label = String(app || "");
 
     els.push({
       role: "toolbar",
-      frame: { x: x + 8, y: y + 8, w: Math.max(40, w - 16), h: Math.min(44, Math.round(h * 0.08)) },
-      importance: 0.55,
+      frame: { x: x + 8, y: y + 8, w: Math.max(40, w - 16), h: Math.min(40, Math.round(h * 0.07)) },
+      importance: 0.7,
       hierarchyDepth: 1,
       cornerRadius: 8,
     });
 
-    if (/safari|chrome|firefox|edge|brave|arc|example/i.test(app || "")) {
-      const barH = Math.min(32, Math.round(h * 0.05));
-      const barW = Math.min(w * 0.55, Math.max(160, w - 180));
+    const isBrowser = /safari|chrome|firefox|edge|brave|arc|chromium|example/i.test(label);
+    const isIde = /code|cursor|jetbrains|intellij|webstorm|sublime|zed/i.test(label);
+
+    if (isBrowser || isIde) {
+      // Tab strip + individual tab contours (wave reveals each as it reaches them).
+      const stripY = y + (isBrowser ? 44 : Math.round(h * 0.08));
+      const stripH = isBrowser ? 28 : 30;
+      const stripW = Math.max(80, w - 24);
       els.push({
-        role: "search",
+        role: "tabStrip",
+        frame: { x: x + 12, y: stripY, w: stripW, h: stripH },
+        importance: 0.78,
+        hierarchyDepth: 1,
+        cornerRadius: 6,
+      });
+
+      const tabCount = Math.min(5, Math.max(3, Math.floor(stripW / 120)));
+      const gap = 4;
+      const tabW = Math.min(148, Math.floor((stripW - gap * (tabCount - 1) - 28) / tabCount));
+      for (let i = 0; i < tabCount; i++) {
+        els.push({
+          role: "tab",
+          frame: {
+            x: x + 16 + i * (tabW + gap),
+            y: stripY + 2,
+            w: tabW,
+            h: stripH - 4,
+          },
+          importance: i === 0 ? 0.82 : 0.62,
+          selected: i === 0,
+          hierarchyDepth: 2,
+          cornerRadius: 7,
+        });
+      }
+    }
+
+    if (isBrowser) {
+      const barH = Math.min(30, Math.round(h * 0.045));
+      const barW = Math.min(w * 0.58, Math.max(160, w - 180));
+      els.push({
+        role: "searchField",
         frame: {
           x: x + Math.round((w - barW) / 2),
           y: y + 12,
           w: barW,
           h: barH,
         },
-        importance: 0.4,
+        importance: 0.6,
         hierarchyDepth: 2,
-        cornerRadius: 8,
+        cornerRadius: Math.round(barH / 2),
       });
       els.push({
-        role: "tabs",
-        frame: { x: x + 12, y: y + 48, w: Math.max(80, w - 24), h: 28 },
+        role: "content",
+        frame: {
+          x: x + 10,
+          y: y + 84,
+          w: Math.max(80, w - 20),
+          h: Math.max(60, h - 100),
+        },
         importance: 0.45,
-        hierarchyDepth: 2,
-        cornerRadius: 6,
+        hierarchyDepth: 1,
+        cornerRadius: 8,
       });
     }
 
-    if (/code|cursor|finder|terminal|slack|notion|figma/i.test(app || "") && w > 420) {
+    if ((isIde || /finder|terminal|slack|notion|figma|discord/i.test(label)) && w > 420) {
       els.push({
         role: "sidebar",
         frame: {
           x: x + 10,
-          y: y + Math.round(h * 0.12),
+          y: y + Math.round(h * 0.14),
           w: Math.min(220, Math.round(w * 0.22)),
-          h: Math.max(80, Math.round(h * 0.72)),
+          h: Math.max(80, Math.round(h * 0.7)),
         },
-        importance: 0.5,
+        importance: 0.68,
         hierarchyDepth: 1,
-        cornerRadius: 10,
+        cornerRadius: 8,
       });
       els.push({
         role: "editor",
         frame: {
           x: x + Math.min(230, Math.round(w * 0.24)),
-          y: y + Math.round(h * 0.12),
+          y: y + Math.round(h * 0.14),
           w: Math.max(120, w - Math.min(250, Math.round(w * 0.28))),
-          h: Math.max(80, Math.round(h * 0.72)),
+          h: Math.max(80, Math.round(h * 0.7)),
         },
-        importance: 0.48,
+        importance: 0.65,
         hierarchyDepth: 1,
-        cornerRadius: 10,
+        cornerRadius: 8,
       });
     }
 
@@ -291,19 +342,28 @@ $out = New-Object System.Collections.Generic.List[object]
       if (filtered.length >= 120) break;
     }
 
-    const needsBackdrop = process.platform === "linux" || opts.forceBackdrop === true;
+    // Linux (and any GPU-disabled Electron) cannot show true transparent overlays —
+    // always freeze a live desktop snapshot as the backdrop so the wave is visible.
+    const needsBackdrop =
+      process.platform === "linux" ||
+      opts.forceBackdrop === true ||
+      opts.liveBackdrop === true ||
+      Boolean(opts.backdropBuffer);
     const scene = {
       width: bounds.width,
       height: bounds.height,
       scale,
-      durationMs: 1650,
+      durationMs: opts.durationMs || 1850,
       origin: { x: originX, y: originY },
-      maxRadius: Math.hypot(bounds.width / 2, bounds.height / 2) * 1.05,
+      maxRadius: Math.hypot(bounds.width / 2, bounds.height / 2) * 1.08,
       elements: filtered,
       reason: opts.reason || "scan",
       backdropPath: null,
+      backdropDataUrl: null,
       hasBackdrop: false,
       needsBackdrop,
+      liveBackdrop: opts.liveBackdrop !== false,
+      providedBackdropBuffer: opts.backdropBuffer || null,
     };
 
     try {
@@ -405,8 +465,21 @@ $out = New-Object System.Collections.Generic.List[object]
 
     if (scene.needsBackdrop) {
       try {
-        scene.backdropPath = await this.#captureBackdropFile(bounds);
-        scene.hasBackdrop = Boolean(scene.backdropPath);
+        // Prefer a buffer provided by the caller (e.g. post-restore live frame with bar).
+        if (scene.providedBackdropBuffer && Buffer.isBuffer(scene.providedBackdropBuffer)) {
+          const tmp = path.join(os.tmpdir(), `oc-scan-live-${process.pid}-${Date.now()}.png`);
+          fs.writeFileSync(tmp, scene.providedBackdropBuffer);
+          this._backdropTmp = tmp;
+          scene.backdropPath = tmp;
+          scene.hasBackdrop = true;
+        } else {
+          // Small delay so restored OpenCluely bar is composited into the live frame.
+          if (scene.liveBackdrop) {
+            await new Promise((r) => setTimeout(r, 90));
+          }
+          scene.backdropPath = await this.#captureBackdropFile(bounds);
+          scene.hasBackdrop = Boolean(scene.backdropPath);
+        }
       } catch (error) {
         this.logger.warn?.("[visual-scan] backdrop capture failed", error?.message || error);
       }
@@ -461,21 +534,51 @@ $out = New-Object System.Collections.Generic.List[object]
       /* ignore */
     }
 
-    const payload = JSON.stringify(scene).replace(/</g, "\\u003c");
+    // Never serialize Buffer / internal flags into the renderer payload.
+    const rendererScene = {
+      width: scene.width,
+      height: scene.height,
+      scale: scene.scale,
+      durationMs: scene.durationMs,
+      origin: scene.origin,
+      maxRadius: scene.maxRadius,
+      elements: scene.elements,
+      reason: scene.reason,
+      backdropPath: scene.backdropPath,
+      backdropDataUrl: scene.backdropDataUrl,
+      hasBackdrop: scene.hasBackdrop,
+    };
+    const payload = JSON.stringify(rendererScene).replace(/</g, "\\u003c");
 
     this.overlay.webContents.on("did-finish-load", () => {
       if (!this.overlay || this.overlay.isDestroyed()) return;
       try {
         if (process.platform === "linux") this.overlay.show();
         else this.overlay.showInactive();
-        try {
-          this.overlay.moveTop();
-        } catch (_) {
-          /* ignore */
-        }
+        const keepTop = () => {
+          try {
+            if (!this.overlay || this.overlay.isDestroyed()) return;
+            this.overlay.setAlwaysOnTop(true, "screen-saver");
+            this.overlay.moveTop();
+            if (typeof this.overlay.setVisibleOnAllWorkspaces === "function") {
+              this.overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        };
+        keepTop();
+        // Re-assert top after the main bar finishes restoring (critical on Linux).
+        setTimeout(keepTop, 40);
+        setTimeout(keepTop, 120);
+        setTimeout(keepTop, 280);
+        setTimeout(keepTop, 520);
         this.overlay.webContents
           .executeJavaScript(`window.__runVisualScan && window.__runVisualScan(${payload});`, true)
-          .then(() => this.logger.info?.("[visual-scan] animation started"))
+          .then(() => this.logger.info?.("[visual-scan] animation started", {
+            elements: scene.elements?.length || 0,
+            backdrop: Boolean(scene.hasBackdrop),
+          }))
           .catch((error) =>
             this.logger.warn?.("[visual-scan] run failed", error?.message || error),
           );

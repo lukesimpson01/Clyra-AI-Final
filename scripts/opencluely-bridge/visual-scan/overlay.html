@@ -10,14 +10,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: transparent !important;
-      pointer-events: none;
-    }
-    canvas {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
+      background: #0a0a0a !important;
       pointer-events: none;
     }
     #backdrop {
@@ -28,6 +21,15 @@
       object-fit: cover;
       pointer-events: none;
       display: none;
+      z-index: 0;
+    }
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
     }
   </style>
 </head>
@@ -36,23 +38,42 @@
   <canvas id="c"></canvas>
   <script>
     const canvas = document.getElementById("c");
-    const ctx = canvas.getContext("2d", { alpha: true });
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
     let raf = 0;
 
-    function roundedRectPath(ctx, x, y, w, h, r) {
-      const radius = Math.min(r, w / 2, h / 2);
-      ctx.beginPath();
-      ctx.moveTo(x + radius, y);
-      ctx.arcTo(x + w, y, x + w, y + h, radius);
-      ctx.arcTo(x + w, y + h, x, y + h, radius);
-      ctx.arcTo(x, y + h, x, y, radius);
-      ctx.arcTo(x, y, x + w, y, radius);
-      ctx.closePath();
+    function roundedRectPath(c, x, y, w, h, r) {
+      const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+      c.beginPath();
+      c.moveTo(x + radius, y);
+      c.arcTo(x + w, y, x + w, y + h, radius);
+      c.arcTo(x + w, y + h, x, y + h, radius);
+      c.arcTo(x, y + h, x, y, radius);
+      c.arcTo(x, y, x + w, y, radius);
+      c.closePath();
     }
 
-    function perimeter(w, h, r) {
-      const radius = Math.min(r, w / 2, h / 2);
-      return 2 * (w + h) - 8 * radius + 2 * Math.PI * radius;
+    function sampleRoundedRect(x, y, w, h, r, spacing) {
+      const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+      const pts = [];
+      const push = (px, py) => pts.push({ x: px, y: py });
+      const step = Math.max(6, spacing);
+      for (let i = radius; i <= w - radius; i += step) push(x + i, y);
+      for (let a = -Math.PI / 2; a <= 0; a += 0.14) {
+        push(x + w - radius + Math.cos(a) * radius, y + radius + Math.sin(a) * radius);
+      }
+      for (let i = radius; i <= h - radius; i += step) push(x + w, y + i);
+      for (let a = 0; a <= Math.PI / 2; a += 0.14) {
+        push(x + w - radius + Math.cos(a) * radius, y + h - radius + Math.sin(a) * radius);
+      }
+      for (let i = w - radius; i >= radius; i -= step) push(x + i, y + h);
+      for (let a = Math.PI / 2; a <= Math.PI; a += 0.14) {
+        push(x + radius + Math.cos(a) * radius, y + h - radius + Math.sin(a) * radius);
+      }
+      for (let i = h - radius; i >= radius; i -= step) push(x, y + i);
+      for (let a = Math.PI; a <= (Math.PI * 3) / 2; a += 0.14) {
+        push(x + radius + Math.cos(a) * radius, y + radius + Math.sin(a) * radius);
+      }
+      return pts;
     }
 
     window.__runVisualScan = function runVisualScan(scene) {
@@ -61,14 +82,15 @@
       const hasBackdrop = Boolean(scene.backdropPath || scene.backdropDataUrl);
       if (hasBackdrop && backdrop) {
         try {
-          if (scene.backdropPath && typeof require === "function") {
+          if (scene.backdropDataUrl) {
+            backdrop.src = scene.backdropDataUrl;
+          } else if (scene.backdropPath && typeof require === "function") {
             const fs = require("fs");
             const buf = fs.readFileSync(scene.backdropPath);
             backdrop.src = "data:image/png;base64," + buf.toString("base64");
-          } else if (scene.backdropDataUrl) {
-            backdrop.src = scene.backdropDataUrl;
           }
           backdrop.style.display = "block";
+          document.body.style.background = "#000";
         } catch (e) {
           console.warn("backdrop load failed", e);
           backdrop.style.display = "none";
@@ -77,6 +99,7 @@
         backdrop.removeAttribute("src");
         backdrop.style.display = "none";
       }
+
       const dpr = Math.min(window.devicePixelRatio || scene.scale || 1, 2);
       const W = scene.width;
       const H = scene.height;
@@ -87,119 +110,145 @@
       const reduce =
         window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const duration = reduce ? 900 : scene.durationMs || 1650;
+      const duration = reduce ? 1000 : scene.durationMs || 1850;
       const origin = scene.origin || { x: W / 2, y: H / 2 };
-      const maxRadius = scene.maxRadius || Math.hypot(W / 2, H / 2) * 1.05;
-      const elements = (scene.elements || []).map((el) => ({
-        ...el,
-        peri: perimeter(el.frame.w, el.frame.h, el.cornerRadius || 10),
-      }));
+      const maxRadius = scene.maxRadius || Math.hypot(W / 2, H / 2) * 1.08;
+
+      const elements = (scene.elements || []).map((el) => {
+        const f = el.frame;
+        const r = el.cornerRadius || 10;
+        const spacing = Math.max(8, Math.min(f.w, f.h) * 0.04);
+        const samples = sampleRoundedRect(f.x, f.y, f.w, f.h, r, spacing).map((p, idx, arr) => ({
+          x: p.x,
+          y: p.y,
+          radial: Math.hypot(p.x - origin.x, p.y - origin.y),
+          pathT: arr.length > 1 ? idx / (arr.length - 1) : 0,
+        }));
+        const activationRadius = Math.min(...samples.map((s) => s.radial));
+        return { ...el, samples, activationRadius };
+      });
 
       const start = performance.now();
+      // Wave stays subtle; UI traces carry the recognition (Linux needs stronger traces).
+      const WAVE = hasBackdrop ? 0.95 : 0.8;
+      const TRACE = hasBackdrop ? 2.05 : 1.7;
 
       function frame(now) {
         const elapsed = now - start;
         const t = Math.min(1, elapsed / duration);
-        // Soft ease-out — wave feels calm, not linear
-        const eased = 1 - Math.pow(1 - t, 1.45);
+        const eased = t < 0.92 ? (t / 0.92) * 0.96 : 0.96 + ((t - 0.92) / 0.08) * 0.04;
         const radius = eased * maxRadius;
 
         ctx.clearRect(0, 0, W, H);
 
-        // Centre pulse (0–140ms)
-        if (elapsed < 150) {
+        // Centre ignition
+        if (elapsed < 170) {
           const p = Math.min(1, elapsed / 140);
-          const glow = 4 + p * 14;
-          const alpha = (1 - p * 0.85) * 0.5;
-          const g = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, glow);
-          g.addColorStop(0, `rgba(255,255,255,${0.62 * alpha})`);
-          g.addColorStop(0.4, `rgba(225,238,255,${0.26 * alpha})`);
-          g.addColorStop(1, "rgba(195,220,255,0)");
+          const core = 2.2 + p * 3.2;
+          const halo = 8 + p * 18;
+          const a = (1 - p * 0.72) * 0.9 * WAVE;
+          const g = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, halo);
+          g.addColorStop(0, `rgba(255,255,255,${Math.min(1, 0.95 * a)})`);
+          g.addColorStop(0.3, `rgba(237,246,255,${0.42 * a})`);
+          g.addColorStop(0.7, `rgba(205,228,255,${0.12 * a})`);
+          g.addColorStop(1, "rgba(205,228,255,0)");
           ctx.fillStyle = g;
           ctx.beginPath();
-          ctx.arc(origin.x, origin.y, glow, 0, Math.PI * 2);
+          ctx.arc(origin.x, origin.y, halo, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = `rgba(255,255,255,${Math.min(1, 0.95 * a)})`;
+          ctx.beginPath();
+          ctx.arc(origin.x, origin.y, core, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // Narrow luminous radial band (not a thick radar / concentric HUD)
-        if (!reduce && elapsed > 90) {
-          const bandBoost = hasBackdrop ? 1.35 : 1;
-          // Single sharp core + one soft feather — avoid double rings
+        // Radial intelligence front — narrow, restrained (not a radar ring)
+        if (!reduce && elapsed > 110) {
+          const haze = ctx.createRadialGradient(
+            origin.x, origin.y, Math.max(0, radius - 18),
+            origin.x, origin.y, radius + 6,
+          );
+          haze.addColorStop(0, "rgba(255,255,255,0)");
+          haze.addColorStop(0.82, `rgba(237,246,255,${0.014 * WAVE})`);
+          haze.addColorStop(0.94, `rgba(255,255,255,${0.055 * WAVE})`);
+          haze.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = haze;
+          ctx.beginPath();
+          ctx.arc(origin.x, origin.y, radius + 8, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Sharp core front (~1px)
           ctx.beginPath();
           ctx.arc(origin.x, origin.y, Math.max(0.5, radius), 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(245,248,255,${0.14 * bandBoost})`;
+          ctx.strokeStyle = `rgba(255,255,255,${0.18 * WAVE})`;
           ctx.lineWidth = 1.15;
           ctx.stroke();
+
+          // Soft feather only
           ctx.beginPath();
-          ctx.arc(origin.x, origin.y, Math.max(0.5, radius - 1.2), 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(225,238,255,${0.06 * bandBoost})`;
-          ctx.lineWidth = 3.5;
-          ctx.stroke();
-          // Optional micro-ripple ~50ms behind
-          const r2 = Math.max(0.5, radius - maxRadius * 0.04);
-          ctx.beginPath();
-          ctx.arc(origin.x, origin.y, r2, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(195,220,255,${0.03 * bandBoost})`;
-          ctx.lineWidth = 8;
+          ctx.arc(origin.x, origin.y, Math.max(0.5, radius), 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(218,236,255,${0.07 * WAVE})`;
+          ctx.lineWidth = 4;
           ctx.stroke();
         }
 
-        // Contour traces — draw as wave reaches each element
-        for (const el of elements) {
-          const delta = radius - (el.activationRadius || 0);
-          if (delta < 0) continue;
-          const hierarchyDelay = (el.hierarchyDepth || 0) * 7;
-          const local = delta - hierarchyDelay;
-          if (local < 0) continue;
+        // Contour traces (radial intersection)
+        for (let ei = 0; ei < elements.length; ei++) {
+          const el = elements[ei];
+          const samples = el.samples;
+          if (!samples || !samples.length) continue;
 
-          const pxPerMs = maxRadius / duration;
-          const traceMs = Math.min(280, Math.max(140, el.peri * 0.11));
-          const drawT = Math.min(1, local / (traceMs * pxPerMs));
-          const fadeStart = traceMs * pxPerMs;
-          const fadeT =
-            local > fadeStart
-              ? Math.min(1, (local - fadeStart) / (220 * pxPerMs))
-              : 0;
-          if (fadeT >= 1) continue;
+          let base = 0.42;
+          const imp = el.importance || 0;
+          if (imp >= 0.95) base = 0.88;
+          else if (imp >= 0.78) base = 0.72;
+          else if (imp >= 0.6) base = 0.58;
+          else if (imp >= 0.45) base = 0.48;
+          else if (imp >= 0.35) base = 0.36;
 
-          let base = 0.22;
-          if ((el.importance || 0) >= 0.95) base = 0.42;
-          else if ((el.importance || 0) >= 0.5) base = 0.28;
-          else if ((el.importance || 0) >= 0.35) base = 0.18;
+          if (el.role === "tab") base = Math.max(base, el.selected ? 0.78 : 0.62);
 
-          if (reduce) {
-            // Soft highlight only
-            const opacity = base * 0.55 * (1 - fadeT);
-            const f = el.frame;
-            ctx.save();
-            roundedRectPath(ctx, f.x, f.y, f.w, f.h, el.cornerRadius || 10);
-            ctx.strokeStyle = `rgba(255,255,255,${opacity})`;
-            ctx.lineWidth = 1;
+          ctx.save();
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+
+          // Draw short segments with per-segment alpha (wave intersection).
+          for (let i = 0; i < samples.length - 1; i++) {
+            const s0 = samples[i];
+            const s1 = samples[i + 1];
+            const radial = (s0.radial + s1.radial) * 0.5;
+            const delta = radius - radial;
+            const frontSoft = 14;
+            const trailStart = 4;
+            const trailEnd = 220;
+            const reveal = delta < -frontSoft ? 0 : delta < 0 ? (delta + frontSoft) / frontSoft : 1;
+            const fade = delta <= trailStart ? 1 : Math.max(0, 1 - (delta - trailStart) / (trailEnd - trailStart));
+            const contact = Math.exp(-(delta * delta) / 60);
+            const alpha = Math.min(0.96, (base * reveal * fade + contact * 0.4) * TRACE);
+            if (alpha < 0.04) continue;
+
+            ctx.beginPath();
+            ctx.moveTo(s0.x, s0.y);
+            ctx.lineTo(s1.x, s1.y);
+            // Soft bloom
+            ctx.strokeStyle = `rgba(205,228,255,${0.28 * alpha})`;
+            ctx.lineWidth = 5.5;
             ctx.stroke();
-            ctx.restore();
-            continue;
+            // Crisp edge
+            ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
           }
 
-          const opacity = base * (0.3 + 0.7 * drawT) * (1 - fadeT);
-          const distFront = Math.abs(local);
-          const waveBoost = Math.exp(-(distFront * distFront) / 1100) * 0.18;
-
-          const f = el.frame;
-          ctx.save();
-          roundedRectPath(ctx, f.x, f.y, f.w, f.h, el.cornerRadius || 10);
-          ctx.setLineDash([el.peri]);
-          ctx.lineDashOffset = el.peri * (1 - drawT);
-          // Slightly stronger on Linux snapshot path so the effect reads on busy wallpapers.
-          const boost = hasBackdrop ? 1.25 : 1;
-          ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.62, (opacity + waveBoost) * boost)})`;
-          ctx.lineWidth = 1.15;
-          ctx.shadowColor = `rgba(195,220,255,${0.22 * opacity * boost})`;
-          ctx.shadowBlur = 7;
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-          ctx.strokeStyle = `rgba(225,238,255,${0.14 * opacity * boost})`;
-          ctx.lineWidth = 3.2;
-          ctx.stroke();
+          const delta0 = radius - el.activationRadius;
+          if (delta0 > 0 && delta0 < 40) {
+            const f = el.frame;
+            const flash = Math.exp(-(delta0 * delta0) / 300) * base * 0.55 * TRACE;
+            roundedRectPath(ctx, f.x, f.y, f.w, f.h, el.cornerRadius || 10);
+            ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.9, flash)})`;
+            ctx.lineWidth = 1.25;
+            ctx.stroke();
+          }
           ctx.restore();
         }
 
@@ -207,6 +256,9 @@
           raf = requestAnimationFrame(frame);
         } else {
           ctx.clearRect(0, 0, W, H);
+          try {
+            if (window.__visualScanDone) window.__visualScanDone();
+          } catch (_) { /* ignore */ }
         }
       }
 

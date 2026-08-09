@@ -1484,7 +1484,7 @@ class ApplicationController {
 
   _isScreenQuestion(text) {
     const t = String(text || "");
-    return /\b(what('?s| is) on (my )?screen|see (my )?screen|look at (my )?screen|on my screen|what (page|site|app|website|article) (am i|is) (on|open|this)|what (am i|is) (looking at|viewing)|main (heading|title|article)|read (the )?(page|screen|heading|title)|quote the (main |page )?(heading|title|article)|interview coding|coding (interview|page)|visible on (the )?screen|describe (the |my )?(screen|page|window|desktop|background)|screenshot|what color|desktop background|background color|what do you see|can you see)\b/i.test(
+    return /\b(what('?s| is) on (my |your )?screen|see (my |your )?screen|look at (my |your )?screen|on (my |your )screen|what (page|site|app|website|article) (am i|is) (on|open|this)|what (am i|is) (looking at|viewing)|main (heading|title|article)|read (the )?(page|screen|heading|title)|quote the (main |page )?(heading|title|article)|interview coding|coding (interview|page)|visible on (the )?screen|describe (the |my |your )?(screen|page|window|desktop|background)|screenshot|what color|desktop background|background color|what do you see|can you see)\b/i.test(
       t
     );
   }
@@ -1791,18 +1791,7 @@ class ApplicationController {
           logger.warn("Failed to dump last capture", { error: dumpError.message });
         }
       } finally {
-        // 3) Start Visual Intelligence scan AFTER the clean screenshot is taken.
-        if (wantScan) {
-          try {
-            void this.visualScan.start({
-              reason: visionMode || "screenshot",
-              force: true,
-            });
-          } catch (scanError) {
-            logger.warn("Visual scan failed to start", { error: scanError.message });
-          }
-        }
-        // 4) Restore OpenCluely UI (scan overlay stays on top while it runs).
+        // 3) Restore OpenCluely bar first so it stays visible during the scan.
         for (const item of hiddenForCapture) {
           try {
             const win = item.win;
@@ -1811,6 +1800,21 @@ class ApplicationController {
             }
           } catch (_) {
             /* ignore */
+          }
+        }
+        // 4) Visual Intelligence scan AFTER capture — live backdrop includes the
+        // restored bar so the effect is visible (and bar appears in the freeze).
+        if (wantScan) {
+          try {
+            void this.visualScan.start({
+              reason: visionMode || "screenshot",
+              force: true,
+              liveBackdrop: true,
+              forceBackdrop: process.platform === "linux",
+              durationMs: 1850,
+            });
+          } catch (scanError) {
+            logger.warn("Visual scan failed to start", { error: scanError.message });
           }
         }
       }
@@ -2191,9 +2195,40 @@ class ApplicationController {
     });
   }
 
+  formatVisionUserError(errorMessage) {
+    const raw = String(errorMessage || "");
+    if (/429|quota|rate.?limit|RESOURCE_EXHAUSTED|out of credits/i.test(raw)) {
+      return "I'm out of credits for Gemini right now — screen capture and the Visual Intelligence scan still ran, but I can't describe what's on your screen until the API quota is restored.";
+    }
+    if (/403|PERMISSION_DENIED|denied access/i.test(raw)) {
+      return "Gemini denied access for this API key. Check the key permissions, then try again.";
+    }
+    if (/GEMINI_API_KEY/i.test(raw)) {
+      return "Gemini API key is missing. Add GEMINI_API_KEY to your .env and restart OpenCluely.";
+    }
+    // Strip raw JSON dumps from provider errors for the chat UI.
+    const cleaned = raw
+      .replace(/\{[\s\S]*\}$/m, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return cleaned.slice(0, 280) || "Screen analysis failed.";
+  }
+
   broadcastOCRError(errorMessage) {
+    const friendly = this.formatVisionUserError(errorMessage);
+    // Show in the Ask drawer as a normal assistant reply (not a raw JSON dump).
+    try {
+      windowManager.showLLMResponse(friendly, {
+        skill: this.activeSkill,
+        usedFallback: true,
+        isImageAnalysis: true,
+        messageId: `vision-err-${Date.now()}`,
+      });
+    } catch (_) {
+      /* ignore */
+    }
     windowManager.broadcastToAllWindows("ocr-error", {
-      error: errorMessage,
+      error: friendly,
       timestamp: new Date().toISOString(),
     });
   }
