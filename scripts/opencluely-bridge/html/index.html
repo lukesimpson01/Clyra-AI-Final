@@ -7,15 +7,15 @@
     <link href="./src/styles/common.css" rel="stylesheet" />
     <style>
       :root {
-        /* Collapsed pill: fully opaque. Expanded shell fades to normal glass. */
-        --oc-bar-solid: #f8f9fb;
+        /* Collapsed pill matches button fill so chrome blends into one surface. */
+        --oc-bar-solid: #ffffff;
         --oc-glass: rgba(248, 249, 251, 0.82);
         --oc-glass-open: rgba(255, 255, 255, 0.90);
         --oc-border: rgba(15, 23, 42, 0.07);
         --oc-text: #3d4656;
         --oc-text-strong: #1f2937;
         --oc-shadow: 0 12px 32px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.05);
-        --oc-btn-bg: rgba(255, 255, 255, 0.72);
+        --oc-btn-bg: #ffffff;
         --oc-btn-border: rgba(15, 23, 42, 0.05);
         --oc-close-bg: #ffffff;
         --oc-close-fg: #5b6575;
@@ -39,16 +39,16 @@
 
       html.oc-stealth,
       html.oc-dark {
-        --oc-bar-solid: #161b22;
+        --oc-bar-solid: #1e293b;
         --oc-glass: rgba(22, 27, 34, 0.86);
         --oc-glass-open: rgba(17, 24, 39, 0.94);
         --oc-border: rgba(148, 163, 184, 0.14);
         --oc-text: #cbd5e1;
         --oc-text-strong: #f1f5f9;
         --oc-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.28);
-        --oc-btn-bg: rgba(30, 41, 59, 0.88);
+        --oc-btn-bg: #1e293b;
         --oc-btn-border: rgba(148, 163, 184, 0.14);
-        --oc-close-bg: rgba(30, 41, 59, 0.96);
+        --oc-close-bg: #1e293b;
         --oc-close-fg: #e2e8f0;
         --oc-drag: #94a3b8;
         --oc-input-bg: rgba(15, 23, 42, 0.9);
@@ -58,16 +58,16 @@
       }
       @media (prefers-color-scheme: dark) {
         html:not(.oc-force-light) {
-          --oc-bar-solid: #161b22;
+          --oc-bar-solid: #1e293b;
           --oc-glass: rgba(22, 27, 34, 0.86);
           --oc-glass-open: rgba(17, 24, 39, 0.94);
           --oc-border: rgba(148, 163, 184, 0.14);
           --oc-text: #cbd5e1;
           --oc-text-strong: #f1f5f9;
           --oc-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.28);
-          --oc-btn-bg: rgba(30, 41, 59, 0.88);
+          --oc-btn-bg: #1e293b;
           --oc-btn-border: rgba(148, 163, 184, 0.14);
-          --oc-close-bg: rgba(30, 41, 59, 0.96);
+          --oc-close-bg: #1e293b;
           --oc-close-fg: #e2e8f0;
           --oc-drag: #94a3b8;
           --oc-input-bg: rgba(15, 23, 42, 0.9);
@@ -190,9 +190,9 @@
         padding: 0 12px 0 10px;
         width: max-content;
         min-width: 420px;
-        /* Collapsed: zero transparency (fully opaque pill) */
+        /* Collapsed: opaque, same fill as buttons so chrome reads as one surface */
         background: var(--oc-bar-solid);
-        border: 1px solid rgba(15, 23, 42, 0.08);
+        border: 1px solid rgba(15, 23, 42, 0.06);
         border-radius: 999px;
         box-shadow: var(--oc-shadow);
         backdrop-filter: none;
@@ -209,6 +209,30 @@
       }
       html.oc-stealth .command-tab {
         border-color: rgba(148, 163, 184, 0.22);
+      }
+
+      /* Collapsed: flatten nested pills so buttons blend into the bar */
+      .oc-shell:not(.is-chat-open) .oc-pill-btn,
+      .oc-shell:not(.is-chat-open) .oc-stealth-wrap {
+        background: transparent;
+        border-color: transparent;
+        box-shadow: none;
+      }
+      .oc-shell:not(.is-chat-open) .oc-close,
+      .oc-shell:not(.is-chat-open) .oc-drag {
+        background: transparent;
+        box-shadow: none;
+      }
+      .oc-shell:not(.is-chat-open) .oc-pill-btn:hover,
+      .oc-shell:not(.is-chat-open) .oc-stealth-wrap:hover {
+        background: rgba(15, 23, 42, 0.045);
+        box-shadow: none;
+      }
+      html.oc-stealth .oc-shell:not(.is-chat-open) .oc-pill-btn:hover,
+      html.oc-stealth .oc-shell:not(.is-chat-open) .oc-stealth-wrap:hover,
+      html.oc-dark .oc-shell:not(.is-chat-open) .oc-pill-btn:hover,
+      html.oc-dark .oc-shell:not(.is-chat-open) .oc-stealth-wrap:hover {
+        background: rgba(148, 163, 184, 0.12);
       }
 
       .oc-shell.is-wide:not(.is-chat-open) .command-tab {
