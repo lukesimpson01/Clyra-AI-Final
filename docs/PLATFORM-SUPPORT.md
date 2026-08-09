@@ -27,7 +27,7 @@ Node launchers work on macOS, Windows (PowerShell/cmd), and Linux. Bash `.sh` sc
 | Screen vision | **Screen Recording** for OpenCluely / Clyra |
 | Mic / Async STT | **Microphone** permission |
 | Take Control | **Accessibility** + optional `pip install pyobjc-framework-Quartz` or Homebrew `cliclick` |
-| Packaging | `build/entitlements.mac.plist` (Hardened Runtime) |
+| Packaging | `resources/entitlements.mac.plist` (Hardened Runtime) |
 
 Privacy strings are set for Microphone, Camera, Screen Recording, and Apple Events.
 
