@@ -18,6 +18,26 @@
   /* Set by App resize / visualViewport (defaults safe for SSR) */
   --clyra-ui-scale: 1;
   --clyra-content-cap: 768px;
+
+  /* Shared Clyra light design tokens */
+  --clyra-canvas: #f7f7f6;
+  --clyra-surface: #ffffff;
+  --clyra-surface-muted: #f4f4f3;
+  --clyra-hover: rgba(0, 0, 0, 0.035);
+  --clyra-selected: rgba(0, 0, 0, 0.055);
+  --clyra-border: rgba(0, 0, 0, 0.07);
+  --clyra-border-strong: rgba(0, 0, 0, 0.1);
+  --clyra-text: #1c1c1c;
+  --clyra-text-secondary: #666666;
+  --clyra-text-tertiary: #929292;
+  --clyra-accent: #0052fb;
+  --clyra-accent-soft: #eef3ff;
+  --clyra-radius-sm: 6px;
+  --clyra-radius-md: 8px;
+  --clyra-radius-lg: 12px;
+  --clyra-radius-xl: 14px;
+  --clyra-shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --clyra-transition-fast: 140ms ease;
 }
 
 .clyra-app-shell {
@@ -397,14 +417,24 @@
   will-change: height, opacity;
 }
 
+.clyra-voice-reply-card {
+  border-radius: 16px;
+  border: 1px solid #e7e7e4;
+  background: #fbfbfa;
+  padding: 0.85rem 1rem;
+  box-shadow: none;
+  backdrop-filter: none;
+  text-align: left;
+}
+
 .clyra-voice-call-btn {
   -webkit-tap-highlight-color: transparent;
   position: relative;
   z-index: 1;
   pointer-events: auto;
   will-change: transform;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
   transition:
     background-color 180ms ease,
     border-color 180ms ease,
@@ -412,14 +442,16 @@
     box-shadow 180ms ease;
 }
 
-.clyra-voice-reply-card {
-  border-radius: 18px;
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  background: rgba(255, 255, 255, 0.92);
-  padding: 0.85rem 1rem;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-  backdrop-filter: blur(10px);
-  text-align: left;
+.clyra-voice-call-btn--accent {
+  border-color: rgba(0, 82, 251, 0.22) !important;
+  background: rgba(0, 82, 251, 0.08) !important;
+  color: #0052fb !important;
+}
+
+.clyra-voice-type-composer {
+  box-shadow: none !important;
+  border-color: #dfe7f1 !important;
+  background: rgba(255, 255, 255, 0.96) !important;
 }
 
 .clyra-voice-chooser,
@@ -883,8 +915,8 @@
 
 .clyra-vibe-agent-line {
   position: relative;
-  border-left: 1px solid rgba(15, 23, 42, 0.08);
-  padding-left: 12px;
+  border-left: 1px solid rgba(15, 23, 42, 0.06);
+  padding-left: 10px;
 }
 
 .clyra-vibe-chip:hover {
@@ -2120,6 +2152,42 @@ body,
   text-decoration: underline;
 }
 
+/* The verified Docs result remains a normal external link semantically, but
+   reads as one calm, compact action in chat rather than a loose URL. */
+.markdown-body .clyra-workspace-open-link,
+.markdown-body .clyra-document-open-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 31px;
+  padding: 0 12px;
+  border: 1px solid #dce5f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #314a69;
+  box-shadow: 0 3px 10px rgba(42, 63, 92, .07);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  line-height: 1;
+  text-decoration: none;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.markdown-body .clyra-workspace-open-link:hover,
+.markdown-body .clyra-document-open-link:hover {
+  transform: translateY(-1px);
+  border-color: #bed0e5;
+  background: #f9fbff;
+  box-shadow: 0 6px 16px rgba(42, 63, 92, .11);
+  color: #1f416d;
+}
+
+.markdown-body .clyra-workspace-open-link:focus-visible,
+.markdown-body .clyra-document-open-link:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .20);
+  outline-offset: 2px;
+}
+
 /* Performance optimizations */
 .clyra-workspace-card {
   will-change: transform, opacity;
@@ -2314,13 +2382,18 @@ body,
   transition: background 180ms ease, color 180ms ease;
 }
 
+.clyra-message-actions > button {
+  width: 26px;
+  height: 26px;
+}
+
 .clyra-header-icon {
   width: 32px;
   height: 32px;
 }
 
 .clyra-header-icon:hover,
-.clyra-message-actions button:hover {
+.clyra-message-actions > button:hover {
   background: #f1f4f7;
   color: var(--chat-text);
 }
@@ -2369,11 +2442,13 @@ body,
 
 .clyra-message-actions {
   display: flex;
+  width: 100%;
   height: 26px;
   align-items: center;
   gap: 2px;
   margin-top: 7px;
   opacity: 0;
+  overflow: visible;
   transition: opacity 180ms ease;
 }
 
@@ -3825,8 +3900,8 @@ body,
   gap: 4px;
   margin-top: 10px;
 }
-.clyra-message-actions button { width: 30px; height: 30px; border-radius: 8px; }
-.clyra-message-actions button.is-active { color: #406b9e; background: #edf4fb; }
+.clyra-message-actions > button { width: 30px; height: 30px; border-radius: 8px; }
+.clyra-message-actions > button.is-active { color: #406b9e; background: #edf4fb; }
 .clyra-message-actions__divider { width: 1px; height: 16px; margin: 0 3px; background: #e1e6ed; }
 
 .clyra-scroll-latest {
@@ -4149,7 +4224,7 @@ body,
 .clyra-chat-page .clyra-assistant-message { max-width: min(78%, 760px); padding-top: 0; }
 .clyra-chat-page .clyra-message-actions { margin-top: 7px; }
 
-.clyra-chat-page .clyra-composer-transition { width: 100%; max-width: 860px; padding-inline: 20px; }
+.clyra-chat-page .clyra-composer-transition { width: 100%; max-width: 720px; padding-inline: 16px; }
 .clyra-composer-tools { position: relative; z-index: 40; margin: 0 0 8px 12px; pointer-events: auto; }
 .clyra-composer-tools button { min-height: 31px; border-radius: 999px; padding: 0 11px; font-size: 11px; pointer-events: auto; }
 .clyra-chat-page .input-wrapper:not(.loading) { min-height: 64px; border-radius: 999px !important; }
@@ -4388,20 +4463,17 @@ body,
 
 .clyra-shining-text {
   background-position: 200% 0;
-  animation: clyra-text-shine 1.7s linear infinite;
+  animation: clyra-text-shine 2s linear infinite;
   will-change: background-position;
 }
 
 .clyra-thinking-shimmer {
-  --clyra-thinking-base: #a1a1aa;
-  --clyra-thinking-highlight: #111827;
-  background-image:
-    linear-gradient(90deg, transparent calc(50% - 16px), var(--clyra-thinking-highlight), transparent calc(50% + 16px)),
-    linear-gradient(var(--clyra-thinking-base), var(--clyra-thinking-base));
-  background-position: 100% center, 0 0;
+  /* Mid-stop stays slate — never pure white, so text never vanishes on light UI. */
+  background-image: linear-gradient(110deg, #64748b 0%, #64748b 35%, #94a3b8 50%, #64748b 75%, #64748b 100%);
+  background-position: 200% 0;
   background-repeat: no-repeat;
-  background-size: 250% 100%, auto;
-  animation: clyra-thinking-shimmer 2.35s cubic-bezier(.45, 0, .55, 1) infinite;
+  background-size: 200% 100%;
+  animation: clyra-text-shine 2s linear infinite;
   will-change: background-position;
 }
 
@@ -4463,6 +4535,168 @@ body,
   .clyra-browser-agent-tab,
   .clyra-browser-ai-control::after,
   .clyra-browser-agent-cursor::before { animation: none; }
+}
+
+/* ============================================================
+   Clyra Code — agent-first coding workspace theme
+   ============================================================ */
+.clyra-code-root {
+  --app-background: #F7F7F6;
+  --sidebar-background: #F7F7F6;
+  --main-background: #FFFFFF;
+  --preview-background: #FFFFFF;
+  --composer-surface: #FFFFFF;
+  --surface-muted: #F6F6F5;
+  --surface-hover: #F0F0EE;
+  --surface-selected: #EEEEEC;
+  --border-subtle: #EEEEEC;
+  --border-medium: #D8D8D6;
+  --text-primary: #171717;
+  --text-secondary: #5F6368;
+  --text-tertiary: #8A8A8A;
+  --text-disabled: #B0B0B0;
+  --accent-blue: #2563eb;
+  --clyra-code-user-bubble: #F1F3F6;
+  --addition-green: #239653;
+  --deletion-red: #C44B4B;
+  --warning-amber: #b87918;
+  --radius-row: 6px;
+  --radius-control: 7px;
+  --radius-tab: 8px;
+  --radius-input: 11px;
+  --radius-panel: 8px;
+  font-family: "Geist", "Geist Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-feature-settings: "ss01" on, "cv11" on;
+  letter-spacing: -0.011em;
+  color: var(--text-primary);
+  background: var(--app-background);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.clyra-code-root .cc-mono {
+  font-family: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Masked glyph shimmer for active action targets. Light passes across the
+   text itself (background-clip: text), never a surrounding rectangle. */
+.cc-shimmer {
+  --cc-shimmer-base: #666666;
+  background-image: linear-gradient(
+    100deg,
+    var(--cc-shimmer-base) 0%,
+    var(--cc-shimmer-base) 35%,
+    rgba(190, 205, 235, 0.92) 50%,
+    var(--cc-shimmer-base) 65%,
+    var(--cc-shimmer-base) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 200% 0;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: clyra-text-shine 1.45s linear infinite;
+  will-change: background-position;
+}
+
+.cc-shimmer--blue { --cc-shimmer-base: #1c62c9; }
+.cc-shimmer--long { animation-duration: 1.6s; background-size: 260% 100%; }
+
+.cc-counter {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* User prompt: subtle rounded surface only — not a chat bubble or card */
+.clyra-code-root .cc-user-prompt {
+  background: var(--clyra-code-user-bubble, #F1F3F6);
+  border-radius: 9px;
+  border: none;
+  box-shadow: none;
+}
+
+/* Minimal professional preview loading indicator */
+.clyra-code-root .cc-preview-loader {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1.5px solid #EEEEEC;
+  border-top-color: #5F6368;
+  animation: cc-preview-spin 0.85s linear infinite;
+}
+@keyframes cc-preview-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-code-root .cc-preview-loader { animation: none; border-top-color: #EEEEEC; }
+}
+
+/* Subtle top-dot to reveal workspace tabs without overlapping content */
+.clyra-workflow-tabs-hint {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  z-index: 189;
+  width: 28px;
+  height: 16px;
+  margin-left: -14px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.clyra-workflow-tabs-hint__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(23, 23, 23, 0.22);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.clyra-workflow-tabs-hint:hover .clyra-workflow-tabs-hint__dot,
+.clyra-workflow-tabs-hint:focus-visible .clyra-workflow-tabs-hint__dot {
+  background: rgba(23, 23, 23, 0.45);
+  transform: scale(1.15);
+}
+
+.cc-resize-handle {
+  position: relative;
+  width: 1px;
+  flex: 0 0 1px;
+  background: var(--border-subtle);
+  cursor: col-resize;
+}
+.cc-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.cc-resize-handle:hover,
+.cc-resize-handle[data-active="true"] { background: var(--border-medium); }
+
+.cc-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(20, 20, 20, 0.14) transparent;
+}
+.cc-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.cc-scroll::-webkit-scrollbar-thumb {
+  background: rgba(20, 20, 20, 0.14);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.cc-scroll::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-shimmer {
+    animation: none;
+    background-image: none;
+    background-clip: border-box;
+    -webkit-background-clip: border-box;
+    color: var(--cc-shimmer-base);
+  }
 }
 
 /* Welcome screen: compact, quietly tactile controls. These rules live at the
@@ -5026,14 +5260,15 @@ body,
 .clyra-status-text-shimmer {
   display: inline-block;
   max-width: 100%;
-  color: #53677d;
-  background-image: linear-gradient(105deg, #53677d 0%, #53677d 38%, #8da5bf 45%, #edf5fb 50%, #6c8eaf 55%, #53677d 62%, #53677d 100%);
-  background-size: 280% 100%;
-  background-position: 115% 50%;
+  color: #404040;
+  /* Mid-stop is soft slate — never pure white (washes out on light UI). */
+  background-image: linear-gradient(110deg, #404040 0%, #404040 35%, #7a8a9c 50%, #404040 75%, #404040 100%);
+  background-size: 200% 100%;
+  background-position: 200% 0;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: clyra-status-text-shimmer 2.4s cubic-bezier(.45, 0, .55, 1) infinite;
+  animation: clyra-text-shine 2s linear infinite;
   will-change: background-position;
 }
 
@@ -5046,6 +5281,29 @@ body,
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -.01em;
+}
+
+/* The active tool label remains readable, while the small moving highlight
+   connects the normal thinking state to web and Google Workspace stages. */
+.clyra-thinking-wave--shimmer {
+  color: #64748b;
+  background-image: linear-gradient(110deg, #64748b 0%, #64748b 35%, #94a3b8 50%, #64748b 75%, #64748b 100%);
+  background-size: 200% 100%;
+  background-position: 200% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: clyra-text-shine 2s linear infinite;
+  will-change: background-position;
+}
+
+@keyframes clyra-thinking-shimmer-pass {
+  from { background-position: 180% 50%; }
+  to { background-position: -180% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clyra-thinking-wave--shimmer { animation: none; }
 }
 
 @keyframes clyra-gradient-wave {
@@ -5126,15 +5384,22 @@ body,
   animation-fill-mode: both;
 }
 
-/* The palette follows the visible input, not its padded outer wrapper. */
+/* The palette belongs to the composer: it deliberately shares its inner
+   reading width instead of becoming a second, wider floating surface. */
 .clyra-command-palette {
-  width: min(640px, calc(100vw - 48px)) !important;
-  max-height: 220px !important;
-  border: 1px solid rgba(221, 228, 237, .96) !important;
-  border-radius: 16px !important;
-  background: rgba(255, 255, 255, .985) !important;
-  box-shadow: 0 14px 34px rgba(24, 39, 60, .105), 0 2px 7px rgba(24, 39, 60, .045) !important;
-  backdrop-filter: blur(14px) saturate(1.06);
+  width: 100% !important;
+  max-width: none !important;
+  max-height: min(278px, 42vh) !important;
+  left: 0 !important;
+  right: 0 !important;
+  translate: 0 0 !important;
+  overflow-y: auto !important;
+  border: 1px solid rgba(218, 226, 236, .92) !important;
+  border-radius: 18px !important;
+  background: linear-gradient(160deg, rgba(255,255,255,.985), rgba(249,251,254,.96)) !important;
+  box-shadow: 0 20px 48px rgba(24, 39, 60, .13), 0 3px 10px rgba(24, 39, 60, .045) !important;
+  backdrop-filter: blur(22px) saturate(1.12);
+  -webkit-backdrop-filter: blur(22px) saturate(1.12);
   will-change: transform, opacity;
 }
 
@@ -5145,11 +5410,15 @@ body,
 }
 
 .clyra-command-palette .clyra-command-option {
-  min-height: 40px;
-  padding: 8px 13px !important;
-  border-radius: 10px;
-  margin-inline: 5px;
+  min-height: 48px;
+  padding: 9px 12px !important;
+  border-radius: 13px;
+  margin-inline: 7px;
+  transition: transform 220ms cubic-bezier(.16,1,.3,1), background-color 180ms ease, box-shadow 180ms ease, color 180ms ease !important;
 }
+.clyra-command-palette .clyra-command-option:hover { transform: translate3d(2px, 0, 0); }
+.clyra-command-palette .clyra-command-option:active { transform: translate3d(1px, 0, 0) scale(.992); }
+.clyra-command-palette .clyra-command-option > div:first-child { border-radius: 9px !important; }
 
 /* Premium but restrained boot surface. The content stays pinned to the true
    viewport centre while a soft halo and fine progress beam provide movement. */
@@ -5160,7 +5429,7 @@ body,
 .clyra-boot-overlay__content {
   position: relative;
   isolation: isolate;
-  width: min(280px, calc(100vw - 48px));
+  width: min(380px, calc(100vw - 48px));
   justify-content: center;
 }
 
@@ -5169,7 +5438,7 @@ body,
 }
 
 .clyra-boot-overlay .clyra-boot-progress {
-  width: min(250px, 68vw);
+  width: min(340px, 76vw);
   gap: 11px;
   margin-top: 0;
 }
@@ -5212,44 +5481,199 @@ body,
   font-weight: 650;
 }
 
+:root {
+  --atlas-window-bg: var(--clyra-canvas);
+  --atlas-titlebar-bg: var(--clyra-canvas);
+  --atlas-toolbar-bg: var(--clyra-surface);
+  --atlas-tab-active: #ffffff;
+  --atlas-sidebar-bg: var(--clyra-surface);
+  --atlas-user-bubble: var(--clyra-surface-muted);
+  --atlas-text-primary: var(--clyra-text);
+  --atlas-text-secondary: var(--clyra-text-secondary);
+  --atlas-text-tertiary: var(--clyra-text-tertiary);
+  --atlas-divider: var(--clyra-border);
+  --atlas-clyra-blue: var(--clyra-accent);
+  --atlas-agent-black: #171817;
+  --atlas-stop-red: #dd5e58;
+  --atlas-titlebar-height: 42px;
+  --atlas-toolbar-height: 46px;
+  --atlas-sidebar-width: clamp(340px, 30vw, 390px);
+}
+
+/* Finished browse/search source chips — sit to the right of message actions */
+.clyra-message-source-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid #e1e6ed;
+  max-width: min(520px, 70vw);
+  overflow: visible;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.clyra-message-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 22px;
+  max-width: 22px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: #fff;
+  color: #4b5b70;
+  flex: 0 0 auto;
+  min-width: 22px;
+  overflow: hidden;
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+  z-index: 1;
+  transition:
+    max-width 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    gap 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+.clyra-message-source-chip:hover,
+.clyra-message-source-chip:focus-visible,
+.clyra-message-source-chip.is-expanded {
+  z-index: 2;
+  max-width: 240px;
+  gap: 6px;
+  padding: 0 10px 0 2px;
+  background: #f7f9fb;
+  border-color: rgba(64, 107, 158, 0.22);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  outline: none;
+  transform: none;
+}
+.clyra-message-source-chip__icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.clyra-message-source-chip img {
+  width: 14px;
+  height: 14px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.clyra-message-source-chip__bullet {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateX(-6px);
+  transition:
+    max-width 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.22s ease,
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.clyra-message-source-chip:hover .clyra-message-source-chip__bullet,
+.clyra-message-source-chip:focus-visible .clyra-message-source-chip__bullet,
+.clyra-message-source-chip.is-expanded .clyra-message-source-chip__bullet {
+  max-width: 200px;
+  opacity: 1;
+  transform: translateX(0);
+}
+.clyra-message-source-chip__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #7d8795;
+  flex-shrink: 0;
+}
+.clyra-message-source-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  color: #3d4d61;
+}
+
+/* Keep action-row height stable while a source pill expands horizontally */
+.clyra-message-actions:has(.clyra-message-source-chip:hover),
+.clyra-message-actions:has(.clyra-message-source-chip:focus-visible),
+.clyra-message-actions:has(.clyra-message-source-chip.is-expanded) {
+  overflow: visible;
+}
+
+/* Source chips must stay clickable even if a status node is exiting. */
+.clyra-message-actions .clyra-message-source-chips,
+.clyra-message-actions .clyra-message-source-chip {
+  pointer-events: auto;
+}
+
 .clyra-browser-ai-control {
-  box-shadow: inset 0 0 0 1px rgba(15,23,42,.28), inset 0 0 22px rgba(15,23,42,.06);
+  box-shadow: none;
 }
 
 .clyra-browser-ai-control::after {
+  content: none;
+  display: none;
+}
+
+.clyra-browser-agent-cursor {
   position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  content: "";
-  background: linear-gradient(105deg, transparent 10%, rgba(148,163,184,.55) 48%, transparent 72%);
-  background-size: 210% 100%;
-  animation: clyra-browser-control-glow 1.85s linear infinite;
-  opacity: .55;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.28));
 }
 
 .clyra-browser-agent-cursor::before {
-  position: absolute;
-  left: -7px;
-  top: -7px;
-  width: 25px;
-  height: 25px;
-  border-radius: 999px;
   content: "";
-  background: rgba(15,23,42,.12);
-  box-shadow: 0 0 18px rgba(15,23,42,.22), 0 0 28px rgba(100,116,139,.18);
-  animation: clyra-browser-cursor-halo 1.35s ease-in-out infinite;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  translate: -50% -50%;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(96, 152, 230, 0.42) 0%, rgba(96, 152, 230, 0.12) 42%, rgba(96, 152, 230, 0) 72%);
+  filter: blur(1.5px);
+  animation: clyra-browser-cursor-halo 2.4s ease-in-out infinite;
+  pointer-events: none;
 }
 
-.clyra-browser-agent-cursor > * { position: relative; }
+.clyra-browser-agent-cursor > * { position: relative; z-index: 1; }
+
+.clyra-browser-agent-cursor__arrow {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: #1f2430;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 0.6;
+}
 
 .clyra-browser-agent-tab {
-  background-image: linear-gradient(110deg, transparent 20%, rgba(148,163,184,.22) 48%, transparent 72%);
-  background-size: 220% 100%;
-  animation: clyra-browser-tab-shimmer 2.1s linear infinite;
+  background-image: none;
+  animation: none;
 }
 
 .clyra-browser-user-message-entry {
+  animation: clyra-user-message-entry 980ms cubic-bezier(.22, 1, .36, 1) both;
   will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clyra-browser-user-message-entry { animation: none; }
 }
 
 @keyframes clyra-browser-control-glow {
@@ -5258,7 +5682,8 @@ body,
 }
 
 @keyframes clyra-browser-cursor-halo {
-  50% { transform: scale(1.16); opacity: .72; }
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.18); opacity: 0.55; }
 }
 
 @keyframes clyra-browser-tab-shimmer {
@@ -5360,7 +5785,7 @@ body,
 }
 
 @media (max-width: 760px) {
-  .clyra-command-palette { width: min(640px, calc(100vw - 24px)) !important; }
+  .clyra-command-palette { width: 100% !important; max-height: min(258px, 46vh) !important; }
 }
 
 /* A row-level entry is independent of message streaming and scroll renders.
@@ -5438,8 +5863,9 @@ body,
   .clyra-stream-paint__caret { animation: none; opacity: 0.22; }
 }
 
-/* Assistant controls must never leak through a held thinking state. */
-.clyra-assistant-message:has([role="status"]) .clyra-message-actions {
+/* Assistant controls must never leak through a held thinking state.
+   Once the answer + actions are showing, keep chips/buttons interactive. */
+.clyra-assistant-message:has([role="status"]):not(:has(.clyra-message-source-chips)) .clyra-message-actions {
   opacity: 0 !important;
   pointer-events: none;
 }
@@ -5542,21 +5968,39 @@ body,
   min-height: 42px;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2.5px;
+}
+
+.clyra-voice-waveform--compact {
+  min-height: 32px;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .clyra-voice-waveform__bar {
   width: 3px;
   min-height: 4px;
   border-radius: 999px;
-  background: #64748b;
+  background: linear-gradient(180deg, #7eb0ff 0%, #0052fb 58%, #0040c8 100%);
+  box-shadow: 0 0 8px rgba(0, 82, 251, 0.18);
   transform: translateZ(0);
   will-change: height, opacity;
 }
 
+.clyra-voice-waveform--compact .clyra-voice-waveform__bar {
+  width: 2.5px;
+  box-shadow: 0 0 6px rgba(0, 82, 251, 0.14);
+}
+
+.clyra-voice-waveform--muted .clyra-voice-waveform__bar {
+  background: linear-gradient(180deg, #c5ccd6 0%, #94a3b8 100%);
+  box-shadow: none;
+}
+
 .clyra-voice-call-waveform {
-  width: min(340px, 72vw);
-  margin-top: 16px;
+  width: min(360px, 78vw);
+  margin-top: 18px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5652,20 +6096,373 @@ body,
   margin-left: 0;
 }
 
-/* Keep the welcome group centred by the complete viewport-sized scene. This
-   deliberately wins over the earlier narrow-card styling for every entry
-   path: a cold launch, returning from a tool, and opening from the launcher. */
-.clyra-chat-page .clyra-workspace-card[data-workspace-motion][data-workspace="chat"]:has(.clyra-chat-quick-actions) {
-  justify-content: center;
+/* Empty Chat is document flow inside the existing workspace surface. The
+   sidebar remains entirely outside these selectors, so centre is derived from
+   the remaining workspace width rather than the window. */
+.clyra-chat-page .clyra-workspace-card[data-workspace-motion][data-workspace="chat"]:has(.clyra-chat-welcome) {
+  justify-content: flex-start !important;
+}
+.clyra-chat-page [data-workspace-surface="chat"]:has(.clyra-chat-welcome) {
+  overflow-y: auto;
+  overflow-x: hidden;
   align-items: stretch;
 }
+.clyra-chat-page .clyra-chat-welcome {
+  width: min(680px, calc(100% - 48px));
+  flex: 0 0 auto;
+  gap: 0;
+  margin: 0 auto;
+  padding: clamp(156px, 18vh, 200px) 0 0;
+  position: relative;
+}
+.clyra-chat-welcome__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #17223a;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 30px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.clyra-chat-welcome__identity svg {
+  width: 30px;
+  height: 30px;
+}
 
-/* Let the lower composer shelf grow without moving or bouncing the text row. */
+.clyra-chat-welcome__title { margin: 38px 0 0; font-size: clamp(34px, 3vw, 36px); font-weight: 550; line-height: 1.15; }
+.clyra-chat-welcome__support {
+  max-width: 560px;
+  margin: 14px auto 0;
+  color: #64748b;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.clyra-chat-welcome__actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  margin: 38px 0 0;
+}
+.clyra-chat-welcome__actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid #dce3eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #52647c;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.clyra-chat-welcome__actions > button:hover {
+  border-color: #aebdce;
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+.clyra-chat-welcome__glow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.clyra-chat-welcome__glow::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 920px;
+  height: 460px;
+  background: radial-gradient(
+    ellipse 50% 50% at 50% 50%,
+    rgba(218, 231, 255, 0.42) 0%,
+    rgba(235, 242, 255, 0.25) 40%,
+    rgba(248, 250, 255, 0.08) 70%,
+    transparent 100%
+  );
+  filter: blur(24px);
+}
+/* The original composer is retained, but only welcome mode stops being a
+   bottom-anchored layer. This keeps its draft, attachment, voice and send
+   implementations intact while placing it below the subtitle. */
 .clyra-chat-page .clyra-composer-welcome {
+  position: relative !important;
+  inset: auto !important;
+  width: min(680px, calc(100% - 48px)) !important;
+  max-width: none !important;
+  flex: 0 0 auto;
+  margin: 26px auto 0 !important;
+  padding: 0 !important;
   transition: none !important;
+}
+.clyra-chat-page .clyra-composer-welcome .input-wrapper {
+  min-height: 122px;
+  border-radius: 22px;
+  box-shadow: 0 16px 38px rgba(15,23,42,.09);
+}
+.clyra-chat-welcome__recent {
+  width: 100%;
+  margin: 42px 0 64px;
+  color: #17223a;
+  text-align: left;
+}
+.clyra-chat-welcome__recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.clyra-chat-welcome__recent-header h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.clyra-chat-welcome__recent-header button { display: inline-flex; align-items: center; gap: 3px; border: 0; background: transparent; color: #64748b; font-size: 12px; font-weight: 600; }
+.clyra-chat-welcome__recent-header button:hover { color: #1e293b; }
+.clyra-chat-welcome__recent-list { border-top: 1px solid #e8edf3; }
+.clyra-chat-welcome__recent-list > button {
+  display: flex;
+  width: 100%;
+  min-height: 60px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid #e8edf3;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px 10px;
+  color: #334155;
+  text-align: left;
+  transition: background-color 160ms ease;
+}
+.clyra-chat-welcome__recent-list > button:hover { background: #f8fafc; }
+.clyra-chat-welcome__recent-icon { flex: 0 0 auto; color: #64748b; }
+.clyra-chat-welcome__recent-copy { min-width: 0; flex: 1; }
+.clyra-chat-welcome__recent-copy strong, .clyra-chat-welcome__recent-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-chat-welcome__recent-copy strong { color: #334155; font-size: 13px; font-weight: 650; }
+.clyra-chat-welcome__recent-copy small { margin-top: 2px; color: #7c8ba0; font-size: 12px; font-weight: 500; }
+.clyra-chat-welcome__recent-list time { flex: 0 0 auto; color: #94a3b8; font-size: 11px; font-weight: 500; }
+@media (max-height: 760px) {
+  .clyra-chat-page .clyra-chat-welcome { padding-top: clamp(48px, 8vh, 64px); }
+  .clyra-chat-welcome__recent { margin-top: 30px; }
+}
+@media (max-width: 640px) {
+  .clyra-chat-page .clyra-chat-welcome, .clyra-chat-page .clyra-composer-welcome { width: calc(100% - 48px) !important; }
+  .clyra-chat-welcome__recent-copy small { display: none; }
+}
+
+/* Chat welcome refinement. These selectors intentionally stop at the Chat
+   surface; the shared Clyra sidebar is not restyled or structurally touched. */
+.clyra-chat-page .clyra-chat-welcome {
+  width: min(720px, calc(100% - 48px));
+  padding-top: clamp(98px, 13vh, 138px);
+}
+.clyra-chat-welcome__glow::before {
+  width: 420px;
+  height: 220px;
+  background: radial-gradient(ellipse at center, rgba(37, 99, 235, .08), rgba(219, 234, 254, .025) 48%, transparent 74%);
+  filter: blur(18px);
+}
+.clyra-chat-welcome__identity {
+  position: relative;
+  z-index: 1;
+  gap: 9px;
+  color: #17223a;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 24px;
+}
+.clyra-chat-welcome__orb {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  box-shadow: 0 3px 12px rgba(37, 99, 235, .14);
+}
+.clyra-chat-welcome__orb .clyra-ai-orb-shell { transform: scale(.42); transform-origin: center; }
+.clyra-chat-welcome__title {
+  position: relative;
+  z-index: 1;
+  margin-top: 23px;
+  color: #14213a;
+  font-size: clamp(30px, 3.1vw, 36px);
+  font-weight: 620;
+  letter-spacing: -.035em;
+}
+.clyra-chat-welcome__support {
+  position: relative;
+  z-index: 1;
+  margin-top: 9px;
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 450;
+}
+.clyra-chat-welcome__actions {
+  position: relative;
+  z-index: 1;
+  max-width: 640px;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 27px;
+}
+.clyra-chat-welcome__actions > button {
+  min-height: 33px;
+  border-radius: 10px;
+  border-color: #e5eaf1;
+  padding: 6px 10px;
+  background: #fff;
+  color: #52647c;
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: none;
+  transition: transform 180ms cubic-bezier(.16, 1, .3, 1), border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+.clyra-chat-welcome__actions > button:hover {
+  transform: translateY(-1px);
+  border-color: #bcd1f7;
+  background: #f8fbff;
+  color: #1454c5;
+}
+.clyra-chat-page .clyra-composer-welcome {
+  width: min(720px, calc(100% - 48px)) !important;
+  margin-top: 21px !important;
+}
+.clyra-chat-page .clyra-composer-welcome .input-wrapper {
+  min-height: 104px;
+  border: 1px solid #dfe7f1;
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .055);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+.clyra-chat-page .clyra-composer-welcome .input-wrapper:focus-within {
+  border-color: rgba(37, 99, 235, .42);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .08), 0 10px 28px rgba(15, 23, 42, .07);
+}
+.clyra-chat-welcome__recent {
+  position: relative;
+  z-index: 1;
+  margin-top: 34px;
+  margin-bottom: 48px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-chat-welcome__actions > button { transition: none; }
+  .clyra-chat-welcome__actions > button:hover { transform: none; }
 }
 
 @media (max-width: 760px) {
   .clyra-chat-page #chat-container { width: calc(100% - 28px); }
   .clyra-scroll-latest { bottom: 92px; }
+}
+
+/* AI Clipper editor: thin timeline zoom slider with a small dark-blue thumb. */
+.clipper-zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: #E3E8F0;
+  outline: none;
+  cursor: pointer;
+}
+.clipper-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: #0F4FBF;
+  border: none;
+  transition: transform 140ms ease;
+}
+.clipper-zoom-slider::-webkit-slider-thumb:hover { transform: scale(1.12); }
+.clipper-zoom-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: #0F4FBF;
+  border: none;
+}
+.clipper-zoom-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #E3E8F0;
+}
+
+.study-brain-shell .clyra-user-message-entry {
+  animation: clyra-user-message-entry 980ms cubic-bezier(.22, 1, .36, 1) both;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .study-brain-shell .clyra-user-message-entry { animation: none; }
+}
+
+/* Study Brain canvas */
+.study-brain-flow {
+  width: 100%;
+  height: 100%;
+}
+
+.study-brain-flow .react-flow__controls-button {
+  border-bottom-color: var(--clyra-border) !important;
+  background: #fff !important;
+  fill: var(--clyra-text-secondary) !important;
+}
+
+.study-brain-node {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 22px rgba(15, 23, 42, 0.045);
+}
+
+.study-source-node {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.035),
+    0 6px 18px rgba(15, 23, 42, 0.035);
+}
+
+.study-brain-node--pulse {
+  animation: study-brain-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes study-brain-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 82, 251, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(0, 82, 251, 0.07);
+  }
+}
+
+.study-brain-flow .react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+.study-brain-flow .react-flow__connection-path {
+  stroke: rgba(0, 82, 251, 0.45) !important;
+  stroke-width: 1.5;
+}
+
+.study-brain-handle,
+.study-source-handle {
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.study-brain-node:hover ~ .study-brain-handle,
+.study-brain-flow .react-flow__node:hover .study-brain-handle,
+.study-brain-flow .react-flow__node:hover .study-source-handle {
+  transform: scale(1.15);
+}
+
+.study-brain-flow .react-flow__handle {
+  z-index: 5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .study-brain-node--pulse {
+    animation: none;
+  }
 }

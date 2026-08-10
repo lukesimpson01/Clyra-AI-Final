@@ -1,16 +1,30 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync, promises as fs, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, WebContentsView } from "electron";
+import { promisify } from "node:util";
+import dotenv from "dotenv";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, WebContentsView } from "electron";
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
+import { SmartToolbarManager } from "./smart-toolbar-manager.mjs";
+import { GoogleWorkspaceManager } from "./google-workspace-manager.mjs";
+import { DeepResearchManager } from "./deep-research-manager.mjs";
+import { LocalMemoryManager } from "./local-memory-manager.mjs";
+import { ScreenCaptureService } from "./screen-capture.mjs";
+import { DesktopControlService } from "./desktop-control.mjs";
+import { CompanionManager } from "./companion-manager.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
+// OAuth credentials stay in the local ignored .env file and are only read by
+// this Electron main process. They are deliberately never sent over IPC.
+dotenv.config({ path: path.join(projectRoot, ".env"), quiet: true });
 const isDevelopment = process.env.CLYRA_ELECTRON_DEV === "1";
 const appPort = Number(process.env.CLYRA_DESKTOP_PORT || 31_415);
 const cdpPort = Number(process.env.CLYRA_CDP_PORT || 9_223);
@@ -36,6 +50,13 @@ let uiView = null;
 let browserManager = null;
 let surfaceManager = null;
 let dictationManager = null;
+let smartToolbarManager = null;
+let googleWorkspaceManager = null;
+let deepResearchManager = null;
+let localMemoryManager = null;
+let companionManager = null;
+let screenCaptureService = null;
+let desktopControlService = null;
 let serviceProcess = null;
 let serviceLaunchError = null;
 let serviceFallbackStarted = false;
@@ -52,7 +73,14 @@ function destroyNativeManagers() {
   try { browserManager?.destroy(); } catch (error) { console.warn("[browser] teardown failed:", error); }
   try { surfaceManager?.destroy(); } catch (error) { console.warn("[surface] teardown failed:", error); }
   try { dictationManager?.destroy(); } catch (error) { console.warn("[dictation] teardown failed:", error); }
+  try { smartToolbarManager?.destroy(); } catch (error) { console.warn("[smart-toolbar] teardown failed:", error); }
+  try { companionManager?.destroy(); } catch (error) { console.warn("[companion] teardown failed:", error); }
   dictationManager = null;
+  smartToolbarManager = null;
+  companionManager = null;
+  googleWorkspaceManager?.finishAuth?.();
+  googleWorkspaceManager = null;
+  deepResearchManager = null;
 }
 
 function sendJson(response, status, payload) {
@@ -194,8 +222,7 @@ function configureUiSession() {
   };
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (permission !== "media") return false;
-    // Chromium may pass mediaType=audio|video|unknown on the check path.
-    if (details?.mediaType === "video") return false;
+    // Allow mic and camera for Clyra origins (voice call + camera vision).
     return allowMediaFrom(webContents, requestingOrigin, details || {});
   });
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
@@ -203,11 +230,7 @@ function configureUiSession() {
       callback(false);
       return;
     }
-    const mediaTypes = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
-    if (mediaTypes.length > 0 && !mediaTypes.includes("audio")) {
-      callback(false);
-      return;
-    }
+    // Allow audio and/or video from Clyra windows (voice call camera uses video-only).
     callback(allowMediaFrom(webContents, details?.requestingUrl || details?.securityOrigin, details || {}));
   });
 }
@@ -218,6 +241,67 @@ function isRunnableFile(candidate) {
   } catch {
     return false;
   }
+}
+
+/** POST JSON to OpenCluely's local control API; try current + legacy ports. */
+async function postOpenCluelyControl(pathname, body = {}) {
+  const ports = [
+    Number(process.env.CLYRA_CONTROL_PORT || 0),
+    3848,
+    3847,
+  ].filter((port, index, all) => Number.isFinite(port) && port > 0 && all.indexOf(port) === index);
+
+  const payload = JSON.stringify(body);
+  for (const port of ports) {
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port,
+            path: pathname,
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(payload),
+            },
+            timeout: 1_500,
+          },
+          (res) => {
+            const chunks = [];
+            res.on("data", (chunk) => chunks.push(chunk));
+            res.on("end", () => {
+              resolve({
+                ok: (res.statusCode || 500) < 400,
+                status: res.statusCode || 0,
+                port,
+                body: Buffer.concat(chunks).toString("utf8"),
+              });
+            });
+          },
+        );
+        req.on("timeout", () => {
+          req.destroy(new Error("timeout"));
+        });
+        req.on("error", reject);
+        req.write(payload);
+        req.end();
+      });
+      if (result.ok) return result;
+    } catch {
+      // Try the next control port.
+    }
+  }
+  return null;
+}
+
+async function toggleOpenCluelyOverlay() {
+  const toggled = await postOpenCluelyControl("/toggle");
+  if (toggled?.ok) return toggled;
+  const shown = await postOpenCluelyControl("/show", { windows: ["main"] });
+  if (shown?.ok) return shown;
+  console.warn("[opencluely] Cmd+/ — OpenCluely control API not reachable on 3848/3847");
+  return null;
 }
 
 function attachLocalService(child, label, { onSpawnError, onUnexpectedExit } = {}) {
@@ -327,19 +411,20 @@ function startLocalService() {
   );
 }
 
-async function waitForService(timeoutMs = 45_000) {
+async function waitForService(timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (serviceLaunchError) {
       throw new Error(`Clyra's local service could not start: ${serviceLaunchError.message}`);
     }
     try {
-      const response = await fetch(`http://127.0.0.1:${appPort}/api/health`, { signal: AbortSignal.timeout(700) });
+      // Cold tsx/Electron boots can take several seconds before /api/health answers.
+      const response = await fetch(`http://127.0.0.1:${appPort}/api/health`, { signal: AbortSignal.timeout(5_000) });
       if (response.ok) return;
     } catch {
       // The service is still booting.
     }
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("Clyra's local service did not become ready.");
 }
@@ -350,6 +435,136 @@ function authorize(event) {
 
 function authorizeDictation(event) {
   if (!dictationManager?.isSender(event.sender)) throw new Error("Untrusted dictation IPC sender.");
+}
+
+function authorizeCompanion(event) {
+  if (!companionManager?.isSender(event.sender)) throw new Error("Untrusted companion IPC sender.");
+}
+
+async function analyseCompanionVision(imagePath, question = "") {
+  const script = path.join(projectRoot, "tools", "companion-vision.py");
+  const runRapidOcr = async () => {
+    const { stdout } = await execFileAsync("python3", [script, imagePath, "--question", String(question || "")], {
+      timeout: 45_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env: process.env,
+    });
+    return JSON.parse(String(stdout || "{}"));
+  };
+
+  // Prefer RapidOCR first (fast, offline). Only call Ollama when OCR is thin so
+  // Companion stay snappy during smoke/guide flows.
+  let rapid = null;
+  try {
+    rapid = await runRapidOcr();
+  } catch (error) {
+    rapid = { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const ocrLines = Array.isArray(rapid?.ocr?.lines) ? rapid.ocr.lines.length : 0;
+  const rapidText = String(rapid?.summary || "").trim();
+  const needsVlm = !rapid?.ok || ocrLines < 2 || rapidText.length < 40;
+  if (!needsVlm && rapid?.ok) return rapid;
+
+  try {
+    const { analyseVisionFrame } = await import("../tools/ollama-vision.mjs");
+    const buffer = await fs.readFile(imagePath);
+    const ext = path.extname(imagePath).toLowerCase() === ".png" ? "png" : "jpeg";
+    const dataUrl = `data:image/${ext};base64,${buffer.toString("base64")}`;
+    const ollama = await Promise.race([
+      analyseVisionFrame(dataUrl, String(question || "")),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("ollama vision timed out")), 12_000)),
+    ]);
+    if (ollama && (ollama.ok !== false) && (ollama.summary || ollama.text)) {
+      return {
+        ...rapid,
+        ...ollama,
+        ok: true,
+        summary: String(ollama.summary || ollama.text || rapid?.summary || "").trim(),
+        model: ollama.model || "ollama",
+        ocr: ollama.ocr || rapid?.ocr,
+      };
+    }
+  } catch {
+    /* keep RapidOCR result */
+  }
+
+  if (rapid?.ok) return rapid;
+  throw new Error(rapid?.error || "Companion vision failed");
+}
+
+function companionVisionFallback({ question, visionSummary, ocrText, controlling, guiding, pointer }) {
+  const seen = String(visionSummary || "").trim();
+  const ocr = String(ocrText || "").trim().split("\n").filter(Boolean).slice(0, 6).join(" · ");
+  const bits = [];
+  if (seen) bits.push(seen);
+  else if (ocr) bits.push(`I can read: ${ocr}`);
+  else bits.push("I captured your screen but could not read much text yet.");
+  if (pointer?.label) {
+    bits.push(`I'm pointing at “${pointer.label}” with the blue guide cursor — I have not clicked it.`);
+  } else if (guiding) {
+    bits.push("Guide mode is on: I can point at UI with a visible cursor without taking control.");
+  } else if (controlling) {
+    bits.push("I have desktop control ready — say what to click or type.");
+  } else {
+    bits.push("Ask me about what you're doing, tap Guide me to point, or Take over to drive the cursor.");
+  }
+  if (question) bits.push(`For “${question}”: use the visible text and layout above as the source of truth.`);
+  return bits.join(" ");
+}
+
+async function askCompanionModel({ question, visionSummary, ocrText, controlling, guiding, pointer }) {
+  const system = [
+    "You are Clyra Screen Companion — a calm desktop helper with an OpenCluely-style overlay UI.",
+    "You can see the user's screen via RapidOCR (open-source ONNX) vision evidence and talk with them.",
+    "Help with whatever they are doing. Be concise and practical.",
+    guiding
+      ? "Guide mode: you show a visible pointer at UI targets but do NOT click or move the OS mouse. Describe what the blue ring is highlighting."
+      : controlling
+        ? "You currently may control the desktop. Propose concrete next clicks/keys when useful."
+        : "You are observing only unless the user asks you to Guide (point) or Take control.",
+    pointer?.label ? `You are currently pointing at: ${pointer.label}.` : "",
+    "Never claim stealth or hidden overlays. Capture is user-visible.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const user = [
+    `User: ${question}`,
+    visionSummary ? `\nScreen vision:\n${visionSummary}` : "",
+    ocrText ? `\nOCR text:\n${String(ocrText).slice(0, 2500)}` : "",
+  ].join("");
+  try {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/companion/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        visionSummary,
+        ocrText,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        temperature: 0.3,
+        max_tokens: 700,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    const text =
+      payload?.choices?.[0]?.message?.content ||
+      payload?.message?.content ||
+      payload?.reply ||
+      payload?.text ||
+      payload?.content ||
+      "";
+    if (response.ok && String(text).trim()) return { text: String(text), source: payload?.source || "clyra-api" };
+  } catch {
+    /* fall through to vision-local reply */
+  }
+  return {
+    text: companionVisionFallback({ question, visionSummary, ocrText, controlling, guiding, pointer }),
+    source: "vision-local",
+  };
 }
 
 function registerIpc() {
@@ -368,9 +583,62 @@ function registerIpc() {
   ipcMain.handle("browser:inspect", async (event) => { authorize(event); return { ok: true, snapshot: await browserManager.inspect() }; });
   ipcMain.handle("browser:set-cursor", async (event, cursor) => { authorize(event); await browserManager.setCursor(cursor); return { ok: true }; });
   ipcMain.handle("browser:devtools", (event) => { authorize(event); browserManager.activeContents()?.openDevTools({ mode: "detach" }); return { ok: true }; });
+  // Task View previews are real pixels from the already-rendered workspace.
+  // The renderer sends the exact workspace bounds before it reveals the
+  // overview, so no tool is remounted, resized, or asked to recreate itself.
+  ipcMain.handle("taskview:capture", async (event, payload = {}) => {
+    authorize(event);
+    const bounds = payload.bounds || {};
+    const x = Math.max(0, Math.round(Number(bounds.x) || 0));
+    const y = Math.max(0, Math.round(Number(bounds.y) || 0));
+    const width = Math.max(2, Math.round(Number(bounds.width) || 2));
+    const height = Math.max(2, Math.round(Number(bounds.height) || 2));
+    const nativeOnly = Boolean(payload.nativeOnly);
+    const contents = uiView?.webContents;
+    if (!nativeOnly && (!contents || contents.isDestroyed())) {
+      throw new Error("The active workspace is unavailable for capture.");
+    }
+    let src = "";
+    let size = { width, height };
+    // While Task View is open, re-capturing the UI shell would snapshot the
+    // overview overlay itself. nativeOnly refreshes just the live browser page.
+    if (!nativeOnly) {
+      const image = await contents.capturePage({ x, y, width, height });
+      size = image.getSize();
+      src = image.toDataURL();
+    }
+    let nativeLayer;
+    if (payload.nativeBrowser) {
+      const nativeContents = browserManager?.activeContents();
+      const nativeBounds = browserManager?.surface?.bounds;
+      if (nativeContents && !nativeContents.isDestroyed() && nativeBounds) {
+        // capturePage works even when the WebContentsView is hidden for Task View.
+        const nativeImage = await nativeContents.capturePage();
+        const nativeSize = nativeImage.getSize();
+        nativeLayer = {
+          src: nativeImage.toDataURL(),
+          // BrowserViews are positioned in the same BrowserWindow coordinate
+          // system as the UI capture. These offsets restore the real page
+          // exactly inside its captured toolbar/sidebar shell.
+          left: nativeBounds.x - x,
+          top: nativeBounds.y - y,
+          width: nativeBounds.width,
+          height: nativeBounds.height,
+          imageWidth: nativeSize.width,
+          imageHeight: nativeSize.height,
+        };
+      }
+    }
+    if (nativeOnly && !nativeLayer) {
+      return { ok: false, src: "", width: size.width, height: size.height };
+    }
+    return { ok: true, src, width: size.width, height: size.height, nativeLayer };
+  });
   ipcMain.handle("surface:update", (event, payload) => { authorize(event); return { ok: true, surface: surfaceManager.update(payload) }; });
   ipcMain.handle("surface:hide", (event, { id }) => { authorize(event); surfaceManager.hide(id); return { ok: true }; });
   ipcMain.handle("dictation:set-state", (event, payload) => { authorize(event); dictationManager?.setState(payload || { phase: "idle" }); return { ok: true }; });
+  ipcMain.handle("dictation:toggle", (event) => { authorize(event); void dictationManager?.toggle(); return { ok: true }; });
+  ipcMain.handle("dictation:shortcut-status", (event) => { authorize(event); return { registered: Boolean(dictationManager?.shortcutRegistered) }; });
   ipcMain.handle("dictation:service-url", (event) => {
     authorize(event);
     return `http://127.0.0.1:${appPort}`;
@@ -383,12 +651,107 @@ function registerIpc() {
     if (mic && mic.ok === false) return { ...status, ...mic };
     return { ok: true, ...(status || {}), ...(mic || {}) };
   });
+  ipcMain.handle("dictation:ensure-camera", async (event) => {
+    authorize(event);
+    const camera = await dictationManager?.ensureCameraAccess();
+    const status = await dictationManager?.permissionStatus();
+    if (camera && camera.ok === false) return { ...status, ...camera };
+    return { ok: true, ...(status || {}), ...(camera || {}) };
+  });
   ipcMain.handle("dictation:open-microphone-settings", async (event) => {
     authorize(event);
     await dictationManager?.openMicrophoneSettings();
     return { ok: true };
   });
+  ipcMain.handle("dictation:open-camera-settings", async (event) => {
+    authorize(event);
+    await dictationManager?.openCameraSettings();
+    return { ok: true };
+  });
   ipcMain.on("dictation:pill-action", (event, action) => { authorizeDictation(event); void dictationManager?.action(String(action || "cancel")); });
+  ipcMain.handle("companion:get-state", (event) => {
+    authorizeCompanion(event);
+    return companionManager?.getState() || { phase: "idle" };
+  });
+  ipcMain.handle("companion:show", async (event) => { authorizeCompanion(event); await companionManager?.show(); return { ok: true }; });
+  ipcMain.handle("companion:hide", (event) => { authorizeCompanion(event); companionManager?.hide(); return { ok: true }; });
+  ipcMain.handle("companion:ask", async (event, payload) => {
+    authorizeCompanion(event);
+    return companionManager?.ask(String(payload?.text || ""));
+  });
+  ipcMain.handle("companion:see", async (event, payload) => {
+    // Allow Companion overlay OR main Clyra window (voice call camera/screen vision)
+    try {
+      authorizeCompanion(event);
+    } catch {
+      authorize(event);
+    }
+    return companionManager?.seeScreen(String(payload?.question || ""));
+  });
+  ipcMain.handle("desktop:see-screen", async (event, payload) => {
+    authorize(event);
+    return companionManager?.seeScreen(String(payload?.question || ""));
+  });
+  ipcMain.handle("companion:start-guide", async (event, payload) => {
+    authorizeCompanion(event);
+    return companionManager?.startGuide(String(payload?.question || ""));
+  });
+  ipcMain.handle("companion:start-control", async (event) => {
+    authorizeCompanion(event);
+    return companionManager?.startControl();
+  });
+  ipcMain.handle("companion:take-control", async (event) => {
+    authorizeCompanion(event);
+    return companionManager?.takeManualControl();
+  });
+  ipcMain.handle("companion:resume", async (event) => {
+    authorizeCompanion(event);
+    return companionManager?.resumeAi();
+  });
+  ipcMain.handle("companion:stop", async (event) => {
+    authorizeCompanion(event);
+    return companionManager?.stopControl();
+  });
+  ipcMain.handle("companion:action", async (event, payload) => {
+    authorizeCompanion(event);
+    return companionManager?.runDesktopAction(payload?.action || {});
+  });
+  // Main renderer may open the companion overlay.
+  ipcMain.handle("companion:toggle", async (event) => {
+    authorize(event);
+    await companionManager?.toggle();
+    return { ok: true, registered: Boolean(companionManager?.shortcutRegistered) };
+  });
+  ipcMain.on("smart-toolbar:action", (event, payload) => {
+    if (!smartToolbarManager?.isSender(event.sender)) throw new Error("Untrusted smart toolbar IPC sender.");
+    void smartToolbarManager.action(payload || {});
+  });
+  ipcMain.handle("google:status", (event) => { authorize(event); return googleWorkspaceManager?.status() || { connected:false }; });
+  ipcMain.handle("google:sign-in", (event) => { authorize(event); return googleWorkspaceManager?.signIn() || { ok:false, error:"Google integration is unavailable." }; });
+  ipcMain.handle("google:disconnect", (event) => { authorize(event); return googleWorkspaceManager?.disconnect() || { ok:true }; });
+  ipcMain.handle("google:execute", (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid Google Workspace IPC payload.");
+    // Renderer input is only a request envelope. Tokens, credentials, raw API
+    // responses, and filesystem paths never cross this boundary.
+    const keys = Object.keys(payload);
+    if (keys.some((key) => !["tool", "prompt", "runId", "service", "action", "args", "confirmed"].includes(key))) throw new Error("Unsupported Google Workspace IPC field.");
+    return googleWorkspaceManager?.execute(payload) || { ok:false, text:"Google integration is unavailable." };
+  });
+  ipcMain.handle("research:execute", (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid Deep Research IPC payload.");
+    const keys = Object.keys(payload);
+    if (keys.some((key) => !["prompt", "runId", "checkpointId", "answers", "action"].includes(key))) throw new Error("Unsupported Deep Research IPC field.");
+    return deepResearchManager?.execute(payload) || { ok:false, text:"Deep Research is unavailable." };
+  });
+  ipcMain.handle("memory:list", (event, payload) => { authorize(event); return localMemoryManager?.list(String(payload?.userId || "local")) || []; });
+  ipcMain.handle("memory:search", (event, payload) => { authorize(event); return localMemoryManager?.search({ userId:String(payload?.userId || "local"), query:String(payload?.query || ""), limit:Number(payload?.limit || 5) }) || []; });
+  ipcMain.handle("memory:add", (event, payload) => { authorize(event); return localMemoryManager?.add({ userId:String(payload?.userId || "local"), text:String(payload?.text || ""), force:Boolean(payload?.force) }) || {saved:false}; });
+  ipcMain.handle("memory:update", (event, payload) => { authorize(event); return localMemoryManager?.update({ userId:String(payload?.userId || "local"), id:String(payload?.id || ""), text:String(payload?.text || "") }) || {ok:false}; });
+  ipcMain.handle("memory:remove", (event, payload) => { authorize(event); return localMemoryManager?.remove({ userId:String(payload?.userId || "local"), id:String(payload?.id || "") }) || {ok:false}; });
+  ipcMain.handle("memory:clear", (event, payload) => { authorize(event); return localMemoryManager?.clear(String(payload?.userId || "local")) || {ok:false}; });
+  if (isDevelopment) ipcMain.handle("google:diagnostic", (event, payload) => { authorize(event); return googleWorkspaceManager?.diagnostic(payload || {}) || { ok:false, stage:"desktop", errorCode:"GOOGLE_UNAVAILABLE" }; });
 }
 
 function resizeUi() {
@@ -440,9 +803,78 @@ async function createWindow() {
     preloadPath: path.join(here, "dictation-preload.cjs"),
     pillPath: path.join(here, "dictation-pill.html"),
   });
+  smartToolbarManager = new SmartToolbarManager({
+    uiContents: () => uiView?.webContents ?? null,
+    preloadPath: path.join(here, "smart-toolbar-preload.cjs"),
+    toolbarPath: path.join(here, "smart-toolbar.html"),
+    serviceUrl: () => `http://127.0.0.1:${appPort}`,
+    isSuppressed: () => Boolean(dictationManager && dictationManager.phase !== "idle"),
+  });
+  googleWorkspaceManager = new GoogleWorkspaceManager({
+    tokenPath: path.join(app.getPath("userData"), "google-workspace.dat"),
+    uiContents: () => uiView?.webContents ?? null,
+    development: isDevelopment,
+    clientId: process.env.CLYRA_GOOGLE_CLIENT_ID,
+    clientSecret: process.env.CLYRA_GOOGLE_CLIENT_SECRET,
+    serviceUrl: () => `http://127.0.0.1:${appPort}`,
+  });
+  deepResearchManager = new DeepResearchManager({
+    uiContents: () => uiView?.webContents ?? null,
+    development: isDevelopment,
+    serviceUrl: () => `http://127.0.0.1:${appPort}`,
+  });
+  localMemoryManager = new LocalMemoryManager({ filePath:path.join(app.getPath("userData"), "clyra-memory.dat"), development:isDevelopment });
+  screenCaptureService = new ScreenCaptureService();
+  desktopControlService = new DesktopControlService();
+  companionManager = new CompanionManager({
+    preloadPath: path.join(here, "companion-preload.cjs"),
+    htmlPath: path.join(here, "companion.html"),
+    getServiceUrl: () => `http://127.0.0.1:${appPort}`,
+    capture: screenCaptureService,
+    desktop: desktopControlService,
+    analyseVision: analyseCompanionVision,
+    askModel: askCompanionModel,
+  });
   await browserManager.initialize();
   await dictationManager.initialize();
+  await smartToolbarManager.initialize();
+  await companionManager.initialize();
   registerIpc();
+
+  // Global Task View — works even when a BrowserView page owns keyboard focus.
+  try {
+    globalShortcut.register("CommandOrControl+J", () => {
+      if (uiView && !uiView.webContents.isDestroyed()) {
+        uiView.webContents.send("taskview:toggle");
+      }
+    });
+  } catch (error) {
+    console.warn("[taskview] global shortcut unavailable:", error);
+  }
+
+  // ⌘/ — activate OpenCluely overlay (show/hide via local control API).
+  try {
+    const registered = globalShortcut.register("CommandOrControl+/", () => {
+      void toggleOpenCluelyOverlay();
+    });
+    if (!registered) {
+      console.warn("[opencluely] Cmd+/ is already owned by another app (OpenCluely may handle it).");
+    }
+  } catch (error) {
+    console.warn("[opencluely] Cmd+/ shortcut unavailable:", error);
+  }
+
+  if (process.env.CLYRA_COMPANION_SMOKE === "1") {
+    setTimeout(() => {
+      void companionManager?.runSmoke().then((report) => {
+        console.log("[companion-smoke]", JSON.stringify(report));
+        if (process.env.CLYRA_COMPANION_SMOKE_EXIT === "1") {
+          destroyNativeManagers();
+          app.exit(report?.ok ? 0 : 1);
+        }
+      });
+    }, 2500);
+  }
 
   mainWindow.on("resize", resizeUi);
   // The window close control is an application exit, not a hide-to-tray
@@ -480,6 +912,9 @@ async function createWindow() {
   uiView.webContents.on("did-finish-load", () => {
     mainWindow?.show();
     mainWindow?.focus();
+    // Register Clyra under System Settings → Privacy (Microphone / Camera).
+    // Only prompt when macOS has never asked for this bundle identity.
+    void primeMacOsMediaAccess();
   });
   await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`);
   return mainWindow;
@@ -489,6 +924,24 @@ async function createWindow() {
     return await createWindowPromise;
   } finally {
     createWindowPromise = null;
+  }
+}
+
+/**
+ * Ask macOS for mic/camera once so "Clyra" appears in Privacy settings.
+ * Skips when already granted/denied (does not spam System Settings).
+ */
+async function primeMacOsMediaAccess() {
+  if (process.platform !== "darwin") return;
+  for (const kind of ["microphone", "camera"]) {
+    try {
+      const status = systemPreferences.getMediaAccessStatus(kind);
+      if (status !== "not-determined" && status !== "unknown") continue;
+      const granted = await systemPreferences.askForMediaAccess(kind);
+      console.log(`[privacy] ${kind} access → ${granted ? "granted" : "denied"} (was ${status})`);
+    } catch (error) {
+      console.warn(`[privacy] could not request ${kind} access:`, error?.message || error);
+    }
   }
 }
 

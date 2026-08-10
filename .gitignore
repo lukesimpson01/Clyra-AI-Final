@@ -4,9 +4,11 @@ dist/
 coverage/
 .DS_Store
 *.log
+.env
 .env*
 !.env.example
 _reference/
+.references/
 vibe-sandbox/
 vendor/opencode/
 tmp/
@@ -27,3 +29,10 @@ src-tauri/binaries/*
 desktop-binaries/
 release-electron/
 vendor-src/
+third_party/
+__pycache__/
+references/
+xyflow/
+
+# Fresh OpenCluely Electron clone (rebuilt via scripts/clone-opencluely.sh)
+apps/opencluely/

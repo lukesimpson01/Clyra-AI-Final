@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,24 +12,36 @@ import { AnimatePresence, motion } from "motion/react";
 import { createPortal } from "react-dom";
 import {
   ArrowUpIcon,
+  MessageSquareText,
   Mic,
   MicOff,
+  MonitorUp,
   Pencil,
   PhoneOff,
   Sparkles,
+  Video,
+  VideoOff,
   X,
 } from "lucide-react";
 import { AiOrb, type OrbColorTheme } from "../AiOrb";
 import { cn } from "../../lib/utils";
 import type { VoiceStatus, VoiceTurn } from "../../hooks/useVoiceCall";
+import { getElectronDesktop } from "../../lib/electron-runtime";
 import { VoiceWaveform } from "./VoiceWaveform";
+import { VoiceTranscriptPanel } from "./VoiceTranscriptPanel";
 
-type LeftMenuMode = "closed" | "type" | "summary";
-type CallMediaMode = "none" | "screen";
+type LeftMenuMode = "closed" | "type" | "summary" | "messages";
+type CallMediaMode = "none" | "screen" | "camera";
 
 const TYPE_DOCK_COLLAPSED_PX = 48;
-const TYPE_DOCK_EXPANDED_PX = 320;
-const DOCK_SPRING = { type: "spring" as const, stiffness: 300, damping: 30 };
+const TYPE_DOCK_EXPANDED_PX = 340;
+const DOCK_SPRING = { type: "spring" as const, stiffness: 320, damping: 30 };
+
+function isVisionQuestion(text: string) {
+  return /\b(what('?s| is) on (my )?(screen|camera)|see (my )?(screen|camera)|look at (my )?(screen|camera|this)|what (am i|do you) (looking at|seeing|viewing)|what (can you|do you) see|describe (what|the|my).*(screen|camera|view)|read (the )?(page|screen)|where (is|do i click)|help (me )?(find|click))\b/i.test(
+    String(text || ""),
+  );
+}
 
 function statusCopy({ status, muted }: { status: VoiceStatus; muted: boolean }) {
   if (muted) return { title: "Muted", hint: "Tap unmute when you’re ready" };
@@ -40,7 +53,7 @@ function statusCopy({ status, muted }: { status: VoiceStatus; muted: boolean }) 
     case "thinking":
       return { title: "Thinking", hint: "Composing a reply" };
     case "speaking":
-      return { title: "Speaking", hint: "Talk for 2s to interrupt" };
+      return { title: "Speaking", hint: "Talk to interrupt" };
     case "error":
       return { title: "Interrupted", hint: "Try again or end the call" };
     default:
@@ -52,7 +65,7 @@ function buildSummary(turns: VoiceTurn[]) {
   const users = turns.filter((t) => t.role === "user").map((t) => t.content.trim()).filter(Boolean);
   const ais = turns.filter((t) => t.role === "assistant").map((t) => t.content.trim()).filter(Boolean);
   if (!users.length && !ais.length) {
-    return "Nothing to summarize yet. Speak or type to start the call.";
+    return "Nothing to summarize yet. Speak, type, or share your screen.";
   }
   const latestUser = users[users.length - 1]!;
   const latestAi = ais[ais.length - 1];
@@ -72,12 +85,14 @@ function CallControlButton({
   onClick,
   active,
   danger,
+  accent,
   children,
 }: {
   label: string;
   onClick: () => void;
   active?: boolean;
   danger?: boolean;
+  accent?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -89,12 +104,14 @@ function CallControlButton({
         onClick();
       }}
       className={cn(
-        "clyra-voice-call-btn relative z-[280] flex h-14 w-14 touch-manipulation items-center justify-center rounded-full border transition-transform active:scale-90",
+        "clyra-voice-call-btn relative z-[280] flex h-12 w-12 touch-manipulation items-center justify-center rounded-full border transition-transform active:scale-90",
         danger
           ? "border-rose-600 bg-rose-600 text-white"
-          : active
-            ? "border-slate-900 bg-slate-900 text-white"
-            : "border-slate-200/90 bg-white/92 text-slate-800",
+          : accent
+            ? "clyra-voice-call-btn--accent"
+            : active
+              ? "border-slate-900 bg-slate-900 text-white"
+              : "border-[#e7e7e4] bg-white/95 text-[#18212f]",
       )}
       aria-label={label}
     >
@@ -132,28 +149,69 @@ function StatusChip({
       <div
         className={cn(
           "inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.14em] uppercase",
-          tone === "muted" && "bg-slate-900 text-white",
-          tone === "thinking" && "bg-slate-100 text-slate-600",
-          tone === "speaking" && "bg-emerald-50 text-emerald-700",
-          tone === "listening" && "bg-slate-50 text-slate-500",
-          tone === "idle" && "bg-slate-50 text-slate-500",
+          tone === "muted" && "bg-[#18212f] text-white",
+          tone === "thinking" && "bg-[#f1f3f7] text-[#697386]",
+          tone === "speaking" && "bg-[#eef4ff] text-[#0052fb]",
+          tone === "listening" && "bg-[#f7f8fa] text-[#697386]",
+          tone === "idle" && "bg-[#f7f8fa] text-[#697386]",
         )}
       >
         <span
           className={cn(
             "h-1.5 w-1.5 rounded-full",
             tone === "muted" && "bg-white/70",
-            tone === "thinking" && "bg-slate-400 clyra-voice-pulse",
-            tone === "speaking" && "bg-emerald-500 clyra-voice-pulse",
-            tone === "listening" && "bg-slate-400",
-            tone === "idle" && "bg-slate-300",
+            tone === "thinking" && "bg-[#94a3b8] clyra-voice-pulse",
+            tone === "speaking" && "bg-[#0052fb] clyra-voice-pulse",
+            tone === "listening" && "bg-[#94a3b8]",
+            tone === "idle" && "bg-[#cbd5e1]",
           )}
         />
         {copy.title}
       </div>
-      <p className="text-[12px] text-slate-400">{copy.hint}</p>
+      <p className="text-[12px] text-[#8b939e]">{copy.hint}</p>
     </motion.div>
   );
+}
+
+async function captureFrameDataUrl(video: HTMLVideoElement | null): Promise<string | null> {
+  if (!video || video.readyState < 2 || video.videoWidth < 2) return null;
+  const canvas = document.createElement("canvas");
+  const maxW = 1280;
+  const scale = Math.min(1, maxW / video.videoWidth);
+  canvas.width = Math.max(2, Math.round(video.videoWidth * scale));
+  canvas.height = Math.max(2, Math.round(video.videoHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.72);
+}
+
+/** Wait until the live <video> has a drawable frame (camera often needs a beat). */
+async function waitForVideoFrame(
+  video: HTMLVideoElement | null,
+  { timeoutMs = 2500 }: { timeoutMs?: number } = {},
+): Promise<boolean> {
+  if (!video) return false;
+  if (video.readyState >= 2 && video.videoWidth > 2) return true;
+  const start = Date.now();
+  return await new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("playing", onReady);
+      clearInterval(poll);
+      resolve(ok);
+    };
+    const onReady = () => {
+      if (video.readyState >= 2 && video.videoWidth > 2) done(true);
+    };
+    const poll = setInterval(() => {
+      if (video.readyState >= 2 && video.videoWidth > 2) done(true);
+      else if (Date.now() - start > timeoutMs) done(false);
+    }, 80);
+    video.addEventListener("loadeddata", onReady);
+    video.addEventListener("playing", onReady);
+    void video.play().catch(() => undefined);
+  });
 }
 
 export function VoiceCallOverlay({
@@ -191,13 +249,14 @@ export function VoiceCallOverlay({
   const [draft, setDraft] = useState("");
   const [mediaMode, setMediaMode] = useState<CallMediaMode>("none");
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [screenHint, setScreenHint] = useState<string | null>(null);
+  const [seeingScreen, setSeeingScreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaPreviewRef = useRef<HTMLVideoElement>(null);
-  // A display/camera picker can resolve after the user has ended the call.
-  // Keep a monotonically increasing request id so a late grant is immediately
-  // stopped instead of leaving the operating-system capture indicator on.
   const mediaRequestIdRef = useRef(0);
+  const autoVisionKeyRef = useRef<string>("");
+  const desktop = getElectronDesktop();
 
   const meterActive =
     !muted &&
@@ -231,10 +290,89 @@ export function VoiceCallOverlay({
     }
     setMediaMode("none");
     setMediaError(null);
+    setScreenHint(null);
+    setSeeingScreen(false);
   };
 
-  const startMedia = async () => {
-    const nextMode: Exclude<CallMediaMode, "none"> = "screen";
+  const analyseSharedScreen = useCallback(async (question?: string) => {
+    setSeeingScreen(true);
+    try {
+      const ask =
+        question ||
+        (mediaMode === "camera"
+          ? "What do you see on my camera? Answer helpfully about what is visible."
+          : "What is on my shared screen? Help briefly.");
+
+      // Wait for a real camera/screenshare frame, then send to OpenCluely Ollama VLM.
+      await waitForVideoFrame(mediaPreviewRef.current);
+      let dataUrl = await captureFrameDataUrl(mediaPreviewRef.current);
+      // One short retry — webcams often need an extra frame after play().
+      if (!dataUrl) {
+        await new Promise((r) => setTimeout(r, 180));
+        await waitForVideoFrame(mediaPreviewRef.current, { timeoutMs: 1200 });
+        dataUrl = await captureFrameDataUrl(mediaPreviewRef.current);
+      }
+
+      let visionText = "";
+      let source = "";
+
+      if (dataUrl) {
+        const response = await fetch("/api/companion/vision-frame", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataUrl, question: ask, source: mediaMode }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        visionText = String(payload?.summary || payload?.text || payload?.error || "").trim();
+        source = String(payload?.source || payload?.model || "vision-frame");
+      } else if (mediaMode === "screen" && (desktop?.seeScreen || desktop?.companion?.seeScreen)) {
+        // Screen-share only: fall back to Electron OS capture. Never use this for camera.
+        const seen = await (desktop.seeScreen || desktop.companion!.seeScreen!)(ask);
+        visionText = String(seen?.vision?.summary || seen?.vision?.text || seen?.error || "").trim();
+        source = String(seen?.vision?.source || seen?.vision?.model || "electron-see");
+      }
+
+      if (visionText) {
+        const label = mediaMode === "camera" ? "Camera" : "Screen share";
+        setScreenHint(`${visionText.slice(0, 220)}${source ? ` · ${source}` : ""}`);
+        onSendText(`[${label}] ${ask}\n\nVisible: ${visionText.slice(0, 1200)}`);
+      } else {
+        setScreenHint(
+          mediaMode === "camera"
+            ? "Camera is on, but no frame was ready yet — try See camera again in a moment."
+            : "Share your screen first, then ask what you’re looking at.",
+        );
+      }
+    } catch (cause) {
+      setScreenHint(cause instanceof Error ? cause.message : "Vision failed.");
+    } finally {
+      setSeeingScreen(false);
+    }
+  }, [desktop, mediaMode, onSendText]);
+
+  const attachStream = (stream: MediaStream, mode: Exclude<CallMediaMode, "none">, hint: string) => {
+    mediaStreamRef.current = stream;
+    const [videoTrack] = stream.getVideoTracks();
+    if (videoTrack) {
+      videoTrack.addEventListener(
+        "ended",
+        () => {
+          if (mediaStreamRef.current === stream) stopMedia();
+        },
+        { once: true },
+      );
+    }
+    setMediaMode(mode);
+    setMenu("closed");
+    setScreenHint(hint);
+    requestAnimationFrame(() => {
+      if (!mediaPreviewRef.current) return;
+      mediaPreviewRef.current.srcObject = stream;
+      void mediaPreviewRef.current.play().catch(() => undefined);
+    });
+  };
+
+  const startCamera = async () => {
     setMediaError(null);
     const requestId = mediaRequestIdRef.current + 1;
     mediaRequestIdRef.current = requestId;
@@ -243,17 +381,20 @@ export function VoiceCallOverlay({
       track.stop();
     }
     try {
-      // Launch the platform picker immediately. There is no intermediate
-      // Clyra setup screen, and the platform retains the permission boundary.
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const desktopPermission = await getElectronDesktop()?.dictation.ensureCamera?.().catch(() => null);
+      if (desktopPermission && desktopPermission.ok === false) {
+        setMediaError(String(desktopPermission.error || "Camera permission was not granted."));
+        setMediaMode("none");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          frameRate: { ideal: 15, max: 30 },
-          ...({ selfBrowserSurface: "exclude", surfaceSwitching: "include" } as MediaTrackConstraints),
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         },
         audio: false,
       });
-      // The picker may resolve after ending the call, changing media modes, or
-      // closing the overlay. Do not retain that late stream.
       if (requestId !== mediaRequestIdRef.current) {
         for (const track of stream.getTracks()) {
           track.enabled = false;
@@ -261,23 +402,76 @@ export function VoiceCallOverlay({
         }
         return;
       }
-      mediaStreamRef.current = stream;
-      const [videoTrack] = stream.getVideoTracks();
-      if (videoTrack) {
-        videoTrack.addEventListener("ended", () => {
-          if (mediaStreamRef.current === stream) stopMedia();
-        }, { once: true });
-      }
-      setMediaMode(nextMode);
-      setMenu("closed");
-      requestAnimationFrame(() => {
-        if (!mediaPreviewRef.current) return;
-        mediaPreviewRef.current.srcObject = stream;
-        void mediaPreviewRef.current.play().catch(() => undefined);
-      });
+      attachStream(
+        stream,
+        "camera",
+        "Camera on — ask what’s visible, or tap See camera. Uses OpenCluely vision.",
+      );
     } catch (cause) {
       if (requestId !== mediaRequestIdRef.current) return;
       const name = cause instanceof DOMException ? cause.name : "";
+      if (name === "NotAllowedError") {
+        void getElectronDesktop()?.dictation.openCameraSettings?.().catch(() => undefined);
+      }
+      setMediaError(
+        name === "NotAllowedError"
+          ? "Camera permission was not granted. Enable “Clyra” under System Settings → Privacy & Security → Camera."
+          : "Could not start the camera.",
+      );
+      setMediaMode("none");
+    }
+  };
+
+  const startMedia = async () => {
+    setMediaError(null);
+    const requestId = mediaRequestIdRef.current + 1;
+    mediaRequestIdRef.current = requestId;
+    for (const track of mediaStreamRef.current?.getTracks() ?? []) {
+      track.enabled = false;
+      track.stop();
+    }
+    try {
+      // Prefer live screenshare frame so voice can feed OpenCluely vision continuously.
+      if (navigator.mediaDevices?.getDisplayMedia) {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 15, max: 30 },
+            ...({ selfBrowserSurface: "exclude", surfaceSwitching: "include" } as MediaTrackConstraints),
+          },
+          audio: false,
+        });
+        if (requestId !== mediaRequestIdRef.current) {
+          for (const track of stream.getTracks()) {
+            track.enabled = false;
+            track.stop();
+          }
+          return;
+        }
+        attachStream(
+          stream,
+          "screen",
+          "Screen shared — ask what’s on screen, or tap See screen. Uses OpenCluely vision.",
+        );
+        return;
+      }
+      // Electron fallback without getDisplayMedia: OS capture via Companion/OpenCluely path.
+      if (desktop?.seeScreen || desktop?.companion?.seeScreen) {
+        setMediaMode("screen");
+        setScreenHint("Desktop vision ready — ask what’s on your screen (OpenCluely models).");
+        setMenu("closed");
+        void analyseSharedScreen("What is on my screen right now?");
+        return;
+      }
+      throw new Error("Screen sharing is not available in this browser.");
+    } catch (cause) {
+      if (requestId !== mediaRequestIdRef.current) return;
+      const name = cause instanceof DOMException ? cause.name : "";
+      // Last resort: Electron OS capture
+      if (desktop?.seeScreen || desktop?.companion?.seeScreen) {
+        setMediaMode("screen");
+        setScreenHint("Using desktop capture — ask what’s on your screen.");
+        return;
+      }
       setMediaError(
         name === "NotAllowedError"
           ? "Screen sharing permission was not granted."
@@ -293,9 +487,20 @@ export function VoiceCallOverlay({
       setDraft("");
       stopMedia();
     }
-    // Media tracks are intentionally tied to the call overlay lifecycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // When camera/screen is on and the user speaks a vision question, auto-analyse.
+  useEffect(() => {
+    if (!open || mediaMode === "none" || seeingScreen) return;
+    const latest = [...turns].reverse().find((t) => t.role === "user");
+    if (!latest?.content || !isVisionQuestion(latest.content)) return;
+    if (/^\[(Camera|Screen share)\]/i.test(latest.content)) return;
+    const key = `${latest.id || latest.content}`;
+    if (autoVisionKeyRef.current === key) return;
+    autoVisionKeyRef.current = key;
+    void analyseSharedScreen(latest.content);
+  }, [turns, open, mediaMode, seeingScreen, analyseSharedScreen]);
 
   useEffect(() => () => stopMedia(), []);
 
@@ -329,6 +534,11 @@ export function VoiceCallOverlay({
     event?.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    if (mediaMode !== "none" && isVisionQuestion(text)) {
+      setDraft("");
+      void analyseSharedScreen(text);
+      return;
+    }
     const ok = onSendText(text);
     if (ok !== false) setDraft("");
   };
@@ -344,9 +554,6 @@ export function VoiceCallOverlay({
     onEnd();
   };
 
-  void onUpdateUserMessage;
-  void onResendUserMessage;
-
   const overlay = (
     <AnimatePresence>
       {open ? (
@@ -356,12 +563,13 @@ export function VoiceCallOverlay({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed inset-0 z-[220] flex flex-col items-center justify-center overflow-hidden bg-white/90 backdrop-blur-[12px] pointer-events-auto"
+          className="fixed inset-0 z-[220] flex flex-col items-center justify-center overflow-hidden bg-[#fbfbfa]/92 backdrop-blur-[14px] pointer-events-auto"
+          style={{ fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif" }}
         >
           <AnimatePresence initial={false}>
-            {mediaMode !== "none" ? (
+            {mediaMode !== "none" && (mediaStreamRef.current || mediaMode === "screen" || mediaMode === "camera") ? (
               <motion.aside
-                key={mediaMode}
+                key="screen-preview"
                 initial={{ opacity: 0, x: 18, y: -8, scale: 0.94, filter: "blur(8px)" }}
                 animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: "blur(0px)" }}
                 exit={{ opacity: 0, x: 12, scale: 0.96, filter: "blur(5px)" }}
@@ -369,19 +577,43 @@ export function VoiceCallOverlay({
                 className="clyra-call-media-preview"
               >
                 <div className="clyra-call-media-preview__frame">
-                  <video
-                    ref={mediaPreviewRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className={cn(
-                      "h-full w-full object-cover",
-                    )}
-                  />
+                  {mediaStreamRef.current ? (
+                    <video
+                      ref={mediaPreviewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className={cn(
+                        "h-full w-full object-cover",
+                        mediaMode === "camera" && "scale-x-[-1]",
+                      )}
+                    />
+                  ) : (
+                    <div className="grid h-full w-full place-items-center bg-[#0f172a] text-[11px] font-medium text-white/80">
+                      Desktop vision ready
+                    </div>
+                  )}
                   <div className="clyra-call-media-preview__sheen" />
                 </div>
-                <div className="absolute right-2 top-2 z-10">
-                  <button type="button" onClick={stopMedia} className="grid h-7 w-7 place-items-center rounded-full border border-white/35 bg-slate-950/65 text-white shadow-sm backdrop-blur-md transition-[background-color,transform] duration-200 hover:scale-105 hover:bg-slate-950/85" aria-label="Stop screen sharing">
+                <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-2 p-2">
+                  <button
+                    type="button"
+                    onClick={() => void analyseSharedScreen()}
+                    disabled={seeingScreen}
+                    className="rounded-full border border-white/40 bg-[#18212f]/72 px-2.5 py-1 text-[10.5px] font-semibold text-white backdrop-blur-md disabled:opacity-60"
+                  >
+                    {seeingScreen
+                      ? "Seeing…"
+                      : mediaMode === "camera"
+                        ? "See camera"
+                        : "See screen"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopMedia}
+                    className="grid h-7 w-7 place-items-center rounded-full border border-white/35 bg-slate-950/65 text-white shadow-sm backdrop-blur-md"
+                    aria-label={mediaMode === "camera" ? "Turn off camera" : "Stop screen sharing"}
+                  >
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -395,13 +627,22 @@ export function VoiceCallOverlay({
             </motion.div>
           ) : null}
 
-          {/* Normal voice call stage — stays put while typing */}
+          {screenHint ? (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="absolute left-1/2 top-6 z-[270] max-w-[420px] -translate-x-1/2 rounded-2xl border border-[#e7e7e4] bg-white/96 px-3.5 py-2 text-[12px] leading-relaxed text-[#18212f] shadow-[0_10px_30px_rgba(15,23,42,0.08)]"
+            >
+              {screenHint}
+            </motion.div>
+          ) : null}
+
           <motion.div
             initial={{ opacity: 0, y: 28, scale: 0.94 }}
             animate={{
-              opacity: 1,
+              opacity: menu === "summary" || menu === "messages" ? 0.35 : 1,
               y: menu === "summary" ? -36 : 0,
-              scale: menu === "summary" ? 0.94 : 1,
+              scale: menu === "summary" || menu === "messages" ? 0.94 : 1,
             }}
             exit={{ opacity: 0, y: 16, scale: 0.97 }}
             transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
@@ -447,10 +688,10 @@ export function VoiceCallOverlay({
                     transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
                     className="clyra-voice-reply-card mx-auto max-w-md"
                   >
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8b939e]">
                       Clyra
                     </p>
-                    <p className="max-h-36 overflow-y-auto text-[15px] leading-relaxed text-slate-800 scrollbar-thin">
+                    <p className="max-h-36 overflow-y-auto text-[15px] leading-relaxed text-[#18212f] scrollbar-thin">
                       {displayAssistant}
                     </p>
                   </motion.div>
@@ -460,7 +701,7 @@ export function VoiceCallOverlay({
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    className="text-center text-[14px] font-medium text-slate-600"
+                    className="mx-auto max-w-md rounded-[14px] bg-[#aec7f1]/55 px-3.5 py-2.5 text-center text-[14px] font-medium text-[#18212f]"
                   >
                     {displayUser}
                   </motion.p>
@@ -481,7 +722,17 @@ export function VoiceCallOverlay({
             </div>
           </motion.div>
 
-          {/* Summary sheet only — no message list */}
+          <VoiceTranscriptPanel
+            open={menu === "messages"}
+            turns={turns}
+            liveUser={displayUser}
+            liveAssistant={displayAssistant}
+            onClose={() => setMenu("closed")}
+            onSend={onSendText}
+            onUpdateUser={onUpdateUserMessage}
+            onResendUser={onResendUserMessage}
+          />
+
           <AnimatePresence>
             {menu === "summary" ? (
               <motion.div key="summary-layer" className="absolute inset-0 z-[241]">
@@ -502,64 +753,48 @@ export function VoiceCallOverlay({
                   transition={{ type: "spring", stiffness: 410, damping: 39, mass: 0.7 }}
                   className="absolute inset-x-0 bottom-0"
                 >
-                <div className="clyra-voice-summary-sheet mx-auto w-full max-w-lg rounded-t-[28px] border border-slate-200/80 bg-white/96 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-18px_55px_rgba(15,23,42,0.12)] backdrop-blur-xl">
-                  <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-slate-200" />
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-slate-500" />
-                      <p className="text-[13px] font-semibold text-slate-900">Summary</p>
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
-                        Live
-                      </span>
+                  <div className="clyra-voice-summary-sheet mx-auto w-full max-w-lg rounded-t-[28px] border border-[#e7e7e4] bg-white/96 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                    <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-[#e7e7e4]" />
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-[#0052fb]" />
+                        <p className="text-[13px] font-semibold text-[#18212f]">Summary</p>
+                        <span className="rounded-full bg-[#eef4ff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#0052fb]">
+                          Live
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMenu("closed")}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[#697386] hover:bg-[#f1f3f7]"
+                        aria-label="Close summary"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setMenu("closed");
-                      }}
-                      className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
-                      aria-label="Close summary"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
+                    <p className="text-[14px] leading-relaxed text-[#697386]">{summary}</p>
                   </div>
-                  <motion.p
-                    key={summary}
-                    initial={{ opacity: 0.4 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.25 }}
-                    className="text-[14px] leading-relaxed text-slate-600"
-                  >
-                    {summary}
-                  </motion.p>
-                  <p className="mt-3 text-[11px] text-slate-400">
-                    Updates automatically as the call continues.
-                  </p>
-                </div>
                 </motion.div>
               </motion.div>
             ) : null}
           </AnimatePresence>
 
-          {/* Bottom dock: call controls ↔ expanding type bar. */}
           <motion.div
             initial={{ opacity: 0, y: 36 }}
             animate={{
-              opacity: menu === "summary" ? 0 : 1,
-              y: menu === "summary" ? 28 : 0,
-              pointerEvents: menu === "summary" ? "none" : "auto",
+              opacity: menu === "summary" || menu === "messages" ? 0 : 1,
+              y: menu === "summary" || menu === "messages" ? 28 : 0,
+              pointerEvents: menu === "summary" || menu === "messages" ? "none" : "auto",
             }}
             exit={{ opacity: 0, y: 20 }}
             transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: 0.08 }}
             className={cn(
-              "absolute bottom-10 left-0 right-0 z-[260] flex justify-center px-5",
-              menu === "summary" && "hidden",
+              "absolute bottom-8 left-0 right-0 z-[260] flex justify-center px-5",
+              (menu === "summary" || menu === "messages") && "hidden",
             )}
-            aria-hidden={menu === "summary"}
+            aria-hidden={menu === "summary" || menu === "messages"}
           >
-            <div className="relative flex min-h-14 w-full max-w-md items-center justify-center">
+            <div className="relative flex min-h-14 w-full max-w-lg items-center justify-center">
               <AnimatePresence mode="wait" initial={false}>
                 {menu === "type" ? (
                   <motion.form
@@ -576,9 +811,9 @@ export function VoiceCallOverlay({
                       initial={{ backdropFilter: "blur(0px)" }}
                       animate={{ backdropFilter: "blur(12px)" }}
                       transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                      className="clyra-voice-type-composer relative flex h-14 w-full items-center gap-2 overflow-hidden rounded-full border border-slate-200/90 bg-white/88 shadow-none backdrop-blur-md"
+                      className="clyra-voice-type-composer relative flex h-14 w-full items-center gap-2 overflow-hidden rounded-full border border-[#dfe7f1] bg-white/96"
                     >
-                      <div className="ml-4 flex shrink-0 text-slate-400">
+                      <div className="ml-4 flex shrink-0 text-[#8b939e]">
                         <Pencil className="h-4 w-4" />
                       </div>
                       <input
@@ -587,9 +822,9 @@ export function VoiceCallOverlay({
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={onTypeKey}
-                        placeholder="Type a message…"
+                        placeholder="Message Clyra…"
                         autoFocus
-                        className="h-14 min-w-0 flex-1 bg-transparent pr-1 text-[14px] text-slate-800 outline-none placeholder:text-slate-400"
+                        className="h-14 min-w-0 flex-1 bg-transparent pr-1 text-[14px] text-[#18212f] outline-none placeholder:text-[#8b939e]"
                       />
                       <motion.button
                         type="submit"
@@ -599,7 +834,7 @@ export function VoiceCallOverlay({
                         transition={{ ...DOCK_SPRING, delay: 0.06 }}
                         whileHover={{ scale: 1.08 }}
                         whileTap={{ scale: 0.9 }}
-                        className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white disabled:bg-slate-300 disabled:opacity-60"
+                        className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0052fb] text-white disabled:bg-[#e8eaef] disabled:text-[#b0b5bf]"
                         aria-label="Send message"
                       >
                         <ArrowUpIcon className="h-4 w-4" />
@@ -612,7 +847,7 @@ export function VoiceCallOverlay({
                         transition={{ ...DOCK_SPRING, delay: 0.08 }}
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
-                        className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
+                        className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#697386] hover:bg-[#f1f3f7]"
                         aria-label="Close typing"
                       >
                         <X className="h-4 w-4" />
@@ -626,11 +861,46 @@ export function VoiceCallOverlay({
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.92, opacity: 0 }}
                     transition={{ type: "spring", stiffness: 320, damping: 28 }}
-                    className="grid w-full max-w-[184px] grid-cols-2 items-center justify-items-center"
+                    className="flex w-full max-w-[420px] items-center justify-center gap-2"
                   >
-                    {/* The former left control (Type plus Share Screen) is
-                        intentionally hidden for now. `startMedia`, `stopMedia`
-                        and the type dock remain intact for the next UI pass. */}
+                    <CallControlButton
+                      label="Type a message"
+                      onClick={() => setMenu("type")}
+                    >
+                      <Pencil className="h-[18px] w-[18px]" />
+                    </CallControlButton>
+                    <CallControlButton
+                      label="Open messages"
+                      onClick={() => setMenu("messages")}
+                    >
+                      <MessageSquareText className="h-[18px] w-[18px]" />
+                    </CallControlButton>
+                    <CallControlButton
+                      label={mediaMode === "camera" ? "Turn off camera" : "Turn on camera"}
+                      onClick={() => {
+                        if (mediaMode === "camera") stopMedia();
+                        else void startCamera();
+                      }}
+                      accent={mediaMode === "camera"}
+                      active={mediaMode === "camera"}
+                    >
+                      {mediaMode === "camera" ? (
+                        <VideoOff className="h-[18px] w-[18px]" />
+                      ) : (
+                        <Video className="h-[18px] w-[18px]" />
+                      )}
+                    </CallControlButton>
+                    <CallControlButton
+                      label={mediaMode === "screen" ? "Stop screen share" : "Share screen"}
+                      onClick={() => {
+                        if (mediaMode === "screen") stopMedia();
+                        else void startMedia();
+                      }}
+                      accent={mediaMode === "screen"}
+                      active={mediaMode === "screen"}
+                    >
+                      <MonitorUp className="h-[18px] w-[18px]" />
+                    </CallControlButton>
                     <CallControlButton
                       label={muted ? "Unmute microphone" : "Mute microphone"}
                       onClick={onToggleMute}
@@ -638,7 +908,6 @@ export function VoiceCallOverlay({
                     >
                       {muted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                     </CallControlButton>
-
                     <CallControlButton label="End voice call" onClick={endCall} danger>
                       <PhoneOff className="h-5 w-5" />
                     </CallControlButton>

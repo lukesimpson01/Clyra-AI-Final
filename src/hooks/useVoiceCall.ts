@@ -68,9 +68,10 @@ const ENDPOINT_SILENCE_DEFAULT_MS = 620;
 const VAD_SILENCE_LEVEL = 0.045;
 const VAD_SPEECH_LEVEL = 0.08;
 /** Continuous user speech required before interrupting the assistant (noise immunity). */
-const BARGE_HOLD_MS = 700;
+const BARGE_HOLD_MS = 480;
 const VITE_ENV = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-const ALLOW_BROWSER_TTS_FALLBACK = VITE_ENV.VITE_ALLOW_BROWSER_TTS_FALLBACK === "true";
+const ALLOW_BROWSER_TTS_FALLBACK =
+  VITE_ENV.VITE_ALLOW_BROWSER_TTS_FALLBACK !== "false";
 const CHATTERBOX_WATCHDOG_MS = Math.max(
   5_000,
   Number(VITE_ENV.VITE_CHATTERBOX_WATCHDOG_MS || 30_000),
@@ -389,6 +390,7 @@ export function useVoiceCall(options: {
 
   const endCall = useCallback(() => {
     const sessionId = sessionIdRef.current;
+    const wasActive = activeRef.current;
     activeRef.current = false;
     pipelineModeRef.current = false;
     stopMic();
@@ -397,16 +399,21 @@ export function useVoiceCall(options: {
     sessionIdRef.current = null;
     committedSpeechRef.current = "";
     interimSpeechRef.current = "";
-    // The hang-up action must always feel immediate. Cleanup on the gateway is
-    // intentionally detached so a transient request failure cannot leave the
-    // overlay or microphone stuck on screen.
-    flushSync(() => {
+    // Hang-up must paint immediately when a call is live. Skip flushSync on
+    // idle cleanup (Strict Mode remount / unmount) — flushing during React's
+    // lifecycle throws and can leave the rest of the app feeling unresponsive.
+    const clearCallSurface = () => {
       setActive(false);
       setStatus("ended");
       setPartialTranscript("");
       setAssistantText("");
       setError(null);
-    });
+    };
+    if (wasActive) {
+      flushSync(clearCallSurface);
+    } else {
+      clearCallSurface();
+    }
     statusRef.current = "ended";
     if (sessionId) {
       void serviceUrl("/voice/end").then((url) => fetch(url, {
@@ -1006,6 +1013,19 @@ export function useVoiceCall(options: {
     statusRef.current = "connecting";
     pendingAssistantTextRef.current = "";
     ttsPlaybackStartedRef.current = false;
+    // Ask through the desktop main process before Chromium opens getUserMedia.
+    // This makes the first-click path deterministic on macOS, where a hidden
+    // WebContentsView otherwise occasionally drops the TCC prompt.
+    const desktopPermission = await getElectronDesktop()?.dictation.ensurePermissions?.().catch(() => null);
+    if (desktopPermission && desktopPermission.ok === false) {
+      const message = String(desktopPermission.error || "Microphone permission is blocked.");
+      setError(message);
+      setStatus("error");
+      statusRef.current = "error";
+      activeRef.current = false;
+      setActive(false);
+      return;
+    }
     // This runs synchronously from the user's Start Call gesture. Keeping the
     // context active here avoids browser autoplay policies suspending valid
     // Async/Max PCM that arrives later over WebSocket.
@@ -1286,6 +1306,16 @@ export function useVoiceCall(options: {
             });
             setStatus("speaking");
           }
+          if (message.type === "tts_browser" && message.text) {
+            beginAssistantHold();
+            setAssistantText(message.text);
+            pendingAssistantTextRef.current = message.text;
+            if (ALLOW_BROWSER_TTS_FALLBACK) {
+              speakProgressive(message.text, true);
+              armTtsWatchdog(message.text);
+            }
+            setStatus("speaking");
+          }
           if (message.type === "tts_done") {
             if (gotTtsChunkRef.current) {
               clearTtsWatchdog();
@@ -1304,7 +1334,6 @@ export function useVoiceCall(options: {
             } else if (pendingAssistantTextRef.current) {
               setAssistantText(pendingAssistantTextRef.current);
               clearTtsWatchdog();
-              setError("Async Voice returned no audio. Browser speech fallback is disabled to keep Max consistent.");
               finishSpeakingAndListen();
             } else {
               finishSpeakingAndListen();
@@ -1328,8 +1357,11 @@ export function useVoiceCall(options: {
             finishSpeakingAndListen();
           }
           if (message.type === "error") {
-            setError(message.message || "Voice stream error");
-            setStatus("error");
+            const err = String(message.message || "Voice stream error");
+            if (!/not configured/i.test(err)) {
+              setError(err);
+              setStatus("error");
+            }
             listenPausedRef.current = false;
             localTtsActiveRef.current = false;
           }

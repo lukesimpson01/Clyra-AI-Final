@@ -30,14 +30,68 @@ export type ClyraDesktopBridge = {
     }) => Promise<any>;
     hide: (id: string) => Promise<any>;
   };
+  taskView: {
+    capture: (payload: {
+      bounds: ElectronSurfaceBounds;
+      nativeBrowser?: boolean;
+      /** Refresh only the native browser layer (skip UI shell capture). */
+      nativeOnly?: boolean;
+    }) => Promise<{
+      ok: boolean;
+      src: string;
+      width: number;
+      height: number;
+      nativeLayer?: {
+        src: string;
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+        imageWidth: number;
+        imageHeight: number;
+      };
+    }>;
+    onToggle: (callback: () => void) => () => void;
+  };
   dictation: {
+    toggle?: () => Promise<{ ok: boolean }>;
+    shortcutStatus?: () => Promise<{ registered: boolean }>;
     setState: (payload: unknown) => Promise<any>;
     serviceUrl: () => Promise<string>;
     insert: (payload: { text: string; target?: unknown }) => Promise<any>;
-    ensurePermissions?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; accessibility?: boolean }>;
+    ensurePermissions?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string; accessibility?: boolean }>;
+    ensureCamera?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string }>;
     openMicrophoneSettings?: () => Promise<{ ok: boolean }>;
+    openCameraSettings?: () => Promise<{ ok: boolean }>;
     onTrigger: (callback: (payload: any) => void) => () => void;
     onAction: (callback: (payload: any) => void) => () => void;
+  };
+  companion?: {
+    toggle?: () => Promise<{ ok: boolean; registered?: boolean }>;
+    seeScreen?: (question?: string) => Promise<{
+      ok: boolean;
+      vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
+      error?: string;
+    }>;
+    ask?: (text: string) => Promise<{ ok: boolean; reply?: { text?: string }; vision?: { summary?: string }; error?: string }>;
+  };
+  seeScreen?: (question?: string) => Promise<{
+    ok: boolean;
+    vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
+    error?: string;
+  }>;
+  google: {
+    status: () => Promise<{ connected: boolean; email?: string }>;
+    signIn: () => Promise<{ ok: boolean; pending?: boolean; error?: string }>;
+    disconnect: () => Promise<{ ok: boolean }>;
+    execute: (payload: { tool?: "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive"; prompt?: string; runId?: string; service?: "docs" | "drive" | "sheets" | "gmail" | "calendar" | "contacts" | "youtube"; action?: string; args?: Record<string, unknown>; confirmed?: boolean }) => Promise<{ ok: boolean; text: string; action?: string; detail?: string; needsAuth?: boolean; needsInput?: boolean; requiresConfirmation?: boolean; confirmationKind?: string; gmailResults?: unknown; gmailThread?: unknown; gmailEmail?: unknown; gmailMutation?: unknown; gmailFollowUp?: { id?: string; dueAt?: string }; workspaceResult?: unknown }>;
+    diagnostic: (payload?: { forceRefresh?: boolean }) => Promise<{ ok: boolean; stage?: string; httpStatus?: number; errorCode?: string; driveListed?: boolean; documentCreated?: boolean; documentRead?: boolean; documentDeleted?: boolean; refreshVerified?: boolean; accessibleFileCount?: number }>;
+    onAuthState: (callback: (payload: { connected: boolean; email?: string; pending?: boolean; error?: string }) => void) => () => void;
+    onAgentProgress: (callback: (payload: { runId: string; service: "clyra" | "research" | "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive"; state: "running" | "completed" | "failed"; label: string; detail: string }) => void) => () => void;
+  };
+  research: {
+    execute: (payload: { prompt: string; runId?: string; checkpointId?: string; answers?: string; action?: "start" | "continue" | "cancel" }) => Promise<{ ok: boolean; text: string; needsClarification?: boolean; checkpointId?: string; questions?: string[]; analysisPrompt?: string; sources?: Array<{ url: string; publisher: string; branch: string }>; assumptions?: string[]; paused?: boolean; cancelled?: boolean }>;
+    onAgentProgress: (callback: (payload: { runId: string; service: "clyra" | "research"; state: "running" | "completed" | "failed"; label: string; detail: string }) => void) => () => void;
   };
 };
 

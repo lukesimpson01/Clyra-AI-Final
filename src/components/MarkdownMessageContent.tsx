@@ -54,15 +54,31 @@ export function MarkdownMessageContent({
           </span>
         );
       }
+      const googleWorkspaceMatch = typeof href === "string"
+        ? href.match(/^https:\/\/(docs\.google\.com\/(document|spreadsheets)\/|calendar\.google\.com\/|mail\.google\.com\/)/)
+        : null;
+      const googleWorkspaceLabel = googleWorkspaceMatch?.[2] === "spreadsheets"
+        ? "Open Google Sheet"
+        : googleWorkspaceMatch?.[2] === "document"
+          ? "Open Google Doc"
+          : href?.startsWith("https://calendar.google.com")
+            ? "Open Google Calendar"
+            : href?.startsWith("https://mail.google.com")
+              ? "Open Gmail"
+              : null;
       return (
         <a
           {...props}
           href={href}
           target={href?.startsWith("http") ? "_blank" : undefined}
           rel={href?.startsWith("http") ? "noopener noreferrer" : undefined}
-          className="font-semibold text-slate-900 underline decoration-slate-300 underline-offset-4 transition-colors hover:text-slate-600"
+          className={cn(
+            googleWorkspaceLabel
+              ? "clyra-workspace-open-link"
+              : "font-semibold text-slate-900 underline decoration-slate-300 underline-offset-4 transition-colors hover:text-slate-600",
+          )}
         >
-          {children}
+          {googleWorkspaceLabel || children}
         </a>
       );
     },

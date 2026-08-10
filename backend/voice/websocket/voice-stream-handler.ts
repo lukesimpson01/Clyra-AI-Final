@@ -52,8 +52,9 @@ type ActiveSocket = {
 const sockets = new Map<string, ActiveSocket>();
 
 /** User must talk continuously this long before interrupting the assistant. */
-const BARGE_HOLD_MS = Number(process.env.VOICE_BARGE_HOLD_MS ?? 700);
-const TTS_FLUSH_MS = Number(process.env.VOICE_TTS_FLUSH_MS ?? 120);
+const BARGE_HOLD_MS = Number(process.env.VOICE_BARGE_HOLD_MS ?? 480);
+/** Flush TTS sooner so first audio arrives faster. */
+const TTS_FLUSH_MS = Number(process.env.VOICE_TTS_FLUSH_MS ?? 72);
 
 let pipelineHealthCache: { ok: boolean; at: number } = { ok: false, at: 0 };
 
@@ -65,9 +66,9 @@ function send(ws: WebSocket, message: VoiceServerMessage) {
 
 function nextSpeakable(full: string, from: number) {
   return nextSemanticPhrase(full, from, {
-    minWords: 8,
-    preferredWords: 14,
-    maxWords: 28,
+    minWords: 5,
+    preferredWords: 11,
+    maxWords: 22,
   });
 }
 
@@ -189,6 +190,19 @@ async function speakText(
   try {
     const config = loadVoiceConfig();
     const contextId = active.asyncContextId || active.responseId;
+    // When Async TTS isn't configured, keep the call alive and let the client
+    // speak via browser TTS — still stream llm_token / llm_done for the UI.
+    if (!active.asyncVoice?.configured) {
+      send(active.ws, {
+        type: "tts_browser",
+        sessionId: active.sessionId,
+        responseId: active.responseId,
+        generation: active.generation,
+        text: spoken,
+      });
+      active.phraseSeq += 1;
+      return true;
+    }
     if (!active.asyncVoice || !contextId) return await sendLocalPipelineAudio();
     if (!active.ttsFormatSent) {
       send(active.ws, {
@@ -212,15 +226,32 @@ async function speakText(
     active.asyncVoice.cancelContext(contextId);
     return await sendLocalPipelineAudio();
   } catch (error) {
-    console.warn(
-      "[voice] Async TTS failed:",
-      error instanceof Error ? error.message : error,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    // Missing Async credentials are expected in local/dev — don't alarm the UI.
+    if (/not configured/i.test(message)) {
+      send(active.ws, {
+        type: "tts_browser",
+        sessionId: active.sessionId,
+        responseId: active.responseId,
+        generation: active.generation,
+        text: spoken,
+      });
+      active.phraseSeq += 1;
+      return true;
+    }
+    console.warn("[voice] Async TTS failed:", message);
     try {
       return await sendLocalPipelineAudio();
     } catch (fallbackError) {
       console.warn("[voice] Local TTS fallback failed:", fallbackError instanceof Error ? fallbackError.message : fallbackError);
-      return false;
+      send(active.ws, {
+        type: "tts_browser",
+        sessionId: active.sessionId,
+        responseId: active.responseId,
+        generation: active.generation,
+        text: spoken,
+      });
+      return true;
     }
   }
 }
@@ -544,8 +575,8 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
       if (current.ttsSeq === 1) voiceMetrics.record(sessionId, "tts_chunk", 0);
     },
     onError: (message) => {
-      // Async is preferred, but a live call continues through the local TTS
-      // fallback when the hosted socket is slow or unavailable.
+      // Async is preferred; missing credentials are expected in local/dev.
+      if (/not configured/i.test(message)) return;
       console.warn("[voice] Hosted TTS:", message);
     },
   });
@@ -553,11 +584,9 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
 
   void (async () => {
     void active.asyncVoice?.connect().catch((error) => {
-      send(ws, {
-        type: "error",
-        sessionId,
-        message: error instanceof Error ? error.message : "Async voice could not connect.",
-      });
+      const message = error instanceof Error ? error.message : "Async voice could not connect.";
+      if (/not configured/i.test(message)) return;
+      send(ws, { type: "error", sessionId, message });
     });
     if (!attachAsyncStt(active, config)) await attachPipeline(active);
     send(ws, {
