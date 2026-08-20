@@ -32,6 +32,8 @@ export type AgentEvent =
   | { type: "command.output"; callId: string; stream: "stdout" | "stderr"; text: string }
   | { type: "command.completed"; callId: string; exitCode: number }
   | { type: "plan.updated"; items: Array<{ id: string; title: string; status: string }> }
+  | { type: "approval.requested"; approvalId: string; callId?: string; tool: string; reason: string }
+  | { type: "approval.resolved"; approvalId: string; outcome: "allowed-once" | "rejected" | "cancelled" }
   | { type: "message.delta"; delta: string }
   | { type: "message.completed" }
   | { type: "run.completed"; runId: string }

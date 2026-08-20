@@ -119,7 +119,11 @@ export function registerHarnessRoutes(app: Application) {
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not store attachments." }); }
   });
 
-  app.post("/api/opencode/sessions/:projectId/:sessionId/permissions/:permissionId", (_req, res) => {
-    res.status(409).json({ error: "This Harness run denied the dangerous action. Retry with a safer command or explicitly perform the operation in the user terminal." });
+  app.post("/api/opencode/sessions/:projectId/:sessionId/permissions/:permissionId", (req, res) => {
+    try {
+      const response = String(req.body?.response ?? "deny");
+      if (response !== "allow" && response !== "always" && response !== "deny") return res.status(400).json({ error: "Invalid approval response." });
+      res.json({ ok: true, ...harnessService.get(safeProjectId(req.params.projectId)).resolveApproval(req.params.sessionId, req.params.permissionId, response) });
+    } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Could not resolve approval." }); }
   });
 }

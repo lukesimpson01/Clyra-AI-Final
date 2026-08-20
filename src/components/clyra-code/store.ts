@@ -391,7 +391,7 @@ export function useClyraCode() {
       const normalized = raw as {
         type?: string; runId?: string; state?: string; label?: string; delta?: string;
         id?: string; summary?: string; tool?: string; callId?: string; input?: unknown;
-        output?: unknown; error?: string; durationMs?: number;
+        output?: unknown; error?: string; durationMs?: number; approvalId?: string; reason?: string;
       };
       if (normalized?.type?.includes(".") && !normalized.type.startsWith("session.") && !normalized.type.startsWith("message.part.")) {
         const ts = Date.now();
@@ -450,6 +450,40 @@ export function useClyraCode() {
               ? prev.log
               : [...prev.log, { type: "action", id: `entry-${actionId}`, actionId, ts }],
           }));
+          return;
+        }
+        if (normalized.type === "approval.requested") {
+          const permissionId = normalized.approvalId || normalized.callId || `approval-${ts}`;
+          const actionId = `permission:${permissionId}`;
+          setState((prev) => ({
+            ...prev,
+            actions: {
+              ...prev.actions,
+              [actionId]: {
+                id: actionId,
+                kind: "permission",
+                tool: normalized.tool || "approval",
+                status: "active",
+                target: normalized.reason || "Approve this action",
+                permissionId,
+                startedAt: ts,
+              },
+            },
+            log: prev.log.some((entry) => entry.type === "action" && entry.actionId === actionId)
+              ? prev.log
+              : [...prev.log, { type: "action", id: `entry-${actionId}`, actionId, ts }],
+          }));
+          return;
+        }
+        if (normalized.type === "approval.resolved") {
+          const permissionId = normalized.approvalId || "";
+          const actionId = `permission:${permissionId}`;
+          setState((prev) => {
+            const existing = prev.actions[actionId];
+            if (!existing) return prev;
+            const outcome = String((normalized as typeof normalized & { outcome?: string }).outcome ?? "rejected");
+            return { ...prev, actions: { ...prev.actions, [actionId]: { ...existing, status: outcome === "cancelled" ? "cancelled" : "success", permissionResolved: outcome, endedAt: ts } } };
+          });
           return;
         }
         if (normalized.type === "tool.completed" || normalized.type === "tool.failed") {

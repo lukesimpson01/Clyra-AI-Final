@@ -16,8 +16,10 @@ import * as ToolFs from "@deepseek-ai/dsh-tool-fs";
 import LocalSubprocessRuntime from "@deepseek-ai/dsh-subprocess-local";
 import * as ToolFsSearch from "@deepseek-ai/dsh-tool-fs-search";
 import SandboxBashExecutor from "@deepseek-ai/dsh-bash-sandbox";
+import * as ShellEnvironment from "@deepseek-ai/dsh-shell-env";
 import LocalSandboxProvider from "@deepseek-ai/dsh-sandbox-local";
 import SandboxPolicyService from "@deepseek-ai/dsh-sandbox-policy";
+import UserApproval, { type ApprovalOutcome, type ApprovalRequest } from "@deepseek-ai/dsh-user-approval";
 import * as ToolBash from "@deepseek-ai/dsh-tool-bash";
 import * as ToolTodo from "@deepseek-ai/dsh-tool-todo";
 import { CheckpointService, type CheckpointManifest } from "./checkpoint-service";
@@ -34,6 +36,12 @@ Never invent file changes, command output, diagnostics, previews, or successful 
 Do not read secrets or leave {{cwd}}. Prefer existing architecture and dependencies. For iOS projects, follow the Apple skills stored in .agent/skills and build real SwiftUI source; an "iOS theme/style/look" request alone is visual direction and must not change a web or desktop project's platform.`;
 
 type Listener = (event: AgentEvent) => void;
+type PendingApproval = {
+  sessionId: string;
+  resumeState: AgentRunState;
+  resolve: (outcome: ApprovalOutcome) => void;
+  cleanup: () => void;
+};
 type SessionRecord = {
   id: string;
   title: string;
@@ -78,6 +86,7 @@ export class HarnessWorkspaceRuntime {
   private sessions = new Map<string, SessionRecord>();
   private listeners = new Set<Listener>();
   private recentCalls = new Map<string, number>();
+  private pendingApprovals = new Map<string, PendingApproval>();
   private checkpointService: CheckpointService;
   private permissionService: PermissionService;
 
@@ -95,6 +104,7 @@ export class HarnessWorkspaceRuntime {
     await ctx.plugin(ToolRuntime, { mode: "native" });
     await ctx.plugin(AgentRegistry);
     await ctx.plugin(AgentLoop, { agents: [] });
+    await ctx.plugin(UserApproval, { policy: "ask" });
     ctx.llm.registerAdapter(["existing"], new ExistingLLMAdapter(this.provider));
 
     await ctx.plugin(LocalSubprocessRuntime);
@@ -104,6 +114,7 @@ export class HarnessWorkspaceRuntime {
     await ctx.plugin(FsObservationPolicy);
     await ctx.plugin(ToolFs, {});
     await ctx.plugin(ToolFsSearch, { sampleOverCapGlobResults: true });
+    await ctx.plugin(ShellEnvironment, {});
     await ctx.plugin(SandboxBashExecutor, { cwd: this.workspace, timeoutMs: 60_000, maxTimeoutMs: 300_000 });
     await ctx.plugin(ToolBash, { enableRunInBackground: false });
     await ctx.plugin(ToolTodo, { allowParallelInProgress: false });
@@ -115,6 +126,7 @@ export class HarnessWorkspaceRuntime {
       if (count > 3) return { kind: "deny", reason: "Repeated identical tool call stopped by Clyra's runaway-loop safeguard." };
       return this.permissionService.decide(exec);
     });
+    ctx.on("approval/request", async (request: ApprovalRequest) => this.requestApproval(request));
     ctx.on("session/event", (session: any, event: any) => this.onSessionEvent(String(session.id), event));
     ctx.on("agent/status", ({ agent, status }: any) => {
       const record = this.sessions.get(String(agent.session.id));
@@ -187,6 +199,13 @@ export class HarnessWorkspaceRuntime {
 
   async abort(id: string) {
     const record = this.required(id);
+    for (const [approvalId, pending] of this.pendingApprovals) {
+      if (pending.sessionId !== id) continue;
+      pending.cleanup();
+      pending.resolve("cancelled");
+      this.pendingApprovals.delete(approvalId);
+      this.emit(record, { type: "approval.resolved", approvalId, outcome: "cancelled" });
+    }
     record.handle?.agent.cancel({ kind: "user" });
     this.forceTerminal(record, "CANCELLED");
     this.emit(record, { type: "run.cancelled", runId: record.runId ?? id });
@@ -200,6 +219,19 @@ export class HarnessWorkspaceRuntime {
     const checkpoint = this.required(id).checkpoint;
     if (!checkpoint) throw new Error("This run has no checkpoint to restore.");
     return this.checkpointService.revert(checkpoint.id);
+  }
+
+  resolveApproval(sessionId: string, approvalId: string, response: "allow" | "always" | "deny") {
+    const pending = this.pendingApprovals.get(approvalId);
+    if (!pending || pending.sessionId !== sessionId) throw new Error("This approval request is no longer active.");
+    const outcome: ApprovalOutcome = response === "deny" ? "rejected" : "allowed-once";
+    pending.cleanup();
+    pending.resolve(outcome);
+    this.pendingApprovals.delete(approvalId);
+    const record = this.required(sessionId);
+    this.move(record, pending.resumeState);
+    this.emit(record, { type: "approval.resolved", approvalId, outcome });
+    return { approvalId, outcome };
   }
 
   async diff(_id: string) {
@@ -303,6 +335,30 @@ export class HarnessWorkspaceRuntime {
     }
     if (assistant.trim()) lines.push(`Assistant: ${assistant.trim()}`);
     return lines.slice(-12).join("\n").slice(-12_000);
+  }
+
+  private requestApproval(request: ApprovalRequest): Promise<ApprovalOutcome> {
+    const sessionId = String(request.agent.session.id);
+    const record = this.required(sessionId);
+    const approvalId = String(request.callId ?? randomUUID());
+    const reason = request.reason ?? `The ${request.toolName} tool requires approval.`;
+    this.move(record, "WAITING_FOR_APPROVAL");
+    this.emit(record, { type: "approval.requested", approvalId, callId: request.callId ? String(request.callId) : undefined, tool: request.toolName, reason });
+    return new Promise<ApprovalOutcome>((resolve) => {
+      const cancel = () => {
+        if (!this.pendingApprovals.has(approvalId)) return;
+        this.pendingApprovals.delete(approvalId);
+        this.emit(record, { type: "approval.resolved", approvalId, outcome: "cancelled" });
+        resolve("cancelled");
+      };
+      request.signal?.addEventListener("abort", cancel, { once: true });
+      this.pendingApprovals.set(approvalId, {
+        sessionId,
+        resumeState: stateForTool(request.toolName),
+        resolve,
+        cleanup: () => request.signal?.removeEventListener("abort", cancel),
+      });
+    });
   }
 
   private metadataPath() { return path.join(this.workspace, ".clyra", "runtime", "sessions.json"); }

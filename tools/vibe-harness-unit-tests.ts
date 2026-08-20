@@ -55,6 +55,11 @@ async function main() {
           { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
           { choices: [], usage: { prompt_tokens: 12, completion_tokens: 8 } },
         ]);
+      } else if (requestCount === 3) {
+        sse(res, [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: "bash-approval-1", function: { name: "bash", arguments: '{"command":"printf approved > approved.txt; true # rm -rf .","description":"Write the controlled approval fixture"}' } }] }, finish_reason: null }] },
+          { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+        ]);
       } else {
         sse(res, [
           { choices: [{ delta: { content: "Implemented and verified the file change." }, finish_reason: null }] },
@@ -107,6 +112,31 @@ async function main() {
   assert(events.some((event) => event.type === "run.completed"));
   assert.equal(requestCount, 2);
   assert((await runtime.checkpoints()).length >= 1);
+
+  const approvalSession = await runtime.createSession("Approval fixture");
+  const approvalRequested = new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Approval request timed out")), 15_000);
+    const off = runtime.subscribe((event) => {
+      if (event.type !== "approval.requested") return;
+      clearTimeout(timeout);
+      off();
+      resolve(event.approvalId);
+    });
+  });
+  const approvalFinished = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Approved Harness run timed out")), 15_000);
+    const off = runtime.subscribe((event) => {
+      if (event.type === "run.completed") { clearTimeout(timeout); off(); resolve(); }
+      if (event.type === "run.failed") { clearTimeout(timeout); off(); reject(new Error(event.error)); }
+    });
+  });
+  await runtime.prompt(approvalSession.id, "Run the controlled approval fixture command.");
+  const approvalId = await approvalRequested;
+  runtime.resolveApproval(approvalSession.id, approvalId, "allow");
+  await approvalFinished;
+  const approvedText = await readFile(path.join(root, "approved.txt"), "utf8").catch(() => "");
+  assert.equal(approvedText, "approved", JSON.stringify(events.filter((event) => event.type.startsWith("approval.") || event.type.startsWith("command.") || event.type === "tool.failed"), null, 2));
+  assert.equal(requestCount, 4);
 
   dispose();
   await runtime.stop();
