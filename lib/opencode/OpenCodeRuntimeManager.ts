@@ -3,6 +3,27 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
+import { clyraDataPath } from "../runtime-paths";
+import { installOpencodeSandboxWrapper, opencodeDataRoot, sharedCacheRoots } from "../sandbox/seatbelt";
+
+/**
+ * Confines everything the shared OpenCode server process does on disk to
+ * Clyra's own projects directory (plus package-manager caches an install can
+ * legitimately touch). Applied once, at first boot, via a PATH-shimmed
+ * `opencode` wrapper — see lib/sandbox/seatbelt.ts for why a PATH shim is
+ * the only non-invasive interception point. A single shared server handles
+ * every open project, not one process per project, so this can't be scoped
+ * to one project directory the way the manual terminal's spawn can.
+ */
+function ensureSandboxedOpencodePath(): void {
+  const writableRoots = [clyraDataPath("projects"), opencodeDataRoot(), ...sharedCacheRoots()];
+  const wrapperDir = installOpencodeSandboxWrapper(writableRoots);
+  if (!wrapperDir) return;
+  const path_ = process.env.PATH || "";
+  if (!path_.split(path.delimiter).includes(wrapperDir)) {
+    process.env.PATH = `${wrapperDir}${path.delimiter}${path_}`;
+  }
+}
 
 const DEFAULT_AGENTS_MD = `# Clyra Code Agent
 
@@ -12,12 +33,12 @@ For medium, large, investigative, debugging, refactor and greenfield work, use t
 
 Read before changing unfamiliar code. Use progressively narrower retrieval instead of dumping the repository into context. After significant observations, decide whether an edit is justified, what its blast radius is, and the cheapest meaningful verification. Test/build/typecheck failures are observations to investigate and repair, not reasons to stop. Before declaring completion, inspect the changed files and working diff, verify the requested outcome, and avoid unrelated edits.
 
-Execution discipline for a new product: inspect only the project root/configuration and the directly relevant source files, then start writing the implementation. Do not probe the host filesystem, shell configuration, user directories, environment variables, provider settings, or installed tools beyond one focused capability check. For a multi-file greenfield app, make the first implementation edit within the first three tool calls after orientation; continue with focused edits rather than repeatedly rediscovering the repository. A starter scaffold is only a baseline—change it to satisfy the specific request before finishing.
+Execution discipline for a new product: inspect only the project root/configuration and the directly relevant source files, then start writing the implementation. A genuinely blank Clyra workspace is the exception: do not list, read or search merely to establish that it is empty. Start the smallest appropriate scaffold from the user's request immediately, then inspect only the files you created as needed. Do not probe the host filesystem, shell configuration, user directories, environment variables, provider settings, or installed tools beyond one focused capability check. For a multi-file greenfield app, make the first implementation edit within the first three tool calls after orientation; continue with focused edits rather than repeatedly rediscovering the repository. A starter scaffold is only a baseline—change it to satisfy the specific request before finishing.
 
 Between meaningful phases, provide one concise user-facing progress update about what was actually learned or completed and what comes next. Never expose private chain-of-thought, invent actions, files, results, test passes, or progress.
 
 Project architecture rules — for every coding request:
-- Inspect the existing project structure first (list files, read configs) and match its framework and conventions.
+- Inspect the existing project structure first (list files, read configs) and match its framework and conventions. In an explicitly blank Clyra workspace, create the requested scaffold first instead of performing an empty-project inspection.
 - Split code naturally across components, pages, styles, hooks, utilities, APIs, config, assets, and tests. Never cram everything into a single index.html unless a single-file deliverable is genuinely requested.
 - For React/Next/Vite projects create proper files: components, styles, hooks, utilities, routes, and config.
 - Reuse existing components instead of rebuilding them. Revisit and edit multiple files during the run when needed.
@@ -74,6 +95,51 @@ function classifyTask(text: string): TaskComplexity {
   return "small";
 }
 
+/** Commands that count as real verification of a change, on any platform. */
+const VALIDATION_COMMAND = /(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:build|test|typecheck|lint)|\b(?:vitest|jest|eslint|tsc|swiftc|xcodebuild)\b|\bswift\s+(?:build|test)\b/i;
+
+/**
+ * Failure evidence a validation command printed even though the shell
+ * reported success. A piped command (`swiftc ... 2>&1 | head -80`) exits with
+ * the exit code of the LAST stage, so a compiler that failed reports 0 —
+ * observed in a real run whose output carried six `error:` lines under
+ * `exit: 0`. Scanning the output closes that hole for compilers, package
+ * managers and test runners alike.
+ */
+const VALIDATION_FAILURE_OUTPUT = /(?:^|\n)[^\n]*\berror:\s|\bnpm ERR!|(?:^|\n)FAIL\b|\bBuild FAILED\b|\b\d+ failing\b|\bTests:\s+\d+ failed/i;
+
+/**
+ * A validation command the agent actually executed, with the outcome the
+ * shell reported.
+ *
+ * OpenCode marks a bash tool `status: "completed"` when the TOOL ran, not
+ * when the COMMAND succeeded — a build that exits 1 still comes back
+ * "completed". The real result is `state.metadata.exit`, so success is read
+ * from there, then cross-checked against the output because a pipeline can
+ * mask a non-zero exit. Commands the harness killed (its own timeout notice)
+ * are treated as not passing rather than as evidence of a working build.
+ */
+type ValidationRun = { command: string; exit: number | undefined; passed: boolean };
+
+function collectValidationRuns(messages: Array<{ parts?: Array<unknown> }>): ValidationRun[] {
+  const runs: ValidationRun[] = [];
+  for (const message of messages) {
+    for (const rawPart of message.parts ?? []) {
+      const part = rawPart as { type?: string; tool?: string; state?: { input?: { command?: unknown }; output?: unknown; metadata?: { exit?: unknown } } };
+      if (part.type !== "tool" || part.tool !== "bash") continue;
+      const command = String(part.state?.input?.command ?? "");
+      if (!command || !VALIDATION_COMMAND.test(command)) continue;
+      const exitRaw = part.state?.metadata?.exit;
+      const exit = typeof exitRaw === "number" ? exitRaw : undefined;
+      const output = String(part.state?.output ?? "");
+      const killed = /shell tool terminated command after exceeding timeout/i.test(output);
+      const printedFailure = VALIDATION_FAILURE_OUTPUT.test(output);
+      runs.push({ command, exit, passed: exit === 0 && !killed && !printedFailure });
+    }
+  }
+  return runs;
+}
+
 function defaultTodos(objective: string, complexity: TaskComplexity): TaskLedger["todos"] {
   if (complexity === "trivial" || complexity === "small") return [];
   return [
@@ -122,6 +188,40 @@ function resolveCodingModel(): { providerID: string; modelID: string } {
 }
 
 /**
+ * Reasoning-effort vocabulary, confirmed against DeepSeek Harness's adapter
+ * (references/deepseek-harness/packages/llm/llm-deepseek/src/adapter.ts) —
+ * not the "low/medium/high" that's commonly assumed for other providers.
+ */
+export const REASONING_EFFORTS = ["off", "low", "high", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+/** Matches the official DeepSeek Harness adapter's current default. */
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "high";
+
+export const DEEPSEEK_HARNESS_REFERENCE = {
+  repository: "https://github.com/deepseek-ai/deepseek-harness.git",
+  commit: "99f6f02fecdb7dff40c3fbc9470f5907c29f74ca",
+  version: "0.1.0-rc.7",
+  contract: "cordis-llm-plugin",
+  frontend: "clyra-only",
+} as const;
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === "string" && (REASONING_EFFORTS as readonly string[]).includes(value);
+}
+
+/**
+ * "off" means: send no variant, i.e. the model's own un-overridden default —
+ * OpenCode's live DeepSeek catalog entry (confirmed via GET /config/providers
+ * against a running server on this machine) defines `low`/`high`/`max` as
+ * named variants directly on the base model, with no explicit "off" variant
+ * to select. "off" therefore isn't a model-catalog concept here; it's simply
+ * not asking for one of the other three.
+ */
+function variantForEffort(effort: ReasoningEffort): string | undefined {
+  return effort === "off" ? undefined : effort;
+}
+
+/**
  * Some DeepSeek Flash tool-use turns can terminate with no assistant part
  * after a legitimate sequence of commands. Keep the configured model for the
  * normal run, but use the available Pro variant only for the bounded recovery
@@ -146,9 +246,14 @@ export class OpenCodeRuntimeManager {
   private sequence = 0;
   private streamStarted = false;
   private lastError = "";
+  private effortVariantsBase: string | null = null;
+  private effortVariantsReady = false;
 
   async start(projectId: string, projectPath: string) {
     if (!this.runtime) {
+      // Must run before createOpencode(): it spawns "opencode" by resolving
+      // the literal name via PATH, so the shim has to be in place first.
+      ensureSandboxedOpencodePath();
       this.runtime = await createOpencode({ hostname: "127.0.0.1", port: await this.findFreePort(), timeout: 15_000 });
       // The SDK's SSE subscription is intentionally long-lived. Starting it
       // must not block runtime health/session creation while the server keeps
@@ -156,6 +261,11 @@ export class OpenCodeRuntimeManager {
       void this.startEventStream().catch((error) => {
         this.lastError = error instanceof Error ? error.message : String(error);
       });
+      // Best-effort: confirms the resolved model actually has low/high/max
+      // variants before the effort chip claims to work. A failure here must
+      // never block the harness from starting — prompts still work, just
+      // without a working effort control.
+      void this.checkEffortVariants(projectPath);
     }
     const existing = this.projects.get(projectId);
     if (existing && existing.projectPath !== projectPath) throw new Error("Project ID is already associated with a different workspace.");
@@ -327,6 +437,9 @@ export class OpenCodeRuntimeManager {
    * guard only applies to substantial build requests and uses real session
    * diffs/tool history to request another turn in the same OpenCode session.
    * It never fabricates work or rewrites the model's result.
+   *
+   * See {@link collectValidationRuns} for why this checks exit codes rather
+   * than merely matching command text.
    */
   private async completionGap(project: ProjectRuntime, sessionId: string, messages: Array<{ parts?: Array<unknown> }>) {
     const ledgerPath = path.join(project.projectPath, ".clyra", "agent", "sessions", `${sessionId}.json`);
@@ -343,14 +456,20 @@ export class OpenCodeRuntimeManager {
     // action count, so it cannot turn a no-op into a completed feature.
     const files = [...new Set([...sessionFiles, ...await this.filesTouchedSince(project.projectPath, ledger.createdAt)])];
     const implementationFiles = files.filter((file) => !/(^|\/)(PLAN\.md|AGENTS\.md|\.gitignore|package-lock\.json)$/i.test(file));
-    const toolText = JSON.stringify(messages.map((message) => message.parts ?? []));
-    const hasValidation = /(?:npm\s+run\s+(?:build|test|typecheck|lint)|\b(?:typecheck|vitest|jest|eslint|swiftc|swift\s+build|xcodebuild)\b)/i.test(toolText);
+    const validations = collectValidationRuns(messages);
     const isSwiftTask = /\b(?:swift|swiftui|ios|iphone)\b/i.test(ledger.objective);
     const minimumFiles = isSwiftTask ? 2 : 3;
     if (implementationFiles.length < minimumFiles) {
       return `only ${implementationFiles.length} implementation file${implementationFiles.length === 1 ? "" : "s"} changed (need a real multi-file implementation)`;
     }
-    if (!hasValidation) return "no real build, typecheck, test, or Swift validation command ran";
+    if (validations.length === 0) return "no real build, typecheck, test, or Swift validation command ran";
+    // Running a validation command is not the same as passing one. A failing
+    // build that the model narrates as "done" is exactly the case this guard
+    // exists to catch, so require at least one run that actually exited 0.
+    if (!validations.some((run) => run.passed)) {
+      const failed = validations.find((run) => !run.passed);
+      return `the validation command that ran did not pass (\`${failed?.command.slice(0, 80) ?? "unknown"}\` exited ${failed?.exit ?? "non-zero"}); fix the reported errors and re-run it`;
+    }
     return undefined;
   }
 
@@ -362,25 +481,65 @@ export class OpenCodeRuntimeManager {
         model: resolveRecoveryModel(),
         parts: [{
           type: "text",
-          text: `Do not complete this task yet: ${reason}. Continue the same task now. Implement the remaining product across the appropriate real files, make the visible interactions work, run a relevant validation command, inspect the preview where available, and repair any failure. Do not only describe a plan or change configuration.`,
+          // The `[Clyra continuation]` tag marks this as a harness directive
+          // rather than something a person asked for, so the transcript can
+          // leave it out instead of rendering Clyra talking to itself.
+          text: `[Clyra continuation] Do not complete this task yet: ${reason}. Continue the same task now. Implement the remaining product across the appropriate real files, make the visible interactions work, run a relevant validation command, inspect the preview where available, and repair any failure. Do not only describe a plan or change configuration.`,
         }],
       },
       throwOnError: true,
     });
   }
 
-  async prompt(projectId: string, sessionId: string, text: string, agent?: string, model?: { providerID: string; modelID: string }) {
+  /**
+   * Confirms the resolved base model's OWN catalog entry already declares
+   * `low`/`high`/`max` variants before the effort chip claims picking one
+   * does anything. Read-only — OpenCode's live DeepSeek catalog (confirmed
+   * via GET /config/providers against a running server) already ships these
+   * natively on deepseek-v4-flash, so there is nothing to register; this
+   * just guards against a provider/model override (CLYRA_OPENCODE_PROVIDER/
+   * _MODEL) pointing at something that doesn't have them.
+   */
+  private async checkEffortVariants(projectPath: string): Promise<void> {
+    const base = resolveCodingModel();
+    const key = `${base.providerID}/${base.modelID}`;
+    if (this.effortVariantsBase === key) return;
+    this.effortVariantsBase = key;
+    try {
+      const { providers } = await this.client(projectPath).config.providers({ throwOnError: true });
+      const model = providers.find((candidate) => candidate.id === base.providerID)?.models[base.modelID];
+      const variants = (model as { variants?: Record<string, unknown> } | undefined)?.variants ?? {};
+      this.effortVariantsReady = REASONING_EFFORTS.filter((effort) => effort !== "off").every((effort) => effort in variants);
+    } catch (error) {
+      // Reasoning-effort selection is additive, never a startup requirement.
+      this.effortVariantsReady = false;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** What the frontend's effort chip should offer, and whether picking a level actually does anything yet. */
+  effortStatus(): { levels: readonly ReasoningEffort[]; defaultEffort: ReasoningEffort; ready: boolean } {
+    return { levels: REASONING_EFFORTS, defaultEffort: DEFAULT_REASONING_EFFORT, ready: this.effortVariantsReady };
+  }
+
+  async prompt(projectId: string, sessionId: string, text: string, agent?: string, model?: { providerID: string; modelID: string }, effort?: ReasoningEffort) {
     const project = this.requiredSession(projectId, sessionId);
     // The model always comes from Clyra's server-side provider configuration.
     const selectedModel = model ?? resolveCodingModel();
+    const variant = this.effortVariantsReady ? variantForEffort(effort ?? DEFAULT_REASONING_EFFORT) : undefined;
     // Adaptive behaviour is guided via AGENTS.md (OpenCode reads it), not by
     // injecting preface text into the user turn (which models may echo).
     await this.ensureAgentsGuide(project.projectPath);
     await this.beginTaskLedger(project.projectPath, sessionId, text);
     this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "busy" } } });
+    // `variant` selects one of the base model's own low/high/max variants
+    // (see checkEffortVariants) — real on the running server, confirmed
+    // via its live OpenAPI schema, but newer than what the installed
+    // @opencode-ai/sdk's bundled types declare, hence the cast.
+    const body = { agent, model: selectedModel, variant, parts: [{ type: "text", text }] } as unknown as { agent?: string; model: typeof selectedModel; parts: [{ type: "text"; text: string }] };
     const response = await this.client(project.projectPath).session.promptAsync({
       path: { id: sessionId },
-      body: { agent, model: selectedModel, parts: [{ type: "text", text }] },
+      body,
       throwOnError: true,
     });
     void this.reconcileSession(project, sessionId, 0);

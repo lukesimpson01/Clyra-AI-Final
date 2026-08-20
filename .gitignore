@@ -15,6 +15,8 @@ vendor/Ultra-Light-Fast-Generic-Face-Detector-1MB/
 tmp/
 output/
 .cache/
+# Generated Seatbelt sandbox wrapper script (written by lib/sandbox/seatbelt.ts) — machine-specific, regenerated on each run. Anchored to root: lib/sandbox/ is source, not this.
+/sandbox/
 *.mp4
 !public/media/fake-text/gameplay/**/*.mp4
 .clyra/
@@ -41,3 +43,4 @@ lib/*-repo/
 
 # Fresh OpenCluely Electron clone (rebuilt via scripts/clone-opencluely.sh)
 apps/opencluely/
+third_party/research/

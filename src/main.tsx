@@ -58,6 +58,10 @@ if (embedParams.get("vibe_embed") === "1") {
   });
 } else if (window.location.pathname === "/__dev/opencode") {
   void import("./dev-fixtures/clyra-code/OpenCodeDiagnostic.tsx").then((m) => root.render(<m.default />));
+} else if (window.location.pathname === "/__dev/styleguide") {
+  void import("./components/StyleGuide.tsx").then((m) => root.render(<m.default />));
+} else if (window.location.pathname === "/landing") {
+  void import("./components/ClyraLandingPage.tsx").then((m) => root.render(<m.default />));
 } else if (window.location.pathname === "/preview") {
   const searchParams = new URLSearchParams(window.location.search);
   const theme = searchParams.get("theme");

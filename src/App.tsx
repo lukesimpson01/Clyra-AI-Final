@@ -37,10 +37,12 @@ import {
   ChevronRight,
   FileUp,
   Folder,
+  Drama,
   Gamepad2,
   Globe,
   GraduationCap,
   Heart,
+  Library,
   Loader2,
   MessageCircle,
   MessageCircleDashed,
@@ -54,6 +56,7 @@ import {
   Search,
   Share2,
   Settings,
+  ShieldCheck,
   SquarePen,
   Trash2,
   RotateCcw,
@@ -244,11 +247,28 @@ const loadStudyPalWorkspace = () =>
     default: () => <WorkspaceImportFailure name="Study Pal" />,
   }));
 const StudyPalWorkspace = lazy(loadStudyPalWorkspace);
-const loadForgeWorkspace = () =>
-  import("./components/forge/ForgeWorkspace").catch(() => ({
-    default: () => <WorkspaceImportFailure name="Clyra Forge" />,
+// The workspace tab id stays "forge" so existing deep links and persisted
+// tab state keep working; the module behind it is the Game Maker platform.
+const loadGameMakerWorkspace = () =>
+  import("./features/game-maker/ui/GameMakerWorkspace").catch(() => ({
+    default: () => <WorkspaceImportFailure name="Game Maker" />,
   }));
-const ForgeWorkspace = lazy(loadForgeWorkspace);
+const GameMakerWorkspace = lazy(loadGameMakerWorkspace);
+const loadRoleplayWorkspace = () =>
+  import("./components/roleplay/RoleplayWorkspace").catch(() => ({
+    default: () => <WorkspaceImportFailure name="AI Roleplay" />,
+  }));
+const RoleplayWorkspace = lazy(loadRoleplayWorkspace);
+const loadToolLibraryWorkspace = () =>
+  import("./components/tools/ToolLibraryWorkspace").catch(() => ({
+    default: () => <WorkspaceImportFailure name="Tool Library" />,
+  }));
+const ToolLibraryWorkspace = lazy(loadToolLibraryWorkspace);
+const loadSystemCareWorkspace = () =>
+  import("./features/system-care/renderer/SystemCareWorkspace").catch(() => ({
+    default: () => <WorkspaceImportFailure name="Clyra System Care" />,
+  }));
+const SystemCareWorkspace = lazy(loadSystemCareWorkspace);
 
 function prepareVibeForBoot(
   onProgress?: (update: VibeBootProgressUpdate) => void,
@@ -313,7 +333,7 @@ function prepareVibeForBoot(
   return vibeBootPreparation;
 }
 
-type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "forge" | "study" | "companion" | CreatorMode;
+type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "forge" | "study" | "companion" | "roleplay" | "tools" | "system-care" | CreatorMode;
 type AppAgentId = "vibe" | "browse" | "clip" | "study" | "fake-text" | "would-rather";
 type GoogleToolId = "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
 type AppAgentStatus = "queued" | "running" | "ready" | "needs_input" | "failed";
@@ -335,6 +355,8 @@ const WORKSPACE_TAB_ORDER: WorkspaceTabId[] = [
   "clip",
   "browser",
   "forge",
+  "tools",
+  "system-care",
   "fake-text",
   "would-rather",
 ];
@@ -354,7 +376,7 @@ function readEmbeddedWorkspace(): WorkspaceTabId {
   const tool = params.get("embedTool");
   if (tool === "browse" || tool === "browser") return "browser";
   if (tool === "fake-text" || tool === "would-rather") return tool;
-  if (tool === "vibe" || tool === "clip" || tool === "forge" || tool === "study" || tool === "companion") return tool;
+  if (tool === "vibe" || tool === "clip" || tool === "forge" || tool === "study" || tool === "companion" || tool === "roleplay" || tool === "tools" || tool === "system-care") return tool;
   return "chat";
 }
 const WORKSPACE_TAB_WIDTH = 105;
@@ -518,27 +540,50 @@ function StartupSpatialRipple() {
           uniform float radius;
           uniform float energy;
           uniform float buildUp;
+          uniform float chargeSpread;
+          uniform float wavePhase;
           out vec4 outColor;
           float bell(float x, float width) { return exp(-pow(x / width, 2.0) * 2.4); }
           void main() {
             vec2 p = vec2(gl_FragCoord.x, resolution.y - gl_FragCoord.y);
             float sd = length(p - origin) - radius;
-            float leading = bell(sd - 7.0, 4.0);
+            // Leading edge stays tight (sharp compression); the tail is wide and
+            // soft (broad release) so the crest reads as one asymmetric pressure
+            // impulse rather than a symmetric ring.
+            float leading = bell(sd - 9.0, 3.2);
             float blue = bell(sd, 14.0);
             float core = bell(sd + 0.5, 5.0);
-            float tail = bell(sd + 24.0, 36.0);
+            float tail = bell(sd + 26.0, 42.0);
             float recoil = bell(sd + 68.0, 10.0) * 0.16;
+            // The charge-up point is anisotropic and grows from a small dot into a
+            // wide band across the top edge as chargeSpread advances toward 1,
+            // instead of fading a fixed-size blob in and out.
             vec2 contactPoint = vec2(origin.x, 4.0);
             vec2 contactDelta = p - contactPoint;
-            float contact = exp(-dot(contactDelta, contactDelta) / 760.0) * buildUp;
-            float alpha = clamp((leading * 0.22 + blue * 0.34 + core * 0.64 + tail * 0.065 + recoil * 0.1) * energy + contact * 0.78, 0.0, 0.8);
+            float sigmaX = mix(42.0, resolution.x * 0.32, chargeSpread);
+            float sigmaY = mix(11.0, 20.0, chargeSpread);
+            float contact = exp(-((contactDelta.x * contactDelta.x) / (2.0 * sigmaX * sigmaX)
+              + (contactDelta.y * contactDelta.y) / (2.0 * sigmaY * sigmaY))) * buildUp;
+            float alpha = clamp((leading * 0.22 + blue * 0.34 + core * 0.64 + tail * 0.065 + recoil * 0.1) * energy + contact * 0.82, 0.0, 0.82);
             vec3 colour = vec3(0.66, 0.85, 1.0) * leading
               + vec3(0.39, 0.71, 1.0) * blue
               + vec3(0.96, 0.99, 1.0) * core
               + vec3(0.58, 0.79, 1.0) * tail
               + vec3(0.82, 0.93, 1.0) * recoil
-              + vec3(0.96, 0.99, 1.0) * contact;
+              + vec3(0.97, 0.995, 1.0) * contact;
             colour /= max(leading + blue + core + tail + recoil + contact, 0.0001);
+            // Restrained spectral shimmer: a slow per-pixel phase across the width
+            // gives faint, shifting cyan/violet/gold refraction inside the
+            // brightest zone only, never a visible rainbow stripe.
+            float brightestZone = clamp(core + contact, 0.0, 1.0);
+            float spatialPhase = (p.x - origin.x) / max(220.0, resolution.x * 0.46);
+            float cyanMix = 0.5 + 0.5 * sin(spatialPhase * 3.05 + wavePhase * 3.4 + 1.1);
+            float violetMix = 0.5 + 0.5 * sin(spatialPhase * 3.05 + wavePhase * 3.4 + 3.6);
+            float goldMix = 0.5 + 0.5 * sin(spatialPhase * 2.15 + wavePhase * 2.6 - 0.6);
+            vec3 spectral = vec3(0.52, 0.98, 0.95) * cyanMix * 0.13
+              + vec3(0.78, 0.66, 1.0) * violetMix * 0.11
+              + vec3(1.0, 0.87, 0.6) * goldMix * 0.09;
+            colour += spectral * brightestZone * 0.42;
             outColor = vec4(colour * alpha, alpha);
           }
         `);
@@ -571,7 +616,7 @@ function StartupSpatialRipple() {
     // progress handoff and the first travelling crest.
     const initialShine = shineRef.current;
     if (initialShine) {
-      const initialDpr = Math.min(1.5, window.devicePixelRatio || 1);
+      const initialDpr = Math.min(2, window.devicePixelRatio || 1);
       canvasWidth = Math.max(1, Math.round(window.innerWidth * initialDpr));
       canvasHeight = Math.max(1, Math.round(window.innerHeight * initialDpr));
       initialShine.width = canvasWidth;
@@ -619,11 +664,13 @@ function StartupSpatialRipple() {
           const relativeCrest = (distance - radius) / waveWidth;
           const crest = Math.exp(-Math.pow(relativeCrest, 2) * 6.2);
           // Compression is slightly tighter before the crest and releases more
-          // gradually behind it, avoiding a symmetrical, synthetic wave.
-          const asymmetricPressure = relativeCrest > 0 ? 0.56 : 0.78;
+          // gradually behind it, avoiding a symmetrical, synthetic wave. Blended
+          // smoothly across the crest (not a hard step) so the pressure profile
+          // itself has no kink exactly at the peak.
+          const asymmetricPressure = 0.86 - 0.36 / (1 + Math.exp(-relativeCrest * 3.0));
           const falloff = Math.min(1, distance / Math.max(18, maxRadius * 0.12));
           const recoil = Math.exp(-Math.pow((distance - (radius - waveWidth * 0.82)) / (waveWidth * 0.3), 2) * 4.4) * 0.14;
-          const magnitude = (crest * asymmetricPressure + recoil) * falloff * energy * 142;
+          const magnitude = (crest * asymmetricPressure + recoil) * falloff * energy * 150;
           const unit = Math.max(1, distance);
           const index = (y * mapSize + x) * 4;
           pixels[index] = Math.round(128 + (pointX / unit) * magnitude);
@@ -641,7 +688,7 @@ function StartupSpatialRipple() {
       if (!shine) return;
       const width = window.innerWidth;
       const height = window.innerHeight;
-      const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
       const targetWidth = Math.max(1, Math.round(width * dpr));
       const targetHeight = Math.max(1, Math.round(height * dpr));
       if (canvasWidth !== targetWidth || canvasHeight !== targetHeight) {
@@ -676,7 +723,7 @@ function StartupSpatialRipple() {
       const waveWidth = 58 + 46 * progress;
 
       if (gl && shaderProgram && shaderCanvas) {
-        const shaderDpr = Math.min(1.5, window.devicePixelRatio || 1);
+        const shaderDpr = Math.min(2, window.devicePixelRatio || 1);
         const targetShaderWidth = Math.max(1, Math.round(width * shaderDpr));
         const targetShaderHeight = Math.max(1, Math.round(height * shaderDpr));
         if (shaderCanvasWidth !== targetShaderWidth || shaderCanvasHeight !== targetShaderHeight) {
@@ -699,6 +746,10 @@ function StartupSpatialRipple() {
         gl.uniform1f(gl.getUniformLocation(shaderProgram, "energy"), energy);
         const buildUp = progress < 0.17 ? Math.sin((progress / 0.17) * Math.PI) : 0;
         gl.uniform1f(gl.getUniformLocation(shaderProgram, "buildUp"), buildUp);
+        const contactSpreadProgress = Math.min(1, progress / 0.17);
+        const chargeSpread = contactSpreadProgress * contactSpreadProgress * (3 - 2 * contactSpreadProgress);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "chargeSpread"), chargeSpread);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "wavePhase"), progress);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       }
       // The surface is revealed by the same expanding pressure geometry as the
@@ -735,6 +786,11 @@ function StartupSpatialRipple() {
       drawArc(radius, Math.max(34, waveWidth * 0.52), `rgba(120, 199, 255, ${0.22 * energy})`);
       drawArc(radius - 2, 13, `rgba(248, 252, 255, ${0.62 * energy})`);
       drawArc(radius - 4, 3, `rgba(255, 255, 255, ${0.88 * energy})`);
+      // A razor-thin, near-saturated hairline right at the crest peak - the
+      // thin bright edge where a real glass surface would catch the most
+      // direct light. Kept extremely narrow so it reads as a highlight, not
+      // a second core.
+      drawArc(radius - 3.5, 1.4, `rgba(255, 255, 255, ${0.96 * energy})`);
       // A subdued trailing recovery line supplies the physical release without
       // turning into a second pulse or an obvious concentric ring.
       if (progress > 0.18) {
@@ -742,16 +798,9 @@ function StartupSpatialRipple() {
         drawArc(recoilRadius, 28, `rgba(151, 210, 255, ${0.045 * energy})`);
         drawArc(recoilRadius, 3, `rgba(237, 249, 255, ${0.12 * energy})`);
       }
-
-      if (progress < 0.18) {
-        const glow = shineContext.createRadialGradient(sourceX, sourceY, 0, sourceX, sourceY, 150);
-        const activation = Math.sin((progress / 0.18) * Math.PI) * 0.2;
-        glow.addColorStop(0, `rgba(255, 255, 255, ${activation})`);
-        glow.addColorStop(0.36, `rgba(100, 181, 255, ${activation * 0.62})`);
-        glow.addColorStop(1, "rgba(100, 181, 255, 0)");
-        shineContext.fillStyle = glow;
-        shineContext.fillRect(sourceX - 150, sourceY - 8, 300, 190);
-      }
+      // The charge-up glow itself is owned entirely by the WebGL shader layer
+      // (see chargeSpread/contact above), which grows it laterally across the
+      // top edge instead of fading a fixed-size blob in place.
     };
 
     const tick = (now: number) => {
@@ -769,12 +818,17 @@ function StartupSpatialRipple() {
       const contactProgress = Math.min(1, progress / 0.17);
       const releaseProgress = Math.max(0, (progress - 0.17) / 0.83);
       const contactRadius = topDistance * (1 - Math.pow(1 - contactProgress, 2.1));
-      const releaseRadius = (maxRadius - topDistance) * (1 - Math.pow(1 - releaseProgress, 1.36));
+      // Slightly more graceful deceleration into the settle than a near-linear
+      // release: fast confident travel through the middle, then a softer tail.
+      const releaseRadius = (maxRadius - topDistance) * (1 - Math.pow(1 - releaseProgress, 1.55));
       const radius = contactRadius + releaseRadius;
       drawShine(radius, progress);
       // The shine runs at native frame rate. The intentionally tiny DOM
       // refraction map refreshes at ~30fps to protect typing and scrolling.
-      if (useLiveDisplacement && (now - lastMapAt >= 32 || progress === 1)) {
+      // 60fps warp-map refresh: this overlay only ever runs once, for ~1s,
+      // before the app is interactive, so there is nothing else to protect
+      // by throttling it the way an always-on effect would need to.
+      if (useLiveDisplacement && (now - lastMapAt >= 16 || progress === 1)) {
         drawMap(radius, progress);
         lastMapAt = now;
       }
@@ -2578,10 +2632,26 @@ export default function App() {
     if (!ok) await captureDomFallback(activeWorkspaceTab);
     setIsTaskViewOpen(true);
   }, [activeWorkspaceTab, captureDomFallback, captureWorkspacePreview, isTaskViewOpen]);
+  // One definition of "open the launcher", shared by the in-window chord and
+  // the desktop shortcut, so the two can never drift apart.
+  const toggleAppLauncher = useCallback(() => {
+    setIsTaskViewOpen(false);
+    setIsAppLauncherOpen((open) => !open);
+    setShowCommandPalette(false);
+    appLauncherChordRef.current = false;
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
   useEffect(() => {
     const desktop = getElectronDesktop();
     return desktop?.taskView.onToggle(() => void openTaskView());
   }, [openTaskView]);
+  // The desktop shell owns ⌘K whenever Clyra is frontmost. That is the only
+  // path that reaches the launcher from surfaces the React window never sees
+  // keystrokes for — the native browser view, embedded previews, OpenCluely.
+  useEffect(() => {
+    const desktop = getElectronDesktop();
+    return desktop?.appLauncher?.onToggle(toggleAppLauncher);
+  }, [toggleAppLauncher]);
   // While Task View is open on AI Browser, keep the card's page pixels live so
   // zoomed-out overview still shows the tool running (agent/demo/navigation).
   useEffect(() => {
@@ -3621,11 +3691,7 @@ export default function App() {
         setShowCommandPalette(false);
       } else if ((e.ctrlKey || e.metaKey) && key === "k") {
         e.preventDefault();
-        setIsTaskViewOpen(false);
-        setIsAppLauncherOpen((open) => !open);
-        setShowCommandPalette(false);
-        appLauncherChordRef.current = false;
-        requestAnimationFrame(() => textareaRef.current?.focus());
+        toggleAppLauncher();
       } else if (key === "k" && !e.ctrlKey && !e.metaKey && !e.altKey && isAppLauncherOpen) {
         e.preventDefault();
         void openTaskView();
@@ -3647,6 +3713,7 @@ export default function App() {
     };
     const handleWorkspaceMessage = (event: MessageEvent) => {
       const isTrustedVibeOrigin =
+        event.origin === window.location.origin ||
         event.origin === "http://127.0.0.1:8000" ||
         event.origin === "http://localhost:8000";
       if (!isTrustedVibeOrigin || event.data?.type !== "clyra:toggle-app-launcher") {
@@ -3656,15 +3723,17 @@ export default function App() {
       setShowCommandPalette(false);
       requestAnimationFrame(() => textareaRef.current?.blur());
     };
-    // Rich embedded workspaces can stop events before they reach `window`.
-    // The launcher is global, so listen on the capture path too.
-    document.addEventListener("keydown", handleGlobalKeyDown, true);
+    // Use the window capture path so rich workspaces, editors and embedded
+    // panes cannot swallow the app-wide launcher shortcut before Clyra sees
+    // it. Preview frames forward the same chord through the trusted message
+    // path above.
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
     window.addEventListener("message", handleWorkspaceMessage);
     return () => {
-      document.removeEventListener("keydown", handleGlobalKeyDown, true);
+      window.removeEventListener("keydown", handleGlobalKeyDown, true);
       window.removeEventListener("message", handleWorkspaceMessage);
     };
-  }, [isAppLauncherOpen, isTaskViewOpen, openTaskView]);
+  }, [isAppLauncherOpen, isTaskViewOpen, openTaskView, toggleAppLauncher]);
 
   const isVibeComposerMode =
     activeWorkspaceTab === "vibe" &&
@@ -6087,6 +6156,9 @@ Please analyze the code you just wrote and fix this error.`;
   const isBrowserWorkspace = activeWorkspaceTab === "browser";
   const isCompanionWorkspace = activeWorkspaceTab === "companion";
   const isForgeWorkspace = activeWorkspaceTab === "forge";
+  const isRoleplayWorkspace = activeWorkspaceTab === "roleplay";
+  const isToolLibraryWorkspace = activeWorkspaceTab === "tools";
+  const isSystemCareWorkspace = activeWorkspaceTab === "system-care";
   const isStudyWorkspace = activeWorkspaceTab === "study";
   const creatorMode: CreatorMode | null =
     activeWorkspaceTab === "would-rather" ||
@@ -6124,6 +6196,12 @@ Please analyze the code you just wrote and fix this error.`;
           ? "companion"
         : isForgeWorkspace
           ? "forge"
+        : isRoleplayWorkspace
+          ? "roleplay"
+        : isToolLibraryWorkspace
+          ? "tools"
+        : isSystemCareWorkspace
+          ? "system-care"
         : isStudyWorkspace
           ? "study"
         : creatorMode ??
@@ -6170,7 +6248,7 @@ Please analyze the code you just wrote and fix this error.`;
       ? Math.max(420, viewportWidth - sidebarClearancePx)
       : viewportWidth;
   const centeredContentWidth =
-    isBrowserWorkspace || isCompanionWorkspace || isForgeWorkspace || isStudyWorkspace
+    isBrowserWorkspace || isCompanionWorkspace || isForgeWorkspace || isRoleplayWorkspace || isToolLibraryWorkspace || isSystemCareWorkspace || isStudyWorkspace
       ? Math.min(1280, Math.max(0, effectiveWorkspaceViewport - 32))
       : isClipWorkspace
         ? Math.min(820, Math.max(0, effectiveWorkspaceViewport - 32))
@@ -6457,6 +6535,7 @@ Please analyze the code you just wrote and fix this error.`;
       <VoiceCallOverlay
         open={voiceCall.active}
         status={voiceCall.status}
+        phase={voiceCall.phase}
         muted={voiceCall.muted}
         micLevel={voiceCall.micLevel}
         waveformSignalRef={voiceCall.waveformSignalRef}
@@ -6464,13 +6543,17 @@ Please analyze the code you just wrote and fix this error.`;
         assistantText={voiceCall.assistantText}
         error={voiceCall.error}
         turns={voiceCall.turns}
-        orbColorTheme={orbColorTheme}
+        voices={voiceCall.voices}
+        selectedVoiceId={voiceCall.selectedVoiceId}
         onToggleMute={voiceCall.toggleMute}
+        onSelectVoice={voiceCall.selectVoice}
         onEnd={voiceCall.endCall}
         onRetry={() => void voiceCall.startCall()}
+        onRetryMicrophone={() => voiceCall.retryMicrophone()}
         onSendText={voiceCall.sendTextMessage}
         onUpdateUserMessage={voiceCall.updateUserMessage}
         onResendUserMessage={voiceCall.resendUserMessage}
+        onOpenNavigation={() => setIsSidebarOpen(true)}
       />
       <GoogleConnectSheet
         open={Boolean(googleConnectRequest)}
@@ -6530,7 +6613,10 @@ Please analyze the code you just wrote and fix this error.`;
             vibe: { label: "Vibe Coder", icon: <Code2 className="h-3.5 w-3.5" /> },
             clip: { label: "AI Clipper", icon: <Scissors className="h-3.5 w-3.5" /> },
             browser: { label: "Browser", icon: <Globe className="h-3.5 w-3.5" /> },
-            forge: { label: "Clyra Forge", icon: <Gamepad2 className="h-3.5 w-3.5" /> },
+            forge: { label: "Game Maker", icon: <Gamepad2 className="h-3.5 w-3.5" /> },
+            roleplay: { label: "AI Roleplay", icon: <Drama className="h-3.5 w-3.5" /> },
+            tools: { label: "Tool Library", icon: <Library className="h-3.5 w-3.5" /> },
+            "system-care": { label: "System Care", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
             companion: { label: "Companion", icon: <AppWindow className="h-3.5 w-3.5" /> },
             study: { label: "Study Pal", icon: <GraduationCap className="h-3.5 w-3.5" /> },
             "fake-text": { label: "Text Story", icon: <MessagesSquare className="h-3.5 w-3.5" /> },
@@ -7298,6 +7384,9 @@ Please analyze the code you just wrote and fix this error.`;
                         !isBrowserWorkspace &&
                         !isCompanionWorkspace &&
                         !isForgeWorkspace &&
+                        !isRoleplayWorkspace &&
+                        !isToolLibraryWorkspace &&
+                        !isSystemCareWorkspace &&
                         !isStudyWorkspace &&
                         !isCreatorWorkspace &&
                         "justify-center",
@@ -7344,7 +7433,19 @@ Please analyze the code you just wrote and fix this error.`;
                         </Suspense>
                       ) : isForgeWorkspace ? (
                         <Suspense fallback={null}>
-                          <ForgeWorkspace />
+                          <GameMakerWorkspace />
+                        </Suspense>
+                      ) : isRoleplayWorkspace ? (
+                        <Suspense fallback={null}>
+                          <RoleplayWorkspace />
+                        </Suspense>
+                      ) : isToolLibraryWorkspace ? (
+                        <Suspense fallback={null}>
+                          <ToolLibraryWorkspace />
+                        </Suspense>
+                      ) : isSystemCareWorkspace ? (
+                        <Suspense fallback={null}>
+                          <SystemCareWorkspace onAskClyra={applyQuickPrompt} />
                         </Suspense>
                       ) : isStudyWorkspace ? (
                         <Suspense fallback={null}>
@@ -7634,6 +7735,9 @@ Please analyze the code you just wrote and fix this error.`;
                           !isBrowserWorkspace &&
                           !isCompanionWorkspace &&
                           !isForgeWorkspace &&
+                          !isRoleplayWorkspace &&
+                          !isToolLibraryWorkspace &&
+                          !isSystemCareWorkspace &&
                           !isStudyWorkspace &&
                           !isCreatorWorkspace &&
                           !isVibeWorkspace && (

@@ -7,7 +7,8 @@ import {
   type VoiceChatMessage,
 } from "./session/voice-session-manager";
 import { createLiveKitSession } from "./transport/livekit";
-import { closeVoiceSocket } from "./websocket/voice-stream-handler";
+import { closeFishVoiceSocket as closeVoiceSocket } from "./websocket/fish-voice-stream-handler";
+import { loadFishSpeechConfig } from "./providers/fish-speech";
 
 function parseHistory(body: unknown): VoiceChatMessage[] {
   if (!Array.isArray(body)) return [];
@@ -69,7 +70,11 @@ export function registerVoiceRoutes(app: Express) {
       transport: livekit ? "livekit" : "websocket",
       websocketUrl,
       livekit,
-      config: voiceConfigPublic(config),
+      config: {
+        ...voiceConfigPublic(config),
+        voices: loadFishSpeechConfig().voices,
+        defaultVoiceId: loadFishSpeechConfig().defaultVoiceId,
+      },
     });
   });
 

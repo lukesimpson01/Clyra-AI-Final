@@ -20,10 +20,40 @@ import {
   VOICE_SPEECH_LEVEL,
   VOICE_TRAILING_SILENCE_MS,
 } from "../lib/voiceTurnDetection";
+import { transitionVoiceCall, type VoiceCallState } from "../lib/voiceCallStateMachine";
 
 function openMicrophoneSettingsIfNeeded(message?: string) {
-  if (!/microphone|notallowed|permission|denied|not-allowed/i.test(String(message || "microphone"))) return;
-  void getElectronDesktop()?.dictation.openMicrophoneSettings?.().catch(() => undefined);
+  if (!/notallowed|permission|denied|not-allowed|blocked/i.test(String(message || ""))) return;
+  const desktop = getElectronDesktop();
+  if (desktop?.dictation.openMicrophoneSettings) {
+    void desktop.dictation.openMicrophoneSettings().catch(() => undefined);
+    return;
+  }
+  // A website cannot change browser permission itself. It can, however, ask
+  // the OS to reveal the relevant privacy pane after getUserMedia was denied.
+  // Browsers that block custom schemes simply remain on Clyra and show the
+  // actionable site-settings copy in the call UI.
+  if (typeof window === "undefined") return;
+  const target = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
+    ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+    : /Win/i.test(navigator.platform || navigator.userAgent)
+      ? "ms-settings:privacy-microphone"
+      : "";
+  if (target) {
+    try { window.open(target, "_self"); } catch { /* browser may reject OS schemes */ }
+  }
+}
+
+function microphoneErrorMessage(cause: unknown) {
+  const name = cause instanceof DOMException ? cause.name : "";
+  if (name === "NotAllowedError" || /permission|denied|notallowed|not-allowed/i.test(String(cause))) {
+    return getElectronDesktop()
+      ? "Microphone access is blocked. Enable Clyra in System Settings, then retry."
+      : "Microphone access is blocked. Allow it for this site in your browser settings, then retry.";
+  }
+  if (name === "NotFoundError") return "No microphone was found. Connect one, then retry.";
+  if (!navigator.mediaDevices?.getUserMedia) return "Microphone capture requires localhost or a secure HTTPS connection.";
+  return cause instanceof Error ? cause.message : "Clyra could not start the microphone.";
 }
 
 type VoiceStatus =
@@ -39,7 +69,11 @@ type VoiceSessionResponse = {
   sessionId: string;
   websocketUrl: string;
   transport: "livekit" | "websocket";
-  config?: { sampleRate: number };
+  config?: {
+    sampleRate: number;
+    voices?: Array<{ id: string; label: string; description: string }>;
+    defaultVoiceId?: string;
+  };
   error?: string;
 };
 
@@ -136,12 +170,19 @@ export function useVoiceCall(options: {
 }) {
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState<VoiceStatus>("connecting");
+  const [phase, setPhase] = useState<VoiceCallState>("idle");
+  const [voices, setVoices] = useState<Array<{ id: string; label: string; description: string }>>([]);
+  const [selectedVoiceId, setSelectedVoiceId] = useState("");
   const [muted, setMuted] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [partialTranscript, setPartialTranscript] = useState("");
   const [assistantText, setAssistantText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<VoiceTurn[]>([]);
+
+  const moveTo = useCallback((next: VoiceCallState) => {
+    setPhase((current) => transitionVoiceCall(current, next));
+  }, []);
 
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -166,6 +207,8 @@ export function useVoiceCall(options: {
   const speechVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const stopSpeechResumeRef = useRef<(() => void) | null>(null);
   const ttsWatchdogRef = useRef<number | null>(null);
+  const endingTimerRef = useRef<number | null>(null);
+  const recoveryTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mutedRef = useRef(false);
   const statusRef = useRef<VoiceStatus>("connecting");
@@ -368,6 +411,7 @@ export function useVoiceCall(options: {
 
   const performBargeIn = useCallback(() => {
     if (!activeRef.current) return;
+    moveTo("interrupting");
     clearPlaybackResumeTimer();
     clearTtsWatchdog();
     stopSpeechResumeRef.current?.();
@@ -395,7 +439,8 @@ export function useVoiceCall(options: {
     setStatus("listening");
     statusRef.current = "listening";
     listenPausedRef.current = false;
-  }, [clearPlaybackResumeTimer, clearTtsWatchdog, stopScheduledPlayback]);
+    moveTo("listening");
+  }, [clearPlaybackResumeTimer, clearTtsWatchdog, moveTo, stopScheduledPlayback]);
 
   const releaseCapture = useCallback(() => {
     // Invalidate any in-flight permission request. A delayed browser response
@@ -480,6 +525,7 @@ export function useVoiceCall(options: {
   }, [clearPlaybackResumeTimer, clearTtsWatchdog, releaseCapture, stopPlaybackMeter, stopScheduledPlayback]);
 
   const endCall = useCallback(() => {
+    moveTo("ending");
     const sessionId = sessionIdRef.current;
     const wasActive = activeRef.current;
     activeRef.current = false;
@@ -490,22 +536,29 @@ export function useVoiceCall(options: {
     sessionIdRef.current = null;
     committedSpeechRef.current = "";
     interimSpeechRef.current = "";
-    // Hang-up must paint immediately when a call is live. Skip flushSync on
-    // idle cleanup (Strict Mode remount / unmount) — flushing during React's
-    // lifecycle throws and can leave the rest of the app feeling unresponsive.
+    // Audio and capture stop immediately; the surface remains briefly so its
+    // exit motion can communicate that the call actually ended.
     const clearCallSurface = () => {
-      setActive(false);
       setStatus("ended");
-      setPartialTranscript("");
-      setAssistantText("");
       setError(null);
     };
-    if (wasActive) {
-      flushSync(clearCallSurface);
-    } else {
-      clearCallSurface();
-    }
+    clearCallSurface();
     statusRef.current = "ended";
+    if (endingTimerRef.current != null) window.clearTimeout(endingTimerRef.current);
+    if (wasActive) {
+      endingTimerRef.current = window.setTimeout(() => {
+        endingTimerRef.current = null;
+        setActive(false);
+        setPartialTranscript("");
+        setAssistantText("");
+        moveTo("ended");
+      }, 500);
+    } else {
+      setActive(false);
+      setPartialTranscript("");
+      setAssistantText("");
+      moveTo("ended");
+    }
     if (sessionId) {
       void serviceUrl("/voice/end").then((url) => fetch(url, {
           method: "POST",
@@ -513,7 +566,7 @@ export function useVoiceCall(options: {
           body: JSON.stringify({ sessionId }),
         }).catch(() => undefined));
     }
-  }, [serviceUrl, stopMic]);
+  }, [moveTo, serviceUrl, stopMic]);
 
   const playPcmBytes = useCallback(async (bytes: Uint8Array, sampleRate: number) => {
     // Dedicated playback context at the device rate — never reuse the mic capture graph.
@@ -592,6 +645,7 @@ export function useVoiceCall(options: {
     setPartialTranscript(clean);
     setAssistantText("");
     setStatus("thinking");
+    moveTo("thinking");
     gotTtsChunkRef.current = false;
     ttsPlaybackStartedRef.current = false;
     pendingAssistantTextRef.current = "";
@@ -613,7 +667,7 @@ export function useVoiceCall(options: {
         text: clean,
       }),
     );
-  }, [beginAssistantHold, clearEndpointTimer]);
+  }, [beginAssistantHold, clearEndpointTimer, moveTo]);
 
   const scheduleEndpoint = useCallback(() => {
     clearEndpointTimer();
@@ -757,8 +811,9 @@ export function useVoiceCall(options: {
     if (!activeRef.current) return;
     endAssistantHold();
     setStatus("listening");
+    moveTo("listening");
     resumeListening();
-  }, [endAssistantHold, resumeListening]);
+  }, [endAssistantHold, moveTo, resumeListening]);
 
   const onSpeechUtteranceFinished = useCallback(() => {
     speechUtteranceCountRef.current = Math.max(0, speechUtteranceCountRef.current - 1);
@@ -815,6 +870,7 @@ export function useVoiceCall(options: {
       if (pipelineModeRef.current) {
         const now = performance.now();
         if (level >= VOICE_SPEECH_LEVEL) {
+          moveTo("user_speaking");
           if (!pipelineHeardSpeechRef.current) pipelineSpeechStartedAtRef.current = now;
           pipelineHeardSpeechRef.current = true;
           pipelineLastSpeechAtRef.current = now;
@@ -824,6 +880,7 @@ export function useVoiceCall(options: {
         if (!pipelineHeardSpeechRef.current || pipelineSilenceTimerRef.current != null) return;
         if (now - pipelineSpeechStartedAtRef.current < VOICE_MIN_UTTERANCE_MS) return;
         const remaining = remainingVoiceSilenceMs(pipelineLastSpeechAtRef.current, now);
+        moveTo("endpointing");
         pipelineSilenceTimerRef.current = window.setTimeout(() => {
           pipelineSilenceTimerRef.current = null;
           if (!activeRef.current || mutedRef.current || !pipelineHeardSpeechRef.current) return;
@@ -832,6 +889,7 @@ export function useVoiceCall(options: {
           listenPausedRef.current = true;
           setPartialTranscript("Transcribing…");
           setStatus("thinking");
+          moveTo("transcribing");
           pcmCapturerRef.current?.stop();
           pcmCapturerRef.current = null;
           const socket = wsRef.current;
@@ -864,7 +922,7 @@ export function useVoiceCall(options: {
         silenceFramesRef.current = 0;
       }
     }
-  }, [clearEndpointTimer, clearPipelineSilenceTimer, performBargeIn, scheduleEndpoint, sendUtterance]);
+  }, [clearEndpointTimer, clearPipelineSilenceTimer, moveTo, performBargeIn, scheduleEndpoint, sendUtterance]);
 
   const enqueueSpeech = useCallback(
     (text: string) => {
@@ -1000,6 +1058,9 @@ export function useVoiceCall(options: {
     // already requesting the microphone. Reuse that request instead of
     // releasing/recreating the meter graph in the middle of permission setup.
     if (micStartPromiseRef.current) return micStartPromiseRef.current;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Microphone capture requires localhost or a secure HTTPS connection.");
+    }
     releaseCapture();
     const requestId = micRequestIdRef.current;
     const capture = (async () => {
@@ -1016,6 +1077,19 @@ export function useVoiceCall(options: {
         stopMediaStreamTracks(stream);
         throw new Error("Microphone request was cancelled.");
       }
+      const track = stream.getAudioTracks()[0];
+      if (!track) {
+        stopMediaStreamTracks(stream);
+        throw new DOMException("No microphone audio track was returned.", "NotFoundError");
+      }
+      track.enabled = true;
+      track.addEventListener("ended", () => {
+        if (!activeRef.current || mutedRef.current) return;
+        setError("The microphone stopped. Reconnect it or enable access, then retry.");
+        mutedRef.current = true;
+        setMuted(true);
+        moveTo("muted");
+      }, { once: true });
       mediaStreamRef.current = stream;
       // Dedicated meter graph — never reused for TTS playback.
       const ctx = new AudioContext();
@@ -1053,7 +1127,7 @@ export function useVoiceCall(options: {
     } finally {
       if (micStartPromiseRef.current === capture) micStartPromiseRef.current = null;
     }
-  }, [applyMicLevel, releaseCapture]);
+  }, [applyMicLevel, moveTo, releaseCapture]);
 
   const startPipelineCapture = useCallback(async (sampleRate = captureSampleRateRef.current) => {
     const stream = await startMicMeter();
@@ -1092,6 +1166,11 @@ export function useVoiceCall(options: {
 
   const startCall = useCallback(async () => {
     if (!options.enabled) return;
+    if (endingTimerRef.current != null) {
+      window.clearTimeout(endingTimerRef.current);
+      endingTimerRef.current = null;
+    }
+    moveTo("starting");
     // Allow retry when a previous start left the overlay in error state.
     if (activeRef.current && statusRef.current !== "error") return;
     if (statusRef.current === "error") {
@@ -1117,6 +1196,7 @@ export function useVoiceCall(options: {
       setActive(true);
       setMuted(false);
       setStatus("connecting");
+      moveTo("connecting");
       setAssistantText("");
       setPartialTranscript("");
       setMicLevel(0);
@@ -1128,7 +1208,15 @@ export function useVoiceCall(options: {
     // Ask through the desktop main process before Chromium opens getUserMedia.
     // This makes the first-click path deterministic on macOS, where a hidden
     // WebContentsView otherwise occasionally drops the TCC prompt.
-    const desktopPermission = await getElectronDesktop()?.dictation.ensurePermissions?.().catch(() => null);
+    const desktop = getElectronDesktop();
+    // Create playback from the original click on every platform. Awaiting the
+    // native macOS permission sheet first can consume user activation and leave
+    // an otherwise valid Fish PCM stream queued into a suspended AudioContext.
+    const playbackWarmup = ensurePlaybackContext();
+    const browserMicWarmup = desktop ? null : startMicMeter();
+    const desktopPermission = desktop
+      ? await desktop.dictation.ensurePermissions?.().catch(() => null)
+      : null;
     if (desktopPermission && desktopPermission.ok === false) {
       const message = String(desktopPermission.error || "Microphone permission is blocked.");
       setError(message);
@@ -1141,7 +1229,7 @@ export function useVoiceCall(options: {
     // This runs synchronously from the user's Start Call gesture. Keeping the
     // context active here avoids browser autoplay policies suspending valid
     // Async/Max PCM that arrives later over WebSocket.
-    void ensurePlaybackContext().catch((cause) => {
+    void playbackWarmup.catch((cause) => {
       setError(
         cause instanceof Error
           ? `Voice playback: ${cause.message}`
@@ -1150,9 +1238,12 @@ export function useVoiceCall(options: {
     });
     // Keep the microphone setup within the Start Call user gesture. Delaying
     // it until WebSocket.onopen can leave capture suspended in Chromium.
-    void startMicMeter().catch((cause) => {
-      const message = cause instanceof Error ? cause.message : "Microphone permission denied";
+    void (browserMicWarmup ?? startMicMeter()).catch((cause) => {
+      const message = microphoneErrorMessage(cause);
       setError(message);
+      mutedRef.current = true;
+      setMuted(true);
+      moveTo("muted");
       openMicrophoneSettingsIfNeeded(message);
     });
     // Carry chat context into the call UI + server history.
@@ -1188,6 +1279,8 @@ export function useVoiceCall(options: {
         throw new Error(payload.error || "Could not start voice session");
       }
       sessionIdRef.current = payload.sessionId;
+      setVoices(payload.config?.voices ?? []);
+      setSelectedVoiceId(payload.config?.defaultVoiceId ?? payload.config?.voices?.[0]?.id ?? "");
       const ws = new WebSocket(payload.websocketUrl);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -1197,6 +1290,7 @@ export function useVoiceCall(options: {
       ws.onopen = async () => {
         setStatus("listening");
         statusRef.current = "listening";
+        moveTo("listening");
         try {
           await startMicMeter();
           // Wait for the gateway's explicit `pipeline_mode` message before
@@ -1207,11 +1301,12 @@ export function useVoiceCall(options: {
           // getUserMedia and the meter are working normally.
         } catch (micError) {
           // Keep the call alive (Listening) so session/WS still work; show mic error.
-          setError(
-            micError instanceof Error
-              ? micError.message
-              : "Microphone permission denied",
-          );
+          const message = microphoneErrorMessage(micError);
+          setError(message);
+          mutedRef.current = true;
+          setMuted(true);
+          moveTo("muted");
+          openMicrophoneSettingsIfNeeded(message);
           setStatus("listening");
           statusRef.current = "listening";
         }
@@ -1251,6 +1346,7 @@ export function useVoiceCall(options: {
             token?: string;
             data?: string;
             message?: string;
+            recoverable?: boolean;
             mode?: "pipeline" | "browser";
             sampleRate?: number;
             generation?: number;
@@ -1261,20 +1357,18 @@ export function useVoiceCall(options: {
             pipelineModeRef.current = message.mode === "pipeline";
             if (message.mode === "pipeline") {
               stopRecognition();
+              if (mutedRef.current) return;
               void startPipelineCapture(message.sampleRate ?? sampleRate).catch((err) => {
                 try {
-                  pipelineModeRef.current = false;
-                  setError(
-                    err instanceof Error
-                      ? err.message
-                      : "Microphone permission denied",
-                  );
+                  const message = microphoneErrorMessage(err);
+                  setError(message);
                   setStatus("listening");
                   statusRef.current = "listening";
-                  // Only fall back to browser STT when the constructor exists.
-                  if (getSpeechRecognitionCtor()) {
-                    startRecognition();
-                  }
+                  mutedRef.current = true;
+                  setMuted(true);
+                  moveTo("muted");
+                  releaseCapture();
+                  openMicrophoneSettingsIfNeeded(message);
                 } catch {
                   // Error UI above is best-effort during teardown races.
                 }
@@ -1319,6 +1413,7 @@ export function useVoiceCall(options: {
             pendingAssistantTextRef.current = "";
             setAssistantText("");
             setStatus("thinking");
+            moveTo("thinking");
             setPartialTranscript(message.text);
             // Pipeline path may finalize without going through sendUtterance.
             setTurns((prev) => {
@@ -1341,6 +1436,7 @@ export function useVoiceCall(options: {
             beginAssistantHold();
           }
           if (message.type === "llm_token" && message.token) {
+            moveTo("assistant_starting");
             beginAssistantHold();
             const next = `${pendingAssistantTextRef.current}${message.token}`;
             pendingAssistantTextRef.current = next;
@@ -1387,11 +1483,13 @@ export function useVoiceCall(options: {
             }
           }
           if (message.type === "tts_format" && message.sampleRate) {
+            moveTo("assistant_starting");
             ttsSampleRateRef.current = message.sampleRate;
             ttsGenerationRef.current = message.generation ?? ttsGenerationRef.current;
             ttsResponseHashRef.current = stableVoiceId(message.responseId ?? "");
           }
           if (message.type === "tts_chunk" && message.data) {
+            moveTo("assistant_speaking");
             const firstChunk = !gotTtsChunkRef.current;
             gotTtsChunkRef.current = true;
             if (firstChunk) {
@@ -1470,9 +1568,22 @@ export function useVoiceCall(options: {
           }
           if (message.type === "error") {
             const err = String(message.message || "Voice stream error");
-            if (!/not configured/i.test(err)) {
-              setError(err);
+            setError(err);
+            if (message.recoverable) {
+              setStatus("listening");
+              moveTo("recovering");
+              if (recoveryTimerRef.current != null) window.clearTimeout(recoveryTimerRef.current);
+              recoveryTimerRef.current = window.setTimeout(() => {
+                recoveryTimerRef.current = null;
+                if (!activeRef.current) return;
+                setError(null);
+                setStatus("listening");
+                statusRef.current = "listening";
+                moveTo("listening");
+              }, 1800);
+            } else {
               setStatus("error");
+              moveTo("error");
             }
             listenPausedRef.current = false;
             localTtsActiveRef.current = false;
@@ -1508,6 +1619,7 @@ export function useVoiceCall(options: {
     finishSpeakingAndListen,
     options.conversationId,
     options.enabled,
+    moveTo,
     ensurePlaybackContext,
     enqueuePcmBytes,
     scheduleResumeAfterPlayback,
@@ -1517,6 +1629,7 @@ export function useVoiceCall(options: {
     startMicMeter,
     startPipelineCapture,
     startRecognition,
+    releaseCapture,
     stopMic,
     stopScheduledPlayback,
   ]);
@@ -1529,18 +1642,20 @@ export function useVoiceCall(options: {
       wsRef.current.send(JSON.stringify({ type: "mute", sessionId: sessionIdRef.current, muted: next }));
     }
     if (next) {
+      moveTo("muted");
       // Releasing every track is what turns off the browser's microphone indicator.
       releaseCapture();
       return;
     }
     if (!activeRef.current) return;
+    moveTo(statusRef.current === "speaking" ? "assistant_speaking" : "listening");
     void (async () => {
       try {
         await startMicMeter();
         if (pipelineModeRef.current) await startPipelineCapture();
         else if (statusRef.current === "listening" && !listenPausedRef.current) startRecognition();
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Microphone permission denied";
+        const message = microphoneErrorMessage(error);
         setError(message);
         openMicrophoneSettingsIfNeeded(message);
         mutedRef.current = true;
@@ -1548,7 +1663,53 @@ export function useVoiceCall(options: {
         releaseCapture();
       }
     })();
-  }, [releaseCapture, startMicMeter, startPipelineCapture, startRecognition]);
+  }, [moveTo, releaseCapture, startMicMeter, startPipelineCapture, startRecognition]);
+
+  const retryMicrophone = useCallback(async () => {
+    if (!activeRef.current) return false;
+    // A native permission failure can happen before the voice session is
+    // created. Retrying must resume the complete call, not only open a mic
+    // stream with nowhere to send its audio.
+    if (!sessionIdRef.current) {
+      await startCall();
+      return Boolean(sessionIdRef.current);
+    }
+    try {
+      const desktop = getElectronDesktop();
+      const permission = await desktop?.dictation.ensurePermissions?.().catch(() => null);
+      if (permission?.ok === false) throw new DOMException(permission.error || "Microphone permission denied", "NotAllowedError");
+      setError(null);
+      mutedRef.current = false;
+      setMuted(false);
+      await startMicMeter();
+      if (pipelineModeRef.current) await startPipelineCapture();
+      else if (statusRef.current === "listening" && !listenPausedRef.current) startRecognition();
+      if (wsRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+        wsRef.current.send(JSON.stringify({ type: "mute", sessionId: sessionIdRef.current, muted: false }));
+      }
+      moveTo("listening");
+      return true;
+    } catch (cause) {
+      const message = microphoneErrorMessage(cause);
+      setError(message);
+      mutedRef.current = true;
+      setMuted(true);
+      moveTo("muted");
+      releaseCapture();
+      openMicrophoneSettingsIfNeeded(message);
+      return false;
+    }
+  }, [moveTo, releaseCapture, startCall, startMicMeter, startPipelineCapture, startRecognition]);
+
+  const selectVoice = useCallback((voiceId: string) => {
+    if (!voices.some((voice) => voice.id === voiceId)) return;
+    setSelectedVoiceId(voiceId);
+    const socket = wsRef.current;
+    const sessionId = sessionIdRef.current;
+    if (socket?.readyState === WebSocket.OPEN && sessionId) {
+      socket.send(JSON.stringify({ type: "set_voice", sessionId, voiceId }));
+    }
+  }, [voices]);
 
   const sendTextMessage = useCallback(
     (text: string) => {
@@ -1607,6 +1768,7 @@ export function useVoiceCall(options: {
   return {
     active,
     status,
+    phase,
     muted,
     micLevel,
     waveformSignalRef,
@@ -1614,9 +1776,13 @@ export function useVoiceCall(options: {
     assistantText,
     error,
     turns,
+    voices,
+    selectedVoiceId,
+    selectVoice,
     startCall,
     endCall,
     toggleMute,
+    retryMicrophone,
     sendTextMessage,
     resendUserMessage,
     updateUserMessage,

@@ -22,6 +22,24 @@ type RunnerState = {
 
 const sessions = new Map<string, RunnerState>();
 
+/**
+ * Where an `index.html` entry may live, in preference order ("" is the
+ * project root). Desktop/Electron projects conventionally keep their web
+ * layer in `src/`, so a root-only check reported "preview files are
+ * incomplete" for an otherwise complete app. Every entry is joined with
+ * `path.join`, so this resolves identically on POSIX and Windows.
+ */
+const HTML_ENTRY_DIRS = ["", "src", "public", "app", "www", "renderer"] as const;
+
+/** Resolve the project's HTML entry point, or undefined when none exists yet. */
+export function findHtmlEntry(projectPath: string): string | undefined {
+  for (const dir of HTML_ENTRY_DIRS) {
+    const candidate = path.join(projectPath, dir, "index.html");
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 function addLog(state: RunnerState, level: PreviewLogLine["level"], message: string) {
   const clean = message.trim();
   if (!clean) return;
@@ -48,12 +66,43 @@ function serialise(state: RunnerState): PreviewSession {
 }
 
 function getViteBinary(projectPath: string) {
-  const candidates = [
-    path.join(projectPath, "node_modules", ".bin", "vite"),
-    clyraResourcePath("node_modules", ".bin", "vite"),
-  ];
+  // npm installs shell shims on POSIX but `.cmd` wrappers on Windows, so the
+  // bare name only resolves on macOS/Linux. Probe both spellings.
+  const names = process.platform === "win32" ? ["vite.cmd", "vite.exe", "vite"] : ["vite"];
+  const candidates = names.flatMap((name) => [
+    path.join(projectPath, "node_modules", ".bin", name),
+    clyraResourcePath("node_modules", ".bin", name),
+  ]);
   return candidates.find((candidate) => existsSync(candidate));
 }
+
+/**
+ * Static file server for dependency-free projects, run through Node itself.
+ *
+ * This previously shelled out to `python3`, which is absent on a default
+ * Windows install (and on Windows the name resolves to a Store stub that
+ * never serves), so static previews could only work on macOS/Linux. Node is
+ * already running Clyra, so `process.execPath` is guaranteed present and
+ * identical on both platforms. Passed via `node -e`, and because `spawn` is
+ * called without a shell the source needs no cross-platform quoting.
+ */
+const STATIC_SERVER_SOURCE = `
+const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
+const root = process.argv[1], port = Number(process.argv[2]);
+const TYPES = { '.html':'text/html', '.js':'text/javascript', '.mjs':'text/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.gif':'image/gif', '.webp':'image/webp', '.ico':'image/x-icon', '.woff':'font/woff', '.woff2':'font/woff2', '.wasm':'application/wasm' };
+http.createServer((req, res) => {
+  const url = decodeURIComponent((req.url || '/').split('?')[0]);
+  let file = path.join(root, url);
+  // The preview serves real project files on localhost; keep requests inside root.
+  if (!path.resolve(file).startsWith(path.resolve(root))) { res.writeHead(403); return res.end('Forbidden'); }
+  try { if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html'); } catch {}
+  fs.readFile(file, (err, buf) => {
+    if (err) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Not found'); }
+    res.writeHead(200, { 'content-type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
+    res.end(buf);
+  });
+}).listen(port, '127.0.0.1', () => console.log('Serving ' + root + ' on http://127.0.0.1:' + port));
+`;
 
 async function waitForReady(state: RunnerState, port: number, timeoutMs = 20000) {
   const started = Date.now();
@@ -122,7 +171,7 @@ export async function startDevServer({
   }
 
   const hasPackageJson = existsSync(path.join(projectPath, "package.json"));
-  const hasHtmlEntry = existsSync(path.join(projectPath, "index.html"));
+  const hasHtmlEntry = Boolean(findHtmlEntry(projectPath));
   if (!hasHtmlEntry) {
     // Preserve prior log lines when we re-probe during an agent run so the
     // terminal panel does not flash empty between missing-entry checks.
@@ -135,7 +184,7 @@ export async function startDevServer({
       status: "build_failed",
       lastError: {
         title: "Preview files are incomplete",
-        message: "The agent has not yet created an index.html entry point, so Clyra cannot start a preview.",
+        message: `The agent has not yet created an index.html entry point, so Clyra cannot start a preview. Clyra looks in the project root and in ${HTML_ENTRY_DIRS.filter(Boolean).join(", ")}.`,
       },
     };
     const state = { session, logs: priorLogs };
@@ -147,31 +196,21 @@ export async function startDevServer({
   }
   const packageManager = hasPackageJson ? detectPackageManager(projectPath) : "npm";
   const script = hasPackageJson ? await detectDevScript(projectPath) : null;
-  if (hasPackageJson && !script) {
-    const session: PreviewSession = {
-      projectId,
-      projectPath,
-      packageManager,
-      devCommand: "missing",
-      status: "build_failed",
-      lastError: {
-        title: "Preview setup needed",
-        message: "No dev, start, or preview script exists in package.json.",
-      },
-    };
-    const state = { session, logs: [] };
-    addLog(state, "error", session.lastError!.message);
-    sessions.set(projectId, state);
-    return session;
-  }
+  // A package.json may exist only to define tests or metadata. When the
+  // project has a real HTML entry but no dev/start/preview script, use Clyra's
+  // bundled Vite static server instead of rejecting an otherwise runnable
+  // website. This also makes generated dependency-free sites survive a clean
+  // Clyra restart, rather than relying on a preview process that happened to
+  // start before package.json was written.
 
   const port = await findPreviewPort(projectId);
   const viteBinary = getViteBinary(projectPath);
+  const useVite = Boolean(script && viteBinary);
   const session: PreviewSession = {
     projectId,
     projectPath,
     packageManager,
-    devCommand: script ? `${script.scriptName}: ${script.command}` : "static HTML: vite",
+    devCommand: script ? `${script.scriptName}: ${script.command}` : "static HTML: local server",
     port,
     url: `http://127.0.0.1:${port}`,
     status: "starting",
@@ -188,15 +227,21 @@ export async function startDevServer({
   );
   addLog(state, "info", `Starting preview on port ${port}.`);
 
+  // Serve from the directory that actually holds index.html. Desktop/Electron
+  // projects keep their web layer in src/, and serving the project root there
+  // would return a directory listing instead of the app.
+  const staticRoot = path.dirname(findHtmlEntry(projectPath) ?? path.join(projectPath, "index.html"));
   const child = spawn(
-    viteBinary || "python3",
-    viteBinary
+    useVite ? viteBinary! : process.execPath,
+    useVite
       ? ["--host", "127.0.0.1", "--port", String(port), "--strictPort"]
-      : ["-m", "http.server", String(port), "--bind", "127.0.0.1"],
+      : ["-e", STATIC_SERVER_SOURCE, staticRoot, String(port)],
     {
       cwd: projectPath,
       env: { ...process.env, BROWSER: "none", FORCE_COLOR: "0" },
       stdio: ["pipe", "pipe", "pipe"],
+      // .cmd shims on Windows are not directly executable by CreateProcess.
+      shell: useVite && process.platform === "win32",
     },
   );
   state.process = child;

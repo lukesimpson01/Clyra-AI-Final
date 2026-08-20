@@ -35,6 +35,10 @@ function isHtmlContentType(type: string | undefined) {
   return Boolean(type && /text\/html/.test(type));
 }
 
+function isJavaScriptContentType(type: string | undefined) {
+  return Boolean(type && /(?:javascript|ecmascript)/i.test(type));
+}
+
 /** Strip hop-by-hop headers before relaying a proxied response. */
 function relayHeaders(headers: http.IncomingHttpHeaders) {
   const out: Record<string, string | string[]> = {};
@@ -65,6 +69,8 @@ function proxyRequest(
     (upstream) => {
       const contentType = String(upstream.headers["content-type"] ?? "");
       const status = upstream.statusCode ?? 502;
+      const projectId = safeProjectId(String((req.params as { projectId?: string })?.projectId ?? ""));
+      const proxyBase = `/api/vibe/projects/${projectId}/preview/`;
       if (options?.inject && isHtmlContentType(contentType)) {
         // The page is rewritten below, so relay every safe header except the
         // upstream content length. Passing `undefined` to writeHead crashes
@@ -79,7 +85,16 @@ function proxyRequest(
           let html = chunks;
           // Rewrite absolute asset references into the proxied namespace so
           // /@vite/client and /src/... resolve through this origin.
-          html = html.replace(/(src|href)="\/(?!\/)/g, `$1="/api/vibe/projects/${safeProjectId(String((req.params as { projectId?: string })?.projectId ?? ""))}/preview/`);
+          html = html.replace(/(src|href)="\/(?!\/)/g, `$1="${proxyBase}`);
+          // Vite's injected HMR client derives its websocket endpoint from
+          // Clyra's outer origin, not the stripped upstream preview path. It
+          // then waits on a root websocket and can block the project's later
+          // module scripts. Clyra already reloads this iframe after agent runs
+          // and applies inspector edits live, so HMR is redundant here.
+          html = html.replace(
+            /<script\s+type="module"\s+src="[^"]*\/@vite\/client"\s*><\/script>\s*/i,
+            "",
+          );
           // Inline the small local overlay bridge. Some embedded preview
           // environments block an extra injected script request even when
           // ordinary project scripts are allowed; inline execution keeps the
@@ -89,6 +104,25 @@ function proxyRequest(
             html = html.replace(/<\/head>/i, `${inject}</head>`);
           }
           res.end(html);
+        });
+        upstream.on("error", () => res.end());
+        return;
+      }
+      if (options?.inject && isJavaScriptContentType(contentType)) {
+        // Vite rewrites relative ESM imports to root-relative paths such as
+        // `/src/toggle.js`. The HTML already lives inside a per-project proxy
+        // namespace, so leaving those imports absolute makes them escape to
+        // Clyra's own origin and silently breaks generated interactions.
+        res.writeHead(status, relayHeaders(upstream.headers));
+        let source = "";
+        upstream.setEncoding("utf8");
+        upstream.on("data", (chunk) => { source += chunk; });
+        upstream.on("end", () => {
+          source = source.replace(
+            /(["'`])\/(?!\/)(?=(?:@vite|@id|@fs|src|node_modules|assets)\/)/g,
+            `$1${proxyBase}`,
+          );
+          res.end(source);
         });
         upstream.on("error", () => res.end());
         return;
@@ -105,11 +139,11 @@ function proxyRequest(
 }
 
 /** Proxy a websocket upgrade to the given target port. */
-function proxyUpgrade(req: http.IncomingMessage, socket: net.Socket, head: Buffer, targetPort: number) {
+function proxyUpgrade(req: http.IncomingMessage, socket: net.Socket, head: Buffer, targetPort: number, upstreamPath = req.url ?? "/") {
   const { WebSocketServer } = require("ws") as typeof import("ws");
   const wss = new WebSocketServer({ noServer: true });
   wss.on("connection", (client) => {
-    const upstream = new WebSocket(`ws://127.0.0.1:${targetPort}${req.url}`, {
+    const upstream = new WebSocket(`ws://127.0.0.1:${targetPort}${upstreamPath}`, {
       headers: { "sec-websocket-protocol": (client as unknown as { protocol?: string }).protocol ?? "" },
     });
     let ready = false;
@@ -245,6 +279,17 @@ export function registerPreviewProxy(app: Application) {
 export function attachPreviewUpgrades(httpServer: Server) {
   httpServer.on("upgrade", (req, socket, head) => {
     const url = req.url ?? "/";
+    const previewMatch = url.match(/^\/api\/vibe\/projects\/([^/]+)\/preview(\/.*)?$/);
+    if (previewMatch) {
+      const projectId = safeProjectId(decodeURIComponent(previewMatch[1] ?? ""));
+      const port = getPreviewTargetPort(projectId);
+      if (!port) {
+        socket.destroy();
+        return;
+      }
+      proxyUpgrade(req, socket, head, port, previewMatch[2] || "/");
+      return;
+    }
     if (url.startsWith("/ios-bridge/")) {
       const base = iosBridgeUrl();
       if (!base) {

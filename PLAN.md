@@ -29,3 +29,16 @@ Do not introduce BrowserOS as product foundation (AGPL) without commercial revie
 - No large checklist / avatar / blue cursor by default
 - Floating black Take control / Stop
 - Real page still driven by openbrowser runtime
+
+---
+
+## Clyra Game Maker
+
+The AI game creation platform (the workspace formerly called Clyra Forge) has
+its own plan, status and architecture documents:
+
+- [docs/game-maker/PLAN.md](docs/game-maker/PLAN.md) — phase checklist
+- [docs/game-maker/STATUS.md](docs/game-maker/STATUS.md) — what works, what does not
+- [docs/game-maker/ARCHITECTURE.md](docs/game-maker/ARCHITECTURE.md) — the three layers
+- [docs/game-maker/AGENTS.md](docs/game-maker/AGENTS.md) — the AI harness
+- [docs/game-maker/DEPENDENCIES.md](docs/game-maker/DEPENDENCIES.md) / [LICENSE_MATRIX.md](docs/game-maker/LICENSE_MATRIX.md)

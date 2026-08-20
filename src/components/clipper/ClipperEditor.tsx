@@ -84,6 +84,23 @@ export type EditorClip = {
   clip_duration?: string;
   artifact_id?: string;
   crop_keyframes?: Array<{ timeMs: number }>;
+  /**
+   * People the backend detected before rendering (thumbnails + ids from
+   * `clipper_face_tracking.py`'s person clustering). Used so the live
+   * preview's client-side tracker can favour the same person the export
+   * was rendered with, instead of whichever face happens to be biggest.
+   */
+  available_faces?: Array<{
+    id: string;
+    personId?: string;
+    thumbnail?: string;
+    thumbnailUrl?: string;
+    thumbnailPath?: string;
+  }>;
+  face_tracking?: {
+    selectedTrackId?: string | null;
+    selectedPersonId?: string | null;
+  };
 };
 
 export type EditorWord = OverlayWord;
@@ -1418,7 +1435,23 @@ export default function ClipperEditor({
   const zoomRafRef = useRef(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const zoomEffectsRef = useRef<ZoomPinEffect[]>([]);
-  const faceTrack = useLiveFaceTrack(videoEl, faceTrackingEnabled && Boolean(selected));
+  // Prefer the same person the pipeline was told to track before rendering
+  // (available_faces / face_tracking.selectedPersonId, from the backend's
+  // person clustering) so the live preview and the export stay in sync
+  // instead of the live tracker always following whichever face is biggest.
+  const selectedFaceInfo = useMemo(() => {
+    const faces = selected?.available_faces;
+    if (!faces?.length) return null;
+    const wantedId = selected?.face_tracking?.selectedPersonId || selected?.face_tracking?.selectedTrackId;
+    const face = (wantedId && faces.find((item) => item.id === wantedId || item.personId === wantedId)) || faces[0];
+    if (!face) return null;
+    return {
+      thumbnailUrl: face.thumbnailUrl || face.thumbnail || face.thumbnailPath || null,
+      peopleCount: faces.length,
+    };
+  }, [selected]);
+  const selectedFaceThumbnail = selectedFaceInfo?.thumbnailUrl ?? null;
+  const faceTrack = useLiveFaceTrack(videoEl, faceTrackingEnabled && Boolean(selected), selectedFaceThumbnail);
   const faceTrackRef = useRef(faceTrack);
   faceTrackRef.current = faceTrack;
   zoomEffectsRef.current = zoomEffects;
@@ -1737,7 +1770,15 @@ export default function ClipperEditor({
                       {faceTrackingEnabled ? (
                         <span className="pointer-events-none absolute left-2 top-2 z-[3] flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
                           <ScanFace size={11} strokeWidth={2} />
-                          {faceTrack ? "Tracking" : "Finding face…"}
+                          {!faceTrack
+                            ? "Finding face…"
+                            : selectedFaceThumbnail
+                              ? faceTrack.identityMatched
+                                ? "Tracking selected person"
+                                : "Tracking largest face"
+                              : (faceTrack.faceCount || 0) > 1
+                                ? `Tracking · ${faceTrack.faceCount} faces`
+                                : "Tracking"}
                         </span>
                       ) : null}
                     </div>
@@ -1819,6 +1860,22 @@ export default function ClipperEditor({
               ) : inspectorMode === "reframe" ? (
                 <div className="p-5"><div className="flex items-center justify-between"><p className="text-[14px] font-semibold text-[#30343A]">Reframe</p><button type="button" onClick={() => setInspectorMode("overview")} className="grid h-7 w-7 place-items-center rounded-[7px] text-[#969BA3] hover:bg-[#F0F1F3]">×</button></div><p className="mt-1 text-[10.5px] text-[#92979F]">Keep the subject composed for a vertical clip.</p>
                   <div aria-label={`Face tracking ${faceTrackingEnabled ? "enabled" : "disabled"}`} className="mt-5 flex w-full items-center gap-3 rounded-[14px] border border-black/[.065] bg-white p-4 text-left"><span className="grid h-9 w-9 place-items-center rounded-[10px] bg-[#EEF4FF] text-[#3977F6]"><ScanFace size={17} /></span><span className="min-w-0 flex-1"><strong className="block text-[11.5px]">Face tracking</strong><small className="mt-1 block text-[9.5px] leading-4 text-[#969BA3]">{faceTrackingEnabled ? "Enabled for this clip · smart camera active" : "Off for this clip"}</small></span><span className={cn("rounded-full px-2 py-1 text-[9px] font-semibold", faceTrackingEnabled ? "bg-[#EEF4FF] text-[#3977F6]" : "bg-[#F1F2F4] text-[#8E939B]")}>{faceTrackingEnabled ? "On" : "Off"}</span></div>
+                  {faceTrackingEnabled && selectedFaceInfo ? (
+                    <div className="mt-2 flex items-center gap-2.5 rounded-[10px] border border-black/[.05] bg-white px-3 py-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-[#EEF4FF]">
+                        {selectedFaceInfo.thumbnailUrl ? (
+                          <img src={selectedFaceInfo.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <ScanFace size={14} className="text-[#3977F6]" />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1 text-[10.5px] leading-4 text-[#565D67]">
+                        {selectedFaceInfo.peopleCount > 1
+                          ? `Locked to the selected person · ${selectedFaceInfo.peopleCount} people detected`
+                          : "Locked to the tracked person"}
+                      </span>
+                    </div>
+                  ) : null}
                   <p className="mt-3 rounded-[10px] bg-[#F3F5F8] px-3 py-2.5 text-[9.5px] leading-4 text-[#7E848D]">Framing is chosen before generation so preview and export stay identical. Start a new clip to change this setting.</p>
                   <div className="mt-3 grid gap-1.5"><div className="flex h-10 items-center justify-between rounded-[10px] px-3 text-[11px] text-[#555B64]"><span>Auto reframe</span><small className="text-[#90959D]">Dead-zone camera</small></div><div className="flex h-10 items-center justify-between rounded-[10px] px-3 text-[11px] text-[#555B64]"><span>Follow speaker</span>{faceTrackingEnabled ? <Check size={13} className="text-[#3977F6]" /> : <span className="text-[9px] text-[#9A9FA7]">Disabled</span>}</div></div>
                 </div>

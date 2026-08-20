@@ -5,6 +5,7 @@ export type VoiceClientMessage =
   | { type: "barge_in"; sessionId: string }
   | { type: "playback_done"; sessionId: string }
   | { type: "flush"; sessionId: string }
+  | { type: "set_voice"; sessionId: string; voiceId: string }
   | { type: "ping"; sessionId: string };
 
 export type VoiceServerMessage =
@@ -20,7 +21,7 @@ export type VoiceServerMessage =
   | { type: "tts_done"; sessionId: string; responseId?: string; generation?: number }
   | { type: "tts_browser"; sessionId: string; responseId?: string; generation?: number; text: string }
   | { type: "barge_in"; sessionId: string }
-  | { type: "error"; sessionId?: string; message: string }
+  | { type: "error"; sessionId?: string; message: string; recoverable?: boolean }
   | { type: "pong"; sessionId: string };
 
 export function parseVoiceClientMessage(raw: string): VoiceClientMessage | null {

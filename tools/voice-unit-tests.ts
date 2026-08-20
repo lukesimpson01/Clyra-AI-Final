@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { decodeVoicePcmPacket, encodeVoicePcmPacket, stableVoiceId } from "../src/lib/voicePcmPacket";
 import { nextSemanticPhrase, normalizeSpokenText, splitSpeakablePhrases } from "../src/lib/voiceSpeech";
 import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
+import { transitionVoiceCall, voiceStatusLabel } from "../src/lib/voiceCallStateMachine";
 
 const spoken = normalizeSpokenText("## Cost\n- **AUD $699.50** is 25% less. See https://ebay.com.au/item/1");
 assert.match(spoken, /six hundred and ninety nine point five zero Australian dollars/i);
@@ -42,4 +43,20 @@ stopMediaStreamTracks({ getTracks: () => tracks as unknown as MediaStreamTrack[]
 assert.equal(stops, 2);
 assert.ok(tracks.every((track) => track.enabled === false));
 
-console.log("voice-unit-tests: 15 assertions passed");
+let callState = transitionVoiceCall("idle", "starting");
+callState = transitionVoiceCall(callState, "connecting");
+callState = transitionVoiceCall(callState, "listening");
+callState = transitionVoiceCall(callState, "user_speaking");
+callState = transitionVoiceCall(callState, "endpointing");
+callState = transitionVoiceCall(callState, "transcribing");
+callState = transitionVoiceCall(callState, "thinking");
+callState = transitionVoiceCall(callState, "assistant_starting");
+callState = transitionVoiceCall(callState, "assistant_speaking");
+assert.equal(callState, "assistant_speaking");
+assert.equal(transitionVoiceCall("assistant_speaking", "transcribing"), "assistant_speaking");
+assert.equal(voiceStatusLabel("transcribing", false), "Understanding…");
+assert.equal(transitionVoiceCall("muted", "thinking"), "thinking");
+assert.equal(voiceStatusLabel("thinking", true), "Thinking");
+assert.equal(voiceStatusLabel("assistant_speaking", true), "Speaking");
+
+console.log("voice-unit-tests: 21 assertions passed");

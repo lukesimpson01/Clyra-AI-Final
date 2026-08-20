@@ -461,7 +461,7 @@ function VoicePicker({
               className={cn(
                 "flex items-center gap-2 rounded-[12px] px-3 py-2.5 transition-[background-color,box-shadow,color]",
                 active
-                  ? "bg-white text-slate-950 shadow-[0_2px_10px_rgba(15,23,42,.06)] ring-1 ring-[#4169f6]/30"
+                  ? "bg-white text-slate-950 shadow-[0_2px_10px_rgba(15,23,42,.06)] ring-1 ring-[color:color-mix(in_srgb,var(--clyra-accent)_30%,transparent)]"
                   : "text-slate-700 hover:bg-white/75",
               )}
             >
@@ -479,7 +479,7 @@ function VoicePicker({
                 onClick={() => onPreview(voice.id)}
                 className={cn(
                   "grid h-8 w-8 shrink-0 place-items-center rounded-full transition-[background-color,color,transform] active:scale-95",
-                  active ? "bg-[#4169f6] text-white" : "bg-[#edf2ff] text-[#4169f6] hover:bg-[#4169f6] hover:text-white",
+                  active ? "bg-[color:var(--clyra-accent)] text-white" : "bg-[#edf2ff] text-[color:var(--clyra-accent)] hover:bg-[color:var(--clyra-accent)] hover:text-white",
                 )}
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
@@ -523,7 +523,7 @@ function PercentScroller({
         step={1}
         value={value}
         onChange={(event) => onChange(Math.max(5, Math.min(95, Number(event.target.value))))}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#e2e5ea] accent-[#4169f6] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#4169f6] [&::-webkit-slider-thumb]:shadow-[0_2px_8px_rgba(65,105,246,.35)]"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#e2e5ea] accent-[var(--clyra-accent)] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[color:var(--clyra-accent)] [&::-webkit-slider-thumb]:shadow-[0_2px_8px_rgba(65,105,246,.35)]"
       />
     </div>
   );
@@ -805,7 +805,7 @@ function SetupWizard({
                   <button
                     type="button"
                     onClick={() => setStep("brief")}
-                    className="h-10 rounded-md bg-slate-950 px-5 text-[10px] font-semibold text-white transition-transform active:scale-[.98]"
+                    className="h-10 rounded-[9px] bg-[color:var(--clyra-accent)] px-4 text-[12.5px] font-medium text-white transition-[background-color,transform] duration-150 hover:bg-[color:var(--clyra-accent-hover,var(--clyra-accent))] active:scale-[.985]"
                   >
                     Continue
                   </button>
@@ -852,7 +852,7 @@ function SetupWizard({
                   <button
                     type="button"
                     onClick={() => void generate()}
-                    className="flex h-11 items-center gap-2 rounded-md bg-slate-950 px-6 text-[10px] font-semibold text-white transition-transform active:scale-[.98]"
+                    className="flex h-11 items-center gap-2 rounded-[10px] bg-[color:var(--clyra-accent)] px-5 text-[12.5px] font-medium text-white transition-[background-color,transform] duration-150 hover:bg-[color:var(--clyra-accent-hover,var(--clyra-accent))] active:scale-[.985]"
                   >
                     {method === "ai" ? <Sparkles className="h-3.5 w-3.5" /> : <SlidersHorizontal className="h-3.5 w-3.5" />}
                     {method === "ai" ? "Generate project" : "Open editor"}
@@ -1725,7 +1725,7 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
     : <MessagePreview project={project} visible={visibleMessages} windowStart={messageWindowStart} isPlaying={playing} playbackMs={currentTime} />;
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-white text-[#111318]">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#f6f6f4] text-[#1d1d1f]">
       <AnimatePresence>
         {generating ? (
           <LoadingScreen
@@ -1737,15 +1737,15 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
       </AnimatePresence>
       <AnimatePresence>{renderProgress !== null ? <RenderOverlay progress={renderProgress} onCancel={() => renderTask.current?.abort()} /> : null}</AnimatePresence>
       <AnimatePresence>{resultUrl ? <RenderResult url={resultUrl} title={project.name} onClose={() => setResultUrl("")} /> : null}</AnimatePresence>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-8 xl:px-12 xl:py-10">
-        <div className="creator-template-layout mx-auto grid w-full max-w-[1540px] gap-6 xl:gap-9">
-          <section className="min-w-0 rounded-[22px] border border-[#e2e5ea] bg-white px-5 py-5 shadow-[0_12px_38px_rgba(15,23,42,.045)] sm:px-8 sm:py-7 xl:h-[640px]">
-            <div className="flex min-h-[66px] flex-wrap items-center gap-3 border-b border-[#e2e5ea] pb-4">
-              <div className="min-w-0 flex-1"><h1 className="text-[clamp(22px,2vw,28px)] font-semibold tracking-0">{step === "gameplay" ? "Gameplay Video" : step === "theme" ? "Message Theme" : step === "audio" ? "Audio" : project.type === "fake_text_story" ? "Text Script" : "Questions"}</h1></div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 xl:px-8 xl:py-6">
+        <div className="creator-template-layout mx-auto grid w-full max-w-[1460px] gap-4 xl:gap-5">
+          <section className="min-w-0 rounded-[18px] border border-black/[.075] bg-white px-5 py-4 shadow-[0_12px_32px_-26px_rgba(15,23,42,.35)] sm:px-6 sm:py-5 xl:h-[620px]">
+            <div className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-black/[.07] pb-3">
+              <div className="min-w-0 flex-1"><h1 className="text-[clamp(19px,1.6vw,22px)] font-semibold tracking-[-.025em]">{step === "gameplay" ? "Gameplay Video" : step === "theme" ? "Message Theme" : step === "audio" ? "Audio" : project.type === "fake_text_story" ? "Text Script" : "Questions"}</h1></div>
               {step === "script" ? (
                 <>
-                  <button type="button" onClick={() => importInput.current?.click()} className="h-[48px] min-w-[100px] rounded-full border border-[#e2e5ea] px-5 text-[15px] font-medium text-[#303642] transition-colors hover:bg-[#f6f8fc]">Import</button>
-                  <button type="button" onClick={() => setShowAiBrief((value) => !value)} className="h-[48px] min-w-[112px] rounded-full bg-[#4169f6] px-5 text-[15px] font-medium text-white shadow-[0_8px_18px_rgba(65,105,246,.24)] transition-[transform,background-color] hover:bg-[#3158ea] active:scale-[.98]">AI Writer</button>
+                  <button type="button" onClick={() => importInput.current?.click()} className="h-9 min-w-[82px] rounded-[10px] border border-black/[.09] px-4 text-[13px] font-medium text-[#3a3a3c] transition-colors hover:bg-black/[.035]">Import</button>
+                  <button type="button" onClick={() => setShowAiBrief((value) => !value)} className="h-9 min-w-[92px] rounded-[10px] bg-[color:var(--clyra-accent)] px-4 text-[13px] font-medium text-white transition-[transform,background-color] duration-150 hover:bg-[color:var(--clyra-accent-hover,var(--clyra-accent))] active:scale-[.985]">AI Writer</button>
                   <input ref={importInput} type="file" accept=".json,.txt,.csv,text/plain,application/json" className="hidden" onChange={(event) => void importScript(event.target.files?.[0])} />
                 </>
               ) : null}
@@ -1761,20 +1761,20 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
                   <>
                     <div className="flex min-h-[132px] items-center gap-4 border-b border-[#e2e5ea] py-5">
                       <span className="grid h-[62px] w-[62px] shrink-0 place-items-center rounded-full bg-[#aab1bf] text-[20px] font-light text-white">{(project.participants[0].name || "Unknown").slice(0, 1).toUpperCase()}</span>
-                      <label className="min-w-0 flex-1 text-[16px] font-medium text-[#252a32]">Profile Name<input value={project.participants[0].name} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.participants[0].name = event.target.value.slice(0, 30); })} className="mt-2 h-[50px] w-full rounded-[11px] border border-[#dfe3e8] bg-white px-4 text-[17px] font-normal text-[#111318] shadow-[0_2px_6px_rgba(15,23,42,.035)] outline-none transition-shadow focus:border-[#4169f6] focus:ring-2 focus:ring-blue-100" /></label>
+                      <label className="min-w-0 flex-1 text-[16px] font-medium text-[#252a32]">Profile Name<input value={project.participants[0].name} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.participants[0].name = event.target.value.slice(0, 30); })} className="mt-2 h-[50px] w-full rounded-[11px] border border-[#dfe3e8] bg-white px-4 text-[17px] font-normal text-[#111318] shadow-[0_2px_6px_rgba(15,23,42,.035)] outline-none transition-shadow focus:border-[color:var(--clyra-accent)] focus:ring-2 focus:ring-blue-100" /></label>
                     </div>
                     <div className="flex min-h-[76px] items-center justify-between border-b border-[#e2e5ea]"><p className="text-[21px] font-semibold">Messages</p><div className="flex gap-2.5"><button type="button" onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages.forEach((message) => { message.side = message.side === "left" ? "right" : "left"; }); })} className="h-[38px] rounded-full border border-[#e0e4e9] px-4 text-[14px] font-medium text-[#303642] transition-colors hover:bg-[#f6f8fc]">Swap All <span className="ml-1.5 text-[17px]">⇄</span></button><button type="button" onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages = [{ id: crypto.randomUUID(), side: "left", text: "New message", typingSeconds: 0.8, pauseSeconds: 0.25, narration: true }]; })} className="flex h-[38px] items-center gap-2 rounded-full border border-[#e0e4e9] px-4 text-[14px] font-medium text-[#303642] transition-colors hover:bg-[#f6f8fc]">Delete All <Trash2 className="h-4 w-4" /></button></div></div>
                     <div className="mt-4 max-h-[132px] space-y-3 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#dfe3ea_transparent]">
-                      {project.messages.map((message, index) => <div key={message.id} className="grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] transition-[border-color,box-shadow] focus-within:border-[#4169f6] focus-within:ring-2 focus-within:ring-blue-100"><span className="mr-4 text-[19px] leading-none text-[#111318]">♫</span><input aria-label={`Message ${index + 1}`} value={message.text} onFocus={() => setSelectedId(message.id)} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].text = event.target.value.slice(0, 600); })} className="min-w-0 flex-1 bg-transparent text-[16px] outline-none" /></div><MessageSpeakerToggle side={message.side} label={`Swap sender for message ${index + 1}`} onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].side = draft.messages[index].side === "left" ? "right" : "left"; })} /><button type="button" aria-label={`Delete message ${index + 1}`} disabled={project.messages.length <= 1} onClick={() => edit((draft) => { if (draft.type === "fake_text_story" && draft.messages.length > 1) draft.messages.splice(index, 1); })} className="grid h-11 w-11 place-items-center rounded-full bg-[#f3f4f6] text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-[18px] w-[18px]" /></button></div>)}
+                      {project.messages.map((message, index) => <div key={message.id} className="grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] transition-[border-color,box-shadow] focus-within:border-[color:var(--clyra-accent)] focus-within:ring-2 focus-within:ring-blue-100"><Volume2 aria-hidden className="mr-4 h-[17px] w-[17px] shrink-0 text-[#69717d]" /><input aria-label={`Message ${index + 1}`} value={message.text} onFocus={() => setSelectedId(message.id)} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].text = event.target.value.slice(0, 600); })} className="min-w-0 flex-1 bg-transparent text-[14px] outline-none" /></div><MessageSpeakerToggle side={message.side} label={`Swap sender for message ${index + 1}`} onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].side = draft.messages[index].side === "left" ? "right" : "left"; })} /><button type="button" aria-label={`Delete message ${index + 1}`} disabled={project.messages.length <= 1} onClick={() => edit((draft) => { if (draft.type === "fake_text_story" && draft.messages.length > 1) draft.messages.splice(index, 1); })} className="grid h-11 w-11 place-items-center rounded-[11px] bg-[#f3f4f6] text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-[17px] w-[17px]" /></button></div>)}
                     </div>
-                    <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] focus-within:border-[#4169f6] focus-within:ring-2 focus-within:ring-blue-100"><ImagePlus className="mr-4 h-[19px] w-[19px] text-[#7b8492]" /><input value={messageDraft} onChange={(event) => setMessageDraft(event.target.value.slice(0, 600))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessageDraft(); } }} placeholder="Type your message here..." aria-label="New message" className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-[#8a909a]" /></div><MessageSpeakerToggle side={messageDraftSide} label="Swap sender for new message" onClick={() => setMessageDraftSide((side) => side === "left" ? "right" : "left")} /><button type="button" aria-label="Send message" disabled={!messageDraft.trim()} onClick={submitMessageDraft} className={cn("grid h-11 w-11 place-items-center rounded-full transition-[background-color,color,transform] active:scale-95", messageDraft.trim() ? "bg-[#4169f6] text-white" : "bg-[#f3f4f6] text-[#8a909a]")}><Send className="h-[18px] w-[18px]" /></button></div>
+                    <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] focus-within:border-[color:var(--clyra-accent)] focus-within:ring-2 focus-within:ring-blue-100"><ImagePlus className="mr-4 h-[19px] w-[19px] text-[#7b8492]" /><input value={messageDraft} onChange={(event) => setMessageDraft(event.target.value.slice(0, 600))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessageDraft(); } }} placeholder="Type your message here..." aria-label="New message" className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-[#8a909a]" /></div><MessageSpeakerToggle side={messageDraftSide} label="Swap sender for new message" onClick={() => setMessageDraftSide((side) => side === "left" ? "right" : "left")} /><button type="button" aria-label="Send message" disabled={!messageDraft.trim()} onClick={submitMessageDraft} className={cn("grid h-11 w-11 place-items-center rounded-full transition-[background-color,color,transform] active:scale-95", messageDraft.trim() ? "bg-[color:var(--clyra-accent)] text-white" : "bg-[#f3f4f6] text-[#8a909a]")}><Send className="h-[18px] w-[18px]" /></button></div>
                   </>
                 ) : (
                   <div className="max-h-[440px] space-y-3 overflow-y-auto py-5 pr-1 [scrollbar-width:thin] [scrollbar-color:#dfe3ea_transparent]">
-                    {project.rounds.map((round, index) => <div key={round.id} onClick={() => { setSelectedId(round.id); setPreviewRound(index); setRevealed(false); }} className={cn("rounded-[16px] border bg-white p-4 transition-[border-color,box-shadow]", selectedId === round.id ? "border-[#4169f6] shadow-[0_0_0_2px_rgba(65,105,246,.08)]" : "border-[#e2e5ea] hover:border-[#cdd3dc]")}><div className="mb-3 flex items-center justify-between"><span className="text-[15px] font-semibold text-[#303642]">Choice {index + 1}</span><button type="button" aria-label={`Delete choice ${index + 1}`} disabled={project.rounds.length <= 1} onClick={() => edit((draft) => { if (draft.type === "would_rather" && draft.rounds.length > 1) draft.rounds.splice(index, 1); })} className="grid h-9 w-9 place-items-center rounded-full bg-[#f3f4f6] text-[#68707c] hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-4 w-4" /></button></div><div className="grid gap-3 sm:grid-cols-2"><label className="text-[12px] font-medium text-[#68707c]">First option<input aria-label={`Question ${index + 1} option A`} value={round.left} onChange={(event) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].left = event.target.value.slice(0, 120); })} className="mt-1.5 h-[48px] w-full rounded-[10px] border border-[#dfe3e8] bg-white px-4 text-[16px] text-[#111318] outline-none focus:border-[#4169f6] focus:ring-2 focus:ring-blue-100" /></label><label className="text-[12px] font-medium text-[#68707c]">Second option<input aria-label={`Question ${index + 1} option B`} value={round.right} onChange={(event) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].right = event.target.value.slice(0, 120); })} className="mt-1.5 h-[48px] w-full rounded-[10px] border border-[#dfe3e8] bg-white px-4 text-[16px] text-[#111318] outline-none focus:border-[#4169f6] focus:ring-2 focus:ring-blue-100" /></label></div><div className="mt-3"><PercentScroller value={round.leftPercent} onChange={(leftPercent) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].leftPercent = leftPercent; })} /></div></div>)}
+                    {project.rounds.map((round, index) => <div key={round.id} onClick={() => { setSelectedId(round.id); setPreviewRound(index); setRevealed(false); }} className={cn("rounded-[16px] border bg-white p-4 transition-[border-color,box-shadow]", selectedId === round.id ? "border-[color:var(--clyra-accent)] shadow-[0_0_0_2px_rgba(65,105,246,.08)]" : "border-[#e2e5ea] hover:border-[#cdd3dc]")}><div className="mb-3 flex items-center justify-between"><span className="text-[15px] font-semibold text-[#303642]">Choice {index + 1}</span><button type="button" aria-label={`Delete choice ${index + 1}`} disabled={project.rounds.length <= 1} onClick={() => edit((draft) => { if (draft.type === "would_rather" && draft.rounds.length > 1) draft.rounds.splice(index, 1); })} className="grid h-9 w-9 place-items-center rounded-full bg-[#f3f4f6] text-[#68707c] hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-4 w-4" /></button></div><div className="grid gap-3 sm:grid-cols-2"><label className="text-[12px] font-medium text-[#68707c]">First option<input aria-label={`Question ${index + 1} option A`} value={round.left} onChange={(event) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].left = event.target.value.slice(0, 120); })} className="mt-1.5 h-[48px] w-full rounded-[10px] border border-[#dfe3e8] bg-white px-4 text-[16px] text-[#111318] outline-none focus:border-[color:var(--clyra-accent)] focus:ring-2 focus:ring-blue-100" /></label><label className="text-[12px] font-medium text-[#68707c]">Second option<input aria-label={`Question ${index + 1} option B`} value={round.right} onChange={(event) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].right = event.target.value.slice(0, 120); })} className="mt-1.5 h-[48px] w-full rounded-[10px] border border-[#dfe3e8] bg-white px-4 text-[16px] text-[#111318] outline-none focus:border-[color:var(--clyra-accent)] focus:ring-2 focus:ring-blue-100" /></label></div><div className="mt-3"><PercentScroller value={round.leftPercent} onChange={(leftPercent) => edit((draft) => { if (draft.type === "would_rather") draft.rounds[index].leftPercent = leftPercent; })} /></div></div>)}
                   </div>
                 )}
-                <button type="button" onClick={addItem} className="mt-4 flex h-[52px] w-full items-center justify-center gap-2 rounded-[18px] border border-[#e0e5ed] bg-[#f6f8fc] text-[17px] font-medium text-[#303642] transition-colors hover:bg-white"><Plus className="h-5 w-5" />Add {project.type === "fake_text_story" ? "Message" : "Question"}</button>
+                <button type="button" onClick={addItem} className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-[12px] border border-black/[.075] bg-[#f7f7f6] text-[13px] font-medium text-[#3a3a3c] transition-colors hover:bg-white"><Plus className="h-4 w-4" />Add {project.type === "fake_text_story" ? "Message" : "Question"}</button>
               </div>
             ) : step === "theme" && project.type === "fake_text_story" ? (
               <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="py-5">
@@ -1794,7 +1794,7 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
                       className={cn(
                         "min-h-[148px] rounded-[18px] border p-4 text-left transition-[border-color,background-color,box-shadow,transform] duration-150 hover:-translate-y-0.5",
                         project.theme === theme.id
-                          ? "border-[#4169f6] bg-white shadow-[0_14px_35px_rgba(65,105,246,.12)]"
+                          ? "border-[color:var(--clyra-accent)] bg-white shadow-[0_14px_35px_rgba(65,105,246,.12)]"
                           : "border-[#e2e5ea] bg-white text-slate-950 hover:border-[#cdd3dc]",
                       )}
                     >
@@ -1846,9 +1846,9 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
             )}
           </section>
 
-          <aside className="rounded-[22px] border border-[#e2e5ea] bg-white px-6 py-7 shadow-[0_12px_38px_rgba(15,23,42,.045)] sm:px-8 xl:h-[640px]">
-            <div className="min-h-[66px] border-b border-[#e2e5ea]"><h2 className="text-[clamp(22px,2vw,28px)] font-semibold tracking-0">Video Preview</h2></div>
-            <div className="mt-6 grid place-items-center">
+          <aside className="rounded-[18px] border border-black/[.075] bg-white px-5 py-5 shadow-[0_12px_32px_-26px_rgba(15,23,42,.35)] sm:px-6 xl:h-[620px]">
+            <div className="min-h-[52px] border-b border-black/[.07]"><h2 className="text-[clamp(19px,1.6vw,22px)] font-semibold tracking-[-.025em]">Video Preview</h2></div>
+            <div className="mt-5 grid place-items-center">
               <div ref={previewStage} className="creator-preview-stage relative aspect-[9/16] w-[min(100%,264px)] overflow-hidden rounded-[15px] bg-[#2a7659] shadow-[0_18px_44px_rgba(15,23,42,.18)]">
                 {preview}
                 <div className="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-black/70 via-black/20 to-transparent px-3 pb-3 pt-12 text-white">
@@ -1866,11 +1866,13 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
         </div>
       </div>
 
-      <footer className="shrink-0 bg-white px-4 pb-4 pt-2 sm:px-8 xl:px-12">
-        <div className="mx-auto flex min-h-[104px] max-w-[1540px] items-center gap-2 rounded-[22px] border border-[#e2e5ea] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,.05)] sm:px-7">
+      <footer className="shrink-0 bg-[#f6f6f4]/90 px-4 pb-3 pt-1 backdrop-blur-xl sm:px-6 xl:px-8">
+        <div className="mx-auto flex min-h-[72px] max-w-[1460px] items-center gap-1 rounded-[18px] border border-black/[.075] bg-white/92 px-4 shadow-[0_12px_32px_-26px_rgba(15,23,42,.4)] sm:px-5">
           {templateSteps.map((item, index) => {
             const StepIcon = item === "script" ? MessageCircle : item === "theme" ? Palette : item === "gameplay" ? Video : Volume2;
-            return <div key={item} className="flex items-center"><button type="button" onClick={() => setStep(item)} className={cn("flex h-12 items-center gap-3 rounded-2xl px-3 text-[15px] font-medium capitalize transition-colors", step === item ? "text-[#111318]" : "text-[#68707c] hover:bg-[#f6f8fc] hover:text-[#303642]")}><span className={cn("grid h-10 w-10 place-items-center rounded-full", step === item ? "bg-[#4169f6] text-white" : "bg-[#edf2ff] text-[#4169f6]")}><StepIcon className="h-[19px] w-[19px]" /></span>{item === "gameplay" ? "Gameplay Video" : item}</button>{index < templateSteps.length - 1 ? <span className="px-1 text-[22px] font-light text-[#a1a8b3]">›</span> : null}</div>;
+            return <div key={item} className="flex items-center"><button type="button" onClick={() => setStep(item)} className={cn("flex h-10 items-center gap-2 rounded-[11px] px-2.5 text-[13px] font-medium capitalize transition-colors", step === item ? "bg-black/[.04] text-[#1d1d1f]" : "text-[#6e6e73] hover:bg-black/[.025] hover:text-[#3a3a3c]")}><span className={cn("grid h-7 w-7 place-items-center rounded-[8px]", // Selection reads the way it does everywhere else in Clyra: a quiet
+                    // tint with the accent, not the one black object in the toolbar.
+                    step === item ? "bg-[color:color-mix(in_srgb,var(--clyra-accent)_10%,transparent)] text-[color:var(--clyra-accent)]" : "bg-[#f1f1f0] text-[#6e6e73]")}><StepIcon className="h-[15px] w-[15px]" /></span>{item === "gameplay" ? "Gameplay Video" : item}</button>{index < templateSteps.length - 1 ? <span className="px-0.5 text-[18px] font-light text-[#b0b0b5]">›</span> : null}</div>;
           })}
           <button
             type="button"
@@ -1879,7 +1881,7 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
               if (index >= templateSteps.length - 1) void renderVideo();
               else setStep(templateSteps[index + 1]!);
             }}
-            className="ml-auto flex h-[58px] min-w-[145px] items-center justify-center gap-3 rounded-full bg-[#4169f6] px-7 text-[18px] font-medium text-white shadow-[0_10px_22px_rgba(65,105,246,.25)] transition-[transform,background-color] hover:bg-[#3158ea] active:scale-[.98]"
+            className="ml-auto flex h-10 min-w-[118px] items-center justify-center gap-2 rounded-[11px] bg-[color:var(--clyra-accent)] px-5 text-[13px] font-medium text-white transition-[transform,background-color] duration-150 hover:bg-[color:var(--clyra-accent-hover,var(--clyra-accent))] active:scale-[.985]"
           >
             {templateSteps.indexOf(step) >= templateSteps.length - 1 ? "Render video" : "Continue"}
             {templateSteps.indexOf(step) >= templateSteps.length - 1 ? <Download className="h-5 w-5" /> : <ArrowDown className="h-5 w-5 -rotate-90" />}
@@ -2446,7 +2448,7 @@ function CreatorEditor({ initial }: { initial: CreatorProject }) {
           <IconButton label="Import project" onClick={() => importInput.current?.click()}><Upload className="h-3.5 w-3.5" /></IconButton>
           <IconButton label="Export project JSON" onClick={() => exportCreatorProject(project)}><FileJson className="h-3.5 w-3.5" /></IconButton>
           <input ref={importInput} type="file" accept="application/json,.json" className="hidden" onChange={(event) => void importProject(event.target.files?.[0])} />
-          <button type="button" onClick={() => void renderVideo()} className="ml-1 flex h-8 items-center gap-1.5 rounded-md bg-slate-950 px-3 text-[9px] font-semibold text-white transition-transform active:scale-[.97]">
+          <button type="button" onClick={() => void renderVideo()} className="ml-1 flex h-8 items-center gap-1.5 rounded-[8px] bg-[color:var(--clyra-accent)] px-3 text-[12px] font-medium text-white transition-[background-color,transform] duration-150 hover:bg-[color:var(--clyra-accent-hover,var(--clyra-accent))] active:scale-[.985]">
             <Download className="h-3.5 w-3.5" />
             Export MP4
           </button>

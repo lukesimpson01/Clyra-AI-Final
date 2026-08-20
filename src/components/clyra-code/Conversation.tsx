@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -8,7 +8,7 @@ import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
-import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
+import { AGENT_EASE, ROW_ENTER, enterProps } from "./motion";
 
 /**
  * A single quiet reasoning marker. It only shows the durable elapsed label
@@ -28,13 +28,13 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
   return (
     <motion.div layout className="flex min-h-[22px] items-center py-[2px]">
       {completed ? (
-        <motion.span initial={{ opacity: 0, y: -1 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16, ease: AGENT_EASE }} className="text-[13px] leading-5 text-[#8A8D92]">
+        <motion.span initial={{ opacity: 0, y: -1 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16, ease: AGENT_EASE }} className="text-[13px] leading-5 text-[color:var(--text-tertiary)]">
           Thought · {seconds}s
         </motion.span>
       ) : (
         <>
           <ShiningText text="Thinking" play className="truncate text-[13px] font-medium leading-5 tracking-normal" />
-          <span className="ml-1 inline-block min-w-[2.5ch] text-[11px] tabular-nums text-[#8A8D92]">
+          <span className="ml-1 inline-block min-w-[2.5ch] text-[11px] tabular-nums text-[color:var(--text-tertiary)]">
             {showDuration ? `${seconds}s` : ""}
           </span>
         </>
@@ -50,6 +50,17 @@ function dedupeConsecutiveAssistantEntries(entries: LogEntry[]) {
     const previous = entries[index - 1];
     return previous?.type !== "assistant" || previous.text.trim() !== entry.text.trim();
   });
+}
+
+/** Provider prose occasionally includes long runs of empty paragraphs. Keep
+ * code fences byte-for-byte intact, but collapse accidental whitespace in
+ * surrounding Markdown so the transcript remains dense and readable. */
+function normalizeAssistantMarkdown(text: string) {
+  return text
+    .split(/(```[\s\S]*?```)/g)
+    .map((segment, index) => index % 2 === 1 ? segment : segment.replace(/(?:\r?\n[ \t]*){3,}/g, "\n\n"))
+    .join("")
+    .trim();
 }
 
 /** Tiny transport-level reasoning bridges add no useful structure once their
@@ -92,13 +103,7 @@ function PendingThinking({
   reduced: boolean | null;
 }) {
   return (
-    <motion.div
-      layout
-      className="flex min-w-0 items-center gap-1.5 py-[3px]"
-      {...(reduced
-        ? {}
-        : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
-    >
+    <div className={cn("flex min-w-0 items-center gap-1.5 py-[3px]", !reduced && "cc-rise")}>
       <ShiningText
         text="Thinking"
         play
@@ -108,12 +113,12 @@ function PendingThinking({
         <button
           type="button"
           onClick={onStop}
-          className="ml-0.5 h-5 rounded-[6px] px-1.5 text-[10.5px] text-[#5F6368] transition-colors hover:bg-black/[0.035]"
+          className="ml-0.5 h-5 rounded-[6px] px-1.5 text-[10.5px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.035]"
         >
           Stop
         </button>
       ) : null}
-    </motion.div>
+    </div>
   );
 }
 
@@ -139,19 +144,20 @@ export function CompletionSummary({
     [diffs],
   );
   const successfulValidation = actions.filter(
-    (action) => /^(build|check|test|preview)$/.test(action.kind) && action.status === "success",
+    (action) => /^(build|check|test|preview|inspect)$/.test(action.kind) && action.status === "success",
   );
   const validationLabels = [...new Set(successfulValidation.map((action) => {
     if (action.kind === "build") return "Build passed";
     if (action.kind === "test") return "Tests passed";
     if (action.kind === "check") return "Checks passed";
+    if (action.kind === "inspect") return "Inspected";
     return "Preview checked";
   }))];
   if (!diffs.length && !validationLabels.length) return null;
   return (
     <motion.div
-      {...(restored ? {} : SUBTLE_ENTER)}
-      className="mt-4 text-[12px] leading-[1.5]"
+      layout
+      className={cn("mt-4 text-[12px] leading-[1.5]", !restored && "cc-rise")}
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#65796A]">
         {validationLabels.map((label) => <span key={label}>✓ {label}</span>)}
@@ -163,7 +169,7 @@ export function CompletionSummary({
               type="button"
               aria-expanded={expanded}
               onClick={() => setExpanded((current) => !current)}
-              className="flex min-w-0 items-center gap-1 text-left text-[#686A70] transition-colors hover:text-[#252525]"
+              className="flex min-w-0 items-center gap-1 text-left text-[color:var(--text-secondary)] transition-colors hover:text-[color:var(--text-primary)]"
             >
               <motion.span
                 aria-hidden
@@ -181,7 +187,7 @@ export function CompletionSummary({
             <button
               type="button"
               onClick={onOpenChanges}
-              className="ml-auto text-[11.5px] text-[#3977F6] transition-opacity hover:opacity-80"
+              className="ml-auto text-[11.5px] text-[color:var(--accent-blue)] transition-opacity hover:opacity-80"
             >
               Review
             </button>
@@ -206,7 +212,7 @@ export function CompletionSummary({
                         title={path}
                         className="grid h-[24px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[5px] px-2 text-left transition-colors hover:bg-black/[.025]"
                       >
-                        <span className="cc-mono truncate text-[11px] text-[#505258]">{path}</span>
+                        <span className="cc-mono truncate text-[11px] text-[color:var(--text-secondary)]">{path}</span>
                         <DiffCounters additions={diff.additions} deletions={diff.deletions} animate={false} className="text-[10.75px] font-medium" />
                       </button>
                     );
@@ -217,7 +223,7 @@ export function CompletionSummary({
           </AnimatePresence>
         </>
       ) : null}
-      <p className="mt-2 text-[12px] leading-[1.5] text-[#686A70]">
+      <p className="mt-2 text-[12px] leading-[1.5] text-[color:var(--text-secondary)]">
         {diffs.length
           ? `Completed the requested work with ${diffs.length} updated file${diffs.length === 1 ? "" : "s"}.`
           : "Completed the requested validation."}
@@ -226,13 +232,15 @@ export function CompletionSummary({
   );
 }
 
-type TranscriptItem = { type: "entry"; entry: LogEntry; id: string };
+type TranscriptItem =
+  | { type: "entry"; entry: LogEntry; id: string }
+  | { type: "code-group"; entries: Array<Extract<LogEntry, { type: "action" }>>; id: string };
 
 /**
  * Keeps the activity stream readable during a busy OpenCode phase. A later
  * action is not mounted until the prior action has finished its visible
  * lifecycle; streaming edit boxes explicitly release this queue after their
- * own smooth collapse. The 500ms hand-off makes each real event legible.
+ * own smooth collapse. The one-second hand-off makes each real event legible.
  */
 function SequencedActionRows({
   actions,
@@ -240,42 +248,58 @@ function SequencedActionRows({
   onOpenFile,
   revisitedActionIds,
   instant = false,
+  onPlaybackChange,
 }: {
   actions: AgentAction[];
   thoughts: Extract<LogEntry, { type: "reasoning" }>[];
   onOpenFile: (path: string) => void;
   revisitedActionIds: Set<string>;
   instant?: boolean;
+  /** Reports whether this group is still revealing its boxes. */
+  onPlaybackChange?: (busy: boolean) => void;
 }) {
   const reduced = useReducedMotion();
-  const [revealed, setRevealed] = useState(() => (instant ? actions.length : Math.min(1, actions.length)));
+  // Decided once. `instant` is derived from how old the actions are, so a
+  // group that is mid-playback flips to "historical" the moment its actions
+  // age past the threshold — and the remaining boxes all snap open at once
+  // instead of continuing their sequence.
+  const [instantAtMount] = useState(instant);
+  const [revealed, setRevealed] = useState(() => (instantAtMount ? actions.length : Math.min(1, actions.length)));
   const releaseTimer = useRef<number | null>(null);
   const releasing = useRef(false);
   const current = actions[Math.max(0, revealed - 1)];
 
   useEffect(() => {
-    setRevealed((value) => instant ? actions.length : Math.min(Math.max(value, actions.length ? 1 : 0), actions.length));
-  }, [actions.length, instant]);
+    setRevealed((value) => instantAtMount ? actions.length : Math.min(Math.max(value, actions.length ? 1 : 0), actions.length));
+  }, [actions.length, instantAtMount]);
   useEffect(() => () => { if (releaseTimer.current) window.clearTimeout(releaseTimer.current); }, []);
 
   const releaseNext = () => {
-    if (instant || releasing.current || revealed >= actions.length) return;
+    if (instantAtMount || releasing.current || revealed >= actions.length) return;
     releasing.current = true;
     releaseTimer.current = window.setTimeout(() => {
       releasing.current = false;
       setRevealed((value) => Math.min(actions.length, value + 1));
-    }, reduced ? 0 : 120);
+      // A full second after the previous box has finished closing, matching
+      // the beat between every other step of an edit's lifecycle.
+    }, reduced ? 0 : 1000);
   };
 
   useEffect(() => {
-    if (instant || !current || revealed >= actions.length) return;
+    if (instantAtMount || !current || revealed >= actions.length) return;
     const editing = /^(edit|create)$/.test(current.kind);
     const running = current.status === "active" || current.status === "queued";
     // Edit cards control their own close animation and call releaseNext. All
     // other settled real actions receive the same calm 0.5s hand-off.
     if (!editing && !running) releaseNext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.id, current?.status, revealed, actions.length, instant]);
+  }, [current?.id, current?.status, revealed, actions.length, instantAtMount]);
+
+  const playing = !instantAtMount && revealed < actions.length;
+  useEffect(() => {
+    onPlaybackChange?.(playing);
+    return () => onPlaybackChange?.(false);
+  }, [playing, onPlaybackChange]);
 
   // Thoughts are compacted by phase too: the latest provider summary is the
   // useful one, and it appears only after the final visible action.
@@ -289,7 +313,7 @@ function SequencedActionRows({
           onOpenFile={onOpenFile}
           revisiting={revisitedActionIds.has(action.id)}
           onEditClosed={action.id === current?.id ? releaseNext : undefined}
-          settled={instant}
+          settled={instantAtMount}
         />
       ))}
       {revealed >= actions.length && latestThought ? <ThinkingEvent key={latestThought.id} entry={latestThought} /> : null}
@@ -303,14 +327,14 @@ function phaseLabel(actions: AgentAction[]) {
   const research = actions.filter((action) => action.kind === "research").length;
   const lists = actions.filter((action) => action.kind === "list").length;
   const edits = actions.filter((action) => /^(edit|create|delete)$/.test(action.kind));
-  const commands = actions.filter((action) => /^(command|build|check|test|preview)$/.test(action.kind));
+  const commands = actions.filter((action) => /^(command|build|check|test|preview|inspect)$/.test(action.kind));
   const additions = edits.reduce((total, action) => total + (action.additions ?? 0), 0);
   const deletions = edits.reduce((total, action) => total + (action.deletions ?? 0), 0);
   if (edits.length && !reads && !searches && !lists && !commands.length) {
     return { text: `Edited ${new Set(edits.map((action) => action.target)).size} file${new Set(edits.map((action) => action.target)).size === 1 ? "" : "s"}`, additions, deletions };
   }
   if (commands.length && !edits.length && !reads && !searches && !lists) {
-    const validation = commands.some((action) => /^(build|check|test)$/.test(action.kind));
+    const validation = commands.some((action) => /^(build|check|test|inspect)$/.test(action.kind));
     return { text: validation ? "Ran validation" : `Ran ${commands.length} command${commands.length === 1 ? "" : "s"}`, additions, deletions };
   }
   if ((reads || searches || research || lists) && !edits.length && !commands.length) {
@@ -369,22 +393,22 @@ function PhaseGroup({
 
   if (!summaryVisible) {
     return (
-      <motion.div {...(reduced || historical ? {} : ROW_ENTER)} layout className="py-[2px]">
+      <motion.div {...enterProps(ROW_ENTER, !reduced && !historical)} layout className="py-[2px]">
         <SequencedActionRows actions={actions} thoughts={thoughts} onOpenFile={onOpenFile} revisitedActionIds={revisitedActionIds} />
       </motion.div>
     );
   }
   return (
     <motion.div
-      {...(reduced || historical ? {} : ROW_ENTER)}
+      {...enterProps(ROW_ENTER, !reduced && !historical)}
       layout
-      className="py-[2px] text-[14px] leading-5 text-[#73757A] opacity-[0.84] transition-opacity duration-200"
+      className="py-[2px] text-[14px] leading-5 text-[color:var(--text-secondary)] opacity-[0.84] transition-opacity duration-200"
     >
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => { setManuallyExpanded(true); setExpanded((current) => !current); }}
-        className="flex h-6 items-center gap-1 rounded-[5px] pr-1 text-left transition-colors hover:bg-black/[0.025] hover:text-[#505257]"
+        className="flex h-6 items-center gap-1 rounded-[5px] pr-1 text-left transition-colors hover:bg-black/[0.025] hover:text-[color:var(--text-secondary)]"
       >
         <motion.span
           aria-hidden
@@ -423,6 +447,8 @@ export function Conversation({
   onOpenTerminal,
   onOpenFile,
   onOpenChanges,
+  onPlaybackChange,
+  pendingUser = null,
 }: {
   state: ClyraCodeState;
   running: boolean;
@@ -432,6 +458,14 @@ export function Conversation({
   onOpenTerminal: () => void;
   onOpenFile: (path: string) => void;
   onOpenChanges: () => void;
+  /** Fires while the transcript is still revealing edit boxes. The preview
+   *  uses it to keep its loader up until the visible work has finished, not
+   *  merely until the harness went quiet. */
+  onPlaybackChange?: (busy: boolean) => void;
+  /** A prompt the user has just sent that the harness has not echoed back
+   *  yet. Rendering it here is what makes send feel instant while the project
+   *  and session are still being created. */
+  pendingUser?: string | null;
 }) {
   const reduced = useReducedMotion();
   const [density] = useState<"compact" | "balanced" | "detailed">(() => {
@@ -505,7 +539,7 @@ export function Conversation({
 
   const showCompletion = state.runState === "complete" && (
     state.diffs.length > 0 || Object.values(state.actions).some(
-      (action) => /^(build|check|test|preview)$/.test(action.kind) && action.status === "success",
+      (action) => /^(build|check|test|preview|inspect)$/.test(action.kind) && action.status === "success",
     )
   );
   const hasActiveTool = Object.values(state.actions).some(
@@ -525,11 +559,21 @@ export function Conversation({
     latestReasoning?.endedAt && Date.now() - latestReasoning.endedAt < 1_800,
   );
   const showThinking =
-    running &&
-    !!state.runStartedAt &&
+    (running || Boolean(pendingUser)) &&
     !hasActiveTool &&
     !hasOpenReasoning &&
     !reasoningJustSettled;
+  // Several groups can be revealing at once; the transcript is busy while any
+  // of them is.
+  const busyGroups = useRef(new Set<string>());
+  const reportPlayback = useCallback((groupId: string, busy: boolean) => {
+    const set = busyGroups.current;
+    const before = set.size;
+    if (busy) set.add(groupId); else set.delete(groupId);
+    if ((before > 0) !== (set.size > 0)) onPlaybackChange?.(set.size > 0);
+  }, [onPlaybackChange]);
+  useEffect(() => () => onPlaybackChange?.(false), [onPlaybackChange]);
+
   const revisitedActionIds = useMemo(() => {
     const editedFiles = new Set<string>();
     const revisited = new Set<string>();
@@ -546,10 +590,23 @@ export function Conversation({
   }, [state.actions, state.log]);
   const transcriptItems = useMemo<TranscriptItem[]>(() => {
     const log = suppressBriefThoughts(dedupeConsecutiveAssistantEntries(state.log));
-    // Keep the transcript literal: each OpenCode event owns one row. In
-    // particular, do not suppress unfamiliar provider tools; they are often
-    // the only visible record of real browser, file, or project work.
-    return log.map((entry) => ({ type: "entry" as const, entry, id: entry.id }));
+    const items: TranscriptItem[] = [];
+    for (const entry of log) {
+      const action = entry.type === "action" ? state.actions[entry.actionId] : null;
+      const isCodeWrite = Boolean(action && /^(edit|create)$/.test(action.kind));
+      const previous = items.at(-1);
+      // Consecutive source writes arrive in one burst from the harness. Keep
+      // the exact actions, but reveal their small diff boxes one at a time so
+      // code is actually legible rather than several panels expanding at once.
+      if (entry.type === "action" && isCodeWrite && previous?.type === "code-group") {
+        previous.entries.push(entry);
+      } else if (entry.type === "action" && isCodeWrite) {
+        items.push({ type: "code-group", entries: [entry], id: `code-group:${entry.id}` });
+      } else {
+        items.push({ type: "entry", entry, id: entry.id });
+      }
+    }
+    return items;
   }, [state.actions, state.log, density]);
 
   // Render immediately from the real OpenCode event stream. Earlier versions
@@ -562,8 +619,28 @@ export function Conversation({
       <div ref={scrollRef} className="cc-scroll absolute inset-0 overflow-y-auto px-6 pb-4 pt-3 sm:px-7">
         <div className="mx-auto flex w-full max-w-[760px] flex-col">
           {visibleItems.map((item, index) => {
+            if (item.type === "code-group") {
+              const actions = item.entries
+                .map((entry) => state.actions[entry.actionId])
+                .filter((action): action is AgentAction => Boolean(action));
+              if (!actions.length) return null;
+              const instant = actions.every((action) => Date.now() - (action.endedAt ?? action.startedAt) > 4000);
+              return (
+                <div key={item.id} className="mt-1">
+                  <SequencedActionRows
+                    actions={actions}
+                    thoughts={[]}
+                    onOpenFile={onOpenFile}
+                    revisitedActionIds={revisitedActionIds}
+                    instant={instant}
+                    onPlaybackChange={(busy) => reportPlayback(item.id, busy)}
+                  />
+                </div>
+              );
+            }
             const entry = item.entry;
-            const prev = visibleItems[index - 1]?.entry;
+            const previousItem = visibleItems[index - 1];
+            const prev = previousItem?.type === "entry" ? previousItem.entry : undefined;
             const nextKindGap =
               prev &&
               ((prev.type === "action" && entry.type === "assistant") ||
@@ -574,36 +651,36 @@ export function Conversation({
 
             if (entry.type === "user") {
               return (
-                <motion.div
+                <div
                   key={entry.id}
-                  {...(reduced || !fresh
-                    ? {}
-                    : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
-                  className="mb-2.5 mt-[16px] flex w-full justify-end first:mt-2"
+                  className={cn(
+                    "mb-2.5 mt-[16px] flex w-full justify-end first:mt-2",
+                    !reduced && fresh && "cc-rise",
+                  )}
                 >
                   <div
                     data-invert-ignore="true"
-                    className="cc-user-prompt max-w-[82%] whitespace-pre-wrap rounded-[11px] px-[12px] py-[8px] text-[14px] leading-[21px] text-[#2F3033]"
+                    className="cc-user-prompt max-w-[82%] whitespace-pre-wrap rounded-[11px] px-[12px] py-[8px] text-[14px] leading-[21px] text-[color:var(--text-primary)]"
                   >
                     {entry.text}
                   </div>
-                </motion.div>
+                </div>
               );
             }
             if (entry.type === "assistant") {
               return (
-                <motion.div
+                <div
                   key={entry.id}
-                  {...(reduced || !fresh ? {} : SUBTLE_ENTER)}
                   className={cn(
-                    "text-[14px] font-normal leading-[21px] tracking-normal text-[#303136]",
+                    !reduced && fresh && "cc-rise",
+                    "text-[14px] font-normal leading-[21px] tracking-normal text-[color:var(--text-primary)]",
                     "[&_p]:my-[9px] [&_ul]:my-[9px] [&_ol]:my-[9px] [&_li]:my-[3px] [&_pre]:my-2 [&_code]:text-[12px]",
                     "[&_strong]:font-medium",
                     nextKindGap ? "mt-2.5" : "mt-1.5",
                   )}
                 >
-                  <MarkdownMessageContent content={entry.text} />
-                </motion.div>
+                  <MarkdownMessageContent content={normalizeAssistantMarkdown(entry.text)} />
+                </div>
               );
             }
             if (entry.type === "reasoning") {
@@ -632,34 +709,47 @@ export function Conversation({
             );
           })}
 
-          <AnimatePresence initial={false}>
-            {showThinking ? (
-              <motion.div
-                key="thinking-gap"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18, ease: AGENT_EASE }}
-                className="mt-1.5 overflow-hidden"
+          {pendingUser ? (
+            <div
+              key="pending-user"
+              className={cn(
+                "mb-2.5 mt-[16px] flex w-full justify-end first:mt-2",
+                !reduced && "cc-rise",
+              )}
+            >
+              <div
+                data-invert-ignore="true"
+                className="cc-user-prompt max-w-[82%] whitespace-pre-wrap rounded-[11px] px-[12px] py-[8px] text-[14px] leading-[21px] text-[color:var(--text-primary)]"
               >
-                <PendingThinking
-                  startedAt={state.runStartedAt!}
-                  onStop={onCancel}
-                  reduced={reduced}
-                />
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
+                {pendingUser}
+              </div>
+            </div>
+          ) : null}
+
+          {/* No presence transition here. When the exit animation does not get
+              cleaned up, the row stays mounted at zero height — invisible, but
+              still holding a focusable "Stop" that keyboard users land on with
+              no way to see what they are stopping. The thinking marker is
+              replaced by the work it was waiting for, so it simply goes. */}
+          {showThinking ? (
+            <div className="mt-1.5">
+              <PendingThinking
+                startedAt={state.runStartedAt ?? Date.now()}
+                onStop={running ? onCancel : undefined}
+                reduced={reduced}
+              />
+            </div>
+          ) : null}
 
           {state.runState === "failed" && state.error ? (
             <div className="mt-2 text-[12px] leading-[1.5]">
-              <span className="font-medium text-[#B94B4B]">Failed</span>{" "}
-              <span className="text-[#787A7F]">{state.error}</span>
+              <span className="font-medium text-[color:var(--deletion-red)]">Failed</span>{" "}
+              <span className="text-[color:var(--text-secondary)]">{state.error}</span>
             </div>
           ) : null}
 
           {state.runState === "cancelled" ? (
-            <div className="mt-2 text-[11.5px] text-[#96989D]">
+            <div className="mt-2 text-[11.5px] text-[color:var(--text-tertiary)]">
               Cancelled by user
             </div>
           ) : null}
@@ -688,7 +778,7 @@ export function Conversation({
             onClick={jumpToLatest}
             aria-label="Jump to latest"
             title="Jump to latest"
-            className="absolute bottom-4 left-1/2 z-10 flex h-7 -translate-x-1/2 items-center gap-1 rounded-full border border-black/[0.08] bg-white px-2.5 text-[12px] font-medium text-[#5F6368] shadow-[0_4px_14px_rgba(15,23,42,0.1)] transition-colors hover:text-[#171717]"
+            className="absolute bottom-4 left-1/2 z-10 flex h-7 -translate-x-1/2 items-center gap-1 rounded-full border border-black/[0.08] bg-white px-2.5 text-[12px] font-medium text-[color:var(--text-secondary)] shadow-[0_4px_14px_rgba(15,23,42,0.1)] transition-colors hover:text-[color:var(--text-primary)]"
           >
             <ArrowDown className="h-3 w-3" strokeWidth={2} />
             Jump to latest

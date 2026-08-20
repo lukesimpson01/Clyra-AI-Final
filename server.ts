@@ -33,7 +33,9 @@ dotenv.config({ path: clyraResourcePath(".env") });
 // developer credentials as `npm run dev`; a user-owned data override still
 // wins below in packaged builds.
 dotenv.config({ path: clyraResourcePath(".env.local") });
+dotenv.config({ path: clyraResourcePath(".env.fish.local"), override: true });
 dotenv.config({ path: clyraDataPath(".env.local"), override: true });
+dotenv.config({ path: clyraDataPath(".env.fish.local"), override: true });
 import { Readable, Transform } from "node:stream";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -64,6 +66,9 @@ import { TaskGroupPlanner } from "./lib/vibe-coder/harness/task-group-planner";
 import { FileSpecPlanner } from "./lib/vibe-coder/harness/file-spec-planner";
 import { registerClineRoutes } from "./lib/cline/cline-routes";
 import { registerOpenCodeRoutes } from "./lib/opencode/opencode-routes";
+import { registerGameMakerRoutes } from "./lib/game-maker/routes";
+import { attachGameMakerOrchestrator } from "./lib/game-maker/orchestrator";
+import { registerRoleplayRoutes } from "./lib/roleplay/roleplay-routes";
 import { registerVoiceRoutes, attachVoiceWebSocket } from "./backend/voice";
 import { attachTerminalWebSocket } from "./lib/terminal-ws";
 import { detectMobileSwiftProject, registerMobilePreviewRoutes } from "./lib/mobile-preview-routes";
@@ -1421,6 +1426,8 @@ async function startServer() {
 
   registerClineRoutes(app);
   registerOpenCodeRoutes(app);
+  registerGameMakerRoutes(app);
+  registerRoleplayRoutes(app);
   registerMobilePreviewRoutes(app);
   registerSwiftWasmRoutes(app);
   registerVoiceRoutes(app);
@@ -4148,18 +4155,48 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
   app.get("/api/clipper/media/:filename", (req, res) => sendClipperMedia(req, res, "inline"));
   app.get("/api/clipper/download/:filename", (req, res) => sendClipperMedia(req, res, "attachment"));
 
+  /**
+   * The Game Maker play runtime runs in an iframe with sandbox="allow-scripts"
+   * and no allow-same-origin, which gives it an OPAQUE origin. Its module
+   * scripts are therefore fetched cross-origin (Vite emits them with the
+   * `crossorigin` attribute), so they need an explicit CORS header or the
+   * game will never boot. These are public, credential-free build assets, so
+   * allowing any origin to read them adds no exposure.
+   */
+  app.use((req, res, next) => {
+    if (
+      req.path === "/game-runtime.html" ||
+      req.path === "/game-runtime-2d.html" ||
+      req.path.startsWith("/assets/") ||
+      req.path.startsWith("/src/features/game-maker/") ||
+      req.path.startsWith("/node_modules/.vite/")
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    }
+    next();
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const viteModule = "vite";
     const { createServer: createViteServer } = await import(viteModule);
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
+        // The Game Maker play runtime is a sandboxed iframe with an opaque
+        // origin, so every module it loads — including Vite's own injected
+        // /@vite/client — is fetched with `Origin: null`. Vite's default CORS
+        // reply echoes the exact dev origin, which does not match `null`, and
+        // a single blocked module aborts the whole graph so the runtime never
+        // boots. Allowing any origin on the local dev server fixes it; the
+        // production build serves plain static files and never sees this.
+        cors: { origin: "*" },
         // Renderer refreshes are intentionally driven by Clyra's preview
         // controller; this prevents an embedded-browser HMR socket warning.
         hmr: false,
       },
       optimizeDeps: {
-        entries: ["index.html", "todo.html"],
+        entries: ["index.html", "todo.html", "game-runtime.html", "game-runtime-2d.html"],
         // Middleware mode must publish the React prebundle immediately; a
         // held dependency crawl otherwise serves transient 504 responses.
         holdUntilCrawlEnd: false,
@@ -4180,6 +4217,7 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
   attachVoiceWebSocket(httpServer);
   attachTerminalWebSocket(httpServer);
   attachPreviewUpgrades(httpServer);
+  attachGameMakerOrchestrator(httpServer);
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

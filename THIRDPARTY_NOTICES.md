@@ -4,6 +4,46 @@ This project incorporates components from the open-source software listed below.
 
 ---
 
+## DeepSeek Harness (deepseek-ai/deepseek-harness)
+
+- **Source**: [https://github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
+- **Pinned reference commit**: `99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`
+- **License**: MIT License
+- **Use**: Developer-preview reference for the pluggable LLM contract and reasoning-effort vocabulary. Its bundled web UI is not shipped.
+
+```text
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the conditions in the upstream MIT license.
+```
+
+---
+
+## Awesome Design MD (VoltAgent/awesome-design-md)
+
+- **Source**: [https://github.com/VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)
+- **Pinned reference commit**: `8147538b4226ae41e2487a9179e3bcc1f68e8554`
+- **License**: MIT License
+- **Use**: Reference-only design guidance; it is not bundled as a separate product surface.
+
+```text
+Copyright (c) 2026 VoltAgent
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the conditions in the upstream MIT license.
+```
+
+---
+
 ## cdesktop (cdesktop-ai/cdesktop)
 
 - **Source**: [https://github.com/cdesktop-ai/cdesktop.git](https://github.com/cdesktop-ai/cdesktop.git)

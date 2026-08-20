@@ -1,0 +1,26 @@
+# Clyra System Care research
+
+Research date: 2026-08-20. `gh repo clone` was attempted exactly as requested, but GitHub CLI refused public cloning because this workstation has no authenticated GitHub host. No token was requested, stored, or inferred. The empty `research/system-care/` boundary remains available for an authenticated follow-up. The findings below come from official repository pages and license files; no source was copied into Clyra.
+
+| Repository | Purpose / language / license | Useful to Clyra | Not appropriate | Integration strategy, performance, security |
+|---|---|---|---|---|
+| `sebhildebrandt/systeminformation` | Cross-platform Node system observation; JavaScript; MIT | Normalized hardware, OS, disk, battery, network and process vocabulary | Renderer use; sole source of truth; unique identifiers | Wrap behind Clyra providers and pin a patched version. A 2026 command-injection advisory affected `versions()` through 5.30.7, so never expose arbitrary inputs and require >=5.31.0 if adopted. Cache static calls. |
+| `qarmin/czkawka` | Duplicate/large/temp/similar-file tools; Rust; component-specific MIT, with Slint-linked Krokiet/Cedinia binaries GPL-3.0-only and media CC-BY-4.0 | `czkawka_core` concepts: staged hashes, cache, traversal, media fingerprints | Slint applications, GUI, media, wholesale binary integration | Reimplement Clyra-owned engine or separately review permissive core crates. Bound concurrency and never import GPL application binaries into commercial packaging. |
+| `imsnif/diskonaut` | Interactive disk navigator; Rust; MIT | Streaming traversal, explore-while-scanning, treemap drill-down | Terminal UI and in-memory indexing at Clyra renderer scale | Use concepts for bounded aggregates and progressive Storage Map. Keep raw nodes outside React. |
+| `bootandy/dust` | Directory-size accounting; Rust; Apache-2.0 | Efficient size aggregation and top-N presentation | CLI presentation | Reference accounting and pruning; preserve symlink and mount boundaries. |
+| `ClementTsang/bottom` | Cross-platform system monitor; Rust; MIT | Platform collection architecture, process grouping, CPU/RAM/I/O/network/battery | Terminal UI and high-frequency renderer updates | Native provider samples at source; publish bounded 500–1000 ms aggregates. |
+| `osquery/osquery` | SQL operating-system instrumentation; C++; Apache-2.0 OR GPL-2.0-only | On-demand apps, processes, persistence, certificates, security facts | Permanent daemon by default; arbitrary SQL from model | Optional pinned provider using the Apache option and Clyra-owned query allowlist. Treat results as evidence, not executable authority. |
+| `microsoft/winget-cli` | Windows package manager; C++; MIT | Installed package metadata, updates and standard uninstall paths | Bundling another copy or using web-search download URLs | Detect the OS installation/version and invoke registered package IDs only after approval. Parse structured output where supported. |
+| `Homebrew/brew` | macOS/Linux package manager; Ruby; BSD-2-Clause | Outdated formula/cask metadata and approved cleanup when already installed | Silent installation; trusting arbitrary taps | Detect existing Brew, record version and tap provenance, and keep update execution explicit. |
+| `BCUninstaller/Bulk-Crap-Uninstaller` | Windows application discovery/uninstall/leftovers; C#; Apache-2.0 | MSI/MSIX/NSIS/Inno/Store discovery and high-confidence leftover association | Existing Windows Forms UI; name-only leftover matching | Study provider separation; use Windows-native uninstaller first and rescan verified identities after it finishes. |
+| `pkolaczk/fclones` | High-performance duplicate finder; Rust; MIT | Size → inode → prefix/start/end → full-hash stages, per-device tuning and metadata cache | Direct permanent deletion defaults; Linux-only optimizations as universal claims | Adopt staged BLAKE3 verification, file identity cache, per-volume worker pools, dry preview and Trash/Recycle Bin execution. |
+| `napi-rs/napi-rs` | Rust Node-API framework; Rust/TypeScript; MIT | Stable typed bridge from Electron main to native workers | Loading native code in the renderer | Pin toolchain/CLI, package per target architecture, validate every boundary object, and keep scans off the Electron renderer thread. |
+| `google/osv-scanner` | Dependency vulnerability scanner; Go; Apache-2.0 | Optional, user-invoked Developer Health for recognized projects | Antivirus claims; every-scan whole-drive recursion; guided fixes on untrusted projects | Pin binary and checksum if bundled. Scan selected manifests/projects only. Offline DB is supported after download; registry/network failure must remain non-fatal. |
+
+## Restrictive conceptual references
+
+BleachBit, dupeGuru and Pearcleaner may be considered only as product research after separate license review. Their code is not an implementation source for the commercial Clyra binary.
+
+## Design decision
+
+Phase 1 uses only Node/Electron built-ins and fixed OS observation commands. This produces an honest device profile without adding a third-party runtime dependency before license, security and packaging review. Rust/N-API remains the intended boundary for heavy Phase 2 scanning.

@@ -146,27 +146,27 @@ export function VisualInspector({
       className="absolute right-3 top-[52px] z-30 w-[236px] rounded-[10px] border border-black/[0.07] bg-white/98 p-2.5 shadow-[0_2px_4px_rgba(0,0,0,0.03),0_10px_28px_rgba(0,0,0,0.09)] backdrop-blur"
     >
       <div className="flex items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[#343539]">
+        <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-[color:var(--text-primary)]">
           {payload.platform === "ios" ? "iPhone view" : payload.label ?? payload.name}
         </span>
         <button
           type="button"
           aria-label="Close inspector"
           onClick={onClose}
-          className="rounded-[5px] p-0.5 text-[#96989D] transition-colors hover:bg-black/[0.04] hover:text-[#202124]"
+          className="rounded-[5px] p-0.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.04] hover:text-[color:var(--text-primary)]"
         >
           <X className="h-3 w-3" />
         </button>
       </div>
       {sourceHint ? (
-        <p className="cc-mono mt-0.5 truncate text-[9.5px] text-[#A0A2A6]" title={sourceHint}>
+        <p className="cc-mono mt-0.5 truncate text-[9.5px] text-[color:var(--text-tertiary)]" title={sourceHint}>
           {sourceHint}
         </p>
       ) : null}
 
       {payload.platform === "ios" ? (
         <div className="mt-2 flex flex-col gap-1.5">
-          <p className="text-[10.5px] leading-[1.45] text-[#94969A]">
+          <p className="text-[10.5px] leading-[1.45] text-[color:var(--text-tertiary)]">
             iOS changes are applied through the agent as SwiftUI edits.
           </p>
           <textarea
@@ -188,8 +188,8 @@ export function VisualInspector({
             className={cn(
               "h-[26px] rounded-[7px] text-[11px] font-medium transition-colors",
               note.trim()
-                ? "bg-[#242528] text-white hover:bg-[#17181A]"
-                : "bg-[#F0F0EF] text-[#B7B8BA]",
+                ? "bg-[color:var(--control-dark)] text-white hover:bg-[color:var(--control-dark-hover)]"
+                : "bg-[color:var(--surface-muted)] text-[color:var(--text-disabled)]",
             )}
           >
             Apply through agent
@@ -206,14 +206,14 @@ export function VisualInspector({
                   onChange={(event) => applyColor(entry.prop, event.target.value)}
                   className="h-5 w-6 shrink-0 cursor-pointer rounded-[4px] border border-black/[0.08] bg-transparent p-0"
                 />
-                <span className="truncate text-[10.5px] text-[#686A70]">{entry.label}</span>
+                <span className="truncate text-[10.5px] text-[color:var(--text-secondary)]">{entry.label}</span>
               </label>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {NUMBER_PROPS.map((entry) => (
               <label key={entry.prop} className="flex items-center gap-1.5 rounded-[6px] px-1 py-0.5 transition-colors hover:bg-black/[0.025]">
-                <span className="w-[52px] shrink-0 truncate text-[10.5px] text-[#686A70]">{entry.label}</span>
+                <span className="w-[52px] shrink-0 truncate text-[10.5px] text-[color:var(--text-secondary)]">{entry.label}</span>
                 <input
                   type="number"
                   defaultValue={styles[entry.prop] ? String(px(styles[entry.prop])) : ""}
@@ -236,7 +236,7 @@ export function VisualInspector({
           <div className="grid grid-cols-2 gap-1.5">
             {SELECT_PROPS.filter((entry) => styles[entry.prop]).map((entry) => (
               <label key={entry.prop} className="flex items-center gap-1.5 rounded-[6px] px-1 py-0.5 transition-colors hover:bg-black/[0.025]">
-                <span className="w-[52px] shrink-0 truncate text-[10.5px] text-[#686A70]">{entry.label}</span>
+                <span className="w-[52px] shrink-0 truncate text-[10.5px] text-[color:var(--text-secondary)]">{entry.label}</span>
                 <select
                   defaultValue={styles[entry.prop]}
                   onChange={(event) => applySelect(entry.prop, event.target.value)}
@@ -252,11 +252,11 @@ export function VisualInspector({
             ))}
           </div>
           {sourceHint ? (
-            <p className="mt-0.5 text-[9.5px] leading-[1.4] text-[#A0A2A6]">
+            <p className="mt-0.5 text-[9.5px] leading-[1.4] text-[color:var(--text-tertiary)]">
               Changes write directly to {sourceHint.split("/").pop()} and the preview refreshes live.
             </p>
           ) : (
-            <p className="mt-0.5 text-[9.5px] leading-[1.4] text-[#A0A2A6]">
+            <p className="mt-0.5 text-[9.5px] leading-[1.4] text-[color:var(--text-tertiary)]">
               No CSS file mapping — changes are applied through the coding agent.
             </p>
           )}

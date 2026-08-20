@@ -15,10 +15,13 @@ import {
   Globe,
   Maximize2,
   Minimize2,
+  Minus,
+  Monitor,
   RotateCw,
   Save,
   Search,
   Pencil,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
@@ -43,7 +46,7 @@ export type RightTab = "browser" | "changes" | "files";
 /* Preview controller                                                  */
 /* ------------------------------------------------------------------ */
 
-export function usePreview(projectId: string | null, buildVersion: number) {
+export function usePreview(projectId: string | null, buildVersion: number, enabled = true) {
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [logs, setLogs] = useState<PreviewLogLine[]>([]);
   const [frameVersion, setFrameVersion] = useState(0);
@@ -77,7 +80,18 @@ export function usePreview(projectId: string | null, buildVersion: number) {
   const reload = useCallback(() => setFrameVersion((v) => v + 1), []);
 
   useEffect(() => {
-    if (!projectId) return;
+    // A newly created workspace is intentionally blank. Do not start a
+    // development server (or create an entry-point failure) until the agent
+    // has made the first source edit. Resetting here also prevents a previous
+    // project's ready frame from flashing while the next project is selected.
+    startedForRef.current = null;
+    setSession(null);
+    setLogs([]);
+    setFrameVersion(0);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || !enabled) return;
     if (startedForRef.current !== projectId) {
       startedForRef.current = projectId;
       void start();
@@ -111,21 +125,59 @@ export function usePreview(projectId: string | null, buildVersion: number) {
       }
     }, 2000);
     return () => window.clearInterval(interval);
-  }, [projectId, start]);
+  }, [enabled, projectId, start]);
 
   // Reload the frame after each successful agent run so the preview always
   // reflects the latest build.
   useEffect(() => {
-    if (buildVersion > 0) {
+    if (enabled && buildVersion > 0) {
       setFrameVersion((v) => v + 1);
-      if (projectId && (!session?.url || session.status === "stopped" || session.status === "build_failed")) {
-        void start();
-      }
+      // The first file edit may replace a static page with a Vite/Electron
+      // project (or the inverse). A health probe alone would retain the old
+      // server and keep rendering stale assets, so rebuild the preview process
+      // after a completed run and only remove the loading cover once its new
+      // frame has loaded.
+      if (projectId) void restart();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildVersion]);
+  }, [buildVersion, enabled, projectId, restart]);
 
   return { session, logs, frameVersion, start, restart, reload };
+}
+
+/** How long the preview must stay quiet and loaded before the loader lets go. */
+const PREVIEW_SETTLE_HOLD_MS = 900;
+
+/**
+ * Holds a preview in its loading state from the moment the agent starts work
+ * until the surface that work produced has actually rendered.
+ *
+ * Without this, every preview stops its loader on the frame the run completes
+ * — before the rebuild has been requested, let alone loaded — so the pane
+ * announces "done" while still showing the previous build or nothing at all.
+ * `settled` is each preview's own definition of "the new thing is on screen";
+ * `failed` releases the latch so a broken build shows its error instead of
+ * spinning forever.
+ */
+function usePreviewSettling(agentRunning: boolean, settled: boolean, failed = false) {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (agentRunning) setPending(true);
+  }, [agentRunning]);
+  useEffect(() => {
+    if (agentRunning || !pending) return;
+    if (!settled && !failed) return;
+    // "Settled" has to *stay* settled. A run that finishes often continues a
+    // moment later — Clyra re-prompts its own session, the harness rebuilds,
+    // a second edit lands — and each of those leaves a gap where nothing is
+    // running and the previous frame is still loaded. Clearing on the first
+    // such frame stops the loader mid-task, which is exactly what "it stops
+    // too early" describes. Requiring the quiet to hold rides straight over
+    // those gaps and only releases when the work is genuinely over.
+    const timer = window.setTimeout(() => setPending(false), PREVIEW_SETTLE_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [agentRunning, pending, settled, failed]);
+  return pending || agentRunning;
 }
 
 /* ------------------------------------------------------------------ */
@@ -164,6 +216,7 @@ function BrowserView({
   const [historyIndex, setHistoryIndex] = useState(0);
   const [history, setHistory] = useState<string[]>([]);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const [frameLoaded, setFrameLoaded] = useState(false);
 
   const url = session?.url ?? "";
   const host = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -181,6 +234,12 @@ function BrowserView({
     (session?.status === "build_failed" ||
       session?.status === "server_crashed" ||
       session?.status === "runtime_error");
+  const settling = usePreviewSettling(agentRunning, ready && frameLoaded && !starting, failed);
+  const previewPending = !failed && (starting || settling || (ready && !frameLoaded));
+
+  useEffect(() => {
+    setFrameLoaded(false);
+  }, [frameVersion, projectId, url]);
 
   useEffect(() => {
     if (failed && session?.lastError?.message) onPreviewError?.(session.lastError.message);
@@ -204,7 +263,7 @@ function BrowserView({
           aria-label="Back"
           disabled={historyIndex <= 0}
           onClick={() => setHistoryIndex((i) => Math.max(0, i - 1))}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
+          className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
         >
           <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={1.8} />
         </button>
@@ -213,7 +272,7 @@ function BrowserView({
           aria-label="Forward"
           disabled={historyIndex >= history.length - 1}
           onClick={() => setHistoryIndex((i) => Math.min(history.length - 1, i + 1))}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
+          className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
         >
           <ArrowRight className="h-[13px] w-[13px]" strokeWidth={1.8} />
         </button>
@@ -221,7 +280,7 @@ function BrowserView({
           type="button"
           aria-label="Reload"
           onClick={onReload}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)]"
+          className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-[color:var(--surface-hover)]"
         >
           <RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} />
         </button>
@@ -261,7 +320,7 @@ function BrowserView({
           className={cn(
             "ml-1 flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] transition-colors",
             inspectMode
-              ? "bg-[#E8F0FE] font-medium text-[#3977F6]"
+              ? "bg-[color-mix(in_srgb,var(--accent-blue)_8%,white)] font-medium text-[color:var(--accent-blue)]"
               : "font-medium text-[color:var(--text-secondary)] hover:bg-[color:var(--surface-hover)]",
           )}
         >
@@ -284,27 +343,43 @@ function BrowserView({
               const win = event.currentTarget.contentWindow;
               onFrameReady(win);
               win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
+              // The preview is an application surface too. Forward the global
+              // launcher chord through its same-origin frame so Cmd/Ctrl-K
+              // works while the user is focused inside a generated product.
+              try {
+                win?.addEventListener("keydown", (keyEvent: KeyboardEvent) => {
+                  if ((keyEvent.metaKey || keyEvent.ctrlKey) && keyEvent.key.toLowerCase() === "k") {
+                    keyEvent.preventDefault();
+                    win.parent.postMessage({ type: "clyra:toggle-app-launcher" }, window.location.origin);
+                  }
+                }, true);
+              } catch {
+                // A navigated third-party page is not same-origin; its normal
+                // browser chrome continues to receive the parent window chord.
+              }
+              setFrameLoaded(true);
             }}
           />
-        ) : starting || agentRunning ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 bg-[#FAFAF9]">
+        ) : null}
+        {previewPending ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 bg-[color:var(--surface-muted)]">
             <div className="cc-preview-loader" aria-hidden />
             <div className="flex flex-col items-center gap-1 text-center">
               <ShiningText
-                text={starting ? "Starting live preview…" : "Building your project…"}
+                text={starting || !frameLoaded ? "Starting live preview…" : "Building your project…"}
                 play
                 className="text-[12.5px] font-medium tracking-[-0.01em]"
               />
-              <p className="text-[11px] text-[#8A8A8A]">
-                {starting ? "Preparing the development server" : "Preview will appear when files are ready"}
+              <p className="text-[11px] text-[color:var(--text-tertiary)]">
+                {starting || !frameLoaded ? "Waiting for the finished preview to load" : "Preview will appear when files are ready"}
               </p>
             </div>
           </div>
         ) : failed ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
-            <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[color:var(--surface-muted)]">
+            <p className="text-[13px] font-medium text-[color:var(--text-primary)]">Preview could not start</p>
             {session?.lastError?.message ? (
-              <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[#8A8A8A]">
+              <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[color:var(--text-tertiary)]">
                 {session.lastError.message}
               </p>
             ) : null}
@@ -312,27 +387,27 @@ function BrowserView({
               <button
                 type="button"
                 onClick={onRestart}
-                className="h-7 rounded-[7px] border border-[#EEEEEC] px-2.5 text-[11.5px] text-[#171717] transition-colors hover:bg-[#F6F6F5]"
+                className="h-7 rounded-[7px] border border-[color:var(--border-subtle)] px-2.5 text-[11.5px] text-[color:var(--text-primary)] transition-colors hover:bg-[color:var(--surface-muted)]"
               >
                 Retry
               </button>
               <button
                 type="button"
                 onClick={onOpenTerminal}
-                className="h-7 rounded-[7px] px-2.5 text-[11.5px] text-[#5F6368] transition-colors hover:bg-[#F6F6F5]"
+                className="h-7 rounded-[7px] px-2.5 text-[11.5px] text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-muted)]"
               >
                 View logs
               </button>
             </div>
           </div>
         ) : (
-          <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[#F7F7F6]">
+          <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[color:var(--sidebar-background)]">
             <div className="relative z-[1] flex max-w-[300px] flex-col items-center px-5 text-center">
-              <Globe className="mb-2.5 h-6 w-6 text-[#B7B9BD]" strokeWidth={1.4} />
-              <h3 className="text-[13px] font-medium tracking-[-0.015em] text-[#3D3F43]">
+              <Globe className="mb-2.5 h-6 w-6 text-[color:var(--text-disabled)]" strokeWidth={1.4} />
+              <h3 className="text-[13px] font-medium tracking-[-0.015em] text-[color:var(--text-primary)]">
                 Preview will appear here
               </h3>
-              <p className="mt-1 text-[11.5px] leading-[1.45] text-[#94969A]">
+              <p className="mt-1 text-[11.5px] leading-[1.45] text-[color:var(--text-tertiary)]">
                 Describe what to create in the chat. The live preview opens here once files are ready.
               </p>
             </div>
@@ -343,6 +418,66 @@ function BrowserView({
     </div>
   );
 }
+/* ------------------------------------------------------------------ */
+/* Windows 11 preview — a Fluent-styled window frame around the same    */
+/* live preview BrowserView renders, for users targeting a Windows      */
+/* desktop app. There is no real Windows machine to stream from here    */
+/* (unlike the iOS simulator/device tiers below), so this is an         */
+/* accurate device-chrome mockup, not a live remote stream.             */
+/* ------------------------------------------------------------------ */
+
+function WindowsPreviewView(props: Parameters<typeof BrowserView>[0] & { appName?: string }) {
+  const [minimized, setMinimized] = useState(false);
+  const host = (props.session?.url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const title = props.appName || host || "App";
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-[#e8ecf1] p-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] border border-black/[0.08] bg-white shadow-[0_10px_36px_rgba(15,23,42,.14)]">
+        <div className="flex h-[32px] shrink-0 items-center gap-2 bg-[color-mix(in_srgb,white_92%,#e8ecf1)] pl-3 pr-1">
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-[4px] bg-[#0078d4]">
+            <Monitor className="h-2.5 w-2.5 text-white" strokeWidth={2.2} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[12px] font-normal text-[#1b1b1b]" style={{ fontFamily: '"Segoe UI Variable", "Segoe UI", -apple-system, sans-serif' }}>
+            {title}
+          </span>
+          <div className="flex h-full items-center">
+            <button
+              type="button"
+              aria-label="Minimize preview"
+              onClick={() => setMinimized((value) => !value)}
+              className="grid h-full w-[42px] place-items-center text-[#1b1b1b] transition-colors hover:bg-black/[0.055]"
+            >
+              <Minus className="h-3 w-3" strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              aria-label={props.fullscreen ? "Restore preview" : "Maximize preview"}
+              onClick={props.onToggleFullscreen}
+              className="grid h-full w-[42px] place-items-center text-[#1b1b1b] transition-colors hover:bg-black/[0.055]"
+            >
+              <Square className="h-[10px] w-[10px]" strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              aria-label="Close preview"
+              title="This is a preview window, not a real OS window"
+              className="grid h-full w-[42px] place-items-center text-[#1b1b1b] transition-colors hover:bg-[#c42b1c] hover:text-white"
+            >
+              <X className="h-3 w-3" strokeWidth={1.75} />
+            </button>
+          </div>
+        </div>
+        {minimized ? null : (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <BrowserView {...props} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* iOS Simulator preview — live stream from the embedded ios-bridge     */
 /* ------------------------------------------------------------------ */
@@ -430,26 +565,31 @@ function IosPreviewView({
     return () => { cancelled = true; if (retry !== undefined) window.clearTimeout(retry); };
   }, [agentRunning, build, projectId, relaunchSignal]);
 
-  const loading = phase === "waiting" || phase === "building";
-  const title = phase === "building" ? "Updating local preview…" : "Preparing SwiftUI preview…";
+  const swiftSettling = usePreviewSettling(agentRunning, phase === "running" && Boolean(bundleUrl), phase === "failed");
+  const loading = phase !== "failed" && (swiftSettling || phase === "waiting" || phase === "building");
+  const title = agentRunning
+    ? "Building your SwiftUI project…"
+    : phase === "building"
+      ? "Updating local preview…"
+      : "Preparing SwiftUI preview…";
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="flex h-[40px] items-center gap-1 border-b border-[color:var(--border-subtle)] px-2.5">
-      <span className="flex h-7 items-center rounded-[7px] px-2 text-[11.5px] font-medium text-[#505258]">iPhone 16</span>
-      <span className="text-[10.5px] text-[#96989D]">Local SwiftUI preview</span>
+      <span className="flex h-7 items-center rounded-[7px] px-2 text-[11.5px] font-medium text-[color:var(--text-secondary)]">iPhone 16</span>
+      <span className="text-[10.5px] text-[color:var(--text-tertiary)]">Local SwiftUI preview</span>
       <span className="flex-1" />
-      <button type="button" aria-label="Rotate preview" title="Rotate preview" onClick={() => setOrientation((value) => value === "portrait" ? "landscape" : "portrait")} className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-black/[0.03] hover:text-[#202124]"><RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} /></button>
-      <button type="button" aria-label="Reload preview" title="Reload preview" onClick={() => void build()} className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-black/[0.03] hover:text-[#202124]"><RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} /></button>
-      <button type="button" aria-label={fullscreen ? "Exit full screen preview" : "Full screen preview"} title={fullscreen ? "Exit full screen" : "Full screen"} onClick={onToggleFullscreen} className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-black/[0.03] hover:text-[#202124]">{fullscreen ? <Minimize2 className="h-[13px] w-[13px]" strokeWidth={1.8} /> : <Maximize2 className="h-[13px] w-[13px]" strokeWidth={1.8} />}</button>
-      <button type="button" onClick={onToggleInspect} className={cn("ml-1 flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] transition-colors", inspectMode ? "bg-[#E8F0FE] font-medium text-[#3977F6]" : "font-medium text-[#505258] hover:bg-black/[0.03]")}>{inspectMode ? "✓ Editing" : "Commenting"}</button>
+      <button type="button" aria-label="Rotate preview" title="Rotate preview" onClick={() => setOrientation((value) => value === "portrait" ? "landscape" : "portrait")} className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.03] hover:text-[color:var(--text-primary)]"><RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} /></button>
+      <button type="button" aria-label="Reload preview" title="Reload preview" onClick={() => void build()} className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.03] hover:text-[color:var(--text-primary)]"><RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} /></button>
+      <button type="button" aria-label={fullscreen ? "Exit full screen preview" : "Full screen preview"} title={fullscreen ? "Exit full screen" : "Full screen"} onClick={onToggleFullscreen} className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.03] hover:text-[color:var(--text-primary)]">{fullscreen ? <Minimize2 className="h-[13px] w-[13px]" strokeWidth={1.8} /> : <Maximize2 className="h-[13px] w-[13px]" strokeWidth={1.8} />}</button>
+      <button type="button" onClick={onToggleInspect} className={cn("ml-1 flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] transition-colors", inspectMode ? "bg-[color-mix(in_srgb,var(--accent-blue)_8%,white)] font-medium text-[color:var(--accent-blue)]" : "font-medium text-[color:var(--text-secondary)] hover:bg-black/[0.03]")}>{inspectMode ? "✓ Editing" : "Commenting"}</button>
     </div>
-    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#FAFAF9] p-4">
-      {bundleUrl && !loading && phase === "running" ? <div ref={phoneAreaRef} className={cn("relative overflow-hidden rounded-[38px] bg-[#1C1C1E] p-[8px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]", orientation === "portrait" ? "h-[532px] w-[260px]" : "h-[270px] w-[532px]")}>
-        <span className={cn("absolute z-10 rounded-full bg-[#111]", orientation === "portrait" ? "left-1/2 top-[14px] h-[19px] w-[88px] -translate-x-1/2" : "left-[14px] top-1/2 h-[88px] w-[19px] -translate-y-1/2")} />
+    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[color:var(--surface-muted)] p-4">
+      {bundleUrl && !loading && phase === "running" ? <div ref={phoneAreaRef} className={cn("relative overflow-hidden rounded-[38px] bg-[color:var(--control-dark)] p-[8px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]", orientation === "portrait" ? "h-[532px] w-[260px]" : "h-[270px] w-[532px]")}>
+        <span className={cn("absolute z-10 rounded-full bg-[color:var(--control-dark-hover)]", orientation === "portrait" ? "left-1/2 top-[14px] h-[19px] w-[88px] -translate-x-1/2" : "left-[14px] top-1/2 h-[88px] w-[19px] -translate-y-1/2")} />
         <iframe key={frameKey} src={bundleUrl} title="SwiftUI preview" className="h-full w-full rounded-[30px] bg-white" />
-        {inspectMode ? <button type="button" className="absolute inset-0 z-20 cursor-crosshair" aria-label="Reference SwiftUI view" onClick={(event) => { const rect = phoneAreaRef.current?.getBoundingClientRect(); onInspectElement({ platform: "ios", kind: "SwiftUI view", label: "SwiftUI preview", name: "ContentView", x: Math.round(event.clientX - (rect?.left ?? 0)), y: Math.round(event.clientY - (rect?.top ?? 0)) }); }}><span className="pointer-events-none absolute left-3 top-3 rounded-[6px] bg-[#3977F6]/95 px-2 py-1 text-[10px] font-medium text-white">Click a view to reference it in chat</span></button> : null}
+        {inspectMode ? <button type="button" className="absolute inset-0 z-20 cursor-crosshair" aria-label="Reference SwiftUI view" onClick={(event) => { const rect = phoneAreaRef.current?.getBoundingClientRect(); onInspectElement({ platform: "ios", kind: "SwiftUI view", label: "SwiftUI preview", name: "ContentView", x: Math.round(event.clientX - (rect?.left ?? 0)), y: Math.round(event.clientY - (rect?.top ?? 0)) }); }}><span className="pointer-events-none absolute left-3 top-3 rounded-[6px] bg-[color:var(--accent-blue)]/95 px-2 py-1 text-[10px] font-medium text-white">Click a view to reference it in chat</span></button> : null}
       </div> : null}
-      {loading ? <div className="relative z-10 flex h-full w-full flex-col items-center justify-center gap-3.5 bg-[#FAFAF9]"><div className="relative h-[438px] w-[218px] rounded-[34px] bg-[#202124] p-[7px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]"><div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-[28px] bg-[#F8F8F7]"><span className="absolute left-1/2 top-2 h-[18px] w-[86px] -translate-x-1/2 rounded-full bg-[#202124]" /><div className="cc-preview-loader" /><ShiningText text={title} play className="mt-4 max-w-[160px] text-center text-[11.5px] font-medium tracking-[-0.01em]" /><p className="mt-1.5 max-w-[166px] text-center text-[9.5px] leading-[1.4] text-[#8A8A8A]">Preview will appear once Swift source is ready</p></div></div><p className="text-[10.5px] text-[#96989D]">Cross-platform local preview</p></div> : null}
-      {phase === "failed" ? <div className="flex max-w-[340px] flex-col items-center gap-2 text-center"><p className="text-[13px] font-medium text-[#3D3F43]">Preview build failed</p><p className="text-[11.5px] leading-[1.5] text-[#94969A]">{error}</p><button type="button" onClick={() => void build()} className="h-7 rounded-[7px] border border-black/[0.08] px-2.5 text-[11.5px] text-[#202124] hover:bg-black/[0.03]">Try again</button></div> : null}
+      {loading ? <div className="relative z-10 flex h-full w-full flex-col items-center justify-center gap-3.5 bg-[color:var(--surface-muted)]"><div className="relative h-[438px] w-[218px] rounded-[34px] bg-[color:var(--text-primary)] p-[7px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]"><div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-[28px] bg-[color:var(--surface-muted)]"><span className="absolute left-1/2 top-2 h-[18px] w-[86px] -translate-x-1/2 rounded-full bg-[color:var(--text-primary)]" /><div className="cc-preview-loader" /><ShiningText text={title} play className="mt-4 max-w-[160px] text-center text-[11.5px] font-medium tracking-[-0.01em]" /><p className="mt-1.5 max-w-[166px] text-center text-[9.5px] leading-[1.4] text-[color:var(--text-tertiary)]">Preview will appear once Swift source is ready</p></div></div><p className="text-[10.5px] text-[color:var(--text-tertiary)]">Cross-platform local preview</p></div> : null}
+      {phase === "failed" ? <div className="flex max-w-[340px] flex-col items-center gap-2 text-center"><p className="text-[13px] font-medium text-[color:var(--text-primary)]">Preview build failed</p><p className="text-[11.5px] leading-[1.5] text-[color:var(--text-tertiary)]">{error}</p><button type="button" onClick={() => void build()} className="h-7 rounded-[7px] border border-black/[0.08] px-2.5 text-[11.5px] text-[color:var(--text-primary)] hover:bg-black/[0.03]">Try again</button></div> : null}
     </div>
   </div>;
 }
@@ -571,7 +711,8 @@ function PhysicalDeviceIosPreviewView({
   // The loader owns the simulator surface until the first actual stream frame
   // arrives. This prevents a blank preview or a stopped loader while the
   // agent is still generating/building the native project.
-  const loading = agentRunning || phase === "waiting" || phase === "building" || phase === "connecting";
+  const deviceSettling = usePreviewSettling(agentRunning, phase === "running", phase === "failed");
+  const loading = phase !== "failed" && (deviceSettling || phase === "waiting" || phase === "building" || phase === "connecting");
   const loadingTitle =
     phase === "waiting"
       ? agentRunning
@@ -598,10 +739,10 @@ function PhysicalDeviceIosPreviewView({
               <button
                 type="button"
                 onClick={() => setDeviceMenu((open) => !open)}
-                className="flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11.5px] font-medium text-[#505258] transition-colors hover:bg-black/[0.03]"
+                className="flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.03]"
               >
                 {currentDeviceName}
-                <ChevronDown className={cn("h-3 w-3 text-[#96989D] transition-transform", deviceMenu && "rotate-180")} />
+                <ChevronDown className={cn("h-3 w-3 text-[color:var(--text-tertiary)] transition-transform", deviceMenu && "rotate-180")} />
               </button>
               {deviceMenu ? (
                 <div className="absolute left-0 top-[32px] z-30 max-h-64 w-[190px] overflow-y-auto rounded-[8px] border border-black/[0.06] bg-white py-0.5 shadow-[0_8px_20px_rgba(15,23,42,0.08)]">
@@ -615,7 +756,7 @@ function PhysicalDeviceIosPreviewView({
                         launchedRef.current = null;
                         void launch();
                       }}
-                      className="flex w-full items-center justify-between px-2.5 py-[5px] text-left text-[11.5px] text-[#202124] transition-colors hover:bg-black/[0.03]"
+                      className="flex w-full items-center justify-between px-2.5 py-[5px] text-left text-[11.5px] text-[color:var(--text-primary)] transition-colors hover:bg-black/[0.03]"
                     >
                       <span className="truncate">{simulator}</span>
                     </button>
@@ -623,7 +764,7 @@ function PhysicalDeviceIosPreviewView({
                 </div>
               ) : null}
             </div>
-            <span className="text-[10.5px] text-[#96989D]">Physical device</span>
+            <span className="text-[10.5px] text-[color:var(--text-tertiary)]">Physical device</span>
             <span className="flex-1" />
             <button
               type="button"
@@ -634,7 +775,7 @@ function PhysicalDeviceIosPreviewView({
                 setOrientation(next);
                 if (projectId) void api.mobilePreviewInput(projectId, { action: "orientation", value: next }).catch(() => undefined);
               }}
-              className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-black/[0.03] hover:text-[#202124]"
+              className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.03] hover:text-[color:var(--text-primary)]"
             >
               <RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} />
             </button>
@@ -646,7 +787,7 @@ function PhysicalDeviceIosPreviewView({
                 launchedRef.current = null;
                 void launch();
               }}
-              className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-black/[0.03] hover:text-[#202124]"
+              className="rounded-[7px] p-1.5 text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.03] hover:text-[color:var(--text-primary)]"
             >
               <RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} />
             </button>
@@ -656,19 +797,19 @@ function PhysicalDeviceIosPreviewView({
               className={cn(
                 "ml-1 flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] transition-colors",
                 inspectMode
-                  ? "bg-[#E8F0FE] font-medium text-[#3977F6]"
-                  : "font-medium text-[#505258] hover:bg-black/[0.03]",
+                  ? "bg-[color-mix(in_srgb,var(--accent-blue)_8%,white)] font-medium text-[color:var(--accent-blue)]"
+                  : "font-medium text-[color:var(--text-secondary)] hover:bg-black/[0.03]",
               )}
             >
               {inspectMode ? "✓ Editing" : "Commenting"}
             </button>
           </>
         ) : (
-          <span className="flex-1 text-[11.5px] text-[#505258]">iPhone Preview</span>
+          <span className="flex-1 text-[11.5px] text-[color:var(--text-secondary)]">iPhone Preview</span>
         )}
       </div>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#FAFAF9] p-4">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[color:var(--surface-muted)] p-4">
         {streamUrl ? (
           <div ref={streamAreaRef} className="absolute inset-0 flex items-center justify-center overflow-hidden">
             <PhysicalDevicePhoneFrame
@@ -693,7 +834,7 @@ function PhysicalDeviceIosPreviewView({
                   onInspectElement({ platform: "ios", kind: "SwiftUI view", label: `iPhone view @ ${x}, ${y}`, name: "view", x, y, device: currentDeviceName });
                 }}
               >
-                <div className="pointer-events-none absolute left-3 top-3 rounded-[6px] bg-[#3977F6]/95 px-2 py-1 text-[10px] font-medium text-white">
+                <div className="pointer-events-none absolute left-3 top-3 rounded-[6px] bg-[color:var(--accent-blue)]/95 px-2 py-1 text-[10px] font-medium text-white">
                   Click a view to reference it in chat
                 </div>
               </div>
@@ -702,42 +843,42 @@ function PhysicalDeviceIosPreviewView({
         ) : null}
 
         {loading ? (
-          <div className="relative z-10 flex h-full w-full flex-col items-center justify-center gap-3.5 bg-[#FAFAF9]">
-            <div className="relative h-[438px] w-[218px] rounded-[34px] bg-[#202124] p-[7px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]">
-              <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-[28px] bg-[#F8F8F7]">
-                <span className="absolute left-1/2 top-2 h-[18px] w-[86px] -translate-x-1/2 rounded-full bg-[#202124]" aria-hidden />
+          <div className="relative z-10 flex h-full w-full flex-col items-center justify-center gap-3.5 bg-[color:var(--surface-muted)]">
+            <div className="relative h-[438px] w-[218px] rounded-[34px] bg-[color:var(--text-primary)] p-[7px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]">
+              <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-[28px] bg-[color:var(--surface-muted)]">
+                <span className="absolute left-1/2 top-2 h-[18px] w-[86px] -translate-x-1/2 rounded-full bg-[color:var(--text-primary)]" aria-hidden />
                 <div className="cc-preview-loader" aria-hidden />
                 <ShiningText text={loadingTitle} play className="mt-4 max-w-[160px] text-center text-[11.5px] font-medium tracking-[-0.01em]" />
-                <p className="mt-1.5 max-w-[166px] text-center text-[9.5px] leading-[1.4] text-[#8A8A8A]">{loadingDetail}</p>
+                <p className="mt-1.5 max-w-[166px] text-center text-[9.5px] leading-[1.4] text-[color:var(--text-tertiary)]">{loadingDetail}</p>
               </div>
             </div>
-            <p className="text-[10.5px] text-[#96989D]">Live physical-device preview</p>
+            <p className="text-[10.5px] text-[color:var(--text-tertiary)]">Live physical-device preview</p>
           </div>
         ) : phase === "failed" ? (
           <div className="flex max-w-[360px] flex-col items-center gap-2 text-center">
-            <p className="text-[13px] font-medium text-[#3D3F43]">Build failed</p>
-            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-[1.5] text-[#94969A]">
+            <p className="text-[13px] font-medium text-[color:var(--text-primary)]">Build failed</p>
+            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-[1.5] text-[color:var(--text-tertiary)]">
               {error}
             </p>
             <button
               type="button"
               onClick={() => void launch()}
-              className="mt-1 h-7 rounded-[7px] border border-black/[0.08] px-2.5 text-[11.5px] text-[#202124] transition-colors hover:bg-black/[0.03]"
+              className="mt-1 h-7 rounded-[7px] border border-black/[0.08] px-2.5 text-[11.5px] text-[color:var(--text-primary)] transition-colors hover:bg-black/[0.03]"
             >
               Try again
             </button>
           </div>
         ) : status && !status.configured ? (
           <div className="flex w-full max-w-[340px] flex-col items-center gap-2.5 text-center">
-            <p className="text-[13px] font-medium text-[#3D3F43]">iPhone preview is unavailable</p>
-            <p className="text-[11.5px] leading-[1.5] text-[#94969A]">
+            <p className="text-[13px] font-medium text-[color:var(--text-primary)]">iPhone preview is unavailable</p>
+            <p className="text-[11.5px] leading-[1.5] text-[color:var(--text-tertiary)]">
               Swift source can still be created here. Configure a supported local preview bridge to stream a native device.
             </p>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-center">
-            <p className="text-[13px] font-medium text-[#3D3F43]">iPhone preview</p>
-            <p className="text-[11.5px] text-[#94969A]">
+            <p className="text-[13px] font-medium text-[color:var(--text-primary)]">iPhone preview</p>
+            <p className="text-[11.5px] text-[color:var(--text-tertiary)]">
               The interactive preview will appear here once Swift source is ready.
             </p>
           </div>
@@ -774,7 +915,7 @@ function PhysicalDevicePhoneFrame({ url, device, frameKey, onReady, onInput }: {
     <div ref={areaRef} className="absolute inset-0 flex items-center justify-center overflow-hidden">
       <div
         style={{ width: 260, height: 532, transform: `scale(${scale})`, transformOrigin: "center center" }}
-        className="relative shrink-0 rounded-[38px] bg-[#1C1C1E] p-[9px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]"
+        className="relative shrink-0 rounded-[38px] bg-[color:var(--control-dark)] p-[9px] shadow-[0_16px_34px_rgba(15,23,42,0.18)]"
         tabIndex={0}
         onPointerDown={(event) => { pointerStart.current = coordinates(event); }}
         onPointerUp={(event) => {
@@ -791,7 +932,7 @@ function PhysicalDevicePhoneFrame({ url, device, frameKey, onReady, onInput }: {
           else if (event.key === "Enter") onInput?.({ action: "type", text: "\n" });
         }}
       >
-        <span className="absolute left-1/2 top-[14px] z-10 h-[19px] w-[88px] -translate-x-1/2 rounded-full bg-[#111]" />
+        <span className="absolute left-1/2 top-[14px] z-10 h-[19px] w-[88px] -translate-x-1/2 rounded-full bg-[color:var(--control-dark-hover)]" />
         <img data-phone-screen key={frameKey} src={url} title={`${device} live preview`} onLoad={onReady} className="h-full w-full rounded-[30px] bg-black object-cover" />
       </div>
     </div>
@@ -890,8 +1031,8 @@ function ChangesView({
                     <td
                       className={cn(
                         "cc-mono whitespace-pre-wrap px-2 text-[11.5px] leading-[1.7]",
-                        line.kind === "add" && "text-[#1c6b3d]",
-                        line.kind === "del" && "text-[#a53c3c]",
+                        line.kind === "add" && "text-[color:var(--addition-green-strong)]",
+                        line.kind === "del" && "text-[color:var(--deletion-red-strong)]",
                         line.kind === "context" && "text-[color:var(--text-secondary)]",
                       )}
                     >
@@ -1074,12 +1215,12 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
     return children.flatMap((child) => {
       if (child.file) {
         if (query && !child.path.toLowerCase().includes(query.toLowerCase())) return [];
-        return <div key={child.path} style={{ paddingLeft: 12 + depth * 14 }} className={cn("group flex h-[26px] items-center pr-1.5", selected === child.path ? "bg-black/[0.045]" : "hover:bg-black/[0.03]")}><button type="button" onClick={() => selectFile(child.path)} title={child.path} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"><FileCode2 className="h-[12px] w-[12px] shrink-0 text-[#85878C]" strokeWidth={1.55} /><span className="truncate text-[11.5px] text-[#5C5F64]">{child.name}</span>{changed.has(child.path) ? <span className="ml-auto h-1 w-1 shrink-0 rounded-full bg-[#3977F6]" /> : null}</button><button type="button" onClick={(event) => { event.stopPropagation(); void renamePath(child.path); }} title={`Rename ${child.name}`} className="invisible ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#7D8086] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-black/[0.05] group-hover:visible group-hover:opacity-100"><Pencil className="h-[11px] w-[11px]" strokeWidth={1.6} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void removePath(child.path); }} title={`Remove ${child.name}`} className="invisible ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#8A6262] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-[#C24949]/[0.08] group-hover:visible group-hover:opacity-100"><Trash2 className="h-[11px] w-[11px]" strokeWidth={1.6} /></button></div>;
+        return <div key={child.path} style={{ paddingLeft: 12 + depth * 14 }} className={cn("group flex h-[26px] items-center pr-1.5", selected === child.path ? "bg-black/[0.045]" : "hover:bg-black/[0.03]")}><button type="button" onClick={() => selectFile(child.path)} title={child.path} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"><FileCode2 className="h-[12px] w-[12px] shrink-0 text-[color:var(--text-tertiary)]" strokeWidth={1.55} /><span className="truncate text-[11.5px] text-[color:var(--text-secondary)]">{child.name}</span>{changed.has(child.path) ? <span className="ml-auto h-1 w-1 shrink-0 rounded-full bg-[color:var(--accent-blue)]" /> : null}</button><button type="button" onClick={(event) => { event.stopPropagation(); void renamePath(child.path); }} title={`Rename ${child.name}`} className="invisible ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[color:var(--text-secondary)] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-black/[0.05] group-hover:visible group-hover:opacity-100"><Pencil className="h-[11px] w-[11px]" strokeWidth={1.6} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void removePath(child.path); }} title={`Remove ${child.name}`} className="invisible ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#8A6262] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-[color:var(--deletion-red)]/[0.08] group-hover:visible group-hover:opacity-100"><Trash2 className="h-[11px] w-[11px]" strokeWidth={1.6} /></button></div>;
       }
       const hidden = collapsedFolders.has(child.path);
       const descendants = renderNode(child, depth + 1);
       if (query && descendants.length === 0) return [];
-      return [<div key={`${child.path}-folder`} style={{ paddingLeft: 11 + depth * 14 }} className="group flex h-[27px] items-center pr-1.5 text-[11.75px] font-medium text-[#55585D] transition-colors hover:bg-black/[0.03]"><button type="button" onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(child.path)) next.delete(child.path); else next.add(child.path); return next; })} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"><ChevronDown className={cn("h-[11px] w-[11px] shrink-0 transition-transform duration-150", hidden && "-rotate-90")} strokeWidth={1.65} />{hidden ? <Folder className="h-[13px] w-[13px] text-[#777A80]" strokeWidth={1.5} /> : <FolderOpen className="h-[13px] w-[13px] text-[#777A80]" strokeWidth={1.5} />}<span className="truncate">{child.name}</span></button><button type="button" onClick={(event) => { event.stopPropagation(); void renamePath(child.path); }} title={`Rename ${child.name}`} className="invisible ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#7D8086] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-black/[0.05] group-hover:visible group-hover:opacity-100"><Pencil className="h-[11px] w-[11px]" strokeWidth={1.6} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void removePath(child.path, true); }} title={`Remove ${child.name}`} className="invisible ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#8A6262] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-[#C24949]/[0.08] group-hover:visible group-hover:opacity-100"><Trash2 className="h-[11px] w-[11px]" strokeWidth={1.6} /></button></div>, ...(hidden ? [] : descendants)];
+      return [<div key={`${child.path}-folder`} style={{ paddingLeft: 11 + depth * 14 }} className="group flex h-[27px] items-center pr-1.5 text-[11.75px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.03]"><button type="button" onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(child.path)) next.delete(child.path); else next.add(child.path); return next; })} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"><ChevronDown className={cn("h-[11px] w-[11px] shrink-0 transition-transform duration-150", hidden && "-rotate-90")} strokeWidth={1.65} />{hidden ? <Folder className="h-[13px] w-[13px] text-[color:var(--text-secondary)]" strokeWidth={1.5} /> : <FolderOpen className="h-[13px] w-[13px] text-[color:var(--text-secondary)]" strokeWidth={1.5} />}<span className="truncate">{child.name}</span></button><button type="button" onClick={(event) => { event.stopPropagation(); void renamePath(child.path); }} title={`Rename ${child.name}`} className="invisible ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[color:var(--text-secondary)] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-black/[0.05] group-hover:visible group-hover:opacity-100"><Pencil className="h-[11px] w-[11px]" strokeWidth={1.6} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void removePath(child.path, true); }} title={`Remove ${child.name}`} className="invisible ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[#8A6262] opacity-0 transition-[opacity,background-color] duration-100 hover:bg-[color:var(--deletion-red)]/[0.08] group-hover:visible group-hover:opacity-100"><Trash2 className="h-[11px] w-[11px]" strokeWidth={1.6} /></button></div>, ...(hidden ? [] : descendants)];
     });
   };
 
@@ -1088,23 +1229,23 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
       <div className="flex w-[218px] shrink-0 flex-col border-r border-black/[0.06]">
         <div className="flex h-[42px] items-center gap-1.5 border-b border-black/[0.06] px-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[7px] bg-black/[0.025] px-2 py-1.5 focus-within:bg-black/[0.04]">
-            <Search className="h-[12px] w-[12px] text-[#96989D]" strokeWidth={1.7} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search files" className="min-w-0 flex-1 bg-transparent text-[11.5px] text-[#55575C] outline-none placeholder:text-[#9A9CA0]" />
-            {query ? <button type="button" onClick={() => setQuery("")} className="text-[#92949A] hover:text-[#52545A]"><X className="h-[12px] w-[12px]" /></button> : null}
+            <Search className="h-[12px] w-[12px] text-[color:var(--text-tertiary)]" strokeWidth={1.7} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search files" className="min-w-0 flex-1 bg-transparent text-[11.5px] text-[color:var(--text-secondary)] outline-none placeholder:text-[color:var(--text-tertiary)]" />
+            {query ? <button type="button" onClick={() => setQuery("")} className="text-[color:var(--text-tertiary)] hover:text-[color:var(--text-secondary)]"><X className="h-[12px] w-[12px]" /></button> : null}
           </div>
-          <button type="button" onClick={() => void createFile()} title="New file" className="flex h-[27px] w-[27px] items-center justify-center rounded-[7px] text-[#66696F] transition-colors hover:bg-black/[0.045]"><FilePlus2 className="h-[14px] w-[14px]" strokeWidth={1.55} /></button>
-          <button type="button" onClick={() => void createFolder()} title="New folder" className="flex h-[27px] w-[27px] items-center justify-center rounded-[7px] text-[#66696F] transition-colors hover:bg-black/[0.045]"><FolderPlus className="h-[14px] w-[14px]" strokeWidth={1.55} /></button>
+          <button type="button" onClick={() => void createFile()} title="New file" className="flex h-[27px] w-[27px] items-center justify-center rounded-[7px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.045]"><FilePlus2 className="h-[14px] w-[14px]" strokeWidth={1.55} /></button>
+          <button type="button" onClick={() => void createFolder()} title="New folder" className="flex h-[27px] w-[27px] items-center justify-center rounded-[7px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.045]"><FolderPlus className="h-[14px] w-[14px]" strokeWidth={1.55} /></button>
         </div>
-        <div className="cc-scroll min-h-0 flex-1 overflow-y-auto py-1.5">{files.length ? renderNode(tree) : <p className="px-3 py-3 text-[11.5px] text-[#989AA0]">No files yet.</p>}</div>
+        <div className="cc-scroll min-h-0 flex-1 overflow-y-auto py-1.5">{files.length ? renderNode(tree) : <p className="px-3 py-3 text-[11.5px] text-[color:var(--text-tertiary)]">No files yet.</p>}</div>
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-[34px] items-end gap-1 border-b border-black/[0.06] px-2 pt-1.5">
           <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
-            {openFiles.map((filePath) => <button key={filePath} type="button" onClick={() => selectFile(filePath)} className={cn("group flex h-[27px] max-w-[190px] shrink-0 items-center gap-1.5 rounded-t-[7px] px-2 text-[11.5px] transition-colors", selected === filePath ? "bg-black/[0.055] text-[#36383D]" : "text-[#84868B] hover:bg-black/[0.03]")}><FileCode2 className="h-[11px] w-[11px] shrink-0" strokeWidth={1.55} /><span className="truncate">{filePath.split("/").at(-1)}</span><span role="button" aria-label={`Close ${filePath}`} onClick={(event) => { event.stopPropagation(); setOpenFiles((current) => current.filter((path) => path !== filePath)); if (selected === filePath) setSelected(openFiles.find((path) => path !== filePath) ?? null); }} className="ml-0.5 rounded p-0.5 opacity-0 transition-opacity hover:bg-black/[0.06] group-hover:opacity-100"><X className="h-[10px] w-[10px]" /></span></button>)}
+            {openFiles.map((filePath) => <button key={filePath} type="button" onClick={() => selectFile(filePath)} className={cn("group flex h-[27px] max-w-[190px] shrink-0 items-center gap-1.5 rounded-t-[7px] px-2 text-[11.5px] transition-colors", selected === filePath ? "bg-black/[0.055] text-[color:var(--text-primary)]" : "text-[color:var(--text-tertiary)] hover:bg-black/[0.03]")}><FileCode2 className="h-[11px] w-[11px] shrink-0" strokeWidth={1.55} /><span className="truncate">{filePath.split("/").at(-1)}</span><span role="button" aria-label={`Close ${filePath}`} onClick={(event) => { event.stopPropagation(); setOpenFiles((current) => current.filter((path) => path !== filePath)); if (selected === filePath) setSelected(openFiles.find((path) => path !== filePath) ?? null); }} className="ml-0.5 rounded p-0.5 opacity-0 transition-opacity hover:bg-black/[0.06] group-hover:opacity-100"><X className="h-[10px] w-[10px]" /></span></button>)}
           </div>
-          {selectedFile ? <><button type="button" onClick={() => void save()} disabled={saving || draft === selectedFile.content} title="Save file" className="mb-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] text-[#5F6368] transition-colors hover:bg-black/[0.045] disabled:opacity-35"><Save className="h-[13px] w-[13px]" strokeWidth={1.55} /></button><button type="button" onClick={() => void removeSelected()} title="Remove file" className="mb-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] text-[#7A5656] transition-colors hover:bg-[#C24949]/[0.08]"><Trash2 className="h-[13px] w-[13px]" strokeWidth={1.55} /></button></> : null}
+          {selectedFile ? <><button type="button" onClick={() => void save()} disabled={saving || draft === selectedFile.content} title="Save file" className="mb-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.045] disabled:opacity-35"><Save className="h-[13px] w-[13px]" strokeWidth={1.55} /></button><button type="button" onClick={() => void removeSelected()} title="Remove file" className="mb-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] text-[#7A5656] transition-colors hover:bg-[color:var(--deletion-red)]/[0.08]"><Trash2 className="h-[13px] w-[13px]" strokeWidth={1.55} /></button></> : null}
         </div>
-        {selectedFile ? <div className="cc-code-editor min-h-0 flex-1 overflow-hidden"><Editor height="100%" path={selectedFile.path} language={fileLanguage(selectedFile.path)} value={draft} onChange={(value) => setDraft(value ?? "")} onMount={handleEditorMount} theme="vs" options={{ fontSize: 12, lineHeight: 19, fontFamily: '"SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace', minimap: { enabled: false }, padding: { top: 12, bottom: 12 }, scrollBeyondLastLine: false, renderLineHighlight: "gutter", suggestOnTriggerCharacters: true, quickSuggestions: { other: true, comments: true, strings: true }, suggest: { showIcons: true, showStatusBar: false, preview: false, selectionMode: "whenQuickSuggestion" }, fixedOverflowWidgets: false, tabSize: 2, automaticLayout: true, smoothScrolling: true, wordWrap: "off", overviewRulerBorder: false }} /></div> : <div className="flex h-full items-center justify-center"><p className="text-[12px] text-[#999BA0]">Select a file to edit.</p></div>}
+        {selectedFile ? <div className="cc-code-editor min-h-0 flex-1 overflow-hidden"><Editor height="100%" path={selectedFile.path} language={fileLanguage(selectedFile.path)} value={draft} onChange={(value) => setDraft(value ?? "")} onMount={handleEditorMount} theme="vs" options={{ fontSize: 12, lineHeight: 19, fontFamily: '"SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace', minimap: { enabled: false }, padding: { top: 12, bottom: 12 }, scrollBeyondLastLine: false, renderLineHighlight: "gutter", suggestOnTriggerCharacters: true, quickSuggestions: { other: true, comments: true, strings: true }, suggest: { showIcons: true, showStatusBar: false, preview: false, selectionMode: "whenQuickSuggestion" }, fixedOverflowWidgets: false, tabSize: 2, automaticLayout: true, smoothScrolling: true, wordWrap: "off", overviewRulerBorder: false }} /></div> : <div className="flex h-full items-center justify-center"><p className="text-[12px] text-[color:var(--text-tertiary)]">Select a file to edit.</p></div>}
       </div>
     </div>
   );
@@ -1309,7 +1450,7 @@ export function RightPanel({
   };
 
   const tabs: Array<{ id: RightTab; label: string; icon?: typeof Globe }> = [
-    { id: "browser", label: platform === "ios" ? "iPhone Preview" : "Browser", icon: Globe },
+    { id: "browser", label: platform === "ios" ? "iPhone Preview" : platform === "windows" ? "Windows Preview" : "Browser", icon: Globe },
     ...EXTRA_TABS,
   ];
 
@@ -1327,8 +1468,8 @@ export function RightPanel({
               className={cn(
                 "relative flex items-center gap-1.5 rounded-[7px] px-[9px] py-[6px] text-[11.75px] transition-colors duration-100",
                 selected
-                  ? "bg-[#F1F1F0] font-medium text-[#34363A]"
-                  : "text-[#818388] hover:bg-black/[0.03]",
+                  ? "bg-[color:var(--surface-selected)] font-medium text-[color:var(--text-primary)]"
+                  : "text-[color:var(--text-tertiary)] hover:bg-black/[0.03]",
               )}
             >
               <span className="flex items-center gap-1.5">
@@ -1355,6 +1496,25 @@ export function RightPanel({
                 label: selectionChipLabel(payload),
                 detail: selectionContextDetail(payload),
               });
+            }}
+            onPreviewError={onPreviewError}
+            fullscreen={fullscreen}
+            onToggleFullscreen={() => onToggleFullscreen?.()}
+          />
+        ) : platform === "windows" ? (
+          <WindowsPreviewView
+            session={preview.session}
+            frameVersion={preview.frameVersion}
+            onReload={preview.reload}
+            onRestart={preview.restart}
+            onOpenTerminal={onOpenTerminal}
+            onAddContext={onAddContext}
+            agentRunning={agentRunning}
+            projectId={state.activeProjectId}
+            inspectMode={inspectMode}
+            onToggleInspect={() => setInspectMode((mode) => !mode)}
+            onFrameReady={(win) => {
+              frameWindowRef.current = win;
             }}
             onPreviewError={onPreviewError}
             fullscreen={fullscreen}

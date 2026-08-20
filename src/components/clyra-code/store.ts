@@ -8,7 +8,30 @@
  * harness event or a real API response.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type VibeProject } from "./api";
+import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type ReasoningEffort, type VibeProject } from "./api";
+
+const EFFORT_STORAGE_KEY = "clyra-code:reasoning-effort";
+
+/**
+ * The backend only knows whether picking an effort level actually does
+ * anything (`ready`) once a project's runtime has started — never on initial
+ * page load, before any project is open. Callers re-derive this from a fresh
+ * `openCodeStatus()` after every `startRuntime()` call, not just once at boot.
+ */
+function applyEffortFromStatus(
+  status: { effort?: ReasoningEffortStatusLike } | null,
+  currentEffort: ReasoningEffort | null,
+): { effort: ReasoningEffort | null; effortLevels: ReasoningEffort[]; effortReady: boolean } {
+  const effortLevels = status?.effort?.levels ?? [];
+  if (effortLevels.length === 0) return { effort: null, effortLevels: [], effortReady: false };
+  const saved = currentEffort ?? (() => {
+    try { return localStorage.getItem(EFFORT_STORAGE_KEY) as ReasoningEffort | null; } catch { return null; }
+  })();
+  const effort = saved && effortLevels.includes(saved) ? saved : status?.effort?.defaultEffort ?? effortLevels[0];
+  return { effort, effortLevels, effortReady: status?.effort?.ready ?? false };
+}
+
+type ReasoningEffortStatusLike = { levels: ReasoningEffort[]; defaultEffort: ReasoningEffort; ready: boolean };
 
 export type ActionKind =
   | "read"
@@ -26,6 +49,7 @@ export type ActionKind =
   | "fetch"
   | "todo"
   | "permission"
+  | "inspect"
   | "generic";
 
 export type ActionStatus = "queued" | "active" | "success" | "error" | "cancelled";
@@ -66,7 +90,7 @@ export type RunState = "idle" | "starting" | "running" | "complete" | "failed" |
 
 export type ConnectionState = "idle" | "connected" | "reconnecting";
 
-export type ProjectPlatform = "web" | "ios";
+export type ProjectPlatform = "web" | "ios" | "windows";
 
 export type ClyraCodeState = {
   projects: VibeProject[];
@@ -86,6 +110,11 @@ export type ClyraCodeState = {
   restored: boolean;
   /** Active platform mode; drives Browser vs iPhone preview. */
   platform: ProjectPlatform;
+  /** Selected reasoning-effort level for the composer's effort chip. */
+  effort: ReasoningEffort | null;
+  effortLevels: ReasoningEffort[];
+  /** False until the runtime has registered the per-effort model variants — the chip stays visible but selection is a no-op until then. */
+  effortReady: boolean;
 };
 
 const STORAGE_KEY = "clyra-code:last-session";
@@ -107,6 +136,9 @@ const INITIAL: ClyraCodeState = {
   tokens: null,
   restored: false,
   platform: "web",
+  effort: null,
+  effortLevels: [],
+  effortReady: false,
 };
 
 function stripProjectPrefix(path: string) {
@@ -122,6 +154,13 @@ export function detectIosIntent(prompt: string): boolean {
   return ios.test(prompt) && !web.test(prompt);
 }
 
+/** Detect Windows desktop intent so the Windows preview chrome activates automatically. */
+export function detectWindowsIntent(prompt: string): boolean {
+  const windows = /\b(windows\s*(?:11|10)?|win32|winui|win\s+forms|\.net\s+maui|fluent\s+design|microsoft\s+store|nsis)\b/i;
+  const ios = /\b(ios|iphone|ipad|swiftui|xcode)\b/i;
+  return windows.test(prompt) && !ios.test(prompt);
+}
+
 /** Commands often embed absolute project paths; compress them for display. */
 function cleanCommand(command: string) {
   return command
@@ -133,6 +172,9 @@ function cleanCommand(command: string) {
 
 function classifyCommand(command: string): ActionKind {
   const c = command.toLowerCase();
+  if (/forge[/-]inspect/.test(c)) {
+    return "inspect";
+  }
   if (/\b(vitest|jest|pytest|playwright|cypress|mocha|ava|tap|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test)\b/.test(c)) {
     return "test";
   }
@@ -148,6 +190,14 @@ function classifyCommand(command: string): ActionKind {
   return "command";
 }
 
+/** Short label like "scene"/"physics"/"entity foo" from a forge-inspect command or URL. */
+function forgeInspectLabel(value: string): string {
+  const match = value.match(/forge[/-]inspect(?:\.mjs)?[/\s]+([a-z]+)(?:[/\s]+([\w-]+))?/i);
+  if (!match) return "game state";
+  const arg = match[2] && !match[2].startsWith("--") ? ` ${match[2]}` : "";
+  return `${match[1].toLowerCase()}${arg}`;
+}
+
 function classifyTool(tool: string, input: Record<string, unknown>): { kind: ActionKind; target: string } {
   // Providers use slightly different names and argument keys for the same
   // tool. Normalize those real variants here instead of hiding them behind a
@@ -158,7 +208,8 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
   const query = firstString(input, "pattern", "query", "search", "q", "text", "term");
   if (/^(bash|shell|command|execute|exec|run|terminal|shell_command)$/.test(lower)) {
     const cleaned = cleanCommand(command) || tool;
-    return { kind: classifyCommand(cleaned), target: cleaned };
+    const kind = classifyCommand(cleaned);
+    return { kind, target: kind === "inspect" ? forgeInspectLabel(cleaned) : cleaned };
   }
   if (/^(write|write_file|create|create_file|file_write)$/.test(lower)) return { kind: "create", target: stripProjectPrefix(file) };
   if (/^(edit|edit_file|apply_patch|applypatch|str_replace|replace|replace_in_file|patch|file_edit)$/.test(lower)) return { kind: "edit", target: stripProjectPrefix(file) };
@@ -168,7 +219,10 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
   if (/^(grep|glob|search|codebase_search|find_in_files|ripgrep)$/.test(lower)) return { kind: "search", target: query || stripProjectPrefix(file) || tool };
   if (/^(list|ls|tree|list_files|readdir|directory_list)$/.test(lower)) return { kind: "list", target: stripProjectPrefix(file || firstString(input, "dir", "directory", "cwd")) || "project structure" };
   if (/^(browser|preview|screenshot|open_browser)$/.test(lower)) return { kind: "preview", target: String(input.url || query || "live preview") };
-  if (/^(webfetch|fetch|curl)$/.test(lower)) return { kind: "fetch", target: String(input.url || query || tool) };
+  if (/^(webfetch|fetch|curl)$/.test(lower)) {
+    const url = String(input.url || query || tool);
+    return /forge[/-]inspect/.test(url) ? { kind: "inspect", target: forgeInspectLabel(url) } : { kind: "fetch", target: url };
+  }
   if (/^(todowrite|todoread|todo)$/.test(lower)) return { kind: "todo", target: "task list" };
   return { kind: "generic", target: stripProjectPrefix(file) || command || query || tool };
 }
@@ -229,6 +283,46 @@ function looksLikeInternalScratchpad(text: string) {
   return text.length > 420 && signals >= 3;
 }
 
+/**
+ * Clyra re-prompts its own session when a run claims completion without doing
+ * real work. That directive is Clyra talking to itself, not a turn in the
+ * user's conversation, so it never belongs in the transcript. The legacy
+ * opening is matched too, for sessions recorded before the tag existed.
+ */
+function isHarnessDirective(text: string) {
+  const trimmed = text.trimStart();
+  return trimmed.startsWith("[Clyra continuation]") ||
+    trimmed.startsWith("Do not complete this task yet:");
+}
+
+/**
+ * Mode preambles, attachment manifests and the blank-workspace note are
+ * instructions Clyra adds for the agent, not words the user typed. They belong
+ * in what is sent, but a transcript that shows them reads as though the user
+ * pasted a page of machine boilerplate — and it is what makes a chat full of
+ * huge grey blocks instead of the request behind them.
+ *
+ * Stripping happens on read as well as on write, so threads recorded before
+ * this existed also render as the sentence their author actually wrote.
+ */
+export function stripHarnessPreamble(text: string, fallback = "") {
+  let out = text;
+  let guard = 0;
+  // "[Clyra Plan mode] …" and friends, each running to the following blank line.
+  while (/^\[Clyra [^\]]*\][\s\S]*?\n\n/.test(out) && guard++ < 8) {
+    out = out.replace(/^\[Clyra [^\]]*\][\s\S]*?\n\n/, "");
+  }
+  // Names and titles were stored as a truncated slice of the same prompt, so
+  // they hold a single unterminated line of preamble and no user words at all.
+  out = out.replace(/^\[Clyra [^\]]*\][^\n]*$/, "");
+  out = out.replace(/^Attached project files \(inspect these before editing\):\n(?:- .*\n)+\n/, "");
+  const cleaned = out.trim();
+  if (cleaned) return cleaned;
+  // Nothing but preamble: a caller that has a sensible neutral label wins,
+  // otherwise keep the original rather than rendering an empty row.
+  return fallback || text.trim();
+}
+
 export function useClyraCode() {
   const [state, setState] = useState<ClyraCodeState>(INITIAL);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -237,10 +331,15 @@ export function useClyraCode() {
   const runStateRef = useRef<RunState>("idle");
   const diffTimerRef = useRef<number | null>(null);
   const projectsRef = useRef<VibeProject[]>([]);
+  const effortRef = useRef<ReasoningEffort | null>(null);
 
   useEffect(() => {
     runStateRef.current = state.runState;
   }, [state.runState]);
+
+  useEffect(() => {
+    effortRef.current = state.effort;
+  }, [state.effort]);
 
   const closeStream = useCallback(() => {
     if (eventSourceRef.current) {
@@ -307,6 +406,7 @@ export function useClyraCode() {
         if (part.type === "text") {
           const text = String(part.text ?? "");
           if (!text) return;
+          if (isHarnessDirective(text)) return;
           if (looksLikeInternalScratchpad(text)) {
             // The preceding reasoning row stays in place and settles into a
             // compact Thought entry once the next real tool action arrives.
@@ -316,7 +416,8 @@ export function useClyraCode() {
           setState((prev) => {
             // OpenCode replays the submitted user prompt as a part; the
             // optimistic user entry already owns it.
-            if (prev.log.some((e) => e.type === "user" && e.text === text)) return prev;
+            const displayed = stripHarnessPreamble(text);
+            if (prev.log.some((e) => e.type === "user" && e.text === displayed)) return prev;
             // An assistant response means the preceding real reasoning phase
             // has concluded. Keep thought events sequential with the streamed
             // tool work instead of leaving several active at once.
@@ -594,7 +695,13 @@ export function useClyraCode() {
     // unlucky fetch cannot present an empty sidebar over real projects.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const projects = await api.listProjects();
+        // Projects auto-named before prompts and instructions were separated
+        // are stored with the harness preamble as their name. Repair the name
+        // on the way in rather than leaving a rail of identical boilerplate.
+        const projects = (await api.listProjects()).map((project) => ({
+          ...project,
+          name: stripHarnessPreamble(project.name || "", "Untitled project").slice(0, 60),
+        }));
         projectsRef.current = projects;
         setState((prev) => ({ ...prev, projects }));
         return projects;
@@ -603,6 +710,17 @@ export function useClyraCode() {
       }
     }
     return [] as VibeProject[];
+  }, []);
+
+  // A newly created project must be available to the active workspace in the
+  // same render. Waiting for a background project-list refresh leaves a brief
+  // state where a run has started but its project metadata is null.
+  const registerProject = useCallback((project: VibeProject) => {
+    projectsRef.current = [project, ...projectsRef.current.filter((item) => item.id !== project.id)];
+    setState((prev) => ({
+      ...prev,
+      projects: [project, ...prev.projects.filter((item) => item.id !== project.id)],
+    }));
   }, []);
 
   const selectProject = useCallback(
@@ -616,8 +734,11 @@ export function useClyraCode() {
           ...INITIAL,
           projects: prev.projects,
           model: prev.model,
+          effort: prev.effort,
+          effortLevels: prev.effortLevels,
+          effortReady: prev.effortReady,
           activeProjectId: projectId,
-          platform: project?.platform === "ios" ? "ios" : "web",
+          platform: project?.platform === "ios" ? "ios" : project?.platform === "windows" ? "windows" : "web",
         };
       });
       try {
@@ -629,14 +750,19 @@ export function useClyraCode() {
   );
 
   const startRun = useCallback(
-    async (prompt: string, agent?: string) => {
+    async (prompt: string, agent?: string, displayText?: string) => {
       const projectId = activeProjectRef.current;
       if (!projectId || !prompt.trim()) return false;
+      // displayText lets a caller show the user's short original request in
+      // the transcript while sending a richer, tool-engineered instruction to
+      // the agent — used by Clyra Forge, whose kickoff/playtest prompts carry
+      // a lot of harness boilerplate the user never typed.
+      const shown = (displayText ?? prompt).trim() || prompt;
       const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
       const userEntry: LogEntry = {
         type: "user",
         id: `user-${Date.now()}`,
-        text: prompt,
+        text: stripHarnessPreamble(shown),
         ts: Date.now(),
       };
       setState((prev) => ({
@@ -646,26 +772,27 @@ export function useClyraCode() {
         runEndedAt: null,
         error: null,
         restored: false,
-        platform: detectIosIntent(prompt) ? "ios" : prev.platform,
+        platform: detectIosIntent(shown) ? "ios" : detectWindowsIntent(shown) ? "windows" : prev.platform,
         log: [...prev.log, userEntry],
       }));
 
       try {
         await api.startRuntime(projectId);
+        void refreshEffortStatus();
         if (!eventSourceRef.current) openStream(projectId);
 
         let sessionId = activeSessionRef.current;
         if (!sessionId) {
-          const session = await api.createSession(projectId, prompt.slice(0, 72));
+          const session = await api.createSession(projectId, shown.slice(0, 72));
           sessionId = session.id;
           activeSessionRef.current = sessionId;
-          setState((prev) => ({ ...prev, sessionId, sessionTitle: session.title ?? prompt.slice(0, 72) }));
+          setState((prev) => ({ ...prev, sessionId, sessionTitle: stripHarnessPreamble(session.title ?? shown, "New chat").slice(0, 72) }));
           // First message names the project: a fresh project created without
           // a name takes the request as its title.
           const fresh = projectsRef.current.find((p) => p.id === projectId);
           if (fresh && /^(new project|untitled)$/i.test(fresh.name.trim())) {
             void api
-              .renameProject(projectId, session.title ?? prompt.slice(0, 60))
+              .renameProject(projectId, stripHarnessPreamble(session.title ?? shown, "Untitled project").slice(0, 60))
               .then((renamed) => {
                 setState((prev) => ({
                   ...prev,
@@ -678,7 +805,7 @@ export function useClyraCode() {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, sessionId }));
           } catch { /* storage unavailable */ }
         }
-        await api.sendPrompt(projectId, sessionId, prompt, agent);
+        await api.sendPrompt(projectId, sessionId, prompt, agent, effortRef.current ?? undefined);
         setState((prev) =>
           prev.runState === "starting" ? { ...prev, runState: "running" } : prev,
         );
@@ -779,6 +906,7 @@ export function useClyraCode() {
     async (projectId: string, sessionId: string) => {
       // Bring the runtime up so persisted sessions can be queried again.
       await api.startRuntime(projectId).catch(() => undefined);
+      void refreshEffortStatus();
       const messages = await api.sessionMessages(projectId, sessionId).catch(() => null);
       if (!messages) return false;
       const log: LogEntry[] = [];
@@ -834,10 +962,11 @@ export function useClyraCode() {
   const newChat = useCallback(
     async (projectId: string) => {
       await api.startRuntime(projectId);
+      void refreshEffortStatus();
       const session = await api.createSession(projectId, "New chat");
       selectProject(projectId);
       activeSessionRef.current = session.id;
-      setState((prev) => ({ ...prev, sessionId: session.id, sessionTitle: session.title ?? "New chat" }));
+      setState((prev) => ({ ...prev, sessionId: session.id, sessionTitle: stripHarnessPreamble(session.title ?? "", "New chat") }));
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, sessionId: session.id }));
       } catch { /* storage unavailable */ }
@@ -863,13 +992,30 @@ export function useClyraCode() {
       sessionTitle: "",
       model: status?.model ?? null,
       platform: "web",
+      ...applyEffortFromStatus(status, null),
     }));
   }, [loadProjects]);
+
+  /**
+   * `effortReady` is false at boot (no runtime yet) and only becomes true
+   * once a project's OpenCode server has actually started and confirmed its
+   * model has the effort variants — call after every startRuntime() so the
+   * chip doesn't stay stuck disabled for the rest of the session.
+   */
+  const refreshEffortStatus = useCallback(async () => {
+    const status = await api.openCodeStatus().catch(() => null);
+    setState((prev) => ({ ...prev, ...applyEffortFromStatus(status, prev.effort) }));
+  }, []);
 
   useEffect(() => {
     void boot();
     // boot() is intentionally run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setEffort = useCallback((effort: ReasoningEffort) => {
+    setState((prev) => (prev.effortLevels.includes(effort) ? { ...prev, effort } : prev));
+    try { localStorage.setItem(EFFORT_STORAGE_KEY, effort); } catch { /* storage unavailable */ }
   }, []);
 
   const derived = useMemo(() => {
@@ -929,6 +1075,7 @@ export function useClyraCode() {
     state,
     ...derived,
     loadProjects,
+    registerProject,
     selectProject,
     selectThread,
     newChat,
@@ -936,6 +1083,7 @@ export function useClyraCode() {
     cancelRun,
     replyPermission,
     recordVisualEdit,
+    setEffort,
     setState,
   };
 }
@@ -964,8 +1112,9 @@ function rebuildMessage(
   const ts = message.info?.time?.created ?? Date.now();
   for (const part of message.parts ?? []) {
     if (part.type === "text" && part.text) {
+      if (isHarnessDirective(part.text)) continue;
       if (role === "user") {
-        log.push({ type: "user", id: `user-${message.info.id}-${part.id}`, text: part.text, ts });
+        log.push({ type: "user", id: `user-${message.info.id}-${part.id}`, text: stripHarnessPreamble(part.text), ts });
       } else {
         log.push({
           type: "assistant",

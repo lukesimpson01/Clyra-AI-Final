@@ -23,6 +23,9 @@ export type VoiceConfig = {
   asyncSampleRate: number;
   asyncSttEnabled: boolean;
   asyncSttModel: string;
+  fishApiKey: string;
+  fishVoiceId: string;
+  fishSampleRate: number;
 };
 
 export function loadVoiceConfig(): VoiceConfig {
@@ -58,10 +61,13 @@ export function loadVoiceConfig(): VoiceConfig {
     asyncFallbackModel: process.env.ASYNC_TTS_FALLBACK_MODEL ?? "async_flash_v1.5",
     asyncVoiceId: process.env.ASYNC_VOICE_ID ?? "e0f39dc4-f691-4e78-bba5-5c636692cc04",
     asyncSampleRate: Number(process.env.ASYNC_TTS_SAMPLE_RATE ?? 44100),
-    // Prefer Async ASR + Flash TTS whenever the API key is present. Opt out with
-    // ASYNC_STT_ENABLED=false to force the local Faster-Whisper worker.
+    // Prefer streaming Async ASR whenever the API key is present; the active
+    // call gateway falls back to Fish batch ASR if the stream yields no text.
     asyncSttEnabled: process.env.ASYNC_STT_ENABLED !== "false" && Boolean(process.env.ASYNC_API_KEY),
     asyncSttModel: process.env.ASYNC_STT_MODEL ?? "async_asr_v1.0",
+    fishApiKey: process.env.FISH_API_KEY ?? "",
+    fishVoiceId: process.env.FISH_VOICE_ID ?? process.env.FISH_VOICE_ID_CLYRA ?? "",
+    fishSampleRate: 24000,
   };
 }
 
@@ -70,10 +76,10 @@ export function voiceConfigPublic(config: VoiceConfig) {
     enabled: config.enabled,
     sampleRate: config.sampleRate,
     chunkMs: config.chunkMs,
-    sttModel: config.sttModel,
+    sttModel: config.asyncSttEnabled ? config.asyncSttModel : "fish-asr",
     ttsVoice: config.ttsVoice,
-    ttsProvider: "async",
-    ttsModel: config.asyncModel,
+    ttsProvider: "fish-audio",
+    ttsModel: "s2-pro",
     transport: config.livekitUrl ? "livekit" : "websocket",
   };
 }

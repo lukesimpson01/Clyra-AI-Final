@@ -17,6 +17,9 @@ export default defineConfig(() => {
         input: {
           main: path.resolve(__dirname, 'index.html'),
           todo: path.resolve(__dirname, 'todo.html'),
+          // The sandboxed game runtime is its own document (see game-runtime.html).
+          gameRuntime: path.resolve(__dirname, 'game-runtime.html'),
+          gameRuntime2d: path.resolve(__dirname, 'game-runtime-2d.html'),
         },
         output: {
           manualChunks(id) {
@@ -41,12 +44,18 @@ export default defineConfig(() => {
             if (id.includes('/components/WebBrowserWorkspace')) return 'web-browser';
             if (id.includes('/components/CreatorStudioWorkspace')) return 'creator-studio';
             if (id.includes('/components/AIClipper')) return 'ai-clipper';
+            // Game Maker is deliberately NOT manually chunked. It has two
+            // entry points — the editor app and the sandboxed game runtime —
+            // and forcing its modules into named chunks merges the two graphs,
+            // which drags React into the runtime document. Rollup's automatic
+            // splitting keeps them apart and honours the dynamic engine
+            // imports in runtime/boot.ts.
           },
         },
       },
     },
     optimizeDeps: {
-      entries: ['index.html', 'todo.html'],
+      entries: ['index.html', 'todo.html', 'game-runtime.html', 'game-runtime-2d.html'],
       // Commit the eager React bundle immediately. In middleware mode Vite's
       // default crawl hold can otherwise invalidate the entry module after the
       // first browser request and return a transient 504 for its old hash.

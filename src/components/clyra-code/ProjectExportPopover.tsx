@@ -21,7 +21,7 @@ export function ProjectExportPopover({ projectId, projectName, ios = false }: Pr
         aria-label={title}
         title={title}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-[31px] w-[31px] items-center justify-center rounded-[9px] text-[#5F6368] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[#27282C]"
+        className="flex h-[31px] w-[31px] items-center justify-center rounded-[9px] text-[color:var(--text-secondary)] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[color:var(--text-primary)]"
       >
         <Download className="h-[16px] w-[16px]" strokeWidth={1.7} />
       </button>
@@ -35,26 +35,26 @@ export function ProjectExportPopover({ projectId, projectName, ios = false }: Pr
             className="absolute right-0 top-[38px] w-[320px] overflow-hidden rounded-[10px] border border-black/[0.08] bg-white py-2 shadow-[0_12px_30px_rgba(15,23,42,0.11)]"
           >
             <div className="flex items-start gap-2 px-3 pb-2">
-              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-black/[0.04] text-[#303136]"><Download className="h-[14px] w-[14px]" strokeWidth={1.65} /></div>
+              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-black/[0.04] text-[color:var(--text-primary)]"><Download className="h-[14px] w-[14px]" strokeWidth={1.65} /></div>
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-[#292A2E]">Export</p>
-                <p className="mt-0.5 truncate text-[11.5px] text-[#818388]">{projectName}</p>
+                <p className="text-[13px] font-medium text-[color:var(--text-primary)]">Export</p>
+                <p className="mt-0.5 truncate text-[11.5px] text-[color:var(--text-tertiary)]">{projectName}</p>
               </div>
-              <button type="button" aria-label="Close export" onClick={() => setOpen(false)} className="-mr-1 -mt-1 flex h-6 w-6 items-center justify-center rounded-[7px] text-[#96989D] transition-colors hover:bg-black/[0.04] hover:text-[#4C4E53]"><X className="h-[13px] w-[13px]" /></button>
+              <button type="button" aria-label="Close export" onClick={() => setOpen(false)} className="-mr-1 -mt-1 flex h-6 w-6 items-center justify-center rounded-[7px] text-[color:var(--text-tertiary)] transition-colors hover:bg-black/[0.04] hover:text-[color:var(--text-secondary)]"><X className="h-[13px] w-[13px]" /></button>
             </div>
             <div className="border-t border-black/[0.055] px-2 py-1">
-              <a href={href} download className="flex min-h-9 items-center gap-2 rounded-[7px] px-2.5 text-[12px] text-[#3C3E43] transition-colors hover:bg-black/[0.035]">
-                <FileArchive className="h-[14px] w-[14px] text-[#64666B]" strokeWidth={1.55} />
+              <a href={href} download className="flex min-h-9 items-center gap-2 rounded-[7px] px-2.5 text-[12px] text-[color:var(--text-primary)] transition-colors hover:bg-black/[0.035]">
+                <FileArchive className="h-[14px] w-[14px] text-[color:var(--text-secondary)]" strokeWidth={1.55} />
                 <span className="min-w-0 flex-1">Export project ZIP</span>
               </a>
               {ios ? (
-                <a href={href} download className="flex min-h-9 items-center gap-2 rounded-[7px] px-2.5 text-[12px] text-[#3C3E43] transition-colors hover:bg-black/[0.035]">
-                  <FileCode2 className="h-[14px] w-[14px] text-[#64666B]" strokeWidth={1.55} />
+                <a href={href} download className="flex min-h-9 items-center gap-2 rounded-[7px] px-2.5 text-[12px] text-[color:var(--text-primary)] transition-colors hover:bg-black/[0.035]">
+                  <FileCode2 className="h-[14px] w-[14px] text-[color:var(--text-secondary)]" strokeWidth={1.55} />
                   <span className="min-w-0 flex-1">Export Xcode source</span>
                 </a>
               ) : null}
             </div>
-            {ios ? <p className="border-t border-black/[0.055] px-3 pt-2 text-[10.75px] leading-[1.45] text-[#8A8D92]">Source exports are ready locally. IPA signing and App Store delivery require a configured Apple build provider.</p> : null}
+            {ios ? <p className="border-t border-black/[0.055] px-3 pt-2 text-[10.75px] leading-[1.45] text-[color:var(--text-tertiary)]">Source exports are ready locally. IPA signing and App Store delivery require a configured Apple build provider.</p> : null}
           </motion.div>
         ) : null}
       </AnimatePresence>

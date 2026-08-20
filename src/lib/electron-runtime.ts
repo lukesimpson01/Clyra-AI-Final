@@ -1,5 +1,7 @@
 export type ElectronSurfaceBounds = { x: number; y: number; width: number; height: number };
 
+import type { ActivitySnapshot, DeviceProfile, InternetSpeedTestResult, InternetSpeedTestStage, ScanEvent } from "../features/system-care/shared/types";
+
 export type ClyraDesktopBridge = {
   runtime: "electron";
   preview?: {
@@ -55,6 +57,18 @@ export type ClyraDesktopBridge = {
       };
     }>;
     onToggle: (callback: () => void) => () => void;
+  };
+  appLauncher?: {
+    onToggle: (callback: () => void) => () => void;
+  };
+  systemCare?: {
+    profile: () => Promise<{ ok: boolean; profile?: DeviceProfile; error?: string }>;
+    activity: () => Promise<{ ok: boolean; activity?: ActivitySnapshot; error?: string }>;
+    speedTest: () => Promise<{ ok: boolean; result?: InternetSpeedTestResult; error?: string }>;
+    onSpeedTestStage: (callback: (stage: InternetSpeedTestStage) => void) => () => void;
+    smartScan: () => Promise<{ ok: boolean; jobId?: string; error?: string }>;
+    cancel: (jobId: string) => Promise<{ ok: boolean }>;
+    onScanEvent: (callback: (event: ScanEvent) => void) => () => void;
   };
   dictation: {
     toggle?: () => Promise<{ ok: boolean }>;

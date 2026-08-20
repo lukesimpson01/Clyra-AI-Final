@@ -17,6 +17,7 @@ import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
 import { DesktopControlService } from "./desktop-control.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
+import { SystemCareService } from "./system-care-service.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +58,50 @@ let localMemoryManager = null;
 let companionManager = null;
 let screenCaptureService = null;
 let desktopControlService = null;
+const systemCareService = new SystemCareService();
+const systemCareIconCache = new Map();
+
+function applicationIconTarget(executable) {
+  if (!executable) return null;
+  if (process.platform === "darwin") return executable.match(/^(.+?\.app)(?:\/|$)/i)?.[1] || executable;
+  return executable;
+}
+
+async function readMacBundleIcon(bundlePath) {
+  if (process.platform !== "darwin" || !bundlePath?.toLowerCase().endsWith(".app")) return null;
+  try {
+    const resources = path.join(bundlePath, "Contents", "Resources");
+    const plist = await fs.readFile(path.join(bundlePath, "Contents", "Info.plist"), "utf8").catch(() => "");
+    const declared = plist.match(/<key>CFBundleIconFile<\/key>\s*<string>([^<]+)<\/string>/i)?.[1]?.trim();
+    const declaredFile = declared ? (declared.toLowerCase().endsWith(".icns") ? declared : `${declared}.icns`) : null;
+    const candidates = declaredFile ? [declaredFile] : (await fs.readdir(resources)).filter((file) => file.toLowerCase().endsWith(".icns")).sort((a, b) => Number(!/appicon|app\.icns|icon\.icns/i.test(a)) - Number(!/appicon|app\.icns|icon\.icns/i.test(b)));
+    for (const fileName of candidates) {
+      const image = nativeImage.createFromPath(path.join(resources, fileName));
+      if (!image.isEmpty()) return image;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function enrichSystemCareIcons(activity) {
+  const processes = await Promise.all(activity.processes.map(async (processGroup, index) => {
+    const target = applicationIconTarget(processGroup.executable);
+    if (!target || index >= 48) return processGroup;
+    if (systemCareIconCache.has(target)) return { ...processGroup, iconDataUrl: systemCareIconCache.get(target) || undefined };
+    try {
+      const icon = await readMacBundleIcon(target) || await app.getFileIcon(target, { size: "normal" });
+      const dataUrl = icon.isEmpty() ? "" : icon.resize({ width: 48, height: 48, quality: "best" }).toDataURL();
+      systemCareIconCache.set(target, dataUrl);
+      return { ...processGroup, iconDataUrl: dataUrl || undefined };
+    } catch {
+      systemCareIconCache.set(target, "");
+      return processGroup;
+    }
+  }));
+  return { ...activity, processes };
+}
 let serviceProcess = null;
 let serviceLaunchError = null;
 let serviceFallbackStarted = false;
@@ -796,6 +841,28 @@ async function askCompanionModel({ question, visionSummary, ocrText, controlling
 function registerIpc() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  ipcMain.handle("system-care:profile", async (event) => {
+    authorize(event);
+    return { ok: true, profile: await systemCareService.profile() };
+  });
+  ipcMain.handle("system-care:activity", async (event) => {
+    authorize(event);
+    return { ok: true, activity: await enrichSystemCareIcons(await systemCareService.activity()) };
+  });
+  ipcMain.handle("system-care:speed-test", async (event) => {
+    authorize(event);
+    return { ok: true, result: await systemCareService.speedTest((stage) => {
+      if (!event.sender.isDestroyed()) event.sender.send("system-care:speed-test-stage", stage);
+    }) };
+  });
+  ipcMain.handle("system-care:smart-scan", (event) => {
+    authorize(event);
+    return { ok: true, ...systemCareService.startSmartScan(event.sender) };
+  });
+  ipcMain.handle("system-care:cancel", (event, payload = {}) => {
+    authorize(event);
+    return systemCareService.cancel(String(payload.jobId || ""));
+  });
   ipcMain.handle("browser:get-state", (event) => { authorize(event); return { ok: true, state: browserManager.getState() }; });
   ipcMain.handle("browser:set-surface", async (event, payload) => { authorize(event); await browserManager.setSurface(payload || {}); return { ok: true }; });
   ipcMain.handle("browser:navigate", async (event, { target }) => { authorize(event); return { ok: true, state: await browserManager.navigate(target) }; });
@@ -1215,16 +1282,57 @@ async function createWindow() {
   await companionManager.initialize();
   registerIpc();
 
-  // Global Task View — works even when a BrowserView page owns keyboard focus.
-  try {
-    globalShortcut.register("CommandOrControl+J", () => {
-      if (uiView && !uiView.webContents.isDestroyed()) {
-        uiView.webContents.send("taskview:toggle");
+  // Task View and the App Launcher are both app-wide overlays: they must
+  // answer from any Clyra surface, including the ones that are native
+  // WebContentsViews (the browser, embedded previews, OpenCluely) where the
+  // React window never sees a keydown at all. A renderer-only listener cannot
+  // cover those, so both chords are registered as real shortcuts.
+  //
+  // They are registered while Clyra is frontmost and released the moment it is
+  // not. ⌘K in particular is a standard shortcut in almost every application,
+  // so holding it system-wide would break it everywhere else on the machine.
+  const APP_OVERLAY_SHORTCUTS = [
+    ["CommandOrControl+J", "taskview:toggle"],
+    ["CommandOrControl+K", "applauncher:toggle"],
+  ];
+  let overlayShortcutsHeld = false;
+
+  const registerOverlayShortcuts = () => {
+    if (overlayShortcutsHeld) return;
+    overlayShortcutsHeld = true;
+    for (const [accelerator, channel] of APP_OVERLAY_SHORTCUTS) {
+      try {
+        const registered = globalShortcut.register(accelerator, () => {
+          summonMainWindow();
+          if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send(channel);
+        });
+        if (!registered) console.warn(`[shortcuts] ${accelerator} is already owned by another app.`);
+      } catch (error) {
+        console.warn(`[shortcuts] ${accelerator} unavailable:`, error);
       }
-    });
-  } catch (error) {
-    console.warn("[taskview] global shortcut unavailable:", error);
-  }
+    }
+  };
+
+  const releaseOverlayShortcuts = () => {
+    if (!overlayShortcutsHeld) return;
+    overlayShortcutsHeld = false;
+    for (const [accelerator] of APP_OVERLAY_SHORTCUTS) {
+      try { globalShortcut.unregister(accelerator); } catch { /* already released */ }
+    }
+  };
+
+  app.on("browser-window-focus", registerOverlayShortcuts);
+  app.on("browser-window-blur", () => {
+    // `blur` also fires when focus moves between Clyra's own windows (the
+    // dictation pill, the companion panel). Only release once nothing of ours
+    // holds focus at all.
+    setTimeout(() => {
+      if (!BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused())) {
+        releaseOverlayShortcuts();
+      }
+    }, 60);
+  });
+  if (mainWindow?.isFocused()) registerOverlayShortcuts();
 
   // ⌘/ — activate OpenCluely overlay (show/hide via local control API).
   try {
@@ -1346,9 +1454,37 @@ app.whenReady().then(() => {
   app.quit();
 });
 
+/**
+ * Brings the Clyra window to the user rather than the user to the window.
+ *
+ * On macOS a hidden or minimised window lives on the Space it was left on, so
+ * `show()` alone can silently raise it two desktops away — the overlay opens
+ * where nobody is looking. Briefly marking it visible on all workspaces pulls
+ * it onto the active Space (and over a fullscreen app) before restoring the
+ * normal single-Space behaviour.
+ */
+function summonMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (process.platform === "darwin") {
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  app.focus({ steal: true });
+  if (process.platform === "darwin") {
+    // Restore on the next tick so the move to the active Space has committed.
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setVisibleOnAllWorkspaces(false);
+      }
+    }, 120);
+  }
+}
+
 app.on("activate", () => {
   if (mainWindow) {
-    mainWindow.show();
+    summonMainWindow();
     return;
   }
   // macOS can emit `activate` during initial boot. Wait for the boot service
@@ -1356,7 +1492,7 @@ app.on("activate", () => {
   if (bootPromise) {
     void bootPromise.then(() => {
       if (!mainWindow) return createWindow();
-      mainWindow.show();
+      summonMainWindow();
       return mainWindow;
     }).catch(() => undefined);
   }

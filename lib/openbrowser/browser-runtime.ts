@@ -919,7 +919,12 @@ async function inspectPageOnce(activePage: Page): Promise<Omit<StructuredObserva
     };
   }, { maxChars: MAX_OBSERVATION_CHARS });
 
-  const fingerprint = crypto.createHash("sha1").update(`${data.url}|${data.title}|${data.visibleText.slice(0, 80).join("|")}|${data.elements.map((item) => `${item.id}:${item.value}:${item.checked}`).join("|")}`).digest("hex").slice(0, 16);
+  // `visibleText` intentionally samples structured text for the model, but
+  // may omit a dynamic region after its cap. Keep the verification fingerprint
+  // sensitive to changes in the readable page body as well: otherwise a
+  // genuine click (for example, adding a cart item) can be reported as a
+  // failure merely because it changed text outside the sampled list.
+  const fingerprint = crypto.createHash("sha1").update(`${data.url}|${data.title}|${data.visibleText.slice(0, 80).join("|")}|${data.mainText.slice(0, MAX_OBSERVATION_CHARS)}|${data.elements.map((item) => `${item.id}:${item.value}:${item.checked}`).join("|")}`).digest("hex").slice(0, 16);
   const signals = injectionSignals([...data.visibleText, data.mainText]);
   return {
     page: { url: data.url, title: data.title, loading: data.loading, fingerprint },

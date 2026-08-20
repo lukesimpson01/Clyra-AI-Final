@@ -12,6 +12,7 @@ import type { Server } from "node:http";
 import { createRequire } from "node:module";
 import { WebSocket, WebSocketServer } from "ws";
 import { clyraDataPath, clyraResourcePath } from "./runtime-paths";
+import { confineArgv, seatbeltAvailable, sharedCacheRoots } from "./sandbox/seatbelt";
 
 const require = createRequire(import.meta.url);
 
@@ -32,10 +33,15 @@ function spawnShell(cwd: string): PtyLike | null {
     process.platform === "win32"
       ? "powershell.exe"
       : process.env.SHELL || "/bin/bash";
+  // Confines this shell's file writes to its project directory (plus shared
+  // package-manager caches) — see lib/sandbox/seatbelt.ts. A no-op outside
+  // macOS or when Seatbelt is unavailable: the terminal spawns exactly as
+  // it did before.
+  const confined = seatbeltAvailable() ? confineArgv(shell, [], [cwd, ...sharedCacheRoots()]) : { command: shell, args: [] };
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pty = require("node-pty");
-    const process_ = pty.spawn(shell, [], {
+    const process_ = pty.spawn(confined.command, confined.args, {
       name: "xterm-256color",
       cols: 100,
       rows: 30,
@@ -70,13 +76,19 @@ function spawnShell(cwd: string): PtyLike | null {
     const { spawn } = require("node:child_process");
     const isWindows = process.platform === "win32";
     const expectScript = "set timeout -1; spawn -noecho $env(CLYRA_TERMINAL_SHELL) -i; interact";
+    // Seatbelt confines a process tree, so wrapping the outer command here
+    // (expect, which itself spawns $CLYRA_TERMINAL_SHELL) confines the real
+    // shell it launches too.
+    const confinedExpect = seatbeltAvailable()
+      ? confineArgv("/usr/bin/expect", ["-c", expectScript], [cwd, ...sharedCacheRoots()])
+      : { command: "/usr/bin/expect", args: ["-c", expectScript] };
     const child = isWindows
       ? spawn(shell, ["-NoLogo", "-NoExit"], {
           cwd,
           env: { ...process.env, TERM: "xterm-256color" },
           stdio: ["pipe", "pipe", "pipe"],
         })
-      : spawn("/usr/bin/expect", ["-c", expectScript], {
+      : spawn(confinedExpect.command, confinedExpect.args, {
       cwd,
       env: { ...process.env, TERM: "xterm-256color", CLYRA_TERMINAL_SHELL: shell },
       stdio: ["pipe", "pipe", "pipe"],

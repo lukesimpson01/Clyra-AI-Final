@@ -38,6 +38,7 @@ const CANDIDATE_BASES = [
 const argv = process.argv.slice(2);
 const dictationMode = argv.includes("--dictation");
 const echoPrompt = argv.includes("--echo");
+const serverVadMode = argv.includes("--server-vad");
 const inputArg = argv.find((a) => !a.startsWith("--"))
   ? path.resolve(argv.find((a) => !a.startsWith("--")))
   : "";
@@ -203,9 +204,13 @@ async function streamAudio(ws, sessionId, pcm, marks) {
     }));
     await sleep(Math.max(4, CHUNK_MS * 0.5));
   }
-  ws.send(JSON.stringify({ type: "flush", sessionId }));
-  marks.flushAt = Date.now();
-  console.log("flush_sent");
+  if (!serverVadMode) {
+    ws.send(JSON.stringify({ type: "flush", sessionId }));
+    marks.flushAt = Date.now();
+    console.log("flush_sent");
+  } else {
+    console.log("flush_skipped server_vad=true");
+  }
 }
 
 async function runTurn({ baseUrl, pcmPath, outDir, mode }) {

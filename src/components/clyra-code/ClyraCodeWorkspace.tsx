@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Globe2, Monitor, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Smartphone } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "./api";
-import { useClyraCode, type AgentAction } from "./store";
+import { stripHarnessPreamble, useClyraCode, type AgentAction } from "./store";
 import { Sidebar, ClyraMark, type ChatThread } from "./Sidebar";
 import { Conversation } from "./Conversation";
 import { Composer, type ComposerAttachment, type ComposerCommand, type ComposerContext } from "./Composer";
@@ -60,10 +60,12 @@ export default function ClyraCodeWorkspace() {
     selectThread,
     newChat,
     loadProjects,
+    registerProject,
     startRun,
     cancelRun,
     replyPermission,
     recordVisualEdit,
+    setEffort,
   } = useClyraCode();
 
   useEffect(() => {
@@ -94,6 +96,14 @@ export default function ClyraCodeWorkspace() {
     undefined,
   );
   const [welcomeSubtitle] = useState(() => WELCOME_SUBTITLES[Math.floor(Math.random() * WELCOME_SUBTITLES.length)]);
+  // A prompt that has been sent but whose project/session round-trip has not
+  // finished. It lives here rather than in the store because creating a
+  // project resets store state, which would wipe an optimistic log entry.
+  const [pendingUser, setPendingUser] = useState<string | null>(null);
+  // True while the transcript is still revealing edit boxes. The harness can
+  // finish a second or two before the visible work does, and to the user
+  // "done" means the last box has closed — not that the socket went quiet.
+  const [transcriptPlaying, setTranscriptPlaying] = useState(false);
   const [threadsByProject, setThreadsByProject] = useState<Record<string, ChatThread[]>>({});
   const [hiddenProjectIds, setHiddenProjectIds] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("clyra-code:hidden-projects") || "[]"); } catch { return []; }
@@ -104,14 +114,18 @@ export default function ClyraCodeWorkspace() {
     setSuggestion((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
   }, []);
 
-  const refreshThreads = useCallback(async () => {
-    const rows = await Promise.all(state.projects.map(async (project) => {
-      const threads = await api.listSessions(project.id).catch(() => [] as ChatThread[]);
-      return [project.id, threads] as const;
-    }));
-    setThreadsByProject(Object.fromEntries(rows));
-  }, [state.projects]);
+  const refreshThreads = useCallback(async (projectId = state.activeProjectId) => {
+    if (!projectId) return;
+    const threads = await api.listSessions(projectId).catch(() => [] as ChatThread[]);
+    // Threads recorded before prompts and instructions were separated carry
+    // the harness preamble in their title. Render the request, not the recipe.
+    const titled = threads.map((thread) => ({ ...thread, title: stripHarnessPreamble(thread.title || "", "New chat") }));
+    setThreadsByProject((current) => ({ ...current, [projectId]: titled }));
+  }, [state.activeProjectId]);
 
+  // Listing every project's sessions starts a runtime for every project on
+  // launch. Refresh only the selected workspace; inactive rows remain quiet
+  // until the user actually opens them.
   useEffect(() => { void refreshThreads(); }, [refreshThreads, state.sessionId, state.runState]);
 
   const hideProject = useCallback((projectId: string) => {
@@ -142,7 +156,14 @@ export default function ClyraCodeWorkspace() {
     setAgentActivityCount(Object.values(state.actions).filter((action) => /^(command|build|check|test|preview)$/.test(action.kind)).length);
   }, [state.actions]);
 
-  const preview = usePreview(state.activeProjectId, buildVersion);
+  const hasPreviewableSourceAction = actionList.some(
+    (action) => /^(create|edit)$/.test(action.kind) && action.status !== "error",
+  );
+  const preview = usePreview(
+    state.activeProjectId,
+    buildVersion,
+    Boolean(state.activeProjectId && (hasPreviewableSourceAction || buildVersion > 0 || state.restored)),
+  );
 
   /* -------------------- resizable centre column -------------------- */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -245,15 +266,18 @@ export default function ClyraCodeWorkspace() {
     setCreating(true);
     try {
       const project = await api.createProject(name.trim() || "New project");
-      await loadProjects();
+      registerProject(project);
       selectProject(project.id);
+      // Project creation should feel immediate. Reconcile the rail in the
+      // background instead of making the first message wait on a full list.
+      void loadProjects();
       return project;
     } catch {
       /* surfaced by empty state */
     } finally {
       setCreating(false);
     }
-  }, [creating, loadProjects, selectProject]);
+  }, [creating, loadProjects, registerProject, selectProject]);
 
   const requestNewProject = useCallback(() => {
     if (creating) return;
@@ -289,7 +313,7 @@ export default function ClyraCodeWorkspace() {
     if (!url) return;
     await window.clyraDesktop?.preview?.launch({ url, title: activeProject?.name || "Clyra desktop project" });
   }, [activeProject?.name, preview.session?.url]);
-  const hasConversation = state.log.length > 0;
+  const hasConversation = state.log.length > 0 || pendingUser !== null;
 
   // Keep preview content out of the width animation.  The pane itself glides
   // in first; the browser or iPhone surface then fades up at its final width,
@@ -325,25 +349,67 @@ export default function ClyraCodeWorkspace() {
     [startRun],
   );
 
+  // "Does this project actually contain anything the agent needs to read?"
+  // Only asked before the first prompt of a session, which is the one moment
+  // the answer changes how the run should open. Anything that goes wrong here
+  // falls back to the agent's normal behaviour rather than suppressing a
+  // legitimate inspection phase.
+  const isBlankProject = useCallback(async (projectId: string) => {
+    try {
+      const { files } = await api.getProject(projectId);
+      return !files.some((file) => {
+        const name = file.path.split("/").pop() ?? "";
+        if (!name || name.startsWith(".")) return false;
+        if (/^(node_modules|dist|build)\//.test(file.path)) return false;
+        return true;
+      });
+    } catch {
+      return false;
+    }
+  }, []);
+
   const submitPrompt = useCallback(
     async (text: string, attachments: ComposerAttachment[] = [], command?: ComposerCommand) => {
       window.dispatchEvent(new CustomEvent("clyra:workflow-tabs-hide"));
+      // Show the prompt and open the workspace before any network work. Project
+      // creation, upload and session setup all happen behind an interface that
+      // has already acknowledged the send.
+      const trimmed = text.trim();
+      if (trimmed) setPendingUser(trimmed);
+      setRightPanelOpen(true);
       let projectId = state.activeProjectId;
+      let createdForThisPrompt = false;
       if (!projectId) {
         const project = await createProject();
         projectId = project?.id ?? null;
+        createdForThisPrompt = Boolean(projectId);
       }
-      setRightPanelOpen(true);
-      if (!projectId) return false;
+      if (!projectId) {
+        setPendingUser(null);
+        return false;
+      }
       try {
-        const uploaded = attachments.length
-          ? await api.uploadAttachments(projectId, await Promise.all(attachments.map(async (attachment) => ({
+        // Upload and the blank-workspace probe are independent of each other,
+        // and only the probe's answer gates the prompt. Running them together
+        // keeps the agent's actual start as early as possible.
+        const uploadTask = attachments.length
+          ? Promise.all(attachments.map(async (attachment) => ({
               name: attachment.file.name,
               relativePath: (attachment.file as File & { webkitRelativePath?: string }).webkitRelativePath || undefined,
               type: attachment.file.type || "application/octet-stream",
               data: await encodeAttachment(attachment.file),
-            }))))
-          : { attachments: [] };
+            }))).then((files) => api.uploadAttachments(projectId!, files))
+          : Promise.resolve({ attachments: [] as Array<{ name: string; path: string; type: string }> });
+        // A project the user made from the rail and is now prompting for the
+        // first time is just as empty as one created by this very prompt.
+        // Both should skip the pointless "let me look around" phase. Once a
+        // session exists the question is settled, so it is never re-asked.
+        const blankTask = createdForThisPrompt
+          ? Promise.resolve(true)
+          : state.sessionId
+            ? Promise.resolve(false)
+            : isBlankProject(projectId);
+        const [uploaded, blankWorkspace] = await Promise.all([uploadTask, blankTask]);
         const attachmentContext = uploaded.attachments.length
           ? `Attached project files (inspect these before editing):\n${uploaded.attachments.map((attachment) => `- ${attachment.path} (${attachment.type})`).join("\n")}\n\n`
           : "";
@@ -354,13 +420,40 @@ export default function ClyraCodeWorkspace() {
           debug: "[Clyra Debug mode] Reproduce the reported issue, inspect real logs and relevant code, make the smallest correct repair, then rerun the reproduction and validation.\n\n",
           explain: "[Clyra Explain mode] Inspect the actual repository and explain the requested architecture or code. Do not edit files unless the user separately asks for a change.\n\n",
         };
-        return startRun((command ? commandInstruction[command] : "") + attachmentContext + text, command === "plan" ? "plan" : undefined);
+        const blankWorkspaceInstruction = blankWorkspace
+          ? "[Clyra blank workspace] This project was just created and contains no user source. Do not list, read or search merely to establish that it is empty. Your first tool action must create the smallest appropriate project scaffold from the request; inspect only files you create afterwards.\n\n"
+          : "";
+        // The mode preamble, attachment manifest and blank-workspace note are
+        // harness instructions, not something the user wrote. They go to the
+        // agent; the transcript, the session title and the workspace header
+        // all show the sentence the user actually typed.
+        return startRun(
+          blankWorkspaceInstruction + (command ? commandInstruction[command] : "") + attachmentContext + text,
+          command === "plan" ? "plan" : undefined,
+          text,
+        );
       } catch {
+        setPendingUser(null);
         return false;
       }
     },
-    [createProject, startRun, state.activeProjectId],
+    [createProject, isBlankProject, startRun, state.activeProjectId, state.sessionId],
   );
+
+  // The real user entry has landed in the log — drop the optimistic copy on the
+  // same commit so the bubble is never rendered twice.
+  useEffect(() => {
+    if (!pendingUser) return;
+    const landed = state.log.some((entry) => entry.type === "user" && entry.text.trim() === pendingUser);
+    if (landed) setPendingUser(null);
+  }, [pendingUser, state.log]);
+
+  // Navigating away abandons anything still pending. This is deliberately
+  // driven by the navigation handlers rather than by watching activeProjectId:
+  // sending the very first prompt *also* changes the active project (it creates
+  // one), and an effect on that id would clear the acknowledgement a frame
+  // after it appeared — exactly the case the pending bubble exists for.
+  const abandonPending = useCallback(() => setPendingUser(null), []);
 
   // A preview failure that appears after an otherwise finished run is a real
   // validation signal. Feed it back into the same agent session once, rather
@@ -392,7 +485,7 @@ export default function ClyraCodeWorkspace() {
   const handleNewChat = useCallback(async (projectId: string) => {
     try {
       await newChat(projectId);
-      await refreshThreads();
+      await refreshThreads(projectId);
       setRightTab("browser");
       setFocusFile(null);
     } catch {
@@ -425,24 +518,27 @@ export default function ClyraCodeWorkspace() {
         collapsed={sidebarCollapsed}
         onToggleCollapsed={toggleSidebarCollapsed}
         onSelectProject={(id) => {
+          abandonPending();
           selectProject(id);
+          void refreshThreads(id);
           setContexts([]);
           setRightTab("browser");
           setFocusFile(null);
         }}
         onSelectChat={(projectId, sessionId) => {
+          abandonPending();
           void selectThread(projectId, sessionId);
           setContexts([]);
           setRightTab("browser");
           setFocusFile(null);
         }}
         onNewProject={requestNewProject}
-        onNewChat={(projectId) => void handleNewChat(projectId)}
+        onNewChat={(projectId) => { abandonPending(); void handleNewChat(projectId); }}
         onRenameProject={(projectId, name) => {
           void api.renameProject(projectId, name).then(() => loadProjects());
         }}
         onRenameChat={(projectId, sessionId, title) => {
-          void api.renameSession(projectId, sessionId, title).then(() => refreshThreads());
+          void api.renameSession(projectId, sessionId, title).then(() => refreshThreads(projectId));
         }}
         onDeleteChat={(projectId, sessionId) => void handleDeleteChat(projectId, sessionId)}
         onRemoveProject={hideProject}
@@ -456,7 +552,7 @@ export default function ClyraCodeWorkspace() {
           <button
             type="button"
             onClick={() => void launchDesktopPreview()}
-            className="flex h-[30px] items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[#3977F6] transition-colors duration-150 hover:bg-[#3977F6]/[0.07]"
+            className="flex h-[30px] items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[color:var(--accent-blue)] transition-colors duration-150 hover:bg-[color:var(--accent-blue)]/[0.07]"
             title="Launch this desktop project in Electron"
           >
             <Play className="h-[12px] w-[12px]" fill="currentColor" strokeWidth={1.8} />
@@ -468,7 +564,7 @@ export default function ClyraCodeWorkspace() {
           aria-label={rightPanelOpen ? "Close preview" : "Open preview"}
           title={rightPanelOpen ? "Close preview" : "Open preview"}
           onClick={() => setRightPanelOpen((open) => !open)}
-          className="flex h-[37px] w-[37px] items-center justify-center rounded-[10px] text-[#5F6368] transition-colors duration-150 hover:bg-black/[0.045]"
+          className="flex h-[37px] w-[37px] items-center justify-center rounded-[10px] text-[color:var(--text-secondary)] transition-colors duration-150 hover:bg-black/[0.045]"
         >
           {rightPanelOpen ? <PanelRightClose className="h-[18px] w-[18px]" strokeWidth={1.65} /> : <PanelRightOpen className="h-[18px] w-[18px]" strokeWidth={1.65} />}
         </button>
@@ -498,7 +594,7 @@ export default function ClyraCodeWorkspace() {
               aria-label="Expand sidebar"
               title="Expand sidebar"
               onClick={toggleSidebarCollapsed}
-              className="flex h-[31px] w-[31px] shrink-0 items-center justify-center rounded-[9px] text-[#5F6368] transition-colors duration-150 hover:bg-black/[0.045]"
+              className="flex h-[31px] w-[31px] shrink-0 items-center justify-center rounded-[9px] text-[color:var(--text-secondary)] transition-colors duration-150 hover:bg-black/[0.045]"
             >
               <PanelLeftOpen className="h-[16px] w-[16px]" strokeWidth={1.6} />
             </button>
@@ -506,7 +602,7 @@ export default function ClyraCodeWorkspace() {
           {activeProject ? (
             <>
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[#343539]">
+                <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[color:var(--text-primary)]">
                   {taskTitle || "New task"}
                 </h1>
               </div>
@@ -515,26 +611,28 @@ export default function ClyraCodeWorkspace() {
         </header>
 
         {
-          <AnimatePresence mode="wait" initial={false}>
+          /* Welcome and conversation are a plain either/or, not a presence
+             transition. An exit animation here has to finish before the
+             conversation is allowed to mount, so a single stalled exit leaves
+             the workspace showing a ghost of the welcome screen and no
+             transcript at all — and it delays the acknowledgement of a send
+             for no benefit. The incoming surface simply rises into place. */
+          <>
             {!hasConversation ? (
-              <motion.div
+              <div
                 key="welcome"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0, y: -5, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pb-[9vh]"
+                className="cc-rise flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pb-[9vh]"
               >
                 <div className="mx-auto flex w-full max-w-[620px] flex-col items-center px-5 text-center">
                   <ClyraMark size={40} />
-                  <h2 className="mt-4 text-[25px] font-medium leading-[1.18] tracking-[-0.03em] text-[#202124]">
+                  <h2 className="mt-4 text-[25px] font-medium leading-[1.18] tracking-[-0.03em] text-[color:var(--text-primary)]">
                     What do you want to build?
                   </h2>
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="mt-2 text-[14px] leading-[1.5] text-[#818388]">
-                    {welcomeSubtitle[0]}<span className="text-[#3977F6]">{welcomeSubtitle[1]}</span>{welcomeSubtitle[2]}
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="mt-2 text-[14px] leading-[1.5] text-[color:var(--text-tertiary)]">
+                    {welcomeSubtitle[0]}<span className="text-[color:var(--accent-blue)]">{welcomeSubtitle[1]}</span>{welcomeSubtitle[2]}
                   </motion.p>
                   {activeProject ? (
-                    <p className="mt-1.5 text-[11.5px] text-[#9A9CA0]">
+                    <p className="mt-1.5 text-[11.5px] text-[color:var(--text-tertiary)]">
                       Working in {activeProject.name || activeProject.id}
                     </p>
                   ) : null}
@@ -542,6 +640,10 @@ export default function ClyraCodeWorkspace() {
                     <Composer
                       running={false}
                       model={state.model}
+                      effort={state.effort}
+                      effortLevels={state.effortLevels}
+                      effortReady={state.effortReady}
+                      onEffortChange={setEffort}
                       contexts={contexts}
                       onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                       onSubmit={submitPrompt}
@@ -563,30 +665,29 @@ export default function ClyraCodeWorkspace() {
                           key={entry.label}
                           type="button"
                           onClick={() => suggestPrompt(entry.prompt)}
-                          className="flex h-[36px] items-center gap-1.5 rounded-[9px] px-3 text-[12.5px] text-[#696B70] transition-colors duration-150 hover:bg-black/[0.035] hover:text-[#303236]"
+                          className="flex h-[36px] items-center gap-1.5 rounded-[9px] px-3 text-[12.5px] text-[color:var(--text-secondary)] transition-colors duration-150 hover:bg-black/[0.035] hover:text-[color:var(--text-primary)]"
                         >
-                          <Icon className="h-[14px] w-[14px] text-[#7D8086]" strokeWidth={1.65} />
+                          <Icon className="h-[14px] w-[14px] text-[color:var(--text-secondary)]" strokeWidth={1.65} />
                           {entry.label}
                         </button>
                       );
                     })}
                   </div>
-                  <p className="mt-[15px] text-[11px] tracking-[-0.005em] text-[#9A9CA0]">
+                  <p className="mt-[15px] text-[11px] tracking-[-0.005em] text-[color:var(--text-tertiary)]">
                     {activeProject?.name || "New project"} <span aria-hidden>·</span> Web, desktop and iOS supported
                   </p>
                 </div>
-              </motion.div>
+              </div>
             ) : (
-              <motion.div
+              <div
                 key="conversation"
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
                 className="flex min-h-0 flex-1 flex-col"
               >
                 <Conversation
                   state={state}
                   running={running}
+                  pendingUser={pendingUser}
+                  onPlaybackChange={setTranscriptPlaying}
                   onCancel={() => void cancelRun()}
                   onReplyPermission={(id, response) => void replyPermission(id, response)}
                   onRetry={retryAction}
@@ -595,34 +696,38 @@ export default function ClyraCodeWorkspace() {
                   onOpenChanges={() => setRightTab("changes")}
                 />
                 {state.runState === "failed" && state.error ? (
-                  <div className="mx-auto mb-1 flex w-full max-w-[760px] items-center gap-2 px-5 text-[11.5px] text-[#76787D]">
+                  <div className="mx-auto mb-1 flex w-full max-w-[760px] items-center gap-2 px-5 text-[11.5px] text-[color:var(--text-secondary)]">
                     <span className="min-w-0 flex-1 truncate">The last run needs attention.</span>
                     <button
                       type="button"
                       onClick={addTerminalErrorContext}
-                      className="shrink-0 rounded-[6px] px-1.5 py-1 font-medium text-[#3977F6] transition-colors hover:bg-[#3977F6]/[0.06]"
+                      className="shrink-0 rounded-[6px] px-1.5 py-1 font-medium text-[color:var(--accent-blue)] transition-colors hover:bg-[color:var(--accent-blue)]/[0.06]"
                     >
                       Add error to chat
                     </button>
                   </div>
                 ) : null}
-                <footer className="flex h-[17px] shrink-0 items-center gap-3 px-4 text-[9.5px] text-[#A0A2A6]">
+                <footer className="flex h-[17px] shrink-0 items-center gap-3 px-4 text-[9.5px] text-[color:var(--text-tertiary)]">
                   <span>Local</span>
-                  <span className="cc-mono truncate">{activeProject.id}</span>
+                  <span className="cc-mono truncate">{activeProject?.id ?? ""}</span>
                   {tokensLabel ? <span className="cc-counter ml-auto">{tokensLabel}</span> : null}
                 </footer>
                 <Composer
                   running={running}
                   model={state.model}
+                  effort={state.effort}
+                  effortLevels={state.effortLevels}
+                  effortReady={state.effortReady}
+                  onEffortChange={setEffort}
                   contexts={contexts}
                   onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                   onSubmit={submitPrompt}
                   onStop={() => void cancelRun()}
                   suggestion={suggestion}
                 />
-              </motion.div>
+              </div>
             )}
-          </AnimatePresence>
+          </>
         }
       </motion.section>
 
@@ -650,7 +755,7 @@ export default function ClyraCodeWorkspace() {
               preview={preview}
               onAddContext={(context) => setContexts((prev) => (prev.some((item) => item.detail === context.detail) ? prev : [...prev, context]))}
               focusFile={focusFile}
-              agentRunning={running}
+              agentRunning={running || transcriptPlaying}
               onOpenTerminal={() => setTerminalOpen(true)}
               platform={state.platform}
               relaunchSignal={relaunchSignal}
@@ -685,12 +790,12 @@ export default function ClyraCodeWorkspace() {
               onSubmit={(event) => { event.preventDefault(); void confirmNewProject(); }}
               className="w-full max-w-[360px] rounded-[13px] border border-black/[0.09] bg-white p-4 shadow-[0_22px_60px_rgba(15,23,42,0.16)]"
             >
-              <p className="text-[13px] font-medium text-[#2D2F34]">New project</p>
-              <p className="mt-1 text-[11.5px] leading-[1.5] text-[#777A80]">Give this workspace a clear name. Chats, files, preview, and source control will stay together here.</p>
-              <input autoFocus value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Project name" className="mt-3 h-9 w-full rounded-[8px] border border-black/[0.09] px-2.5 text-[12px] text-[#35373C] outline-none transition-colors placeholder:text-[#A0A2A6] focus:border-black/[0.22]" />
+              <p className="text-[13px] font-medium text-[color:var(--text-primary)]">New project</p>
+              <p className="mt-1 text-[11.5px] leading-[1.5] text-[color:var(--text-secondary)]">Give this workspace a clear name. Chats, files, preview, and source control will stay together here.</p>
+              <input autoFocus value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Project name" className="mt-3 h-9 w-full rounded-[8px] border border-black/[0.09] px-2.5 text-[12px] text-[color:var(--text-primary)] outline-none transition-colors placeholder:text-[color:var(--text-tertiary)] focus:border-black/[0.22]" />
               <div className="mt-3 flex justify-end gap-1.5">
-                <button type="button" onClick={() => setProjectNameSheetOpen(false)} className="h-8 rounded-[8px] px-2.5 text-[11.5px] text-[#65676C] transition-colors hover:bg-black/[0.04]">Cancel</button>
-                <button type="submit" disabled={!newProjectName.trim() || creating} className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#292A2E] px-3 text-[11.5px] font-medium text-white transition-colors hover:bg-[#17181B] disabled:cursor-not-allowed disabled:opacity-40">{creating ? <span className="h-3 w-3 animate-spin rounded-full border border-white/35 border-t-white" /> : null} Create project</button>
+                <button type="button" onClick={() => setProjectNameSheetOpen(false)} className="h-8 rounded-[8px] px-2.5 text-[11.5px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.04]">Cancel</button>
+                <button type="submit" disabled={!newProjectName.trim() || creating} className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[color:var(--control-dark)] px-3 text-[11.5px] font-medium text-white transition-colors hover:bg-[color:var(--control-dark-hover)] disabled:cursor-not-allowed disabled:opacity-40">{creating ? <span className="h-3 w-3 animate-spin rounded-full border border-white/35 border-t-white" /> : null} Create project</button>
               </div>
             </motion.form>
           </motion.div>

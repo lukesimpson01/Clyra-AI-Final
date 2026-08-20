@@ -1,25 +1,25 @@
 import {
   ArrowUpRight,
   Clapperboard,
-  Clock3,
   Code2,
+  Drama,
   Globe2,
   Gamepad2,
   Grid2X2,
   Heart,
+  Library,
   MessageCircle,
   MessagesSquare,
+  Minus,
+  SlidersHorizontal,
+  ShieldCheck,
 } from "lucide-react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-export type LauncherToolId =
-  | "chat"
-  | "vibe"
-  | "clip"
-  | "browser"
-  | "forge"
-  | "would-rather"
-  | "fake-text";
+import { cn } from "../lib/utils";
+import { MIN_LAUNCHER_TOOLS, PINNED_LAUNCHER_TOOLS, useLauncherTools, type LauncherToolId } from "../lib/launcher-tools";
+
+export type { LauncherToolId };
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
@@ -35,27 +35,29 @@ interface LauncherTool {
   accent: string;
 }
 
-const tools: LauncherTool[] = [
+const ALL_TOOLS: LauncherTool[] = [
   { id: "vibe", label: "Vibe Coder", shortLabel: "Vibe Coder", detail: "Build and preview production applications", icon: Code2, accent: "#0f172a" },
   { id: "chat", label: "Chat", shortLabel: "Chat", detail: "Think, write and reason with Clyra", icon: MessageCircle, accent: "#1e293b" },
   { id: "clip", label: "AI Clipper", shortLabel: "Clip", detail: "Turn long videos into polished social clips", icon: Clapperboard, accent: "#334155" },
-  { id: "forge", label: "Clyra Forge", shortLabel: "Forge", detail: "Build editable 2D and 3D games with semantic AI tools", icon: Gamepad2, accent: "#0f172a" },
+  { id: "forge", label: "Game Maker", shortLabel: "Games", detail: "Describe a game and build, play and publish it in the browser", icon: Gamepad2, accent: "#0f172a" },
   { id: "would-rather", label: "Would You Rather", shortLabel: "Would You Rather", detail: "Make narrated choice and poll videos", icon: Heart, accent: "#334155" },
   { id: "fake-text", label: "Text Story", shortLabel: "Text Story", detail: "Generate narrated iMessage-style stories", icon: MessagesSquare, accent: "#334155" },
   { id: "browser", label: "AI Browser", shortLabel: "Browser", detail: "Research and act across live websites", icon: Globe2, accent: "#1e293b" },
+  { id: "roleplay", label: "AI Roleplay", shortLabel: "Roleplay", detail: "Chat with persistent, web-researched characters", icon: Drama, accent: "#334155" },
+  { id: "tools", label: "Tool Library", shortLabel: "Tools", detail: "Discover, install and create native Clyra capabilities", icon: Library, accent: "#1e293b" },
+  { id: "system-care", label: "Clyra System Care", shortLabel: "System Care", detail: "Understand device health, storage and performance", icon: ShieldCheck, accent: "#1e293b" },
 ];
 
 const CENTER = 320;
 const OUTER_RADIUS = 294;
 const INNER_RADIUS = 124;
-const SLICE_ANGLE = 360 / tools.length;
 /** Snappy open: ~220ms, springy but not bouncy. */
 const LAUNCHER_OPEN = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 const LAUNCHER_CLOSE = { duration: 0.18, ease: [0.4, 0, 1, 1] as const };
 /** Cascade only the first visible arc (~top row of the wheel). */
 const CASCADE_COUNT = 4;
 const CASCADE_STEP = 0.04;
-const barActions = ["resume", "open", "chat"] as const;
+const barActions = ["marketplace", "manage", "open", "chat"] as const;
 type BarAction = (typeof barActions)[number];
 
 function point(radius: number, degrees: number) {
@@ -97,11 +99,20 @@ function tileDelay(index: number) {
 
 function readLastTool(): LauncherToolId {
   const stored = localStorage.getItem("clyra-launcher-last-tool") as LauncherToolId | null;
-  return tools.some((tool) => tool.id === stored) ? stored! : "chat";
+  return ALL_TOOLS.some((tool) => tool.id === stored) ? stored! : "chat";
 }
 
 export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
   const reduceMotion = useReducedMotion();
+  const { ids: wheelIds, remove: removeFromWheel, reset: resetWheel, canRemove } = useLauncherTools();
+  // The wheel is whatever the user has kept on it, in their order. Geometry
+  // follows the data rather than a fixed nine-slice assumption.
+  const tools = useMemo(
+    () => wheelIds.flatMap((id) => { const tool = ALL_TOOLS.find((item) => item.id === id); return tool ? [tool] : []; }),
+    [wheelIds],
+  );
+  const SLICE_ANGLE = 360 / Math.max(1, tools.length);
+  const [manageMode, setManageMode] = useState(false);
   const initialToolIndex = Math.max(0, tools.findIndex((tool) => tool.id === readLastTool()));
   const [activeIndex, setActiveIndex] = useState(initialToolIndex);
   const highlightTarget = useMotionValue(initialToolIndex * SLICE_ANGLE);
@@ -110,10 +121,13 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
   const activeIndexRef = useRef(initialToolIndex);
   const pointerFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number; width: number } | null>(null);
-  const activeTool = tools[activeIndex];
-  const quickTool = tools.find((tool) => tool.id === (activeTool.id === "chat" ? "browser" : "chat"))!;
+  const activeTool = tools[Math.min(activeIndex, tools.length - 1)] ?? ALL_TOOLS[0];
+  const quickTool =
+    tools.find((tool) => tool.id === (activeTool.id === "chat" ? "browser" : "chat"))
+    ?? tools.find((tool) => tool.id !== activeTool.id)
+    ?? activeTool;
   const QuickToolIcon = quickTool.icon;
-  const highlightPath = useMemo(() => wedgePath(-SLICE_ANGLE / 2, SLICE_ANGLE / 2), []);
+  const highlightPath = useMemo(() => wedgePath(-SLICE_ANGLE / 2, SLICE_ANGLE / 2), [SLICE_ANGLE]);
   const motionOff = reduceMotion ? { duration: 0 } : undefined;
 
   const selectTool = useCallback((index: number, rotation = index * SLICE_ANGLE) => {
@@ -228,8 +242,8 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
                     fill="rgba(255,255,255,.001)"
                     stroke="transparent"
                     strokeWidth="0"
-                    onClick={() => openTool(tool)}
-                    className="cursor-pointer"
+                    onClick={() => { if (!manageMode) openTool(tool); }}
+                    className={manageMode ? "cursor-default" : "cursor-pointer"}
                   />
                 );
               })}
@@ -257,7 +271,7 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
                   key={tool.id}
                   type="button"
                   onFocus={() => selectTool(index)}
-                  onClick={() => openTool(tool)}
+                  onClick={() => { if (!manageMode) openTool(tool); }}
                   initial={{ opacity: 0, scale: 0.92, y: 6 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{
@@ -273,8 +287,41 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
                   }
                   className="absolute z-10 flex w-[110px] -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center outline-none"
                   style={{ left: `${x / 6.4}%`, top: `${y / 6.4}%` }}
-                  aria-label={`Open ${tool.label}`}
+                  aria-label={manageMode ? `${tool.label} — on the launcher` : `Open ${tool.label}`}
                 >
+                  {/* Removal lives on the tile it removes, so there is no
+                      separate list to reconcile against the wheel you can see. */}
+                  {manageMode ? (
+                    <motion.button
+                      type="button"
+                      initial={{ opacity: 0, scale: 0.86 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.86 }}
+                      transition={motionOff ?? { duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                      disabled={!canRemove(tool.id)}
+                      onClick={(event) => { event.stopPropagation(); removeFromWheel(tool.id); }}
+                      aria-label={
+                        PINNED_LAUNCHER_TOOLS.includes(tool.id)
+                          ? `${tool.label} stays on the launcher`
+                          : `Remove ${tool.label} from the launcher`
+                      }
+                      title={
+                        PINNED_LAUNCHER_TOOLS.includes(tool.id)
+                          ? "Marketplace stays on the launcher"
+                          : tools.length <= MIN_LAUNCHER_TOOLS
+                            ? "Keep at least two tools on the launcher"
+                            : `Remove ${tool.label}`
+                      }
+                      className={cn(
+                        "absolute -top-1 right-2 z-20 grid h-[18px] w-[18px] place-items-center rounded-full border transition-colors duration-150",
+                        canRemove(tool.id)
+                          ? "border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
+                          : "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300",
+                      )}
+                    >
+                      <Minus className="h-3 w-3" strokeWidth={2.4} />
+                    </motion.button>
+                  ) : null}
                   <span
                     className={
                       selected
@@ -312,7 +359,22 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
                 className="flex flex-col items-center gap-1"
               >
                 <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Clyra</span>
-                <span className="text-[9px] font-medium text-slate-400">{activeTool.shortLabel}</span>
+                {manageMode ? (
+                  <>
+                    <span className="max-w-[120px] text-center text-[9px] font-medium leading-[1.35] text-slate-400">
+                      Remove tools from the wheel, or add more from the Marketplace.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={resetWheel}
+                      className="mt-0.5 text-[9px] font-semibold text-slate-500 underline-offset-2 transition-colors hover:text-slate-900 hover:underline"
+                    >
+                      Reset
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-[9px] font-medium text-slate-400">{activeTool.shortLabel}</span>
+                )}
               </motion.div>
             </div>
           </motion.div>
@@ -349,7 +411,10 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHoveredBarAction(null);
           }}
-          className="relative grid w-full max-w-[620px] shrink-0 grid-cols-3 items-center overflow-hidden rounded-full border border-slate-200/90 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,.06)]"
+          // Column count follows the action list rather than a literal, so adding a
+          // bar action can never silently wrap it onto a second row.
+          style={{ gridTemplateColumns: `repeat(${barActions.length}, minmax(0, 1fr))` }}
+          className="relative grid w-full max-w-[680px] shrink-0 items-center overflow-hidden rounded-full border border-slate-200/90 bg-white p-1 shadow-[0_8px_24px_rgba(15,23,42,.06)]"
         >
           <AnimatePresence>
             {hoveredBarAction ? (
@@ -368,7 +433,7 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
                   top: 4,
                   bottom: 4,
                   height: "auto",
-                  width: "calc((100% - 8px) / 3)",
+                  width: "calc((100% - 8px) / 4)",
                   zIndex: 0,
                   translate: "none",
                 }}
@@ -377,13 +442,27 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
           </AnimatePresence>
           <button
             type="button"
-            onMouseEnter={() => setHoveredBarAction("resume")}
-            onFocus={() => setHoveredBarAction("resume")}
-            onClick={() => openTool(tools.find((tool) => tool.id === readLastTool()) || tools[0])}
+            onMouseEnter={() => setHoveredBarAction("marketplace")}
+            onFocus={() => setHoveredBarAction("marketplace")}
+            onClick={() => openTool(tools.find((tool) => tool.id === "tools")!)}
             className="relative z-10 flex h-10 items-center justify-center gap-2 rounded-full text-[10px] font-semibold text-slate-500 transition-[color,transform] duration-200 hover:text-slate-950 active:scale-[.98]"
           >
-            <Clock3 className="h-4 w-4" />
-            Resume
+            <Library className="h-4 w-4" />
+            Marketplace
+          </button>
+          <button
+            type="button"
+            onMouseEnter={() => setHoveredBarAction("manage")}
+            onFocus={() => setHoveredBarAction("manage")}
+            onClick={() => setManageMode((value) => !value)}
+            aria-pressed={manageMode}
+            className={cn(
+              "relative z-10 flex h-10 items-center justify-center gap-2 rounded-full text-[10px] font-semibold transition-[color,transform] duration-200 active:scale-[.98]",
+              manageMode ? "text-slate-950" : "text-slate-500 hover:text-slate-950",
+            )}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            {manageMode ? "Done" : "Manage"}
           </button>
           <button
             type="button"

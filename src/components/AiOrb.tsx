@@ -63,8 +63,10 @@ function drawPath(context: CanvasRenderingContext2D, center: number, radius: num
   for (let index = 0; index <= points; index += 1) {
     const angle = (index / points) * TAU;
     const spectrum = bands?.length ? bands[Math.floor((index / points) * (bands.length - 1))] ?? 0 : 0;
-    const broad = Math.sin(angle * 2 + physics.flow * 1.6) * (0.006 + energy * 0.012);
-    const micro = Math.sin(angle * 5 - physics.phase * 1.9) * (0.0015 + energy * 0.006 + spectrum * 0.005);
+    const broad = Math.sin(angle * 2 + physics.flow * 1.6) * (0.04 + energy * 0.016)
+      + Math.sin(angle * 3 - physics.phase * 0.55 + 1.3) * 0.024
+      + Math.sin(angle * 5 - physics.phase * 0.31 + 0.6) * 0.014;
+    const micro = Math.sin(angle * 8 - physics.phase * 1.9) * (0.0015 + energy * 0.006 + spectrum * 0.005);
     const cognition = thinking * Math.sin(angle * 3.1 + physics.phase * 0.72) * 0.011;
     const voicePressure = (listening + speaking) * spectrum * 0.014;
     const asymmetry = Math.cos(angle - physics.flow) * (speaking ? 0.012 : 0.004) * energy;
@@ -81,6 +83,48 @@ function gradient(context: CanvasRenderingContext2D, x0: number, y0: number, r0:
   const result = context.createRadialGradient(x0, y0, r0, x1, y1, r1);
   stops.forEach(([position, color]) => result.addColorStop(position, color));
   return result;
+}
+
+type Sparkle = { angle: number; distance: number; speed: number; size: number; twinklePhase: number; twinkleSpeed: number };
+
+function createSparkles(count: number): Sparkle[] {
+  const sparkles: Sparkle[] = [];
+  for (let index = 0; index < count; index += 1) {
+    sparkles.push({
+      angle: Math.random() * TAU,
+      distance: 1.06 + Math.random() * 0.58,
+      speed: (Math.random() - 0.5) * 0.11,
+      size: 0.011 + Math.random() * 0.02,
+      twinklePhase: Math.random() * TAU,
+      twinkleSpeed: 0.55 + Math.random() * 1.35,
+    });
+  }
+  return sparkles;
+}
+
+/** Fine meridian-like ridges sweeping across the liquid, like light caught in brushed glass. */
+function drawGrooves(context: CanvasRenderingContext2D, center: number, radius: number, phase: number, energy: number, size: number) {
+  if (size < 42) return;
+  const count = size > 150 ? 26 : size > 70 ? 20 : 14;
+  const drift = phase * 0.35;
+  context.save();
+  context.globalCompositeOperation = "screen";
+  context.lineCap = "round";
+  for (let index = 0; index < count; index += 1) {
+    const u = (index / (count - 1)) * 2 - 1;
+    const dx = Math.max(-radius * 0.97, Math.min(radius * 0.97, u * radius * 0.96 + Math.sin(drift) * radius * 0.06));
+    const halfHeight = Math.sqrt(Math.max(0, radius * radius - dx * dx)) * 0.98;
+    const bow = -dx * 0.16 + Math.sin(drift * 1.3 + index) * radius * 0.01;
+    const x = center + dx;
+    const edgeFade = 1 - Math.pow(Math.abs(u), 2.4);
+    context.strokeStyle = `rgba(205, 238, 255, ${(0.05 + (0.16 + energy * 0.1) * edgeFade).toFixed(3)})`;
+    context.lineWidth = Math.max(0.6, radius * 0.007);
+    context.beginPath();
+    context.moveTo(x, center - halfHeight);
+    context.quadraticCurveTo(center + dx * 0.55 + bow, center, x, center + halfHeight);
+    context.stroke();
+  }
+  context.restore();
 }
 
 /**
@@ -114,6 +158,7 @@ export function AiOrb({
 
     const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const physics: OrbPhysics = { energy: 0.035, energyVelocity: 0, flow: 0.2, flowVelocity: 0, pressure: 0, pressureVelocity: 0, phase: 0, lastState: stateRef.current, responseStart: 0 };
+    const sparkles = createSparkles(46);
     let frame = 0;
     let previous = performance.now();
     let size = 0;
@@ -172,14 +217,57 @@ export function AiOrb({
         physics.pressure = 0;
       }
 
+      if (size > 60 && !reducedMotion) {
+        context.save();
+        context.strokeStyle = "rgba(150, 175, 215, 0.09)";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.arc(center, center, radius * 1.86, 0, TAU);
+        context.stroke();
+        context.restore();
+      }
+
       // Atmospheric light stays close to its source, never reads as neon.
-      const haloRadius = radius * (1.5 + physics.energy * 0.22);
-      context.fillStyle = gradient(context, center - radius * 0.12, center - radius * 0.18, radius * 0.04, center, center, haloRadius, [
-        [0, `rgba(70, 150, 255, ${0.13 + physics.energy * 0.1})`],
-        [0.45, `rgba(27, 98, 214, ${0.045 + physics.energy * 0.045})`],
-        [1, "rgba(27, 98, 214, 0)"],
+      const haloRadius = radius * (1.35 + physics.energy * 0.18);
+      context.fillStyle = gradient(context, center - radius * 0.1, center - radius * 0.15, radius * 0.04, center, center, haloRadius, [
+        [0, `rgba(130, 205, 255, ${0.09 + physics.energy * 0.07})`],
+        [0.5, `rgba(60, 140, 230, ${0.03 + physics.energy * 0.03})`],
+        [1, "rgba(60, 140, 230, 0)"],
       ]);
       context.beginPath(); context.arc(center, center, haloRadius, 0, TAU); context.fill();
+
+      if (size > 40 && !reducedMotion) {
+        context.save();
+        context.globalCompositeOperation = "lighter";
+        for (const sparkle of sparkles) {
+          sparkle.angle += sparkle.speed * 0.01 * dt;
+          const twinkle = 0.5 + 0.5 * Math.sin(now * 0.001 * sparkle.twinkleSpeed + sparkle.twinklePhase);
+          const distance = radius * sparkle.distance;
+          const px = center + Math.cos(sparkle.angle) * distance;
+          const py = center + Math.sin(sparkle.angle) * distance;
+          const dotRadius = Math.max(0.6, radius * sparkle.size);
+          const alpha = (0.15 + twinkle * 0.35) * (0.4 + physics.energy * 0.6);
+          context.fillStyle = `rgba(190, 230, 255, ${alpha.toFixed(3)})`;
+          context.beginPath();
+          context.arc(px, py, dotRadius, 0, TAU);
+          context.fill();
+        }
+        if (size > 80) {
+          for (let index = 0; index < 2; index += 1) {
+            const streakPhase = now * 0.00012 + index * 2.4;
+            const start = streakPhase * TAU;
+            const end = start + 0.5 + Math.sin(streakPhase * 3) * 0.15;
+            const distance = radius * (1.16 + index * 0.2);
+            const pulse = 0.5 + 0.5 * Math.sin(streakPhase * 1.7 + index);
+            context.strokeStyle = `rgba(120, 225, 255, ${(0.1 + pulse * 0.16).toFixed(3)})`;
+            context.lineWidth = Math.max(0.7, radius * 0.006);
+            context.beginPath();
+            context.arc(center, center, distance, start, end);
+            context.stroke();
+          }
+        }
+        context.restore();
+      }
 
       context.save();
       drawPath(context, center, radius, now, physics, currentState, bands);
@@ -187,20 +275,20 @@ export function AiOrb({
 
       // Deep liquid body with independently drifting optical density.
       context.fillStyle = gradient(context, center - radius * 0.42, center + radius * 0.35, radius * 0.02, center, center, radius * 1.28, [
-        [0, "#8bd2ff"], [0.24, "#2588e8"], [0.62, "#0b4ca7"], [1, "#061d52"],
+        [0, "#aef0ff"], [0.24, "#14c8ee"], [0.62, "#123fd6"], [1, "#080a4c"],
       ]);
       context.fillRect(0, 0, size, size);
       const liquidX = center + Math.cos(physics.phase * 1.25) * radius * 0.24;
       const liquidY = center + Math.sin(physics.phase * 0.9) * radius * 0.19;
       context.globalCompositeOperation = "screen";
       context.fillStyle = gradient(context, liquidX, liquidY, radius * 0.03, liquidX, liquidY, radius * (0.72 + physics.energy * 0.18), [
-        [0, `rgba(202, 238, 255, ${0.38 + physics.energy * 0.22})`], [0.34, "rgba(75, 169, 255, .30)"], [1, "rgba(24, 110, 226, 0)"],
+        [0, `rgba(210, 252, 255, ${0.4 + physics.energy * 0.22})`], [0.34, "rgba(38, 214, 246, .32)"], [1, "rgba(18, 130, 220, 0)"],
       ]);
       context.fillRect(0, 0, size, size);
       const counterX = center + Math.cos(-physics.phase * 0.77 + 1.9) * radius * 0.31;
       const counterY = center + Math.sin(-physics.phase * 1.1 + 0.8) * radius * 0.27;
       context.fillStyle = gradient(context, counterX, counterY, radius * 0.02, counterX, counterY, radius * 0.6, [
-        [0, "rgba(18, 75, 181, .68)"], [0.54, "rgba(5, 42, 119, .2)"], [1, "rgba(2, 25, 75, 0)"],
+        [0, "rgba(8, 10, 70, .76)"], [0.54, "rgba(4, 6, 42, .26)"], [1, "rgba(2, 3, 22, 0)"],
       ]);
       context.fillRect(0, 0, size, size);
 
@@ -209,7 +297,7 @@ export function AiOrb({
       context.lineCap = "round";
       for (let index = 0; index < 3; index += 1) {
         const phase = physics.phase * (0.68 + index * 0.13) + index * 2.08;
-        context.strokeStyle = `rgba(205, 241, 255, ${0.055 + physics.energy * 0.09})`;
+        context.strokeStyle = `rgba(205, 241, 255, ${0.016 + physics.energy * 0.035})`;
         context.lineWidth = Math.max(0.65, radius * (0.009 + index * 0.002));
         context.beginPath();
         context.moveTo(center - radius * 0.8, center + Math.sin(phase) * radius * 0.34);
@@ -220,6 +308,22 @@ export function AiOrb({
         );
         context.stroke();
       }
+
+      // Fine meridian ridges, like light caught in brushed glass.
+      drawGrooves(context, center, radius, physics.phase, physics.energy, size);
+
+      // Thick frosted fresnel rim: the orb's signature glassy edge. Normal
+      // compositing (not screen) so the band reads equally white over both
+      // the bright cyan and the deep navy side of the body.
+      context.globalCompositeOperation = "source-over";
+      context.fillStyle = gradient(context, center, center, radius * 0.52, center, center, radius * 1.02, [
+        [0, "rgba(255, 255, 255, 0)"],
+        [0.58, "rgba(238, 248, 255, 0.1)"],
+        [0.76, `rgba(236, 248, 255, ${0.46 + physics.energy * 0.12})`],
+        [0.9, `rgba(255, 255, 255, ${0.86 + physics.energy * 0.06})`],
+        [1, "rgba(255, 255, 255, 0.97)"],
+      ]);
+      context.fillRect(0, 0, size, size);
       context.restore();
 
       // The glass membrane is drawn last so all inner behaviour reads as one material.

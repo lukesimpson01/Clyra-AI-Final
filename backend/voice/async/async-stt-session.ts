@@ -24,7 +24,7 @@ const ENDPOINT = "wss://api.async.com/speech_to_text/stream";
 // Hosted ASR final packets occasionally arrive just after the silence turn has
 // been closed. Giving that packet a short grace period avoids unnecessarily
 // replaying the utterance through the slower local fallback.
-const FINAL_GRACE_MS = Math.max(160, Number(process.env.ASYNC_STT_FINAL_GRACE_MS ?? 360));
+const FINAL_GRACE_MS = Math.max(120, Number(process.env.ASYNC_STT_FINAL_GRACE_MS ?? 160));
 
 /**
  * Short-lived, server-owned Async ASR socket. A socket corresponds to one

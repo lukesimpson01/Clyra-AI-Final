@@ -37,6 +37,18 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     capture: (payload) => ipcRenderer.invoke("taskview:capture", payload),
     onToggle: (callback) => subscribe("taskview:toggle", callback),
   },
+  appLauncher: {
+    onToggle: (callback) => subscribe("applauncher:toggle", callback),
+  },
+  systemCare: {
+    profile: () => ipcRenderer.invoke("system-care:profile"),
+    activity: () => ipcRenderer.invoke("system-care:activity"),
+    speedTest: () => ipcRenderer.invoke("system-care:speed-test"),
+    onSpeedTestStage: (callback) => subscribe("system-care:speed-test-stage", callback),
+    smartScan: () => ipcRenderer.invoke("system-care:smart-scan"),
+    cancel: (jobId) => ipcRenderer.invoke("system-care:cancel", { jobId }),
+    onScanEvent: (callback) => subscribe("system-care:scan-event", callback),
+  },
   dictation: {
     toggle: () => ipcRenderer.invoke("dictation:toggle"),
     shortcutStatus: () => ipcRenderer.invoke("dictation:shortcut-status"),

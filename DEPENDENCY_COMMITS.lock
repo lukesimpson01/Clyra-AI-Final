@@ -1,6 +1,6 @@
 # Clyra Auto-Reframe V2 reference pins
 #
-# These shallow clones live in ./third_party for local evaluation only. They
+# These shallow clones live in ./third_party or ./references for local evaluation only. They
 # are not vendored into the desktop/runtime bundle and must not be updated
 # without repeating the source-code and model-weight licence review.
 
@@ -12,3 +12,5 @@ opencv https://github.com/opencv/opencv.git e35ad60e4e1db55be854df5770f706af6580
 opencv-contrib https://github.com/opencv/opencv_contrib.git a8e9acd62cabd30419dba83007f2ac0d07de5e2c Apache-2.0 reference-only
 mmpose https://github.com/open-mmlab/mmpose.git 759b39c13fea6ba094afc1fa932f51dc1b11cbf9 Apache-2.0 model-reference-only
 opencode https://github.com/anomalyco/opencode.git 1882c33827cf0ce5c948b69ab5a87ed8f6790cf8 MIT optional-runtime-adapter
+deepseek-harness https://github.com/deepseek-ai/deepseek-harness.git 99f6f02fecdb7dff40c3fbc9470f5907c29f74ca MIT reference-only
+awesome-design-md https://github.com/VoltAgent/awesome-design-md.git 8147538b4226ae41e2487a9179e3bcc1f68e8554 MIT reference-only

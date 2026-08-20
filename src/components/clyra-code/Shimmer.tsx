@@ -40,7 +40,7 @@ export function ShimmerText({
       duration={long ? 1.75 : 1.65}
       className={cn(
         "truncate text-[12px]",
-        tone === "blue" && "text-[#3977F6]",
+        tone === "blue" && "text-[color:var(--accent-blue)]",
         mono && "cc-mono",
         className,
       )}

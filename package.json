@@ -20,7 +20,7 @@
     "check:openpencil": "node tools/openpencil-check.mjs",
     "vibe-server": "tsx vibe-server.ts",
     "start": "node dist/server.js",
-    "build:server": "esbuild server.ts --platform=node --target=node18 --bundle --format=esm --outfile=dist/server.js --external:electron --external:vite --external:playwright --external:playwright-core --external:chromium-bidi/*",
+    "build:server": "esbuild server.ts --platform=node --target=node18 --bundle --format=esm --outfile=dist/server.js --define:process.env.NODE_ENV='\"production\"' --banner:js=\"import { createRequire as __clyraCreateRequire } from 'node:module'; const require = __clyraCreateRequire(import.meta.url);\" --external:electron --external:vite --external:playwright --external:playwright-core --external:chromium-bidi/*",
     "build": "vite build && npm run build:server",
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -39,7 +39,8 @@
     "test:clipper-publishing": "tsx tools/clipper-publishing-unit-tests.ts",
     "test:licensed-footage": "tsx tools/licensed-footage-unit-tests.ts",
     "test:smart-camera": "tsx tools/smart-camera-unit-tests.ts",
-    "test:forge": "tsx tools/forge-unit-tests.ts",
+    "test:game-maker": "tsx tools/game-maker-unit-tests.ts",
+    "test:game-maker:e2e": "tsx tools/game-maker-e2e.ts",
     "test:agent-controller": "tsx tools/agent-controller-unit-tests.ts",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
     "test:vibe-runtime": "tsx tools/vibe-runtime-unit-tests.ts",
@@ -51,7 +52,9 @@
     "opencluely:start": "node tools/start-opencluely.mjs",
     "test:opencluely": "node tools/opencluely-electron-tour.mjs",
     "test:browser-companion-visual": "node tools/browser-companion-visual-smoke.mjs",
-    "test:study-brain": "tsx tools/study-brain-unit-tests.ts"
+    "test:study-brain": "tsx tools/study-brain-unit-tests.ts",
+    "test:roleplay": "tsx tools/roleplay-unit-tests.ts",
+    "test:system-care": "tsx tools/system-care-unit-tests.ts"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
@@ -206,9 +209,15 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
     "archiver": "^7.0.1",
+    "comlink": "^4.4.2",
+    "fish-audio": "^0.1.0",
     "isomorphic-git": "^1.41.4",
+    "nanoid": "^6.0.1",
     "node-pty": "^1.1.0",
+    "phaser": "^4.2.1",
     "pixi.js": "^8.19.0",
-    "three": "^0.185.1"
+    "playcanvas": "^2.21.4",
+    "three": "^0.185.1",
+    "zod": "^4.4.3"
   }
 }

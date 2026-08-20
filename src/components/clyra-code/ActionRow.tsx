@@ -6,7 +6,7 @@ import type { AgentAction } from "./store";
 import { ShimmerText } from "./Shimmer";
 import { DiffCounters } from "./AnimatedCounter";
 import { AgentFileEdit, hasRenderableActionDiff } from "./AgentFileEdit";
-import { AGENT_EASE, LABEL_MORPH, ROW_ENTER } from "./motion";
+import { AGENT_EASE, LABEL_MORPH, ROW_ENTER, enterProps as safeEnterProps } from "./motion";
 
 const VERBS: Record<string, { active: string; done: string; failed: string; min: string }> = {
   read: { active: "Reading", done: "Read", failed: "Failed reading", min: "0" },
@@ -22,6 +22,7 @@ const VERBS: Record<string, { active: string; done: string; failed: string; min:
   test: { active: "Testing", done: "Tested", failed: "Failed testing", min: "0" },
   preview: { active: "Previewing", done: "Previewed", failed: "Preview failed", min: "0" },
   fetch: { active: "Fetching", done: "Fetched", failed: "Failed fetching", min: "0" },
+  inspect: { active: "Inspecting", done: "Inspected", failed: "Failed inspecting", min: "0" },
   todo: { active: "Planning", done: "Planned", failed: "Failed planning", min: "0" },
   permission: { active: "Awaiting approval", done: "Approved", failed: "Denied", min: "0" },
   generic: { active: "Working on", done: "Completed", failed: "Failed", min: "0" },
@@ -89,7 +90,7 @@ export const AgentActionRow = memo(function AgentActionRow({
     const ended = action.endedAt ?? action.startedAt;
     return Date.now() - ended > 4000;
   });
-  const enterProps = reduced || historical ? {} : ROW_ENTER;
+  const rowEnter = safeEnterProps(ROW_ENTER, !reduced && !historical);
   const rowTransition =
     reduced || historical
       ? { layout: { duration: 0.28, ease: AGENT_EASE } }
@@ -108,8 +109,8 @@ export const AgentActionRow = memo(function AgentActionRow({
   // when OpenCode performed a file operation but did not provide changed text.
   const isStreamingEdit = /^(edit|create)$/.test(action.kind) && hasRenderableActionDiff(action);
   const isFileAction = /^(edit|create|delete)$/.test(action.kind);
-  const isTerminalAction = /^(command|build|check|test|preview)$/.test(action.kind);
-  const isMonoTarget = /^(command|build|check|test|preview|edit|create|delete|read|list)$/.test(action.kind);
+  const isTerminalAction = /^(command|build|check|test|preview|inspect)$/.test(action.kind);
+  const isMonoTarget = /^(command|build|check|test|preview|inspect|edit|create|delete|read|list)$/.test(action.kind);
   const hasDetails = Boolean(action.output?.trim() || action.error?.trim());
   const duration = action.endedAt && action.startedAt ? action.endedAt - action.startedAt : null;
   // A tool's completed transport state is not proof that its build or test
@@ -139,7 +140,7 @@ export const AgentActionRow = memo(function AgentActionRow({
 
   if (action.kind === "permission") {
     return (
-      <motion.div {...enterProps} className="flex h-[26px] items-center gap-1.5 text-[12px]">
+      <motion.div {...rowEnter} className="flex h-[26px] items-center gap-1.5 text-[12px]">
         <span className="font-medium text-[color:var(--warning-amber)]">
           {action.status === "active" ? "Approval needed" : "Approval"}
         </span>
@@ -153,7 +154,7 @@ export const AgentActionRow = memo(function AgentActionRow({
                 onClick={() => onReplyPermission(action.permissionId!, response)}
                 className={cn(
                   "rounded-[6px] border border-black/[0.06] px-1.5 py-px text-[10.5px] transition-colors hover:bg-black/[0.035]",
-                  response === "deny" ? "text-[#B94B4B]" : "text-[#202124]",
+                  response === "deny" ? "text-[color:var(--deletion-red)]" : "text-[color:var(--text-primary)]",
                 )}
               >
                 {response === "allow" ? "Allow" : response === "always" ? "Always" : "Deny"}
@@ -161,7 +162,7 @@ export const AgentActionRow = memo(function AgentActionRow({
             ))}
           </span>
         ) : action.permissionResolved ? (
-          <span className="ml-auto text-[10.5px] text-[#96989D]">{action.permissionResolved}</span>
+          <span className="ml-auto text-[10.5px] text-[color:var(--text-tertiary)]">{action.permissionResolved}</span>
         ) : null}
       </motion.div>
     );
@@ -187,7 +188,7 @@ export const AgentActionRow = memo(function AgentActionRow({
 
   return (
     <motion.div
-      {...enterProps}
+      {...rowEnter}
       layout
       transition={rowTransition}
       className={cn("group", !isActive && !isError && "opacity-[0.8] transition-opacity duration-200")}
@@ -212,14 +213,14 @@ export const AgentActionRow = memo(function AgentActionRow({
           className={cn(
             "flex shrink-0 items-center",
             isTerminalAction
-              ? "cc-mono text-[#85878C]"
+              ? "cc-mono text-[color:var(--text-tertiary)]"
               : isError
-              ? "font-medium text-[#B94B4B]"
+              ? "font-medium text-[color:var(--deletion-red)]"
               : isCancelled
-                ? "text-[#96989D]"
+                ? "text-[color:var(--text-tertiary)]"
                 : isActive
-                  ? "font-medium text-[#55575C]"
-                  : "font-normal text-[#73757A]",
+                  ? "font-medium text-[color:var(--text-secondary)]"
+                  : "font-normal text-[color:var(--text-secondary)]",
           )}
           // Compact command labels should sit next to their command, not in a
           // wide faux-table column. File/terminal details still truncate.
@@ -235,8 +236,8 @@ export const AgentActionRow = memo(function AgentActionRow({
             mono={isMonoTarget}
             className={cn(
               "text-[12.5px] tracking-normal",
-              isTerminalAction && "font-normal text-[#404247]",
-              !isActive && !isTerminalAction && "text-[#6D7076]",
+              isTerminalAction && "font-normal text-[color:var(--text-primary)]",
+              !isActive && !isTerminalAction && "text-[color:var(--text-secondary)]",
             )}
           />
           {isFileAction ? (
@@ -265,9 +266,9 @@ export const AgentActionRow = memo(function AgentActionRow({
             />
           ) : null}
         </span>
-        <span className="flex min-w-[4.5ch] items-center justify-end gap-1.5 text-[11px] text-[#8A8D92]">
+        <span className="flex min-w-[4.5ch] items-center justify-end gap-1.5 text-[11px] text-[color:var(--text-tertiary)]">
           {terminalStatus ? (
-            <span className={cn("whitespace-nowrap", isError && "text-[#B94B4B]", !isActive && !isError && !isCancelled && "text-[#65796A]")}>
+            <span className={cn("whitespace-nowrap", isError && "text-[color:var(--deletion-red)]", !isActive && !isError && !isCancelled && "text-[#65796A]")}>
               {isError ? "× " : !isActive && !isCancelled ? "✓ " : ""}
               {isActive ? <ShimmerText text={terminalStatus} active className="text-[11px]" /> : terminalStatus}
             </span>
@@ -280,7 +281,7 @@ export const AgentActionRow = memo(function AgentActionRow({
           {hasDetails ? (
             <ChevronRight
               className={cn(
-                "h-3 w-3 text-[#B0B0B0] transition-colors duration-150 group-hover:text-[#5F6368]",
+                "h-3 w-3 text-[color:var(--text-disabled)] transition-colors duration-150 group-hover:text-[color:var(--text-secondary)]",
                 expanded && "rotate-90",
               )}
             />
@@ -304,11 +305,11 @@ export const AgentActionRow = memo(function AgentActionRow({
       {isError && action.error ? (
         <div
           className={cn(
-            "ml-[1px] max-w-[600px] pb-[2px] text-[13px] leading-5 text-[#8A8D92]",
+            "ml-[1px] max-w-[600px] pb-[2px] text-[13px] leading-5 text-[color:var(--text-tertiary)]",
             historical && "opacity-100",
           )}
         >
-          <span className="mr-1 font-medium text-[#B94B4B]">×</span>
+          <span className="mr-1 font-medium text-[color:var(--deletion-red)]">×</span>
           {action.error}
         </div>
       ) : null}
@@ -326,7 +327,7 @@ export const AgentActionRow = memo(function AgentActionRow({
             }}
             className="mb-1 overflow-hidden"
           >
-            <pre className="cc-mono max-h-48 overflow-auto cc-scroll whitespace-pre-wrap rounded-[7px] bg-[#F7F7F6] px-2.5 py-2 text-[10.75px] leading-[1.55] text-[#5F6368]">
+            <pre className="cc-mono max-h-48 overflow-auto cc-scroll whitespace-pre-wrap rounded-[7px] bg-[color:var(--sidebar-background)] px-2.5 py-2 text-[10.75px] leading-[1.55] text-[color:var(--text-secondary)]">
               {(action.error ? `${action.error}\n\n` : "") + (action.output ?? "")}
             </pre>
             {isError ? (
@@ -335,7 +336,7 @@ export const AgentActionRow = memo(function AgentActionRow({
                   <button
                     type="button"
                     onClick={() => onRetry(action)}
-                    className="rounded-[6px] border border-black/[0.06] px-2 py-[2px] text-[10.5px] text-[#202124] hover:bg-black/[0.035]"
+                    className="rounded-[6px] border border-black/[0.06] px-2 py-[2px] text-[10.5px] text-[color:var(--text-primary)] hover:bg-black/[0.035]"
                   >
                     Ask agent to fix
                   </button>
@@ -344,7 +345,7 @@ export const AgentActionRow = memo(function AgentActionRow({
                   <button
                     type="button"
                     onClick={onOpenTerminal}
-                    className="rounded-[6px] px-2 py-[2px] text-[10.5px] text-[#5F6368] hover:bg-black/[0.035]"
+                    className="rounded-[6px] px-2 py-[2px] text-[10.5px] text-[color:var(--text-secondary)] hover:bg-black/[0.035]"
                   >
                     Open terminal
                   </button>
@@ -355,7 +356,7 @@ export const AgentActionRow = memo(function AgentActionRow({
               <button
                 type="button"
                 onClick={() => onOpenFile(action.target)}
-                className="mt-1 rounded-[6px] px-2 py-[2px] text-[10.5px] text-[#5F6368] hover:bg-black/[0.035]"
+                className="mt-1 rounded-[6px] px-2 py-[2px] text-[10.5px] text-[color:var(--text-secondary)] hover:bg-black/[0.035]"
               >
                 View diff
               </button>

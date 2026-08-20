@@ -13,8 +13,8 @@ export type VibeProject = {
   createdAt: string;
   updatedAt: string;
   previewUrl?: string;
-  /** Detected platform: web (default) or ios for Swift/Xcode projects. */
-  platform?: "web" | "ios";
+  /** Detected platform: web (default), ios for Swift/Xcode projects, or windows for Windows desktop apps. */
+  platform?: "web" | "ios" | "windows";
 };
 
 export type ProjectGitStatus = {
@@ -56,6 +56,17 @@ export type MobilePreviewStatus = {
   goIos: boolean;
   host: string;
   requiresPhysicalDevice: boolean;
+};
+
+/** DeepSeek's real reasoning-effort levels — confirmed against DeepSeek Harness's adapter, not assumed. */
+export const REASONING_EFFORTS = ["off", "low", "high", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export type ReasoningEffortStatus = {
+  levels: ReasoningEffort[];
+  defaultEffort: ReasoningEffort;
+  /** False until the runtime has registered the per-effort model variants — selecting a level before then would silently no-op. */
+  ready: boolean;
 };
 
 export type FileDiff = {
@@ -286,7 +297,7 @@ export const api = {
     }),
 
   openCodeStatus: () =>
-    json<{ status: string; model?: string; serverUrl?: string; error?: string }>(
+    json<{ status: string; model?: string; serverUrl?: string; error?: string; effort?: ReasoningEffortStatus }>(
       "/api/opencode/status",
     ),
 
@@ -318,10 +329,10 @@ export const api = {
       method: "DELETE",
     }),
 
-  sendPrompt: (projectId: string, sessionId: string, text: string, agent?: string) =>
+  sendPrompt: (projectId: string, sessionId: string, text: string, agent?: string, effort?: ReasoningEffort) =>
     json<{ ok: boolean }>(
       `/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/prompt`,
-      { method: "POST", body: JSON.stringify({ text, agent }) },
+      { method: "POST", body: JSON.stringify({ text, agent, effort }) },
     ),
 
   uploadAttachments: (projectId: string, files: UploadedCodeAttachment[]) =>

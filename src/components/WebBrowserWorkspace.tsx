@@ -55,7 +55,6 @@ import { cn } from "../lib/utils";
 import { getElectronDesktop, isElectronRuntime, requestElectronBrowser } from "../lib/electron-runtime";
 import { ElectronWebContentsSurface } from "./ElectronWebContentsSurface";
 import { BrowserStartPage, isBrowserStartPageUrl } from "./BrowserStartPage";
-import { AiOrb } from "./AiOrb";
 import { ShiningBrainIcon, ShiningText, ThinkingDots } from "./ShiningText";
 
 type AgentStatus =
@@ -1451,11 +1450,14 @@ export default function WebBrowserWorkspace() {
         transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
         className="relative mx-auto flex h-full min-h-0 w-full max-w-none flex-col overflow-hidden bg-[var(--atlas-window-bg)]"
       >
-        {/* Tab strip — full width */}
+        {/* Tab strip — full width. The Ask Clyra toggle lives here (not the toolbar
+            row below) so it stays put at tab-strip height regardless of which
+            internal page or sidebar view is open, matching Atlas's placement. */}
         <div
-          className="flex shrink-0 items-end gap-0.5 overflow-x-auto px-2 pt-0.5 [scrollbar-width:none]"
+          className="flex shrink-0 items-center gap-1.5 pl-2 pr-2"
           style={{ height: "var(--atlas-titlebar-height)", background: "var(--atlas-titlebar-bg)" }}
         >
+        <div className="flex min-w-0 flex-1 items-end gap-0.5 self-stretch overflow-x-auto pt-0.5 [scrollbar-width:none]">
           <AnimatePresence initial={false} mode="popLayout">
             {browserState?.tabs.map((tab) => {
               const agentOwnsTab = Boolean(
@@ -1468,9 +1470,9 @@ export default function WebBrowserWorkspace() {
               <motion.button
                 key={tab.id}
                 layout="position"
-                initial={{ opacity: 0, scale: 0.99, x: -2 }}
+                initial={{ opacity: 0, scale: 0.98, x: -12 }}
                 animate={{ opacity: 1, scale: 1, x: 0 }}
-                exit={{ opacity: 0, scale: 0.99, x: -2 }}
+                exit={{ opacity: 0, scale: 0.98, x: -12 }}
                 transition={{ type: "spring", stiffness: 440, damping: 34, mass: 0.5 }}
                 type="button"
                 onPointerEnter={() => setHoveredBrowserTabId(tab.id)}
@@ -1483,18 +1485,18 @@ export default function WebBrowserWorkspace() {
                   if (event.button === 1 && browserState.tabs.length > 1) void performAction({ type: "close_tab", tabId: tab.id });
                 }}
                 className={cn(
-                  "group/tab isolate relative mb-0 flex min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden px-[15px] text-left font-medium transition-[background-color,color] duration-150 ease-out",
+                  "group/tab isolate relative mb-[3px] flex h-[34px] min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden rounded-[11px] px-[15px] text-left font-medium transition-[background-color,color] duration-150 ease-out",
                   tab.active && !activeInternalTab
                     ? agentOwnsTab
-                      ? "mb-[3px] h-[34px] rounded-[12px] bg-transparent text-[var(--atlas-text-secondary)]"
-                      : "mb-[3px] h-[34px] rounded-[12px] bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)] shadow-[0_1px_3px_rgba(15,23,42,.08)]"
-                    : "mb-[3px] h-[34px] rounded-[11px] text-[var(--atlas-text-secondary)]",
+                      ? "bg-transparent text-[var(--atlas-text-secondary)]"
+                      : "bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)] shadow-[0_1px_3px_rgba(15,23,42,0.09),0_1px_1px_rgba(15,23,42,0.05)]"
+                    : "text-[var(--atlas-text-secondary)]",
                   agentOwnsTab && "clyra-browser-agent-tab",
                 )}
                 style={{ fontSize: "13px" }}
                 title={agentOwnsTab ? "Clyra is controlling this tab" : undefined}
               >
-                {hoveredBrowserTabId === tab.id && !(tab.active && !activeInternalTab) ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[9px] bg-black/[0.045]" /> : null}
+                {hoveredBrowserTabId === tab.id && !(tab.active && !activeInternalTab) ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[11px] bg-black/[0.045]" /> : null}
                 <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[6px] bg-[#f3f5f7] text-[var(--atlas-text-secondary)]">
                   {tab.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe2 className="h-3 w-3" strokeWidth={1.8} />}
                 </span>
@@ -1531,22 +1533,22 @@ export default function WebBrowserWorkspace() {
                 <motion.button
                   key={tab.id}
                   layout="position"
-                  initial={{ opacity: 0, scale: 0.99, x: -2 }}
+                  initial={{ opacity: 0, scale: 0.98, x: -12 }}
                   animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.99, x: -2 }}
+                  exit={{ opacity: 0, scale: 0.98, x: -12 }}
                   transition={{ type: "spring", stiffness: 440, damping: 34, mass: 0.5 }}
                   type="button"
                   onPointerEnter={() => setHoveredBrowserTabId(tab.id)}
                   onPointerLeave={() => setHoveredBrowserTabId(null)}
                   onClick={() => setActiveInternalTabId(tab.id)}
                   className={cn(
-                    "group/tab isolate relative mb-0 flex min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden px-[15px] text-left text-[13px] font-medium transition-[background-color,color] duration-150 ease-out",
+                    "group/tab isolate relative mb-[3px] flex h-[34px] min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden rounded-[11px] px-[15px] text-left text-[13px] font-medium transition-[background-color,color] duration-150 ease-out",
                     selected
-                      ? "mb-[3px] h-[34px] rounded-[12px] bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)] shadow-[0_1px_3px_rgba(15,23,42,.08)]"
-                      : "mb-[3px] h-[34px] rounded-[11px] text-[var(--atlas-text-secondary)]",
+                      ? "bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)] shadow-[0_1px_3px_rgba(15,23,42,0.09),0_1px_1px_rgba(15,23,42,0.05)]"
+                      : "text-[var(--atlas-text-secondary)]",
                   )}
                 >
-                  {hoveredBrowserTabId === tab.id && !selected ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[9px] bg-black/[0.045]" /> : null}
+                  {hoveredBrowserTabId === tab.id && !selected ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[11px] bg-black/[0.045]" /> : null}
                   <PageIcon className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" />
                   <span className="min-w-0 flex-1 truncate">{pageTitle}</span>
                   <span
@@ -1562,9 +1564,31 @@ export default function WebBrowserWorkspace() {
               );
             })}
           </AnimatePresence>
-          <IconButton label="New tab" onClick={() => void performAction({ type: "open_tab" })} className="mb-0.5 h-8 w-8 rounded-[9px] text-[var(--atlas-text-secondary)] hover:bg-black/[0.05] hover:text-[var(--atlas-text-primary)]">
+          <IconButton label="New tab" onClick={() => void performAction({ type: "open_tab" })} className="mb-[5px] h-8 w-8 rounded-[9px] text-[var(--atlas-text-secondary)] hover:bg-black/[0.05] hover:text-[var(--atlas-text-primary)]">
             <Plus className="h-4 w-4" />
           </IconButton>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setSideView("agent");
+            setSideOpen((value) => {
+              const next = sideView === "agent" ? !value : true;
+              sideLockRef.current = next;
+              return next;
+            });
+          }}
+          className={cn(
+            "mb-[3px] flex h-[30px] shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-[background-color,color,border-color] duration-150",
+            sideOpen && sideView === "agent"
+              ? "border-[var(--atlas-clyra-blue)]/25 bg-[var(--atlas-clyra-blue)]/[0.08] text-[var(--atlas-clyra-blue)]"
+              : "border-[var(--atlas-clyra-blue)]/20 bg-[var(--atlas-clyra-blue)]/[0.05] text-[var(--atlas-clyra-blue)] hover:bg-[var(--atlas-clyra-blue)]/[0.09]",
+          )}
+          aria-label={sideOpen ? "Hide Ask Clyra" : "Ask Clyra"}
+        >
+          {sideOpen && sideView === "agent" ? <X className="h-3.5 w-3.5" strokeWidth={2} /> : null}
+          Ask Clyra
+        </button>
         </div>
 
         {/* Toolbar — full width */}
@@ -1585,18 +1609,18 @@ export default function WebBrowserWorkspace() {
           <IconButton label={browserState?.loading ? "Stop loading" : "Reload"} disabled={Boolean(activeInternalTab)} onClick={() => void performAction({ type: browserState?.loading ? "stop_loading" : "reload" })} className="h-8 w-8">
             {browserState?.loading ? <X className="h-4 w-4" /> : <RefreshCw className={cn("h-4 w-4", isBrowserBusy && "animate-spin")} />}
           </IconButton>
-          <form onSubmit={(event) => void navigate(event)} className="relative min-w-0 flex-1 px-1.5">
+          <form onSubmit={(event) => void navigate(event)} className="relative flex min-w-0 flex-1 justify-center px-1.5">
             <div
               className={cn(
-                "group/omnibox flex h-9 w-full items-center gap-2 rounded-[15px] border border-black/[0.055] bg-white/90 px-3 transition-[background-color,box-shadow,border-color] duration-200 ease-[cubic-bezier(.22,1,.36,1)]",
+                "group/omnibox flex h-9 items-center transition-[background-color,box-shadow,border-radius,width] duration-150",
                 omniboxFocused
-                  ? "border-[var(--atlas-clyra-blue)]/20 bg-white shadow-[0_4px_16px_rgba(31,71,140,.08),0_0_0_3px_rgba(35,104,245,.055)]"
-                  : "shadow-[0_1px_2px_rgba(0,0,0,.025)] hover:bg-white",
+                  ? "w-full gap-2 rounded-[10px] bg-white px-3 shadow-[inset_0_0_0_1px_var(--atlas-divider)]"
+                  : "w-auto min-w-[180px] max-w-[420px] gap-1.5 rounded-full bg-black/[0.045] px-3.5 hover:bg-black/[0.065]",
               )}
             >
-              {browserState?.secure && !showStartPage
-                ? <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.65} />
-                : <Search className="h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.65} />}
+              {browserState?.secure
+                ? <LockKeyhole className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.8} />
+                : <Search className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" />}
               <input
                 data-browser-omnibox
                 value={omniboxFocused ? address : restingHost}
@@ -1621,7 +1645,7 @@ export default function WebBrowserWorkspace() {
                   "min-w-0 flex-1 bg-transparent outline-none",
                   omniboxFocused
                     ? "text-left text-[13px] font-medium text-[var(--atlas-text-primary)]"
-                    : "cursor-text text-left text-[13px] font-medium text-[var(--atlas-text-secondary)]",
+                    : "cursor-text truncate text-center text-[13px] font-medium text-[var(--atlas-text-tertiary)]",
                 )}
                 placeholder="Search or enter address"
                 aria-label="Address and search bar"
@@ -1685,27 +1709,6 @@ export default function WebBrowserWorkspace() {
               ) : null}
             </AnimatePresence>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSideView("agent");
-              setSideOpen((value) => {
-                const next = sideView === "agent" ? !value : true;
-                sideLockRef.current = next;
-                return next;
-              });
-            }}
-            className={cn(
-              "ml-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 text-[12px] font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.97]",
-              sideOpen && sideView === "agent"
-                ? "bg-black/[0.04] text-[var(--atlas-clyra-blue)]"
-                : "bg-transparent text-[var(--atlas-clyra-blue)] hover:bg-black/[0.035]",
-            )}
-            aria-label={sideOpen ? "Hide Ask Clyra" : "Ask Clyra"}
-          >
-            <AiOrb className="h-5 w-5" state={isAgentBusy ? "thinking" : "idle"} />
-            <span className="hidden xl:inline">Ask Clyra</span>
-          </button>
         </div>
 
         <AnimatePresence initial={false}>

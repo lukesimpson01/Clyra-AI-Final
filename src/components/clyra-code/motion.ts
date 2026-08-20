@@ -48,3 +48,32 @@ export const LABEL_MORPH = {
   exit: { opacity: 0, y: -2 },
   transition: { duration: 0.16, ease: AGENT_EASE },
 } as const;
+
+type EnterSpec = {
+  initial: Record<string, number>;
+  animate: Record<string, number>;
+  transition: Record<string, unknown>;
+};
+
+/**
+ * Entrance props for a transcript row.
+ *
+ * Always keep `animate` mounted and vary only `initial`. Swapping the whole
+ * prop set — passing `{}` for rows that should not animate — leaves a live
+ * component with no animation target, so it keeps whatever style `initial`
+ * put there. That is how streamed assistant prose ended up permanently at
+ * `opacity: 0` while still occupying its full height: the row was mounted
+ * with the fade-in props, and the "is this still fresh?" condition flipped to
+ * false a few seconds later and took `animate` away mid-life. The result was
+ * a tall blank gap in the middle of the conversation.
+ *
+ * `initial: false` tells Motion to start at the animate values, which is the
+ * correct way to express "this row is historical, do not replay it".
+ */
+export function enterProps(spec: EnterSpec, animate: boolean) {
+  return {
+    initial: animate ? spec.initial : false,
+    animate: spec.animate,
+    transition: spec.transition,
+  } as const;
+}
