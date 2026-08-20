@@ -149,9 +149,10 @@ function stripProjectPrefix(path: string) {
 
 /** Detect iOS intent from a prompt so iOS App Mode activates automatically. */
 export function detectIosIntent(prompt: string): boolean {
-  const ios = /\b(ios|iphone|ipad|swiftui|swift\s+app|xcode|apple\s+watch|watchos|visionos|apple\s+tv|tvos|app\s+store)\b/i;
+  const ios = /\b(?:ios|iphone|ipad|swiftui|uikit|xcode)\s+(?:app|application|project|widget|extension|client|game)\b|\b(?:build|create|make|develop|scaffold)\b[^.!?\n]{0,80}\b(?:ios|iphone|ipad|swiftui|uikit)\b/i;
+  const styleOnly = /\b(?:ios|iphone|ipad|swiftui|apple)\s+(?:theme|style|look|aesthetic|design|inspired)\b/i;
   const web = /\b(website|web\s+app|html|react|next\.?js|electron|desktop\s+app|landing\s+page|portfolio)\b/i;
-  return ios.test(prompt) && !web.test(prompt);
+  return !styleOnly.test(prompt) && ios.test(prompt) && !web.test(prompt);
 }
 
 /** Detect Windows desktop intent so the Windows preview chrome activates automatically. */
@@ -332,6 +333,9 @@ export function useClyraCode() {
   const diffTimerRef = useRef<number | null>(null);
   const projectsRef = useRef<VibeProject[]>([]);
   const effortRef = useRef<ReasoningEffort | null>(null);
+  const normalizedRunIdRef = useRef<string>("");
+  const streamTextRef = useRef("");
+  const streamFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     runStateRef.current = state.runState;
@@ -384,6 +388,99 @@ export function useClyraCode() {
   /** Normalize one ClyraAgentEvent envelope from the harness SSE stream. */
   const handleEvent = useCallback(
     (raw: unknown) => {
+      const normalized = raw as {
+        type?: string; runId?: string; state?: string; label?: string; delta?: string;
+        id?: string; summary?: string; tool?: string; callId?: string; input?: unknown;
+        output?: unknown; error?: string; durationMs?: number;
+      };
+      if (normalized?.type?.includes(".") && !normalized.type.startsWith("session.") && !normalized.type.startsWith("message.part.")) {
+        const ts = Date.now();
+        if (normalized.type === "user.message") {
+          const message = normalized as typeof normalized & { text?: string; timestamp?: number };
+          const text = String(message.text ?? "").trim();
+          if (!text) return;
+          const id = message.id || `user-${message.timestamp || ts}`;
+          setState((prev) => prev.log.some((entry) => entry.id === id || (entry.type === "user" && entry.text === text))
+            ? prev
+            : { ...prev, log: [...prev.log, { type: "user", id, text, ts: message.timestamp || ts }] });
+          return;
+        }
+        if (normalized.type === "run.started") {
+          normalizedRunIdRef.current = normalized.runId || `run-${ts}`;
+          streamTextRef.current = "";
+          setState((prev) => ({ ...prev, runState: "running", runStartedAt: ts, runEndedAt: null, error: null }));
+          return;
+        }
+        if (normalized.type === "run.state") {
+          const terminal = normalized.state === "COMPLETED" ? "complete" : normalized.state === "FAILED" ? "failed" : normalized.state === "CANCELLED" ? "cancelled" : "running";
+          setState((prev) => ({
+            ...prev,
+            runState: terminal,
+            runEndedAt: terminal === "running" ? null : ts,
+          }));
+          return;
+        }
+        if (normalized.type === "message.delta") {
+          streamTextRef.current += normalized.delta || "";
+          if (streamFrameRef.current === null) {
+            streamFrameRef.current = window.requestAnimationFrame(() => {
+              streamFrameRef.current = null;
+              const id = `assistant-${normalizedRunIdRef.current || "live"}`;
+              const text = streamTextRef.current;
+              setState((prev) => {
+                const index = prev.log.findIndex((entry) => entry.id === id);
+                const log = [...prev.log];
+                const entry: LogEntry = { type: "assistant", id, text, ts };
+                if (index >= 0) log[index] = entry; else log.push(entry);
+                return { ...prev, log };
+              });
+            });
+          }
+          return;
+        }
+        if (normalized.type === "tool.started") {
+          const input = (normalized.input ?? {}) as Record<string, unknown>;
+          const tool = normalized.tool || "tool";
+          const { kind, target } = classifyTool(tool, input);
+          const actionId = normalized.callId || `tool-${ts}`;
+          setState((prev) => ({
+            ...prev,
+            actions: { ...prev.actions, [actionId]: { id: actionId, kind, tool, status: "active", target: target || tool, startedAt: ts } },
+            log: prev.log.some((entry) => entry.type === "action" && entry.actionId === actionId)
+              ? prev.log
+              : [...prev.log, { type: "action", id: `entry-${actionId}`, actionId, ts }],
+          }));
+          return;
+        }
+        if (normalized.type === "tool.completed" || normalized.type === "tool.failed") {
+          const actionId = normalized.callId || "";
+          setState((prev) => {
+            const existing = prev.actions[actionId];
+            if (!existing) return prev;
+            return { ...prev, actions: { ...prev.actions, [actionId]: {
+              ...existing,
+              status: normalized.type === "tool.failed" ? "error" : "success",
+              output: normalized.type === "tool.completed" ? String(normalized.output ?? "") : existing.output,
+              error: normalized.type === "tool.failed" ? normalized.error || "Tool failed" : undefined,
+              endedAt: ts,
+            } } };
+          });
+          if (normalized.type === "tool.completed" && activeProjectRef.current && activeSessionRef.current) refreshDiff(activeProjectRef.current, activeSessionRef.current);
+          return;
+        }
+        if (normalized.type === "run.completed") {
+          setState((prev) => ({ ...prev, runState: "complete", runEndedAt: ts, actions: finalizeActions(prev.actions, "success") }));
+          return;
+        }
+        if (normalized.type === "run.failed") {
+          setState((prev) => ({ ...prev, runState: "failed", runEndedAt: ts, error: normalized.error || "The coding run failed.", actions: finalizeActions(prev.actions, "error") }));
+          return;
+        }
+        if (normalized.type === "run.cancelled") {
+          setState((prev) => ({ ...prev, runState: "cancelled", runEndedAt: ts, actions: finalizeActions(prev.actions, "cancelled") }));
+          return;
+        }
+      }
       const event = raw as {
         payload?: { type?: string; properties?: Record<string, unknown> };
         timestamp?: number;
@@ -901,6 +998,16 @@ export function useClyraCode() {
     [],
   );
 
+  const revertRun = useCallback(async () => {
+    const projectId = activeProjectRef.current;
+    const sessionId = activeSessionRef.current;
+    if (!projectId || !sessionId) return false;
+    await api.revertSession(projectId, sessionId);
+    const diffs = await api.sessionDiff(projectId, sessionId).catch(() => [] as FileDiff[]);
+    setState((prev) => ({ ...prev, diffs }));
+    return true;
+  }, []);
+
   /** Rebuild the work log from persisted session messages after a reload. */
   const restoreSession = useCallback(
     async (projectId: string, sessionId: string) => {
@@ -909,10 +1016,21 @@ export function useClyraCode() {
       void refreshEffortStatus();
       const messages = await api.sessionMessages(projectId, sessionId).catch(() => null);
       if (!messages) return false;
+      const normalizedMessages = messages.filter((message): message is { type: string; [key: string]: unknown } =>
+        typeof (message as { type?: unknown }).type === "string" && String((message as { type: string }).type).includes("."));
+      if (normalizedMessages.length > 0) {
+        activeSessionRef.current = sessionId;
+        setState((prev) => ({ ...prev, sessionId, log: [], actions: {}, diffs: [], restored: false }));
+        for (const event of normalizedMessages) handleEvent(event);
+        const diffs = await api.sessionDiff(projectId, sessionId).catch(() => [] as FileDiff[]);
+        setState((prev) => ({ ...prev, sessionId, diffs, restored: true }));
+        openStream(projectId);
+        return true;
+      }
       const log: LogEntry[] = [];
       const actions: Record<string, AgentAction> = {};
       for (const message of messages) {
-        rebuildMessage(message, log, actions);
+        rebuildMessage(message as OpenCodeMessage, log, actions);
       }
       activeSessionRef.current = sessionId;
       const diffs = await api.sessionDiff(projectId, sessionId).catch(() => [] as FileDiff[]);
@@ -943,7 +1061,7 @@ export function useClyraCode() {
       openStream(projectId);
       return true;
     },
-    [openStream],
+    [handleEvent, openStream],
   );
 
   /** Select a saved conversation without changing the workspace it belongs to. */
@@ -1082,6 +1200,7 @@ export function useClyraCode() {
     startRun,
     cancelRun,
     replyPermission,
+    revertRun,
     recordVisualEdit,
     setEffort,
     setState,

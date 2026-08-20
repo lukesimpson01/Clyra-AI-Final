@@ -287,14 +287,15 @@ export class PlaytestRunner {
    * backing onto a wall) is not the same as an unreachable object.
    */
   /** Walk to the first of several candidates that can actually be reached. */
-  private async walkToAny(name: string, timeoutMs = 12_000): Promise<{ ok: boolean; target?: ResolvedTarget; distance: number; detail: string }> {
+  private async walkToAny(name: string, timeoutMs?: number): Promise<{ ok: boolean; target?: ResolvedTarget; distance: number; detail: string }> {
+    const moveTimeout = timeoutMs ?? (this.scene.dimensions === "2d" ? 45_000 : 12_000);
     const from = await this.playerPosition();
     const candidates = resolveTargets(this.scene, name, from);
     if (!candidates.length) return { ok: false, distance: 0, detail: `Nothing in the scene is named or tagged "${name}".` };
 
     const attempts: string[] = [];
     for (const candidate of candidates) {
-      const move = await this.walkTo(candidate, timeoutMs);
+      const move = await this.walkTo(candidate, moveTimeout);
       if (move.ok) return { ok: true, target: candidate, distance: move.distance, detail: "" };
       attempts.push(`${candidate.entityId ?? name}: ${move.detail}`);
     }

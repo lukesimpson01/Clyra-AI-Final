@@ -43,6 +43,7 @@ export interface RuntimeWorld {
   render(): void;
   interact(): { ok: boolean; target?: string; reason?: string };
   attack(): { ok: boolean; hit: string[] };
+  restart(): { ok: boolean };
   requestMoveTo(position: [number, number, number]): { accepted: boolean; path: number; reason?: string };
   arrived(position: [number, number, number], tolerance?: number): boolean;
   setLook(yawDelta: number, pitchDelta: number): void;
@@ -122,6 +123,7 @@ function frame(timestamp: number) {
   try {
     world.step(delta);
     world.render();
+    updateRuntimeUi();
   } catch (error) {
     reportError(error, false);
   }
@@ -161,6 +163,13 @@ function applyInput(action: string, phase: "down" | "up" | "press", look?: [numb
   if (phase === "up") world.held.delete(action);
 
   if (phase === "press" || phase === "down") {
+    if (action === "pause") {
+      running = !running;
+      post({ type: "runtime.state", state: running ? "playing" : "paused" });
+      updateRuntimeUi();
+      return { accepted: true, paused: !running };
+    }
+    if (action === "restart") return { accepted: true, ...world.restart() };
     if (action === "interact") return { accepted: true, ...world.interact() };
     if (action === "attack") return { accepted: true, ...world.attack() };
   }
@@ -171,6 +180,27 @@ function applyInput(action: string, phase: "down" | "up" | "press", look?: [numb
     world.held.delete(action);
   }
   return { accepted: true };
+}
+
+let uiRoot: HTMLDivElement | null = null;
+let uiLast = "";
+
+function updateRuntimeUi() {
+  if (!world) return;
+  const snapshot = world.snapshot();
+  const health = snapshot.player?.health;
+  const collected = snapshot.player?.inventory.reduce((total, item) => total + item.count, 0) ?? 0;
+  const html = `<div style="position:absolute;left:20px;top:18px;padding:10px 13px;border-radius:10px;background:rgba(10,13,18,.68);backdrop-filter:blur(12px)">Health ${health?.current ?? 0}/${health?.max ?? 0}<br><span style="opacity:.72">Collected ${collected}</span></div>${running ? "" : '<div data-runtime-pause style="position:absolute;inset:0;display:grid;place-items:center;background:rgba(8,10,14,.48);font-size:28px;font-weight:650">Paused</div>'}`;
+  if (html === uiLast) return;
+  if (!uiRoot) {
+    uiRoot = document.createElement("div");
+    uiRoot.id = "game-ui";
+    uiRoot.setAttribute("aria-live", "polite");
+    Object.assign(uiRoot.style, { position: "fixed", inset: "0", pointerEvents: "none", color: "white", fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif", fontSize: "14px", textShadow: "0 1px 3px rgba(0,0,0,.8)", zIndex: "10" });
+    document.body.appendChild(uiRoot);
+  }
+  uiRoot.innerHTML = html;
+  uiLast = html;
 }
 
 function attachKeyboard() {
@@ -218,6 +248,7 @@ async function loadProject(project: GameProjectIR, sceneId?: string) {
 
   bindInputMap(project);
   const info = world.load(project, sceneId);
+  uiLast = "";
   post({ type: "runtime.loaded", sceneId: info.sceneId, entityCount: info.entityCount, warnings: info.warnings });
   post({ type: "runtime.state", state: "idle" });
   world.render();
@@ -233,11 +264,13 @@ async function handleCommand(command: EditorRuntimeCommand) {
       if (!world) throw new Error("Load a project before pressing play.");
       running = true;
       startLoop();
+      updateRuntimeUi();
       post({ type: "runtime.state", state: "playing" });
       return;
 
     case "runtime.pause":
       running = false;
+      updateRuntimeUi();
       post({ type: "runtime.state", state: "paused" });
       return;
 
@@ -291,7 +324,10 @@ async function handleCommand(command: EditorRuntimeCommand) {
       const position = snapshot.player?.position ?? [0, 0, 0];
       const distance = Math.hypot(position[0] - target[0], position[2] - target[2]);
       const arrivedNow = world.arrived(target, command.tolerance);
-      const progress = (world as { moveTarget?: { index: number; waypoints: unknown[] } | null }).moveTarget;
+      const rawProgress = (world as { moveTarget?: unknown }).moveTarget;
+      const progress = rawProgress && !Array.isArray(rawProgress) && typeof rawProgress === "object" && Array.isArray((rawProgress as { waypoints?: unknown }).waypoints)
+        ? rawProgress as { index: number; waypoints: unknown[] }
+        : null;
 
       // A stalled walk is reported with the numbers that explain it: whether
       // navigation produced a real route, how much of it was consumed, and

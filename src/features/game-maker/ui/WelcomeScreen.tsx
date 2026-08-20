@@ -5,12 +5,13 @@
  * already know what they want, and recent projects for people coming back.
  */
 import { useEffect, useState } from "react";
-import { ChevronRight, Clock, Gamepad2, Loader2 } from "lucide-react";
+import { ArrowUp, Boxes, ChevronRight, Clock, Gamepad2, Loader2, PlayCircle, ShieldCheck } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { editorStore } from "../store/editorStore";
-import { TEMPLATES, projectFromTemplate, templateForPrompt } from "./templates";
+import { TEMPLATES, projectFromTemplate } from "./templates";
 import { listStoredProjects, loadProjectById } from "./persistence";
 import type { RuntimeMode } from "../ir/types";
+import { createProject } from "../ir/project";
 
 const IDEAS = [
   { label: "Fantasy village", prompt: "A third-person fantasy adventure in a medieval village beside a river", mode: "3d" as const },
@@ -46,68 +47,102 @@ export function WelcomeScreen() {
   const create = (templateId?: string) => {
     const text = prompt.trim() || "A third-person adventure";
     setBusy(true);
-    // Deliberately synchronous and local: the first playable slice is built
-    // by deterministic generators, not by waiting on a model (spec §180).
-    setTimeout(() => {
-      try {
-        const template = templateId
-          ? TEMPLATES.find((entry) => entry.id === templateId)!
-          : templateForPrompt(text, mode === "auto" ? undefined : mode);
+    try {
+      if (templateId) {
+        const template = TEMPLATES.find((entry) => entry.id === templateId)!;
         const project = projectFromTemplate(template, { name: titleFrom(text), concept: text, seed: requestedSeed() });
         editorStore.loadProject(project);
         editorStore.markDirty();
-        editorStore.log("info", "editor", `Started from the "${template.name}" template. Ask Clyra to shape it into your game.`);
-      } catch (error) {
-        editorStore.log("error", "editor", error instanceof Error ? error.message : String(error));
-      } finally {
-        setBusy(false);
+        editorStore.log("info", "editor", `Started from the explicit "${template.name}" template.`);
+      } else {
+        const runtimeMode = resolveMode(text, mode);
+        const baseProject = createProject({
+          name: titleFrom(text),
+          concept: text,
+          mode: runtimeMode,
+          genre: "unplanned",
+          camera: runtimeMode === "2d" ? "side-scrolling" : runtimeMode === "voxel" ? "first-person" : "third-person",
+          coreLoop: "pending AI plan",
+        });
+        const project = {
+          ...baseProject,
+          memory: {
+            entries: [{
+              id: `pending-generation-${Date.now()}`,
+              kind: "runbook" as const,
+              text,
+              tags: ["pending-generation", runtimeMode],
+              createdAt: Date.now(),
+            }],
+          },
+        };
+        editorStore.loadProject(project);
+        editorStore.markDirty();
+        editorStore.log("info", "editor", "Created a fresh empty project. Clyra will now plan and build it through the real agent workflow.");
       }
-    }, 16);
+    } catch (error) {
+      editorStore.log("error", "editor", error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="gm-welcome">
-      <div className="gm-welcome__identity">
-        <span><Gamepad2 size={16} /></span>
-        Clyra Game Maker
-      </div>
-
-      <div className="gm-welcome__hero">
-        <h1>Describe a game.</h1>
-        <p>Clyra builds it in the browser, then plays it to check its own work.</p>
-      </div>
-
-      <div className="gm-welcome__composer">
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              create();
-            }
-          }}
-          placeholder="Make me a third-person fantasy adventure with a village, a castle, sword combat and a dungeon boss…"
-          rows={3}
-          autoFocus
-        />
-        <div className="gm-welcome__actions">
-          <div className="gm-welcome__modes" aria-label="Game dimensions">
-            {(["auto", "3d", "2d", "voxel"] as const).map((option) => (
-              <button key={option} type="button" className={cn(mode === option && "is-active")} onClick={() => setMode(option)}>
-                {option === "auto" ? "Auto" : option.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          <button type="button" className="gm-button gm-button--primary" onClick={() => create()} disabled={busy}>
-            {busy ? <Loader2 size={13} className="gm-spin" /> : null}
-            Create <ChevronRight size={14} />
-          </button>
+      <header className="gm-welcome__top">
+        <div className="gm-welcome__identity">
+          <span><Gamepad2 size={16} /></span>
+          <div><strong>Clyra</strong><small>Game Maker</small></div>
         </div>
-      </div>
+        <div className="gm-welcome__availability"><i /> Local engines ready</div>
+      </header>
+
+      <main className="gm-welcome__main">
+        <div className="gm-welcome__hero">
+          <div className="gm-welcome__eyebrow">From an idea to a playable world</div>
+          <h1>Make the game<br />you want to play.</h1>
+          <p>Describe the experience. Clyra plans the build, creates editable scene data, launches the real runtime, and tests what it made.</p>
+        </div>
+
+        <div className="gm-welcome__composer">
+          <div className="gm-welcome__composer-label"><span>New game</span><small>Enter to create · Shift Enter for a new line</small></div>
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                create();
+              }
+            }}
+            placeholder="A third-person fantasy adventure with a village, sword combat, and a ruined tower…"
+            rows={4}
+            autoFocus
+          />
+          <div className="gm-welcome__actions">
+            <div className="gm-welcome__modes" aria-label="Game dimensions">
+              {(["auto", "3d", "2d", "voxel"] as const).map((option) => (
+                <button key={option} type="button" className={cn(mode === option && "is-active")} onClick={() => setMode(option)} aria-pressed={mode === option}>
+                  {option === "auto" ? "Auto" : option.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="gm-button gm-button--primary gm-welcome__create" onClick={() => create()} disabled={busy}>
+              {busy ? <Loader2 size={14} className="gm-spin" /> : <ArrowUp size={14} />}
+              {busy ? "Starting…" : "Create game"}
+            </button>
+          </div>
+        </div>
+
+        <div className="gm-welcome__proof" aria-label="Game Maker capabilities">
+          <div><Boxes size={16} /><span><strong>Editable by design</strong><small>Entities, systems, and assets stay yours.</small></span></div>
+          <div><PlayCircle size={16} /><span><strong>Real browser runtime</strong><small>2D, 3D, and voxel projects run locally.</small></span></div>
+          <div><ShieldCheck size={16} /><span><strong>Verified before complete</strong><small>Playtests and validation gate AI claims.</small></span></div>
+        </div>
+      </main>
 
       <div className="gm-welcome__ideas">
-        <span>Try</span>
+        <span>Start with an idea</span>
         {IDEAS.map((idea) => (
           <button
             key={idea.label}
@@ -123,13 +158,14 @@ export function WelcomeScreen() {
       </div>
 
       <section className="gm-welcome__templates">
-        <h2>Or start from a template</h2>
+        <h2><span>Starting points</span><small>Templates are explicit foundations, never hidden behind your prompt.</small></h2>
         <div>
           {TEMPLATES.map((template) => (
             <button key={template.id} type="button" onClick={() => create(template.id)} disabled={busy}>
               <span className={cn("gm-template__badge", `is-${template.mode}`)}>{template.mode.toUpperCase()}</span>
               <strong>{template.name}</strong>
               <small>{template.description}</small>
+              <ChevronRight className="gm-template__arrow" size={14} />
             </button>
           ))}
         </div>
@@ -163,7 +199,16 @@ export function WelcomeScreen() {
 }
 
 function titleFrom(prompt: string): string {
+  const qaName = prompt.match(/\bQA_(?:2D|3D)_[A-Za-z0-9_-]+\b/i)?.[0];
+  if (qaName) return qaName.slice(0, 48);
   const cleaned = prompt.replace(/^(make|create|build|generate)\s+(me\s+)?(a|an|the)\s+/i, "").trim();
   const words = cleaned.split(/\s+/).slice(0, 4).join(" ");
   return (words || "New game").replace(/^\w/, (character) => character.toUpperCase()).slice(0, 48);
+}
+
+function resolveMode(prompt: string, requested: "auto" | RuntimeMode): RuntimeMode {
+  if (requested !== "auto") return requested;
+  if (/\b(2d|platformer|side.?scroll|top.?down|pixel)\b/i.test(prompt)) return "2d";
+  if (/\b(voxel|block world|minecraft)\b/i.test(prompt)) return "voxel";
+  return "3d";
 }

@@ -15,6 +15,7 @@ import { z } from "zod";
 import { ScenePatchSchema } from "../ir/schema";
 import { SceneQuerySchema } from "../scene/query";
 import { AnchorSchema, PlacementSchema } from "../scene/grounding";
+import { RuntimeQuerySchema } from "../runtime/protocol";
 
 export type ToolPermission = "scene.read" | "scene.write" | "asset.write" | "code.write" | "runtime.control" | "project.write" | "publish";
 
@@ -235,7 +236,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "runtime.query",
     description:
       "Read live state out of the running game: the player (position, velocity, grounded, health, inventory), any entity's components, lists of entities, emitted events, performance metrics, a navigation path, or a numeric render report. This is your only way to know what is actually happening — you have no vision, so verify here instead of assuming. When NOT to use: before runtime.start.",
-    schema: z.object({ query: z.record(z.string(), z.unknown()) }),
+    schema: z.object({ query: RuntimeQuerySchema }),
     permissions: ["runtime.control"],
     readOnly: true,
   }),
@@ -323,10 +324,12 @@ export const TOOLS: ToolDefinition[] = [
     description:
       "Describe what you are trying to do in plain language and get back the specific generators, components and their exact JSON schemas that can do it. Use this instead of guessing parameter names. When NOT to use: for the tools listed here — you already have their schemas.",
     schema: z.object({
-      need: z.string().min(2).max(300),
+      need: z.string().min(2).max(300).optional(),
       kind: z.enum(["generator", "component", "both"]).default("both"),
       /** Fetch the full schema for one named generator or component. */
       name: z.string().optional(),
+    }).superRefine((value, context) => {
+      if (!value.need && !value.name) context.addIssue({ code: "custom", message: "Pass either `need` or `name`.", path: ["need"] });
     }),
     permissions: ["scene.read"],
     readOnly: true,

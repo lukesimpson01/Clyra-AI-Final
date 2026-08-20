@@ -152,6 +152,12 @@ export class EditorStore {
     this.markDirty();
   }
 
+  closeProject() {
+    this.runtime?.stop();
+    this.history.clear();
+    this.set({ ...INITIAL, console: this.state.console, lastSavedAt: this.state.lastSavedAt });
+  }
+
   get project() {
     return this.state.project;
   }

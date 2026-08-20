@@ -159,7 +159,8 @@ export class AgentClient {
         break;
       case "tool.request": {
         const tool = canonicalToolName(message.tool);
-        this.events.onToolStart?.(message.requestId, tool, message.intent);
+        const argumentEvidence = JSON.stringify(message.arguments);
+        this.events.onToolStart?.(message.requestId, tool, [message.intent, argumentEvidence].filter(Boolean).join(" · ").slice(0, 1200));
         const result = await executeTool(this.context, tool, message.arguments);
         this.events.onToolEnd?.(
           message.requestId,

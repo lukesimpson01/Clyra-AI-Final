@@ -203,6 +203,16 @@ export const COMPONENTS: ComponentDefinition[] = [
     }),
   }),
   define({
+    type: "AvatarIdentity",
+    category: "render",
+    summary: "Structured character identity carried from the design brief into the visible runtime avatar.",
+    schema: z.object({
+      role: z.enum(["player", "character"]).default("character"),
+      genderPresentation: z.enum(["female", "male", "neutral"]).default("neutral"),
+      visualPipeline: z.string().min(1),
+    }),
+  }),
+  define({
     type: "CharacterBody",
     category: "movement",
     summary: "Capsule body used for movement and collision resolution.",

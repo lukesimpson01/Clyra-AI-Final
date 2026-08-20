@@ -89,7 +89,7 @@ function commit(
   operations: PatchOperation[],
   assets: AssetRecord[],
   label: string,
-): { revision: number; changed: string[]; warnings: string[] } {
+): { revisionBefore: number; revision: number; changed: string[]; created: string[]; deleted: string[]; createdAssets: string[]; warnings: string[] } {
   const project = context.getProject();
   const scene = activeScene(project);
   const { scene: nextScene, result } = applyScenePatch(scene, {
@@ -102,7 +102,7 @@ function commit(
   const deleted = operations.filter((operation) => operation.op === "delete").map((operation) => (operation as Extract<PatchOperation, { op: "delete" }>).entityId);
   const next: GameProjectIR = { ...replaceScene(project, nextScene), assets: mergeAssets(project, assets) };
   context.setProject(next, { label, changed: result.changedEntities, created, deleted });
-  return { revision: result.revision, changed: result.changedEntities, warnings: result.warnings };
+  return { revisionBefore: scene.revision, revision: result.revision, changed: result.changedEntities, created, deleted, createdAssets: assets.map((asset) => asset.id), warnings: result.warnings };
 }
 
 function toToolError(error: unknown, started: number): ToolResult<never> {
@@ -296,6 +296,20 @@ function handleGenerate(context: ToolContext, args: Record<string, unknown>, sta
     );
   }
 
+  const singletonGenerators = new Set(["tilemap2d", "terrain", "voxelWorld"]);
+  if (singletonGenerators.has(generatorName)) {
+    const existing = Object.values(scene.entities).find((entity) => entity.generator?.generator === generatorName);
+    const alreadyExists = existing || (generatorName === "terrain" && scene.terrain) || (generatorName === "voxelWorld" && scene.voxel);
+    if (alreadyExists) {
+      return fail(
+        "GENERATOR_ALREADY_PRESENT",
+        `This scene already contains a ${generatorName} result; creating another would duplicate the world.`,
+        { hint: existing ? `Use scene.regenerate on ${existing.id}, or edit the existing result.` : "Modify the existing scene-wide data instead of generating it again." },
+        started,
+      );
+    }
+  }
+
   const parameters = { ...((args.parameters as Record<string, unknown>) ?? {}) };
   if (args.at) {
     const frame = context.getContextFrame() ?? undefined;
@@ -322,8 +336,10 @@ function handleGenerate(context: ToolContext, args: Record<string, unknown>, sta
       entitiesCreated: output.operations.filter((operation) => operation.op === "create").length,
       assetsCreated: output.assets.length,
       revision: result.revision,
+      sceneRevisionBefore: result.revisionBefore,
+      sceneRevisionAfter: result.revision,
     },
-    { changedEntities: result.changed, warnings: [...output.warnings, ...result.warnings] },
+    { changedEntities: result.changed, createdEntities: result.created, deletedEntities: result.deleted, createdAssets: result.createdAssets, sceneRevisionBefore: result.revisionBefore, sceneRevisionAfter: result.revision, warnings: [...output.warnings, ...result.warnings] },
     started,
   );
 }
@@ -521,7 +537,7 @@ function handleCharacter(context: ToolContext, args: Record<string, unknown>, st
 
   const result = commit(context, operations, assets, `Add ${count} ${String(args.archetype)}`);
   context.onSelect?.(created);
-  return ok({ created, archetype: args.archetype, genderPresentation: args.genderPresentation ?? "neutral", positions: positions.slice(0, count) }, { changedEntities: result.changed, warnings: result.warnings }, started);
+  return ok({ created, archetype: args.archetype, genderPresentation: args.genderPresentation ?? "neutral", positions: positions.slice(0, count), sceneRevisionBefore: result.revisionBefore, sceneRevisionAfter: result.revision }, { changedEntities: result.changed, createdEntities: result.created, createdAssets: result.createdAssets, sceneRevisionBefore: result.revisionBefore, sceneRevisionAfter: result.revision, warnings: result.warnings }, started);
 }
 
 function handleGameplay(context: ToolContext, args: Record<string, unknown>, started: number): ToolResult {

@@ -350,8 +350,14 @@ export const api = {
   sessionDiff: (projectId: string, sessionId: string) =>
     json<FileDiff[]>(`/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/diff`),
 
+  revertSession: (projectId: string, sessionId: string) =>
+    json<{ ok: boolean; restoredFiles: number; removedNewFiles: number }>(
+      `/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/revert`,
+      { method: "POST" },
+    ),
+
   sessionMessages: (projectId: string, sessionId: string) =>
-    json<OpenCodeMessage[]>(
+    json<Array<OpenCodeMessage | { type: string; [key: string]: unknown }>>(
       `/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/messages`,
     ),
 

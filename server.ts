@@ -54,18 +54,8 @@ import {
   stopAllDevServers,
   stopDevServer,
 } from "./lib/vibe-coder/preview/preview-runner";
-import {
-  classifyVibeRequest,
-  estimateBuildConfidence,
-  scorePlanQuality,
-} from "./lib/vibe-coder/harness/smart-mode-router";
-import { DeepCodingModeTracker } from "./lib/vibe-coder/harness/deep-coding-mode";
-import { DeepWorkBudgetTracker } from "./lib/vibe-coder/harness/deep-work-budget";
-import { MultiPassCoder } from "./lib/vibe-coder/harness/multi-pass-coder";
-import { TaskGroupPlanner } from "./lib/vibe-coder/harness/task-group-planner";
-import { FileSpecPlanner } from "./lib/vibe-coder/harness/file-spec-planner";
 import { registerClineRoutes } from "./lib/cline/cline-routes";
-import { registerOpenCodeRoutes } from "./lib/opencode/opencode-routes";
+import { registerHarnessRoutes } from "./lib/vibe-coder/runtime/harness-routes";
 import { registerGameMakerRoutes } from "./lib/game-maker/routes";
 import { attachGameMakerOrchestrator } from "./lib/game-maker/orchestrator";
 import { registerRoleplayRoutes } from "./lib/roleplay/roleplay-routes";
@@ -73,6 +63,7 @@ import { registerVoiceRoutes, attachVoiceWebSocket } from "./backend/voice";
 import { attachTerminalWebSocket } from "./lib/terminal-ws";
 import { detectMobileSwiftProject, registerMobilePreviewRoutes } from "./lib/mobile-preview-routes";
 import { registerSwiftWasmRoutes } from "./lib/swift-wasm-routes";
+import { registerIosRoutes } from "./lib/ios-routes";
 import { gitService } from "./lib/github/git-service";
 import { registerPreviewProxy, attachPreviewUpgrades } from "./lib/preview-proxy";
 import { registerCreatorTtsRoutes, stopCreatorTtsWorker } from "./backend/creator-tts/service";
@@ -1425,11 +1416,12 @@ async function startServer() {
   });
 
   registerClineRoutes(app);
-  registerOpenCodeRoutes(app);
+  registerHarnessRoutes(app);
   registerGameMakerRoutes(app);
   registerRoleplayRoutes(app);
   registerMobilePreviewRoutes(app);
   registerSwiftWasmRoutes(app);
+  registerIosRoutes(app);
   registerVoiceRoutes(app);
   registerCreatorTtsRoutes(app);
   // The live-preview proxy is required by both Vite development and the

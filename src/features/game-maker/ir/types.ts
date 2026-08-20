@@ -370,6 +370,11 @@ export interface ToolResult<T = unknown> {
   meta: {
     durationMs: number;
     changedEntities?: string[];
+    createdEntities?: string[];
+    deletedEntities?: string[];
+    createdAssets?: string[];
+    sceneRevisionBefore?: number;
+    sceneRevisionAfter?: number;
     warnings?: string[];
   };
 }

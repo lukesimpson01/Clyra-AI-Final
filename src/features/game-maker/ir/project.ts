@@ -62,6 +62,7 @@ export const DEFAULT_INPUT_MAP = {
   block: ["Mouse1"],
   inventory: ["KeyI"],
   pause: ["Escape"],
+  restart: ["KeyR"],
 };
 
 export function createProject(options: {

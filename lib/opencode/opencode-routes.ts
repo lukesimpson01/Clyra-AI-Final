@@ -8,6 +8,7 @@ import { clyraDataPath } from "../runtime-paths";
 import { codingModelStatus, DEEPSEEK_HARNESS_REFERENCE, isReasoningEffort, openCodeRuntimeManager } from "./OpenCodeRuntimeManager";
 import { sandboxStatus } from "../sandbox/seatbelt";
 import { detectMobileSwiftProject } from "../mobile-preview-routes";
+import { requestsIosProject } from "../vibe-coder/runtime/ios-intent";
 
 const execFileAsync = promisify(execFile);
 
@@ -105,10 +106,6 @@ function titleFor(prompt: string) {
   return prompt.replace(/\s+/g, " ").trim().slice(0, 72) || "New Clyra task";
 }
 
-function requestsIosProject(prompt: string) {
-  return /\b(?:ios|iphone|ipad|swiftui|uikit|xcode|xcworkspace|xcodeproj)\b/i.test(prompt);
-}
-
 type IosStarterProfile = {
   title: string;
   kind: "finance" | "travel" | "health" | "food" | "productivity";
@@ -161,7 +158,12 @@ function iOSStarterProfile(prompt: string): IosStarterProfile {
  * evolve them during its normal run. We only seed an otherwise empty Swift
  * workspace, so existing projects always remain user/agent owned.
  */
-async function seedIosStarterIfEmpty(root: string, prompt: string) {
+export async function seedIosStarterIfEmpty(root: string, prompt: string) {
+  const manifestPath = path.join(root, "Package.swift");
+  const existingManifest = await fs.readFile(manifestPath, "utf8").catch(() => "");
+  if (existingManifest && !existingManifest.startsWith("// swift-tools-version:")) {
+    await fs.writeFile(manifestPath, `// swift-tools-version: 6.0\n${existingManifest}`, "utf8");
+  }
   let entries: string[] = [];
   try { entries = await fs.readdir(root, { recursive: true }) as string[]; } catch { /* created below */ }
   // Apple skills are copied into .agent and may themselves contain Swift
@@ -173,7 +175,7 @@ async function seedIosStarterIfEmpty(root: string, prompt: string) {
   const items = profile.items.map((item) => `        ${identifier}Item(title: "${item.name}", detail: "${item.detail}", trailing: "${item.amount}"),`).join("\n");
   const destinationTitles = profile.tabs.map((tab) => `case .${tab.toLowerCase()}: return "${tab}"`).join("\n        ");
   const files: Record<string, string> = {
-    "Package.swift": `// Clyra portable SwiftUI source package\n// The on-device build target can provide SwiftUI; Clyra's cross-platform preview reads these sources.\nimport PackageDescription\nlet package = Package(name: "${identifier}", platforms: [.iOS(.v17)], products: [], targets: [])\n`,
+    "Package.swift": `// swift-tools-version: 6.0\n// Clyra portable SwiftUI source package\n// The on-device build target can provide SwiftUI; Clyra's cross-platform preview reads these sources.\nimport PackageDescription\nlet package = Package(name: "${identifier}", platforms: [.iOS(.v17)], products: [], targets: [])\n`,
     [`App/${identifier}App.swift`]: `import SwiftUI\n\n@main\nstruct ${identifier}App: App {\n    @StateObject private var store = ${identifier}Store()\n\n    var body: some Scene {\n        WindowGroup {\n            ${identifier}RootView().environmentObject(store)\n        }\n    }\n}\n`,
     [`Models/${identifier}Item.swift`]: `import Foundation\n\nstruct ${identifier}Item: Identifiable, Hashable {\n    let id = UUID()\n    var title: String\n    var detail: String\n    var trailing: String\n}\n\nenum ${identifier}Tab: String, CaseIterable, Identifiable {\n    case ${profile.tabs[0].toLowerCase()}, ${profile.tabs[1].toLowerCase()}, ${profile.tabs[2].toLowerCase()}\n    var id: String { rawValue }\n    var title: String {\n        switch self {\n        ${destinationTitles}\n        }\n    }\n}\n`,
     [`ViewModels/${identifier}Store.swift`]: `import Foundation\n\nfinal class ${identifier}Store: ObservableObject {\n    @Published var items: [${identifier}Item] = [\n${items}\n    ]\n    @Published var selectedTab: ${identifier}Tab = .${profile.tabs[0].toLowerCase()}\n    @Published var showingComposer = false\n    @Published var query = ""\n\n    var filteredItems: [${identifier}Item] {\n        guard !query.isEmpty else { return items }\n        return items.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }\n    }\n\n    func add(title: String, detail: String) {\n        items.insert(${identifier}Item(title: title, detail: detail, trailing: "New"), at: 0)\n    }\n}\n`,
@@ -215,7 +217,7 @@ async function seedIosStarterIfEmpty(root: string, prompt: string) {
  * alone cannot select iOS mode. Seed the same real agent guidance from the
  * request when the user explicitly asks for an Apple-platform project.
  */
-async function prepareIosAgentWorkspace(root: string) {
+export async function prepareIosAgentWorkspace(root: string) {
   await fs.writeFile(path.join(root, "AGENTS.md"), IOS_AGENTS_MD, "utf8").catch(() => undefined);
   try {
     await fs.mkdir(path.join(root, ".agent", "skills"), { recursive: true });

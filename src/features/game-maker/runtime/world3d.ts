@@ -22,6 +22,7 @@ import { resolveScatter, type VegetationParams } from "../procedural/vegetation"
 import { BLOCKS, decodeChunk, encodeChunk, meshChunk } from "../procedural/voxel";
 import { buildNavGrid, cellSizeForBounds, findPath, navGeometryFromScene, DEFAULT_NAV_CONFIG, type NavGrid } from "../nav/navmesh";
 import type { GameEvent, RenderReport, RuntimeMetrics, RuntimeSnapshot } from "./protocol";
+import type { Quest, QuestStep } from "../gameplay/quests";
 
 export interface RuntimeEntity {
   ir: EntityIR;
@@ -93,6 +94,7 @@ export class World3D {
   private accumulator = 0;
   private eventSequence = 0;
   private staticColliders: { min: Vec3; max: Vec3 }[] = [];
+  private questStates: Array<{ quest: Quest; step: number; count: number; active: boolean; complete: boolean }> = [];
 
   readonly events: GameEvent[] = [];
   readonly held = new Set<string>();
@@ -129,6 +131,8 @@ export class World3D {
     this.scene = scene;
     this.materials.register(project.assets);
     this.sampleHeight = makeHeightSampler(scene.terrain);
+    const quests = (project.systems.find((system) => system.type === "quests")?.config.quests as Quest[] | undefined) ?? [];
+    this.questStates = quests.map((quest) => ({ quest, step: 0, count: 0, active: !quest.giver, complete: false }));
 
     this.buildEnvironment(scene);
     if (scene.terrain) this.buildTerrain(scene);
@@ -166,6 +170,7 @@ export class World3D {
     this.warnings = [];
     this.runtimeErrors = 0;
     this.moveTarget = null;
+    this.questStates = [];
   }
 
   private buildEnvironment(scene: SceneIR) {
@@ -711,6 +716,46 @@ export class World3D {
     this.events.push(event);
     if (this.events.length > 4000) this.events.splice(0, this.events.length - 4000);
     this.emit(event);
+    if (!name.startsWith("quest_") && name !== "win_state") this.updateQuestProgress(name, data);
+  }
+
+  private updateQuestProgress(event: string, data: Record<string, unknown>) {
+    const eventEntity = typeof data.entityId === "string" ? data.entityId : undefined;
+    const eventQuest = typeof data.questId === "string" ? data.questId : undefined;
+    for (const state of this.questStates) {
+      if (state.complete) continue;
+      if (!state.active && event === "dialogue_started" && eventQuest === state.quest.id) state.active = true;
+      if (!state.active) continue;
+      const step = state.quest.steps[state.step];
+      if (!step || !this.questStepMatches(step, event, data, eventEntity)) continue;
+      state.count += 1;
+      const required = "count" in step ? Number(step.count) : 1;
+      if (state.count < required) continue;
+      this.fire("quest_step_completed", { questId: state.quest.id, step: state.step, type: step.type });
+      state.step += 1;
+      state.count = 0;
+      if (state.step >= state.quest.steps.length) {
+        state.complete = true;
+        this.fire("quest_completed", { questId: state.quest.id, title: state.quest.title });
+        this.fire("win_state", { questId: state.quest.id });
+      }
+    }
+  }
+
+  private questStepMatches(step: QuestStep, event: string, data: Record<string, unknown>, entityId?: string) {
+    const targetMatches = (target: string) => {
+      const entity = entityId ? this.entities.get(entityId) : undefined;
+      return entityId === target || entity?.ir.name === target || entity?.ir.tags.includes(target) === true;
+    };
+    switch (step.type) {
+      case "talk":
+      case "return": return event === "dialogue_started" && targetMatches(step.target);
+      case "kill": return event === "enemy_killed" && targetMatches(step.target);
+      case "interact": return ["container_opened", "door_opened", "interacted"].includes(event) && targetMatches(step.target);
+      case "collect": return event === "item_collected" && data.item === step.item;
+      case "reach": return event === "region_entered" && data.region === step.region;
+      case "escort": return event === "region_entered" && data.region === step.region;
+    }
   }
 
   /* ---------------- simulation ---------------- */
@@ -836,7 +881,11 @@ export class World3D {
   private updatePlayer(dt: number) {
     if (!this.playerId) return;
     const player = this.entities.get(this.playerId);
-    if (!player || !player.alive) return;
+    if (!player) return;
+    if (!player.alive) {
+      if (this.time >= Number(player.state.respawnAt ?? Infinity)) this.restart();
+      return;
+    }
     const controller = player.components.get("PlayerController");
     if (!controller) return;
 
@@ -925,6 +974,7 @@ export class World3D {
     const health = player.components.get("Health");
     if (health && Number(health.current ?? 0) <= 0 && player.alive) {
       player.alive = false;
+      player.state.respawnAt = this.time + 1;
       this.fire("player_died", { entityId: player.ir.id });
     }
 
@@ -1024,6 +1074,7 @@ export class World3D {
     if (current <= 0 && entity.alive) {
       if (entity.ir.id === this.playerId) {
         entity.alive = false;
+        entity.state.respawnAt = this.time + 1;
         this.fire("player_died", { entityId: entity.ir.id });
       }
     }
@@ -1185,6 +1236,21 @@ export class World3D {
     }
     this.fire("player_attacked", { hit });
     return { ok: true, hit };
+  }
+
+  restart() {
+    const player = this.playerId ? this.entities.get(this.playerId) : undefined;
+    if (!player) return { ok: false };
+    const health = player.components.get("Health");
+    if (health) health.current = Number(health.max ?? 100);
+    player.node.setPosition(...player.ir.transform.position);
+    player.velocity = [0, 0, 0];
+    player.alive = true;
+    player.state.respawnAt = undefined;
+    player.node.enabled = true;
+    this.moveTarget = null;
+    this.fire("game_restarted", { entityId: player.ir.id, position: player.ir.transform.position });
+    return { ok: true };
   }
 
   private updateDayNight(dt: number) {

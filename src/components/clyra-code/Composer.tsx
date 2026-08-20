@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Bug, CheckCircle2, ChevronDown, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { ReasoningEffortChip } from "./ReasoningEffortChip";
 import type { ReasoningEffort } from "./api";
@@ -19,6 +19,7 @@ export type ComposerAttachment = {
 };
 
 export type ComposerCommand = "browser" | "plan" | "test" | "debug" | "explain";
+type ComposerMode = "ask" | "agent" | "plan";
 
 const CODING_COMMANDS: Array<{ id: ComposerCommand; name: string; description: string; icon: typeof Globe2 }> = [
   { id: "browser", name: "Browser", description: "Use the live preview autonomously", icon: MousePointer2 },
@@ -36,7 +37,7 @@ const readableSize = (bytes: number) => bytes < 1024 * 1024
  * objects until submit so image previews never become placeholder UI. */
 export function Composer({
   running,
-  model: _model,
+  model,
   effort = null,
   effortLevels = [],
   effortReady = false,
@@ -71,6 +72,8 @@ export function Composer({
   const [command, setCommand] = useState<ComposerCommand | null>(null);
   const [commandQuery, setCommandQuery] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [mode, setMode] = useState<ComposerMode>("agent");
+  const [modeMenu, setModeMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -140,7 +143,7 @@ export function Composer({
     if (!text && attachments.length === 0 && contexts.length === 0) return;
     const contextBlock = contexts.length ? `${contexts.map((context) => `[${context.label}] ${context.detail}`).join("\n")}\n\n` : "";
     const sentAttachments = attachments;
-    const sentCommand = command;
+    const sentCommand = command ?? (mode === "plan" ? "plan" : mode === "ask" ? "explain" : null);
 
     // The composer emptying *is* the acknowledgement that the message was
     // taken. Waiting for the round trip first — project creation, upload,
@@ -164,7 +167,7 @@ export function Composer({
     sentAttachments.forEach((attachment) => attachment.preview && URL.revokeObjectURL(attachment.preview));
     // Context chips are only spent once the request they describe is away.
     contexts.forEach((context) => onRemoveContext(context.id));
-  }, [attachments, command, contexts, onCommandChange, onRemoveContext, onSubmit, value]);
+  }, [attachments, command, contexts, mode, onCommandChange, onRemoveContext, onSubmit, value]);
 
   const visibleCommands = commandQuery === null ? [] : CODING_COMMANDS.filter((item) => item.id.includes(commandQuery.toLowerCase()) || item.name.toLowerCase().includes(commandQuery.toLowerCase()));
   const selectCommand = useCallback((next: ComposerCommand) => {
@@ -207,7 +210,15 @@ export function Composer({
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.035]"><IconComponent className="h-3.5 w-3.5 text-[color:var(--text-secondary)]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
-          <span className="text-[10.5px] font-medium text-[color:var(--text-tertiary)]">Clyra</span><span className="flex-1" />
+          <div className="relative">
+            <button type="button" aria-label="Agent mode" aria-expanded={modeMenu} onClick={() => setModeMenu((open) => !open)} className="flex h-6 items-center gap-1 rounded-[7px] px-1.5 text-[10.5px] font-medium capitalize text-[color:var(--text-secondary)] transition-colors hover:bg-black/[0.045] hover:text-[color:var(--text-primary)]">
+              {mode}<ChevronDown className="h-3 w-3 text-[color:var(--text-tertiary)]" strokeWidth={1.7} />
+            </button>
+            <AnimatePresence>{modeMenu ? <motion.div initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 3, scale: 0.98 }} transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }} className="absolute bottom-8 left-0 z-30 w-[180px] rounded-[10px] border border-black/[0.08] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">
+              {([{ id: "agent", detail: "Inspect, edit and validate" }, { id: "ask", detail: "Read-only assistance" }, { id: "plan", detail: "Plan before editing" }] as const).map((item) => <button key={item.id} type="button" onClick={() => { setMode(item.id); setModeMenu(false); }} className={cn("flex w-full flex-col rounded-[6px] px-2 py-1.5 text-left transition-colors hover:bg-black/[0.035]", mode === item.id && "bg-black/[0.035]")}><span className="text-[11.5px] font-medium capitalize text-[color:var(--text-primary)]">{item.id}</span><span className="text-[10px] text-[color:var(--text-tertiary)]">{item.detail}</span></button>)}
+            </motion.div> : null}</AnimatePresence>
+          </div><span className="flex-1" />
+          {model ? <span title={model} className="max-w-[112px] truncate rounded-[6px] px-1.5 py-1 text-[10px] text-[color:var(--text-tertiary)]">{model}</span> : null}
           {onEffortChange ? (
             <ReasoningEffortChip effort={effort} levels={effortLevels} ready={effortReady} onChange={onEffortChange} />
           ) : null}

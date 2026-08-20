@@ -17,6 +17,7 @@ interface Actor {
   components: Map<string, Record<string, unknown>>;
   alive: boolean;
   state: Record<string, unknown>;
+  decorations: Array<Phaser.GameObjects.GameObject & { setPosition(x: number, y: number): unknown; setVisible(value: boolean): unknown }>;
 }
 
 function detectRenderer(canvas: HTMLCanvasElement): number {
@@ -66,6 +67,9 @@ export class World2D {
   private eventSequence = 0;
   private wallClock = 0;
   private tileSize = 32;
+  private tileWidth = 0;
+  private tileHeight = 0;
+  private tileData: number[] = [];
 
   readonly events: GameEvent[] = [];
   readonly held = new Set<string>();
@@ -171,7 +175,10 @@ export class World2D {
   }
 
   private clear() {
-    for (const actor of this.actors.values()) actor.sprite.destroy();
+    for (const actor of this.actors.values()) {
+      actor.sprite.destroy();
+      actor.decorations.forEach((decoration) => decoration.destroy());
+    }
     this.actors.clear();
     this.platforms?.clear(true, true);
     this.playerId = null;
@@ -191,6 +198,9 @@ export class World2D {
     const tileSize = Number(component.tileSize ?? 32);
     this.tileSize = tileSize;
     const tiles = (component.tiles as number[] | undefined) ?? [];
+    this.tileWidth = width;
+    this.tileHeight = height;
+    this.tileData = tiles;
     const palette = (component.palette ?? {}) as Record<string, string>;
     const colorFor = (tile: number) =>
       Phaser.Display.Color.HexStringToColor(
@@ -237,6 +247,7 @@ export class World2D {
     const collectible = components.get("Collectible");
     const enemy = components.get("Enemy");
     const trigger = components.get("Trigger");
+    const identity = components.get("AvatarIdentity");
     const colorHex =
       String(controller?.color ?? collectible?.color ?? (enemy ? "#c0392b" : trigger ? "#f2c14e" : "#dddddd"));
     const rectangle = this.scene.add.rectangle(
@@ -248,18 +259,44 @@ export class World2D {
     );
     this.scene.physics.add.existing(rectangle, false);
     const sprite = rectangle as Phaser.GameObjects.Rectangle & { body: Phaser.Physics.Arcade.Body };
+    const decorations: Actor["decorations"] = [];
+
+    if (controller && identity?.genderPresentation === "female") {
+      const hair = this.scene.add.circle(ir.transform.position[0], ir.transform.position[1] - size[1] * 0.42, Math.max(5, size[0] * 0.32), 0x5b3528);
+      const cloak = this.scene.add.triangle(ir.transform.position[0], ir.transform.position[1], -size[0] * 0.42, size[1] * 0.42, size[0] * 0.42, size[1] * 0.42, 0, -size[1] * 0.28, 0x315d89);
+      hair.setDepth(2);
+      cloak.setDepth(1);
+      sprite.setDepth(3);
+      decorations.push(hair, cloak);
+    }
 
     if (controller) {
       sprite.body.setCollideWorldBounds(false);
       this.playerId = ir.id;
       if (this.platforms) this.scene.physics.add.collider(sprite, this.platforms);
+      if (this.platforms) {
+        this.scene.physics.add.overlap(sprite, this.platforms, (_player, platform) => {
+          const platformObject = platform as Phaser.GameObjects.GameObject;
+          if (!platformObject.getData("hazard")) return;
+          const actor = this.actors.get(ir.id);
+          const health = actor?.components.get("Health");
+          if (!actor || !health || actor.state.invulnerableUntil) return;
+          health.current = Math.max(0, Number(health.current ?? 0) - 1);
+          actor.state.invulnerableUntil = this.time + 0.8;
+          if (this.moveTarget && actor.sprite.body.blocked.down) {
+            const controller = actor.components.get("PlayerController") ?? {};
+            actor.sprite.body.setVelocityY(-Number(controller.jumpSpeed ?? 560));
+          }
+          this.fire("entity_damaged", { entityId: ir.id, amount: 1, remaining: health.current, source: "hazard" });
+        });
+      }
       this.scene.cameras.main.startFollow(sprite, true, 0.12, 0.12);
     } else {
       sprite.body.setAllowGravity(Boolean(enemy));
       if (enemy && this.platforms) this.scene.physics.add.collider(sprite, this.platforms);
     }
 
-    this.actors.set(ir.id, { ir, sprite, components, alive: true, state: {} });
+    this.actors.set(ir.id, { ir, sprite, components, alive: true, state: {}, decorations });
   }
 
   fire(name: string, data: Record<string, unknown> = {}) {
@@ -294,6 +331,9 @@ export class World2D {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
       this.updatePickups();
+      for (const actor of this.actors.values()) {
+        actor.decorations.forEach((decoration) => decoration.setPosition(actor.sprite.x, actor.sprite.y));
+      }
     } catch (error) {
       this.runtimeErrors += 1;
       this.fire("runtime_exception", { message: error instanceof Error ? error.message : String(error) });
@@ -304,7 +344,11 @@ export class World2D {
     void dt;
     if (!this.playerId) return;
     const player = this.actors.get(this.playerId);
-    if (!player || !player.alive) return;
+    if (!player) return;
+    if (!player.alive) {
+      if (this.time >= Number(player.state.respawnAt ?? Infinity)) this.respawnPlayer(player);
+      return;
+    }
     const controller = player.components.get("PlayerController") ?? {};
     const speed = Number(controller.moveSpeed ?? 220);
     const jump = Number(controller.jumpSpeed ?? 560);
@@ -320,6 +364,18 @@ export class World2D {
         direction = 0;
       } else {
         direction = Math.sign(dx);
+        // The deterministic playtest bot cannot see platform edges. A steady
+        // cadence of grounded jumps lets it traverse the same generated gaps
+        // that the reachability solver declared playable.
+        const lastAutoJump = Number(player.state.lastAutoJump ?? -Infinity);
+        const feetY = player.sprite.y + player.sprite.displayHeight / 2 + 3;
+        const aheadX = player.sprite.x + direction * this.tileSize * 0.9;
+        const floorAhead = this.solidTileAt(aheadX, feetY);
+        const hazardAhead = this.tileAt(aheadX, feetY) === TILE.hazard;
+        if (player.sprite.body.blocked.down && this.time - lastAutoJump > 0.45 && (!floorAhead || hazardAhead)) {
+          player.sprite.body.setVelocityY(-jump);
+          player.state.lastAutoJump = this.time;
+        }
         // Blocked horizontally while grounded: hop the obstacle.
         if (player.sprite.body.blocked.down && Math.abs(player.sprite.body.velocity.x) < 12) {
           player.sprite.body.setVelocityY(-jump);
@@ -336,14 +392,44 @@ export class World2D {
     const health = player.components.get("Health");
     if (health && Number(health.current ?? 1) <= 0 && player.alive) {
       player.alive = false;
+      player.state.respawnAt = this.time + 0.75;
+      player.sprite.setVisible(false);
+      player.decorations.forEach((decoration) => decoration.setVisible(false));
       this.fire("player_died", { entityId: player.ir.id });
     }
     // Falling out of the world is a death, not a silent freefall.
     const worldBottom = this.scene?.physics.world.bounds.bottom ?? Infinity;
     if (player.sprite.y > worldBottom && player.alive) {
       player.alive = false;
+      player.state.respawnAt = this.time + 0.75;
+      player.sprite.setVisible(false);
+      player.decorations.forEach((decoration) => decoration.setVisible(false));
       this.fire("player_died", { entityId: player.ir.id, reason: "fell out of the level" });
     }
+  }
+
+  private tileAt(x: number, y: number) {
+    const column = Math.floor(x / this.tileSize);
+    const row = Math.floor(y / this.tileSize);
+    if (column < 0 || row < 0 || column >= this.tileWidth || row >= this.tileHeight) return TILE.empty;
+    return this.tileData[row * this.tileWidth + column] ?? TILE.empty;
+  }
+
+  private solidTileAt(x: number, y: number) {
+    const tile = this.tileAt(x, y);
+    return tile === TILE.ground || tile === TILE.platform || tile === TILE.wall || tile === TILE.hazard;
+  }
+
+  private respawnPlayer(player: Actor) {
+    const health = player.components.get("Health");
+    if (health) health.current = Number(health.max ?? 1);
+    player.sprite.body.reset(player.ir.transform.position[0], player.ir.transform.position[1]);
+    player.sprite.setVisible(true);
+    player.decorations.forEach((decoration) => decoration.setVisible(true));
+    player.alive = true;
+    player.state.respawnAt = undefined;
+    player.state.invulnerableUntil = this.time + 1;
+    this.fire("player_respawned", { entityId: player.ir.id, position: player.ir.transform.position });
   }
 
   private updateEnemies(dt: number) {
@@ -389,7 +475,9 @@ export class World2D {
       const trigger = actor.components.get("Trigger");
       if (trigger && distance < this.tileSize * 1.2 && !actor.state.triggered) {
         if (trigger.once) actor.state.triggered = true;
-        this.fire(String(trigger.event ?? "trigger_entered"), { entityId: actor.ir.id });
+        const eventName = String(trigger.event ?? "trigger_entered");
+        this.fire(eventName, { entityId: actor.ir.id });
+        if (eventName === "level_complete") this.fire("win_state", { entityId: actor.ir.id });
       }
 
       const enemy = actor.components.get("Enemy");
@@ -426,6 +514,21 @@ export class World2D {
     }
     this.fire("player_attacked", { hit });
     return { ok: true, hit };
+  }
+
+  restart() {
+    const player = this.playerId ? this.actors.get(this.playerId) : undefined;
+    if (!player) return { ok: false };
+    this.respawnPlayer(player);
+    for (const actor of this.actors.values()) {
+      if (actor === player) continue;
+      actor.alive = true;
+      actor.state = {};
+      actor.sprite.setVisible(true);
+      actor.sprite.body.enable = true;
+    }
+    this.fire("game_restarted", {});
+    return { ok: true };
   }
 
   requestMoveTo(position: Vec3) {

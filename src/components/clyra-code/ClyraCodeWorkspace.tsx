@@ -64,6 +64,7 @@ export default function ClyraCodeWorkspace() {
     startRun,
     cancelRun,
     replyPermission,
+    revertRun,
     recordVisualEdit,
     setEffort,
   } = useClyraCode();
@@ -694,6 +695,7 @@ export default function ClyraCodeWorkspace() {
                   onOpenTerminal={() => setTerminalOpen(true)}
                   onOpenFile={openFileDiff}
                   onOpenChanges={() => setRightTab("changes")}
+                  onRevertRun={revertRun}
                 />
                 {state.runState === "failed" && state.error ? (
                   <div className="mx-auto mb-1 flex w-full max-w-[760px] items-center gap-2 px-5 text-[11.5px] text-[color:var(--text-secondary)]">

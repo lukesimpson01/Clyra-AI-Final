@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 
 import { GAME_IR_VERSION, type PatchOperation, type SceneIR, type Vec3 } from "../src/features/game-maker/ir/types";
 import { activeScene, createProject, createScene, migrateProject, replaceScene, validateProject } from "../src/features/game-maker/ir/project";
+import { evaluateGameCompletionGate, validateProjectSubstance } from "../src/features/game-maker/ir/substance";
 import { applyScenePatch, collectSubtree, PatchError, worldPosition, worldSize, worldTransform } from "../src/features/game-maker/ir/patch";
 import { ScenePatchSchema, safeParse } from "../src/features/game-maker/ir/schema";
 import { getSpatialIndex, rayAabb, SpatialIndex } from "../src/features/game-maker/scene/spatial";
@@ -145,6 +146,22 @@ check("validateProject reports broken references and missing spawn", () => {
   assert.ok(codes.includes("BROKEN_CHILD"), "dangling child is an error");
   assert.ok(codes.includes("MISSING_ASSET"), "missing asset reference is an error");
   assert.ok(codes.includes("NO_PLAYER_SPAWN"), "missing player spawn is a warning");
+});
+
+check("ProjectSubstanceValidator rejects a structurally valid blank project", () => {
+  const project = createProject({ name: "Blank", concept: "blank", mode: "2d" });
+  const report = validateProjectSubstance(project);
+  assert.equal(report.valid, false);
+  assert.ok(report.issues.some((issue) => issue.code === "PROJECT_NOT_PLAYABLE"));
+  assert.ok(report.issues.some((issue) => issue.code === "MISSING_OBJECTIVE"));
+});
+
+check("the completion gate refuses success without real runtime evidence", () => {
+  const project = createProject({ name: "Blank", concept: "blank", mode: "3d" });
+  const gate = evaluateGameCompletionGate(project, true, { runtimeBooted: false, smokeTestPassed: false, noCriticalRuntimeErrors: false });
+  assert.equal(gate.complete, false);
+  assert.ok(gate.missing.includes("runtime boot evidence"));
+  assert.ok(gate.missing.includes("passing smoke test"));
 });
 
 /* ================================================================== */
@@ -744,6 +761,18 @@ check("characters are configured, not just modelled", () => {
   assert.equal(health.data.max, 1200, "difficulty scales the boss");
 });
 
+check("female character identity survives into the entity and changes visible geometry", () => {
+  const scene = sceneWith([]);
+  const female = runGenerator("character", genContext(scene), { archetype: "player", genderPresentation: "female", name: "Lyra" }, 91);
+  const neutral = runGenerator("character", genContext(scene), { archetype: "player", genderPresentation: "neutral", name: "Lyra" }, 91);
+  const femaleIdentity = female.operations.find((operation) => operation.op === "setComponent" && operation.component === "AvatarIdentity") as Extract<PatchOperation, { op: "setComponent" }>;
+  const femaleMesh = female.operations.find((operation) => operation.op === "setComponent" && operation.component === "ProceduralMesh") as Extract<PatchOperation, { op: "setComponent" }>;
+  const neutralMesh = neutral.operations.find((operation) => operation.op === "setComponent" && operation.component === "ProceduralMesh") as Extract<PatchOperation, { op: "setComponent" }>;
+  assert.equal(femaleIdentity.data.genderPresentation, "female");
+  assert.equal(femaleIdentity.data.role, "player");
+  assert.ok((femaleMesh.data.spec as { parts: unknown[] }).parts.length > (neutralMesh.data.spec as { parts: unknown[] }).parts.length, "female presentation must be visible geometry, not a renamed neutral body");
+});
+
 check("props are placed without overlapping when scattered", () => {
   const scene = sceneWith([]);
   const output = runGenerator("prop", genContext(scene), { kind: "barrel", count: 5, spread: 6 }, 4321);
@@ -849,6 +878,15 @@ check("the 2D generator emits a player, a goal, enemies and collectibles", () =>
   assert.ok(types.includes("goal"));
   assert.ok(types.filter((type) => type === "enemy").length >= 1, "enemies were placed");
   assert.ok(types.filter((type) => type === "collectible").length >= 1, "collectibles were placed");
+});
+
+check("the 2D generator preserves a female protagonist as structured runtime data", () => {
+  const scene = createScene("female-2d", "Female 2D", "2d");
+  const output = runGenerator("tilemap2d", genContext(scene), { layout: "platformer", enemies: 2, collectibles: 3, playerGenderPresentation: "female" }, 20260820);
+  const identity = output.operations.find((operation) => operation.op === "setComponent" && operation.component === "AvatarIdentity") as Extract<PatchOperation, { op: "setComponent" }>;
+  assert.equal(identity.data.role, "player");
+  assert.equal(identity.data.genderPresentation, "female");
+  assert.equal(identity.data.visualPipeline, "procedural-vector-adventurer");
 });
 
 check("an unbeatable 2D layout is retried, not shipped", () => {

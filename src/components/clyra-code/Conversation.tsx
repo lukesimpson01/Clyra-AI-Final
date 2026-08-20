@@ -127,15 +127,18 @@ export function CompletionSummary({
   actions,
   onOpenChanges,
   onOpenFile,
+  onRevertRun,
   restored = false,
 }: {
   diffs: ClyraCodeState["diffs"];
   actions: AgentAction[];
   onOpenChanges: () => void;
   onOpenFile: (path: string) => void;
+  onRevertRun: () => Promise<boolean>;
   restored?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const totals = useMemo(
     () => ({
       additions: diffs.reduce((sum, d) => sum + (d.additions ?? 0), 0),
@@ -190,6 +193,18 @@ export function CompletionSummary({
               className="ml-auto text-[11.5px] text-[color:var(--accent-blue)] transition-opacity hover:opacity-80"
             >
               Review
+            </button>
+            <button
+              type="button"
+              disabled={reverting}
+              onClick={() => {
+                if (!window.confirm("Revert every file changed by this run to its checkpoint?")) return;
+                setReverting(true);
+                void onRevertRun().finally(() => setReverting(false));
+              }}
+              className="text-[11.5px] text-[color:var(--text-tertiary)] transition-colors hover:text-[color:var(--deletion-red)] disabled:opacity-45"
+            >
+              {reverting ? "Reverting…" : "Revert run"}
             </button>
           </div>
           <AnimatePresence initial={false}>
@@ -447,6 +462,7 @@ export function Conversation({
   onOpenTerminal,
   onOpenFile,
   onOpenChanges,
+  onRevertRun,
   onPlaybackChange,
   pendingUser = null,
 }: {
@@ -458,6 +474,7 @@ export function Conversation({
   onOpenTerminal: () => void;
   onOpenFile: (path: string) => void;
   onOpenChanges: () => void;
+  onRevertRun: () => Promise<boolean>;
   /** Fires while the transcript is still revealing edit boxes. The preview
    *  uses it to keep its loader up until the visible work has finished, not
    *  merely until the harness went quiet. */
@@ -760,6 +777,7 @@ export function Conversation({
               actions={Object.values(state.actions)}
               onOpenChanges={onOpenChanges}
               onOpenFile={onOpenFile}
+              onRevertRun={onRevertRun}
               restored={state.restored}
             />
           ) : null}

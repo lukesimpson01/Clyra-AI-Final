@@ -80,7 +80,9 @@ export default function GameMakerWorkspace() {
     void (async () => {
       try {
         const stored = await loadStoredProject();
-        if (!cancelled && stored) editorStore.loadProject(stored);
+        // Do not let a slow IndexedDB read overwrite a project the user has
+        // just created while restoration was still in flight.
+        if (!cancelled && stored && !editorStore.project) editorStore.loadProject(stored);
       } catch (error) {
         editorStore.log("warn", "editor", `Could not restore the last project: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
@@ -136,6 +138,20 @@ export default function GameMakerWorkspace() {
   const startTask = useCallback((request: string) => {
     editorStore.startTask({ id: `t-${Date.now()}`, request, state: "RECEIVING", effort: "STANDARD", steps: [], startedAt: Date.now() });
   }, []);
+
+  useEffect(() => {
+    const project = state.project;
+    const client = clientRef.current;
+    const pendingCreation = project?.memory.entries.find((entry) => entry.tags.includes("pending-generation"));
+    if (!project || !client || !pendingCreation || client.busy) return;
+    const cleaned = { ...project, memory: { entries: project.memory.entries.filter((entry) => entry.id !== pendingCreation.id) } };
+    editorStore.setProject(cleaned, { label: "Start AI generation", author: "system" });
+    startTask(pendingCreation.text);
+    void client.start(pendingCreation.text, "DEEP").catch((error) => {
+      editorStore.endTask({ error: error instanceof Error ? error.message : String(error) });
+      editorStore.log("error", "ai", error instanceof Error ? error.message : String(error));
+    });
+  }, [startTask, state.project?.projectId]);
 
   useEffect(() => {
     const client = clientRef.current;
@@ -217,7 +233,7 @@ export default function GameMakerWorkspace() {
   return (
     <div className="gm-shell">
       <header className="gm-topbar">
-        <button type="button" className="gm-project" onClick={() => editorStore.loadProject(null as never)} title="Close this project">
+        <button type="button" className="gm-project" onClick={() => editorStore.closeProject()} title="Close this project">
           <span><Gamepad2 size={14} /></span>
           <div>
             <strong>{state.project.metadata.name}</strong>
