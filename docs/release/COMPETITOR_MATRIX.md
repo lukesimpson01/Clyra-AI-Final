@@ -118,21 +118,6 @@ Sources: [Reap.video 2026 clipping tools report](https://reap.video/reports/stat
 
 ---
 
-## Game Builder — Forge
-
-**Competitors:** Rosebud AI, Replit Agent
-
-| | Rosebud | Replit | Clyra Forge |
-|---|---|---|---|
-| Engine | Custom "Vibe Coding" → JS/Three.js/React | General-purpose, not games-native | three.js/pixi.js + `@dimforge/rapier*-compat` physics (confirmed) |
-| Backend | Real, hosts 2.3M+ community games | Real deploys | **Zero `fetch()` calls in the codebase — confirmed via two independent greps this session and last.** Forge is a client-side-only prototype with no AI generation, no save/load, no backend at all. |
-| Multiplayer | Yes (InstantDB) | — | No |
-
-**Verdict: BEHIND — by a wide margin.** This is the single largest gap in the entire product: Forge has zero backend integration. It was already correctly removed from the App Launcher's tool list earlier in this session's history for exactly this reason. **Recommend: DO NOT list Forge as a shipped feature.** Either invest real engineering to wire it to DeepSeek (matching Rosebud's prompt→playable-game loop) or keep it excluded from the launcher until it is.
-
-Sources: [Rosebud AI blog](https://lab.rosebud.ai/blog/top-5-ai-tools-to-upgrade-your-game-development), [Cinevva 2026 AI game generators](https://app.cinevva.com/guides/ai-game-generators-2026)
-
----
 
 ## General Chat
 

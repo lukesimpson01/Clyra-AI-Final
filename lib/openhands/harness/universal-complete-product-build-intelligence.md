@@ -11,15 +11,13 @@ The agent must fully understand, design, implement, test, and polish whatever th
 This applies to EVERY type of project:
 
 * websites
-* applications
+* web applications
 * SaaS products
 * APIs
-* games
 * tools
 * utilities
 * automation systems
 * AI products
-* mobile apps
 * desktop apps
 * browser extensions
 * simulations

@@ -144,7 +144,7 @@ export function applyCssSourceEdit(root: string, file: string, selector: string,
     throw new Error("Path is outside the project.");
   }
   if (!/\.(?:css|scss|sass|less)$/i.test(safeFile)) {
-    throw new Error("Visual CSS edits can only be written to a stylesheet. Use the agent for component or SwiftUI changes.");
+    throw new Error("Visual CSS edits can only be written to a stylesheet. Use the agent for component changes.");
   }
   if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(property)) {
     throw new Error("Unsupported CSS property.");

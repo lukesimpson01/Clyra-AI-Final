@@ -1,12 +1,13 @@
 import {
   ArrowUpRight,
+  BookOpen,
   Clapperboard,
   Clock3,
   Code2,
-  Eye,
   Globe2,
   Grid2X2,
   MessageCircle,
+  Mic,
 } from "lucide-react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
@@ -19,7 +20,8 @@ export type LauncherToolId =
   | "would-rather"
   | "fake-text"
   | "shorts"
-  | "companion";
+  | "notes"
+  | "dictation";
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
@@ -40,7 +42,8 @@ const tools: LauncherTool[] = [
   { id: "chat", label: "Chat", shortLabel: "Chat", detail: "Think, write and reason with Clyra", icon: MessageCircle, accent: "#1e293b" },
   { id: "shorts", label: "Shorts Studio", shortLabel: "Shorts", detail: "Fake texts, Would You Rather, and AI clips", icon: Clapperboard, accent: "#334155" },
   { id: "browser", label: "AI Browser", shortLabel: "Browser", detail: "Research and act across live websites", icon: Globe2, accent: "#1e293b" },
-  { id: "companion", label: "Screen Companion", shortLabel: "Companion", detail: "Ask about anything on your screen", icon: Eye, accent: "#1e293b" },
+  { id: "notes", label: "Clyra Notes", shortLabel: "Notes", detail: "Capture, organise, and review your notes", icon: BookOpen, accent: "#1e293b" },
+  { id: "dictation", label: "Clyra Dictation", shortLabel: "Dictation", detail: "Speak naturally anywhere on your desktop", icon: Mic, accent: "#1e293b" },
 ];
 
 const CENTER = 320;

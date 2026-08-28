@@ -847,7 +847,7 @@ When the missing information would completely change the answer, ask one focused
 
 Good:
 
-> Which platform is this for: web, iOS, Android, or desktop?
+> Is this for a website or desktop app?
 
 Bad:
 
