@@ -129,6 +129,7 @@ function recordAnthropicUsage(payload: any, feature: string, fallbackModel?: str
     usage: usageFromAnthropic(payload),
   }).catch((error) => console.warn("[usage] unable to record provider usage", error instanceof Error ? error.message : error));
 }
+import { initNotesStore, notesApi } from "./lib/notes/store";
 
 type VibeProjectStatus = "Draft" | "Building" | "Ready" | "Failed";
 
@@ -1331,6 +1332,8 @@ function stopVoicePipelineWorker() {
 }
 
 async function startServer() {
+  await initNotesStore();
+  const notes = notesApi();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const VIBE_PORT = Number(process.env.VIBE_PORT) || 5174;
@@ -2147,6 +2150,24 @@ async function startServer() {
       process.env.OPENPENCIL_URL ||
         `http://127.0.0.1:${process.env.OPENPENCIL_PORT || "3100"}`,
     ).replace(/\/$/, "");
+  app.get("/notes", (_req, res) => res.sendFile(path.join(process.cwd(), "public", "notes", "index.html")));
+  app.use("/notes", express.static(path.join(process.cwd(), "public", "notes")));
+  app.get("/api/notes/bootstrap", (_req, res) => res.json(notes.bootstrap()));
+  app.get("/api/notes/pages/:id", (req, res) => { const page=notes.page(Number(req.params.id)); page?res.json(page):res.status(404).json({error:"Note not found"}); });
+  app.post("/api/notes/pages", (req, res) => res.status(201).json(notes.createPage(req.body)));
+  app.put("/api/notes/pages/:id", (req, res) => { const page=notes.savePage(Number(req.params.id),req.body); page?res.json(page):res.status(404).json({error:"Note not found"}); });
+  app.delete("/api/notes/pages/:id", (req, res) => res.json({deleted:notes.removePage(Number(req.params.id))}));
+  app.get("/api/notes/search", (req, res) => { try{res.json(notes.search(String(req.query.q||"")))}catch{res.json([])} });
+  app.post("/api/notes/classes", (req, res) => res.status(201).json(notes.createClass(String(req.body.name||"New class"))));
+  app.post("/api/notes/sessions", (req, res) => res.status(201).json(notes.startSession(Number(req.body.classId))));
+  app.post("/api/notes/sessions/:id/end", (req, res) => res.json(notes.endSession(Number(req.params.id),String(req.body.transcript||"No transcript was captured."))));
+  app.post("/api/notes/sources", (req, res) => res.status(201).json(notes.addSource(req.body)));
+  app.get("/api/notes/cards", (req, res) => res.json(notes.cards(req.query.pageId?Number(req.query.pageId):undefined)));
+  app.post("/api/notes/pages/:id/cards", (req, res) => res.status(201).json(notes.addCards(Number(req.params.id),req.body.cards||[])));
+  app.post("/api/notes/cards/:id/review", (req, res) => res.json(notes.reviewCard(Number(req.params.id),Number(req.body.rating))));
+  app.post("/api/notes/export", async (_req, res) => res.json({path:await notes.exportAll()}));
+  app.post("/api/notes/ai", (req, res) => { const page=req.body?.page||{}; const prompt=String(req.body?.prompt||""); req.body={model:"deepseek-chat",stream:false,messages:[{role:"system",content:"You are Clyra Notes. Distinguish student writing from AI explanation, cite supplied context, and never claim a teacher said AI-generated information."},{role:"user",content:`Student request: ${prompt}\n\nCurrent note (${page.title||"Untitled"}):\n${page.markdown||""}`}]}; return handleClyraChat(req,res); });
+
 
   app.get("/api/openpencil/health", async (_req, res) => {
     try {

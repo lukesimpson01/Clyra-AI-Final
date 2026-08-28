@@ -954,14 +954,6 @@ function registerIpc() {
     authorize(event);
     return companionManager?.seeScreen(String(payload?.question || ""));
   });
-  ipcMain.handle("opencluely:ensure", async (event, payload = {}) => {
-    authorize(event);
-    return ensureOpenCluely({ expand: payload?.expand !== false });
-  });
-  ipcMain.handle("opencluely:show", async (event, payload = {}) => {
-    authorize(event);
-    return ensureOpenCluely({ expand: Boolean(payload?.expand) });
-  });
   ipcMain.handle("companion:start-guide", async (event, payload) => {
     authorizeCompanion(event);
     return companionManager?.startGuide(String(payload?.question || ""));
@@ -1243,7 +1235,6 @@ async function createWindow() {
   await browserManager.initialize();
   await dictationManager.initialize();
   await smartToolbarManager.initialize();
-  await companionManager.initialize();
   registerIpc();
 
   // Global Task View — works even when a BrowserView page owns keyboard focus.
@@ -1257,16 +1248,16 @@ async function createWindow() {
     console.warn("[taskview] global shortcut unavailable:", error);
   }
 
-  // ⌘/ — activate OpenCluely overlay (show/hide via local control API).
+  // ⌘/ — Clyra Dictation replaces the retired OpenCluely overlay.
   try {
     const registered = globalShortcut.register("CommandOrControl+/", () => {
-      void openOpenCluelyWithAutoAnswer();
+      void dictationManager?.toggle();
     });
     if (!registered) {
-      console.warn("[opencluely] Cmd+/ is already owned by another app (OpenCluely may handle it).");
+      console.warn("[dictation] Cmd+/ is already owned by another app.");
     }
   } catch (error) {
-    console.warn("[opencluely] Cmd+/ shortcut unavailable:", error);
+    console.warn("[dictation] Cmd+/ shortcut unavailable:", error);
   }
 
   if (process.env.CLYRA_COMPANION_SMOKE === "1") {

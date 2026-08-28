@@ -324,8 +324,8 @@ function prepareVibeForBoot(
   return vibeBootPreparation;
 }
 
-type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | CreatorMode;
-type AppAgentId = "vibe" | "browse" | "clip" | "study" | "fake-text" | "would-rather";
+type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | CreatorMode;
+type AppAgentId = "vibe" | "browse" | "clip" | "notes" | "fake-text" | "would-rather";
 type GoogleToolId = "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
 type AppAgentStatus = "queued" | "running" | "ready" | "needs_input" | "failed";
 
@@ -364,7 +364,7 @@ function readEmbeddedWorkspace(): WorkspaceTabId {
   const tool = params.get("embedTool");
   if (tool === "browse" || tool === "browser") return "browser";
   if (tool === "fake-text" || tool === "would-rather") return tool;
-  if (tool === "vibe" || tool === "clip" || tool === "study" || tool === "companion") return tool;
+  if (tool === "vibe" || tool === "clip" || tool === "study") return tool;
   return "chat";
 }
 const WORKSPACE_TAB_WIDTH = 105;
@@ -1462,7 +1462,7 @@ function AppAgentGlyph({ id, className = "h-4 w-4" }: { id: AppAgentId; classNam
   if (id === "vibe") return <Code2 className={className} />;
   if (id === "browse") return <Globe className={className} />;
   if (id === "clip") return <Scissors className={className} />;
-  if (id === "study") return <GraduationCap className={className} />;
+  if (id === "notes") return <Pencil className={className} />;
   if (id === "fake-text") return <MessagesSquare className={className} />;
   return <Heart className={className} />;
 }
@@ -1529,7 +1529,9 @@ function AppAgentCard({
   const [iframeReady, setIframeReady] = useState(false);
   const [revealPreview, setRevealPreview] = useState(false);
   const origin = typeof window === "undefined" ? "http://localhost:3000" : window.location.origin;
-  const source = `${origin}/?embedTool=${encodeURIComponent(agent.id)}&agentPreview=1${agent.id === "study" && agent.instruction ? `&agentPrompt=${encodeURIComponent(agent.instruction)}` : ""}`;
+  const source = agent.id === "notes"
+    ? `${origin}/notes`
+    : `${origin}/?embedTool=${encodeURIComponent(agent.id)}&agentPreview=1`;
   const running = agent.status === "running" || agent.status === "queued";
   const ready = agent.status === "ready";
   const glow = running || ready || selected;
@@ -4230,7 +4232,7 @@ export default function App() {
       workspace: "vibe",
     },
     {
-      id: "study",
+      id: "notes",
       kind: "app",
       icon: (isActive) => (
         <div className="relative flex items-center justify-center w-full h-full text-slate-700">
@@ -4238,14 +4240,14 @@ export default function App() {
             animate={isActive ? { y: [0, -1.5, 0] } : { y: 0 }}
             transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
           >
-            <GraduationCap className="w-4 h-4" />
+            <Pencil className="w-4 h-4" />
           </motion.div>
         </div>
       ),
-      label: "Study Pal",
-      description: "Build grounded notes, quizzes, and study maps",
-      prefix: "/study",
-      workspace: "study",
+      label: "Clyra Notes",
+      description: "Capture, organise, and review your notes",
+      prefix: "/notes",
+      workspace: "notes",
     },
     {
       id: "browse",
@@ -5142,14 +5144,12 @@ Please analyze the code you just wrote and fix this error.`;
       if (!finalEvent?.ok) throw new Error(String(finalEvent?.message || "Browser agent stopped before returning a verified result"));
       return { status: "ready", action: "Verified live page", summary: String(finalEvent.content || finalEvent.message || "Browser task completed with live-page verification.").slice(0, 360) };
     }
-    if (agentId === "study") {
-      const evidence = conversationContext.trim()
-        ? `${conversationContext.trim()}\n\nCurrent instruction:\n${cleanPrompt}`
-        : cleanPrompt;
-      const response = await fetch("/api/study/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: cleanPrompt, mode: "plan", context: [{ id: "conversation-brief", title: "Conversation brief", source: "Current chat", body: evidence.slice(0, 8_000) }] }) });
-      const payload = await response.json();
-      if (!response.ok || !payload?.ok) throw new Error(formatApiError(payload?.error, "Study Pal could not prepare the workspace"));
-      return { status: "ready", action: "Mapped study sources", summary: String(payload.answer || "Study plan prepared.").slice(0, 360) };
+    if (agentId === "notes") {
+      return {
+        status: "ready",
+        action: "Opened Clyra Notes",
+        summary: "Clyra Notes is ready to capture and organise this work.",
+      };
     }
     if (agentId === "vibe") {
       return {
@@ -6605,6 +6605,7 @@ Please analyze the code you just wrote and fix this error.`;
     { id: "chat", label: "Chat", icon: MessageCircleDashed },
     { id: "vibe", label: "Vibe Coder", icon: SquarePen },
     { id: "clip", label: "Shorts", icon: Scissors },
+    { id: "notes", label: "Notes", icon: Pencil },
   ];
   const showWorkflowTabs = !isEmbeddedToolPreview && !workflowTabsHidden;
 
@@ -6845,6 +6846,10 @@ Please analyze the code you just wrote and fix this error.`;
   };
 
   const handleWorkspaceTabChange = (tabId: WorkspaceTabId) => {
+    if (tabId === "notes") {
+      window.location.assign("/notes");
+      return;
+    }
     const fromTaskView = taskViewSelectionRef.current;
     taskViewSelectionRef.current = false;
     if (tabId !== activeWorkspaceTab) {
@@ -6942,6 +6947,10 @@ Please analyze the code you just wrote and fix this error.`;
               setShowCommandPalette(false);
               if (tool === "shorts") {
                 setIsShortsWelcomeOpen(true);
+                return;
+              }
+              if (tool === "dictation") {
+                void composerDictation.start();
                 return;
               }
               handleWorkspaceTabChange(tool);
@@ -7057,6 +7066,7 @@ Please analyze the code you just wrote and fix this error.`;
             browser: { label: "Browser", icon: <Globe className="h-3.5 w-3.5" /> },
             companion: { label: "Companion", icon: <AppWindow className="h-3.5 w-3.5" /> },
             study: { label: "Study Pal", icon: <GraduationCap className="h-3.5 w-3.5" /> },
+            notes: { label: "Clyra Notes", icon: <Pencil className="h-3.5 w-3.5" /> },
             "fake-text": { label: "Text Story", icon: <MessagesSquare className="h-3.5 w-3.5" /> },
             "would-rather": { label: "Would You Rather", icon: <Heart className="h-3.5 w-3.5" /> },
             "reddit-story": { label: "Reddit Story", icon: <MessagesSquare className="h-3.5 w-3.5" /> },

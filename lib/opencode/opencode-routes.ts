@@ -81,9 +81,7 @@ export function registerOpenCodeRoutes(app: Application) {
       const root = projectPath(projectId);
       await fs.mkdir(root, { recursive: true });
       await ensureProjectGitRepo(root).catch(() => undefined);
-      // Seed adaptive agent guidance when missing (OpenCode reads AGENTS.md).
-      // iOS projects always get the iOS App Mode guidance plus the Apple
-      // development skills copied into the sandbox the agent can read.
+      // Seed adaptive web and desktop development guidance when missing.
       try {
         await fs.access(path.join(root, "AGENTS.md"));
       } catch {

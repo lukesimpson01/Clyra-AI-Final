@@ -31,7 +31,7 @@ Built from direct repository traversal (two independent passes: frontend/UI surf
 
 | Item | Why it's orphaned |
 |---|---|
-| **Clyra Forge** (game builder) | `src/components/forge/`. Deliberately removed from `AppLauncher`'s `tools` array with an explicit code comment explaining it's "kept ready to drop straight back in." **This is a documented, intentional decision, not a bug** — correctly excluded because (see Competitor Matrix) it has no AI-generation backend of its own, only project persistence borrowed from Vibe Coder's API. Recommend: leave excluded until it's genuinely built out, per the comment's own intent. |
+| ~~Clyra Forge~~ | Removed from the product. No game-builder component or runnable test remains. |
 | ~~Screen Companion~~ | Fixed this session — see above. |
 
 ## Confirmed dead code (zero imports, safe to remove per audit rule 46)
