@@ -63,6 +63,7 @@ export const AgentActionRow = memo(function AgentActionRow({
   revisiting = false,
   onEditClosed,
   settled = false,
+  primaryActive = true,
 }: {
   action: AgentAction;
   onReplyPermission?: (permissionId: string, response: "allow" | "always" | "deny") => void;
@@ -74,11 +75,14 @@ export const AgentActionRow = memo(function AgentActionRow({
   onEditClosed?: (id: string) => void;
   /** Render an expanded completed phase without replaying its animation. */
   settled?: boolean;
+  /** Only the current live action gets the moving activity treatment. */
+  primaryActive?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const reduced = useReducedMotion();
   const verbs = VERBS[action.kind] ?? VERBS.generic;
   const isActive = action.status === "active" || action.status === "queued";
+  const isPrimaryActive = isActive && primaryActive;
   const isError = action.status === "error";
   const isCancelled = action.status === "cancelled";
 
@@ -190,11 +194,11 @@ export const AgentActionRow = memo(function AgentActionRow({
       {...enterProps}
       layout
       transition={rowTransition}
-      className={cn("group", isActive && !isStreamingEdit && "cc-active-row", !isActive && !isError && "opacity-[0.8] transition-opacity duration-200")}
+      className={cn("group", isPrimaryActive && !isStreamingEdit && "cc-active-row", !isActive && !isError && "opacity-[0.8] transition-opacity duration-200")}
     >
       <div
         className={cn(
-          "grid min-h-[26px] items-center gap-x-2 py-[2px] text-[13px] leading-[18px] tracking-[-0.01em]",
+          "grid min-h-[30px] items-center gap-x-2 py-[3px] text-[13px] leading-[18px] tracking-[-0.01em]",
           "grid-cols-[max-content_minmax(0,1fr)_auto]",
           hasDetails && "cursor-pointer",
         )}
@@ -230,8 +234,8 @@ export const AgentActionRow = memo(function AgentActionRow({
         <span className="flex min-w-0 items-center gap-1.5">
           <ShimmerText
             text={action.target}
-            active={isActive}
-            tone={isActive && isFileAction ? "blue" : "neutral"}
+            active={isPrimaryActive}
+            tone={isPrimaryActive && isFileAction ? "blue" : "neutral"}
             mono={isMonoTarget}
             className={cn(
               "text-[12.5px] tracking-normal",
@@ -269,7 +273,7 @@ export const AgentActionRow = memo(function AgentActionRow({
           {terminalStatus ? (
             <span className={cn("whitespace-nowrap", isError && "text-[#B94B4B]", !isActive && !isError && !isCancelled && "text-[#65796A]")}>
               {isError ? "× " : !isActive && !isCancelled ? "✓ " : ""}
-              {isActive ? <ShimmerText text={terminalStatus} active className="text-[11px]" /> : terminalStatus}
+              {isActive ? <ShimmerText text={terminalStatus} active={isPrimaryActive} className="text-[11px]" /> : terminalStatus}
             </span>
           ) : null}
           {duration !== null && duration > 900 ? (

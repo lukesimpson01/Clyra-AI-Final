@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Bug, CheckCircle2, ChevronDown, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
 
@@ -48,6 +48,8 @@ export function Composer({
   questionSubmitting = false,
   onQuestionSubmit,
   onQuestionBack,
+  effort = "medium",
+  onEffortChange,
 }: {
   running: boolean;
   model: string | null;
@@ -63,6 +65,8 @@ export function Composer({
   questionSubmitting?: boolean;
   onQuestionSubmit?: (answers: QuestionAnswers) => void;
   onQuestionBack?: () => void;
+  effort?: "low" | "medium" | "high";
+  onEffortChange?: (effort: "low" | "medium" | "high") => void;
 }) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -70,6 +74,7 @@ export function Composer({
   const [command, setCommand] = useState<ComposerCommand | null>(null);
   const [commandQuery, setCommandQuery] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [effortMenu, setEffortMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -201,7 +206,11 @@ export function Composer({
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[#4C4E53] transition-colors hover:bg-black/[0.035]"><IconComponent className="h-3.5 w-3.5 text-[#77797E]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
-          <span className="text-[10.5px] font-medium text-[#9A9CA0]">Clyra</span><span className="flex-1" />
+          <span className="text-[10.5px] font-medium text-[#9A9CA0]">Agent</span>
+          <div className="relative">
+            <button type="button" aria-label={`Effort: ${effort}`} aria-expanded={effortMenu} onClick={() => setEffortMenu((open) => !open)} className="flex h-6 items-center gap-0.5 rounded-[6px] px-1 text-[10.5px] font-medium capitalize text-[#77797E] transition-colors hover:bg-black/[0.045] hover:text-[#34363A]">{effort}<ChevronDown className="h-3 w-3" strokeWidth={1.7} /></button>
+            <AnimatePresence>{effortMenu ? <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 3 }} transition={{ duration: 0.14 }} className="absolute bottom-8 left-0 z-30 w-[112px] rounded-[9px] border border-black/[0.08] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">{(["low", "medium", "high"] as const).map((value) => <button key={value} type="button" onClick={() => { onEffortChange?.(value); setEffortMenu(false); }} className={cn("flex h-7 w-full items-center rounded-[6px] px-2 text-left text-[11.5px] capitalize transition-colors", effort === value ? "bg-[#3977F6]/[0.08] text-[#3977F6]" : "text-[#55575C] hover:bg-black/[0.035]")}>{value}</button>)}</motion.div> : null}</AnimatePresence>
+          </div><span className="flex-1" />
           <button type="button" aria-label="Voice input" onClick={() => textareaRef.current?.focus()} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[#85878C] transition-colors hover:bg-black/[0.045] hover:text-[#34363A]"><Mic className="h-3.5 w-3.5" strokeWidth={1.65} /></button>
           {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#242528] text-white transition-colors duration-150 hover:bg-[#17181A] active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[#3977F6] text-white hover:bg-[#2E68E5]" : "bg-[#F0F0EF] text-[#B7B8BA]")}><ArrowUp className="h-3.5 w-3.5" strokeWidth={2.15} /></button>}
         </div>

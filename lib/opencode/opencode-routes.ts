@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
 import { codingModelStatus, openCodeRuntimeManager } from "./OpenCodeRuntimeManager";
+import { getVibeUsageAnalytics, type UsageRange } from "../vibe-agent-v3/usage-analytics";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +60,16 @@ function sendSse(res: import("express").Response, event: unknown) {
 
 /** SDK-backed local API. The renderer only sees project/session-scoped data. */
 export function registerOpenCodeRoutes(app: Application) {
+  // Local-only coding analytics. The response intentionally excludes prompts,
+  // file paths and source content.
+  app.get("/api/vibe/v3/usage", async (req, res) => {
+    const range = req.query.range === "7d" || req.query.range === "30d" || req.query.range === "all"
+      ? req.query.range as UsageRange
+      : "all";
+    try { res.json(await getVibeUsageAnalytics(range)); }
+    catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "Usage analytics are unavailable." }); }
+  });
+
   app.get("/api/opencode/status", async (_req, res) => {
     const health = await openCodeRuntimeManager.health();
     const configuredModel = codingModelStatus();
@@ -103,6 +114,7 @@ Project architecture rules — for every coding request:
 - Reuse existing components instead of rebuilding them. Revisit and edit multiple files during the run when needed.
 - Run the project's build/typecheck/tests after changes and fix every error before finishing.
 - For greenfield web apps, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files.
+- Never navigate to a file: URL, start a separate preview server, or kill background processes. Clyra owns the local preview; finish the implementation and use the approved preview surface.
 - For desktop/Electron requests, build the product first as a responsive web application that runs in the live development preview. Then add a minimal Electron main/preload wrapper, safe BrowserWindow configuration, and package scripts around that same web app. Do not make the live preview depend on Electron or native-only APIs; it must remain usable in Chromium at every responsive preview size.
 `,
           "utf8",
@@ -160,11 +172,23 @@ Project architecture rules — for every coding request:
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not fetch changes." }); }
   });
 
+  app.post("/api/opencode/projects/:projectId/checkpoints/undo", async (req, res) => {
+    try { res.json(await openCodeRuntimeManager.undoLastCheckpoint(safeProjectId(req.params.projectId))); }
+    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not restore the last checkpoint." }); }
+  });
+
   app.post("/api/opencode/sessions/:projectId/:sessionId/prompt", async (req, res) => {
     const text = String(req.body?.text || "").trim();
     if (!text || text.length > MAX_PROMPT_LENGTH) return res.status(400).json({ error: "Enter a coding request up to 20,000 characters." });
     try {
-      await openCodeRuntimeManager.prompt(safeProjectId(req.params.projectId), req.params.sessionId, text, typeof req.body?.agent === "string" ? req.body.agent : undefined);
+      await openCodeRuntimeManager.prompt(
+        safeProjectId(req.params.projectId),
+        req.params.sessionId,
+        text,
+        typeof req.body?.agent === "string" ? req.body.agent : undefined,
+        undefined,
+        req.body?.effort,
+      );
       res.json({ ok: true });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Prompt could not be sent." }); }
   });

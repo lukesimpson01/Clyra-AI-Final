@@ -8278,6 +8278,7 @@ body,
 .clyra-ask-pulse {
   animation: clyra-ask-pulse 1.6s ease-in-out 3;
 }
+
 @media (prefers-reduced-motion: reduce) {
   .clyra-ask-pulse { animation: none; }
 }

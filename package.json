@@ -42,6 +42,7 @@
     "test:agent-controller": "tsx tools/agent-controller-unit-tests.ts",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
     "test:vibe-runtime": "tsx tools/vibe-runtime-unit-tests.ts",
+    "test:vibe-agent-v3": "tsx tools/vibe-agent-v3-unit-tests.ts",
     "test:companion": "tsx tools/companion-unit-tests.ts",
     "test:companion:electron": "node tools/companion-electron-smoke.mjs",
     "test:windows-compat": "node tools/windows-compat-smoke.mjs",

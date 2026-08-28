@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, FilePlus2, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import { ShiningText } from "../ShiningText";
@@ -84,10 +84,12 @@ function suppressBriefThoughts(entries: LogEntry[]) {
 /** Bottom-of-transcript thinking gap while the next reasoning phase is pending. */
 function PendingThinking({
   startedAt,
+  starting,
   onStop,
   reduced,
 }: {
   startedAt: number;
+  starting: boolean;
   onStop?: () => void;
   reduced: boolean | null;
 }) {
@@ -100,7 +102,7 @@ function PendingThinking({
         : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
     >
       <ShiningText
-        text="Thinking"
+        text={starting ? "Starting agent" : "Thinking"}
         play
         className="text-[12px] font-medium tracking-[-0.01em]"
       />
@@ -122,15 +124,16 @@ export function CompletionSummary({
   actions,
   onOpenChanges,
   onOpenFile,
+  onUndo,
   restored = false,
 }: {
   diffs: ClyraCodeState["diffs"];
   actions: AgentAction[];
   onOpenChanges: () => void;
   onOpenFile: (path: string) => void;
+  onUndo?: () => void;
   restored?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const totals = useMemo(
     () => ({
       additions: diffs.reduce((sum, d) => sum + (d.additions ?? 0), 0),
@@ -148,81 +151,28 @@ export function CompletionSummary({
     return "Preview checked";
   }))];
   if (!diffs.length && !validationLabels.length) return null;
+  if (!diffs.length) return <p className="mt-3 text-[12px] leading-[1.5] text-[#686A70]">Completed the requested validation.</p>;
   return (
-    <motion.div
-      {...(restored ? {} : SUBTLE_ENTER)}
-      className="mt-4 text-[12px] leading-[1.5]"
-    >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#65796A]">
-        {validationLabels.map((label) => <span key={label}>✓ {label}</span>)}
+    <motion.section {...(restored ? {} : SUBTLE_ENTER)} aria-label="Completed work summary" className="mt-5 overflow-hidden rounded-[17px] border border-black/[0.09] bg-white text-[12px] shadow-[0_1px_1px_rgba(15,23,42,0.015)]">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#F5F5F5] text-[#686A70]"><FilePlus2 className="h-[19px] w-[19px]" strokeWidth={1.8} /></div>
+        <div className="min-w-0">
+          <p className="text-[16px] font-medium tracking-[-0.02em] text-[#25262A]">Edited {diffs.length} file{diffs.length === 1 ? "" : "s"}</p>
+          <DiffCounters additions={totals.additions} deletions={totals.deletions} animate={false} className="mt-0.5 text-[13px] font-medium" />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {onUndo ? <button type="button" onClick={onUndo} title="Restore the state before the last agent checkpoint" className="inline-flex h-8 items-center gap-1 rounded-[9px] px-2.5 text-[12px] font-medium text-[#414348] transition-colors hover:bg-black/[0.045]">Undo <Undo2 className="h-[14px] w-[14px]" strokeWidth={1.8} /></button> : null}
+          <button type="button" onClick={onOpenChanges} className="h-8 rounded-[10px] border border-black/[0.09] bg-white px-3 text-[12px] font-medium text-[#303237] transition-colors hover:bg-[#FAFAFA]">Review</button>
+        </div>
       </div>
-      {diffs.length ? (
-        <>
-          <div className="mt-1.5 flex items-center gap-2 text-[12px]">
-            <button
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((current) => !current)}
-              className="flex min-w-0 items-center gap-1 text-left text-[#686A70] transition-colors hover:text-[#252525]"
-            >
-              <motion.span
-                aria-hidden
-                animate={{ rotate: expanded ? 90 : 0 }}
-                transition={{ duration: 0.18, ease: AGENT_EASE }}
-                className="inline-block w-2 text-[9px]"
-              >
-                ›
-              </motion.span>
-              <span className="font-medium">
-                {diffs.length} file{diffs.length === 1 ? "" : "s"} changed
-              </span>
-            </button>
-            <DiffCounters additions={totals.additions} deletions={totals.deletions} animate={false} className="text-[10.75px] font-medium" />
-            <button
-              type="button"
-              onClick={onOpenChanges}
-              className="ml-auto text-[11.5px] text-[#3977F6] transition-opacity hover:opacity-80"
-            >
-              Review
-            </button>
-          </div>
-          <AnimatePresence initial={false}>
-            {expanded ? (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.22, ease: AGENT_EASE }}
-                className="mt-1 overflow-hidden"
-              >
-                <div className="flex flex-col">
-                  {diffs.map((diff) => {
-                    const path = stripFilePrefix(diff.file);
-                    return (
-                      <button
-                        key={diff.file}
-                        type="button"
-                        onClick={() => onOpenFile(path)}
-                        title={path}
-                        className="grid h-[24px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[5px] px-2 text-left transition-colors hover:bg-black/[.025]"
-                      >
-                        <span className="cc-mono truncate text-[11px] text-[#505258]">{path}</span>
-                        <DiffCounters additions={diff.additions} deletions={diff.deletions} animate={false} className="text-[10.75px] font-medium" />
-                      </button>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </>
-      ) : null}
-      <p className="mt-2 text-[12px] leading-[1.5] text-[#686A70]">
-        {diffs.length
-          ? `Completed the requested work with ${diffs.length} updated file${diffs.length === 1 ? "" : "s"}.`
-          : "Completed the requested validation."}
-      </p>
-    </motion.div>
+      <div className="border-t border-black/[0.075] px-4 py-2">
+        {diffs.map((diff) => {
+          const path = stripFilePrefix(diff.file);
+          return <button key={diff.file} type="button" onClick={() => onOpenFile(path)} title={`Review ${path}`} className="grid min-h-8 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[7px] px-1 text-left transition-colors hover:bg-black/[0.025]"><span className="cc-mono truncate text-[11.5px] text-[#5E6065]">{path}</span><DiffCounters additions={diff.additions} deletions={diff.deletions} animate={false} className="text-[11.5px] font-medium" /></button>;
+        })}
+      </div>
+      {validationLabels.length ? <p className="border-t border-black/[0.055] px-4 py-2 text-[11px] text-[#6C806E]">{validationLabels.map((label) => `✓ ${label}`).join(" · ")}</p> : null}
+    </motion.section>
   );
 }
 
@@ -261,10 +211,10 @@ function SequencedActionRows({
   const releaseNext = () => {
     if (instant || releasing.current || revealed >= actions.length) return;
     releasing.current = true;
-    releaseTimer.current = window.setTimeout(() => {
-      releasing.current = false;
-      setRevealed((value) => Math.min(actions.length, value + 1));
-    }, reduced ? 0 : 120);
+      releaseTimer.current = window.setTimeout(() => {
+        releasing.current = false;
+        setRevealed((value) => Math.min(actions.length, value + 1));
+    }, reduced ? 0 : 180);
   };
 
   useEffect(() => {
@@ -423,6 +373,7 @@ export function Conversation({
   onOpenTerminal,
   onOpenFile,
   onOpenChanges,
+  onUndoCheckpoint,
 }: {
   state: ClyraCodeState;
   running: boolean;
@@ -432,6 +383,7 @@ export function Conversation({
   onOpenTerminal: () => void;
   onOpenFile: (path: string) => void;
   onOpenChanges: () => void;
+  onUndoCheckpoint?: () => void;
 }) {
   const reduced = useReducedMotion();
   const [density] = useState<"compact" | "balanced" | "detailed">(() => {
@@ -475,14 +427,11 @@ export function Conversation({
       scrollFrameRef.current = requestAnimationFrame(() => {
         scrollFrameRef.current = null;
         if (pinnedRef.current) {
-          const nextHeight = node.scrollHeight;
-          const delta = nextHeight - contentHeightRef.current;
-          // Move the viewport by the same amount as the transcript's layout
-          // growth. This keeps collapses/streamed actions visually attached
-          // to the bottom instead of making the content jump underneath it.
-          if (delta > 0) node.scrollTop += delta;
-          else node.scrollTop = node.scrollHeight;
-          contentHeightRef.current = nextHeight;
+          // Pin to the actual bottom once all resize work from this animation
+          // frame has landed. Delta-based scrolling can fall behind when a
+          // streamed edit and an action row resize together.
+          node.scrollTop = node.scrollHeight;
+          contentHeightRef.current = node.scrollHeight;
         }
       });
     });
@@ -556,6 +505,17 @@ export function Conversation({
   // artificially delayed rows, which made scroll position lag behind the
   // changing transcript and looked like a raw, staged command log.
   const visibleItems = transcriptItems;
+  // Tool providers can report overlapping calls. Keep their real state, but
+  // reserve the moving treatment for the newest one so the user always has a
+  // single obvious answer to “what is the agent doing right now?”.
+  const primaryActiveAction = [...visibleItems].reverse().find((item) => {
+    if (item.entry.type !== "action") return false;
+    const action = state.actions[item.entry.actionId];
+    return action?.status === "active" || action?.status === "queued";
+  });
+  const primaryActiveActionId = primaryActiveAction?.entry.type === "action"
+    ? primaryActiveAction.entry.actionId
+    : undefined;
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -637,6 +597,7 @@ export function Conversation({
                   onOpenTerminal={onOpenTerminal}
                   onOpenFile={onOpenFile}
                   revisiting={revisitedActionIds.has(action.id)}
+                  primaryActive={action.id === primaryActiveActionId}
                 />
               </div>
             );
@@ -654,6 +615,7 @@ export function Conversation({
               >
                 <PendingThinking
                   startedAt={state.runStartedAt!}
+                  starting={state.runState === "starting"}
                   onStop={onCancel}
                   reduced={reduced}
                 />
@@ -680,6 +642,7 @@ export function Conversation({
               actions={Object.values(state.actions)}
               onOpenChanges={onOpenChanges}
               onOpenFile={onOpenFile}
+              onUndo={onUndoCheckpoint}
               restored={state.restored}
             />
           ) : null}

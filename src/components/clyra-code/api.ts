@@ -76,6 +76,23 @@ export type PreviewLogLine = {
   timestamp?: number;
 };
 
+export type VibeUsageAnalytics = {
+  range: "all" | "30d" | "7d";
+  calendarStart: string;
+  calendarEnd: string;
+  sessions: number;
+  messages: number;
+  totalTokens: number;
+  activeDays: number;
+  currentStreak: number;
+  longestStreak: number;
+  peakHour: string | null;
+  favoriteModel: string | null;
+  insight: string;
+  heatmap: Array<{ date: string; sessions: number; messages: number; tokens: number; activeMinutes: number; runs: number; level: number }>;
+  models: Array<{ model: string; provider: string; requests: number; inputTokens: number; outputTokens: number; totalTokens: number; avgLatencyMs: number; errorRate: number; toolCalls: number; sessions: number }>;
+};
+
 export type UploadedCodeAttachment = {
   name: string;
   relativePath?: string;
@@ -197,10 +214,18 @@ export const api = {
       "/api/opencode/status",
     ),
 
+  vibeUsage: (range: "all" | "30d" | "7d") => json<VibeUsageAnalytics>(`/api/vibe/v3/usage?range=${range}`),
+
   startRuntime: (projectId: string) =>
     json<{ projectId: string; serverUrl: string; status: string }>(
       "/api/opencode/runtime/start",
       { method: "POST", body: JSON.stringify({ projectId }) },
+    ),
+
+  undoLastCheckpoint: (projectId: string) =>
+    json<{ ok: boolean; checkpointId: string; message: string }>(
+      `/api/opencode/projects/${enc(projectId)}/checkpoints/undo`,
+      { method: "POST" },
     ),
 
   createSession: (projectId: string, title: string) =>
@@ -225,10 +250,10 @@ export const api = {
       method: "DELETE",
     }),
 
-  sendPrompt: (projectId: string, sessionId: string, text: string, agent?: string) =>
+  sendPrompt: (projectId: string, sessionId: string, text: string, agent?: string, effort: "low" | "medium" | "high" = "medium") =>
     json<{ ok: boolean }>(
       `/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/prompt`,
-      { method: "POST", body: JSON.stringify({ text, agent }) },
+      { method: "POST", body: JSON.stringify({ text, agent, effort }) },
     ),
 
   uploadAttachments: (projectId: string, files: UploadedCodeAttachment[]) =>

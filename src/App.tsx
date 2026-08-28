@@ -6605,7 +6605,6 @@ Please analyze the code you just wrote and fix this error.`;
     { id: "chat", label: "Chat", icon: MessageCircleDashed },
     { id: "vibe", label: "Vibe Coder", icon: SquarePen },
     { id: "clip", label: "Shorts", icon: Scissors },
-    { id: "notes", label: "Notes", icon: Pencil },
   ];
   const showWorkflowTabs = !isEmbeddedToolPreview && !workflowTabsHidden;
 
@@ -6635,11 +6634,11 @@ Please analyze the code you just wrote and fix this error.`;
       setIsSidebarOpen(false);
     }
   }, [showSidebarControls]);
-  // The scene card spans the whole workspace, not merely the centred reading
-  // rail. Moving a full scene width keeps Chat -> Vibe and Vibe -> Chat
-  // perfectly mirrored and prevents either view from lingering at an edge.
-  const workspaceSwipeTravelPx = Math.max(360, effectiveWorkspaceViewport + 24);
-  const workspaceSwipeEase = [0.25, 0.1, 0.25, 1] as [
+  // Moving the whole shell during a handoff makes Vibe feel detached from the
+  // rest of Clyra. Keep the existing keyed lifecycle, but only crossfade the
+  // surface so the transition is immediate, calm, and interruption-safe.
+  const workspaceSwipeTravelPx = 0;
+  const workspaceSwipeEase = [0.22, 1, 0.36, 1] as [
     number,
     number,
     number,
@@ -6647,13 +6646,13 @@ Please analyze the code you just wrote and fix this error.`;
   ];
   const workspaceSwipeTransition = {
     type: "tween" as const,
-    duration: 0,
+    duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.2,
     ease: workspaceSwipeEase,
   };
   const workspacePanelVariants = {
     enter: (direction: number) => ({
       x: direction === 0 ? 0 : direction > 0 ? workspaceSwipeTravelPx : -workspaceSwipeTravelPx,
-      opacity: 1,
+      opacity: direction === 0 ? 1 : 0.01,
       zIndex: 2,
       pointerEvents: "none" as const,
     }),
@@ -6668,7 +6667,7 @@ Please analyze the code you just wrote and fix this error.`;
     },
     exit: (direction: number) => ({
       x: direction === 0 ? 0 : direction > 0 ? -workspaceSwipeTravelPx : workspaceSwipeTravelPx,
-      opacity: 1,
+      opacity: direction === 0 ? 1 : 0.01,
       zIndex: 1,
       pointerEvents: "none" as const,
     }),

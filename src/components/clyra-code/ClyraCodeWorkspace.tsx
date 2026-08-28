@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { FolderOpen, Globe2, Monitor, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Server } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { FolderOpen, Globe2, Monitor, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "./api";
 import { shouldAskPlatform, useClyraCode, type AgentAction } from "./store";
@@ -36,7 +36,6 @@ const WELCOME_SUBTITLES = [
 const quickStartTiles: Array<{ label: string; prompt: string; icon: typeof Globe2 }> = [
   { label: "Website", prompt: "Build me a modern website", icon: Globe2 },
   { label: "Desktop app", prompt: "Build me a desktop app", icon: Monitor },
-  { label: "API / Backend", prompt: "Build me a backend API service", icon: Server },
 ];
 
 function formatRecentTime(iso: string): string {
@@ -58,7 +57,18 @@ const PLATFORM_QUESTIONS: QuestionSet = {
       id: "platform",
       question: "Which platform should I target?",
       type: "single",
-      options: ["Webapp/Website", "Desktop app"],
+      options: ["Web app", "Desktop app", "Choose for me"],
+    },
+  ],
+};
+
+const DESKTOP_FRAMEWORK_QUESTIONS: QuestionSet = {
+  questions: [
+    {
+      id: "framework",
+      question: "Which desktop framework should I use?",
+      type: "single",
+      options: ["Electron", "Tauri", "Choose for me"],
     },
   ],
 };
@@ -73,6 +83,9 @@ const DEMO_QUESTIONS: QuestionSet = {
 };
 
 function platformDirective(answer: string): string {
+  if (/^tauri$/i.test(answer)) return "Build this as a Tauri desktop app. Keep the frontend independently runnable for live preview, then add the native Tauri boundary and validate it.\n\n";
+  if (/^electron$/i.test(answer)) return "Build this as an Electron desktop app. Keep the frontend independently runnable for live preview, then add the native Electron boundary and validate it.\n\n";
+  if (/choose for me/i.test(answer)) return "Choose the most suitable platform from the request. Prefer a responsive web app unless the requirements need native desktop APIs or a desktop distribution. Record the decision and proceed without another question.\n\n";
   if (/desktop/i.test(answer)) return "Build this as a desktop app (Electron), shipped as a responsive web app first so the live preview works.\n\n";
   return "Build this as a website / web app.\n\n";
 }
@@ -95,6 +108,7 @@ function encodeAttachment(file: File): Promise<string> {
  * action mirrors a real OpenCode harness event.
  */
 export default function ClyraCodeWorkspace() {
+  const reducedMotion = useReducedMotion();
   const {
     state: rawState,
     actionList,
@@ -107,6 +121,7 @@ export default function ClyraCodeWorkspace() {
     loadProjects,
     startRun,
     cancelRun,
+    undoLastCheckpoint,
     replyPermission,
     recordVisualEdit,
   } = useClyraCode();
@@ -147,6 +162,7 @@ export default function ClyraCodeWorkspace() {
   const [questionSet, setQuestionSet] = useState<QuestionSet | null>(null);
   const questionSetRef = useRef<QuestionSet | null>(null);
   const [questionSubmitting, setQuestionSubmitting] = useState(false);
+  const [effort, setEffort] = useState<"low" | "medium" | "high">("medium");
   const pendingPromptRef = useRef<string>("");
 
   const suggestPrompt = useCallback((text: string) => {
@@ -408,12 +424,20 @@ export default function ClyraCodeWorkspace() {
     [startRun],
   );
 
+  const restoreLastCheckpoint = useCallback(async () => {
+    const restored = await undoLastCheckpoint();
+    if (restored) {
+      setRightTab("browser");
+      setBuildVersion((version) => version + 1);
+    }
+  }, [undoLastCheckpoint]);
+
   const submitPrompt = useCallback(
     async (
       text: string,
       attachments: ComposerAttachment[] = [],
       command?: ComposerCommand,
-      options?: { userText?: string; answers?: Array<{ question: string; answer: string }> },
+      options?: { userText?: string; answers?: Array<{ question: string; answer: string }>; effort?: "low" | "medium" | "high" },
     ) => {
       window.dispatchEvent(new CustomEvent("clyra:workflow-tabs-hide"));
       const trimmed = text.trim();
@@ -427,6 +451,12 @@ export default function ClyraCodeWorkspace() {
       // with no platform signal turns into a question instead of guessing.
       // Follow-ups inside an existing session and ordinary requests always
       // send immediately so the composer never feels like it swallowed a turn.
+      if (!command && /\bdesktop\s+app\b/i.test(trimmed) && !/\b(electron|tauri)\b/i.test(trimmed) && !state.sessionId) {
+        pendingPromptRef.current = trimmed;
+        questionSetRef.current = DESKTOP_FRAMEWORK_QUESTIONS;
+        setQuestionSet(DESKTOP_FRAMEWORK_QUESTIONS);
+        return false;
+      }
       if (!command && shouldAskPlatform(trimmed) && !state.sessionId) {
         pendingPromptRef.current = trimmed;
         questionSetRef.current = PLATFORM_QUESTIONS;
@@ -463,18 +493,18 @@ export default function ClyraCodeWorkspace() {
         // appends the optimistic user message synchronously before its first
         // await, so the composer can clear immediately instead of freezing
         // the input until the agent's runtime/session/prompt calls resolve.
-        void startRun((command ? commandInstruction[command] : "") + attachmentContext + text, command === "plan" ? "plan" : undefined, options);
+        void startRun((command ? commandInstruction[command] : "") + attachmentContext + text, command === "plan" ? "plan" : undefined, { ...options, effort });
         return true;
       } catch {
         return false;
       }
     },
-    [createProject, startRun, state.activeProjectId, state.sessionId],
+    [createProject, effort, startRun, state.activeProjectId, state.sessionId],
   );
 
   const handleQuestionSubmit = useCallback(
     (answers: QuestionAnswers) => {
-      const answer = answers.platform?.values?.[0] ?? answers.layout?.values?.[0] ?? "";
+      const answer = answers.platform?.values?.[0] ?? answers.framework?.values?.[0] ?? answers.layout?.values?.[0] ?? "";
       const pending = pendingPromptRef.current;
       pendingPromptRef.current = "";
       const usedSet = questionSetRef.current;
@@ -661,11 +691,11 @@ export default function ClyraCodeWorkspace() {
             {!hasConversation ? (
               <motion.div
                 key="welcome"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
+                initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pt-[9vh]"
+                transition={{ duration: reducedMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                className="cc-scroll flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pt-[9vh]"
               >
                 <div className="mx-auto flex w-full max-w-[620px] flex-col items-center px-5 text-center">
                   <ClyraMark size={40} />
@@ -695,6 +725,8 @@ export default function ClyraCodeWorkspace() {
                       questionSubmitting={questionSubmitting}
                       onQuestionSubmit={handleQuestionSubmit}
                       onQuestionBack={handleQuestionBack}
+                      effort={effort}
+                      onEffortChange={setEffort}
                     />
                   </div>
                   <div className="mt-4 flex items-center justify-center gap-1.5">
@@ -759,17 +791,10 @@ export default function ClyraCodeWorkspace() {
                   </p>
                   {recentProjects.length ? (
                     <div className="mt-7 w-full text-left">
-                      <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#C1C3C7]">
-                        Recent
-                      </p>
+                      <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#C1C3C7]">Recent</p>
                       <div className="flex flex-col">
                         {recentProjects.map((project) => (
-                          <button
-                            key={project.id}
-                            type="button"
-                            onClick={() => selectProject(project.id)}
-                            className="flex items-center justify-between gap-3 rounded-[9px] px-2.5 py-[7px] text-left transition-colors duration-150 hover:bg-black/[0.03]"
-                          >
+                          <button key={project.id} type="button" onClick={() => selectProject(project.id)} className="flex items-center justify-between gap-3 rounded-[9px] px-2.5 py-[7px] text-left transition-colors duration-150 hover:bg-black/[0.03]">
                             <span className="min-w-0 truncate text-[12.5px] text-[#4B4D51]">{project.name || project.id}</span>
                             <span className="shrink-0 text-[11px] text-[#B7B9BD]">{formatRecentTime(project.updatedAt)}</span>
                           </button>
@@ -796,6 +821,7 @@ export default function ClyraCodeWorkspace() {
                   onOpenTerminal={() => setTerminalOpen(true)}
                   onOpenFile={openFileDiff}
                   onOpenChanges={() => setRightTab("changes")}
+                  onUndoCheckpoint={() => void restoreLastCheckpoint()}
                 />
                 {state.runState === "failed" && state.error ? (
                   <div className="mx-auto mb-1 flex w-full max-w-[760px] items-center gap-2 px-5 text-[11.5px] text-[#76787D]">
@@ -826,6 +852,8 @@ export default function ClyraCodeWorkspace() {
                   questionSubmitting={questionSubmitting}
                   onQuestionSubmit={handleQuestionSubmit}
                   onQuestionBack={handleQuestionBack}
+                  effort={effort}
+                  onEffortChange={setEffort}
                 />
               </motion.div>
             )}

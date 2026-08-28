@@ -18,8 +18,8 @@ export const ROW_ENTER = {
   initial: { opacity: 0, y: 2 },
   animate: { opacity: 1, y: 0 },
   transition: {
-    opacity: { duration: 0.16, ease: AGENT_EASE },
-    y: { duration: 0.15, ease: AGENT_EASE },
+    opacity: { duration: 0.18, ease: AGENT_EASE },
+    y: { duration: 0.18, ease: AGENT_EASE },
   },
 } as const;
 

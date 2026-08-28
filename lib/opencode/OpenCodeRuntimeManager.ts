@@ -1,8 +1,14 @@
 import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
+import { promisify } from "node:util";
+import { createVibePreflight, normalizeEffort, type VibeEffort, type VibePreflight } from "../vibe-agent-v3/preflight";
+import { recordVibeUsage, type ModelUsageEvent } from "../vibe-agent-v3/usage-analytics";
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_AGENTS_MD = `# Clyra Code Agent
 
@@ -23,6 +29,7 @@ Project architecture rules — for every coding request:
 - Reuse existing components instead of rebuilding them. Revisit and edit multiple files during the run when needed.
 - Run the project's build/typecheck/tests after changes and fix every error before finishing.
 - For greenfield web apps, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files.
+- Never navigate to a file: URL, start your own preview server, or kill background processes. Clyra owns project previews; complete the implementation and let Clyra provide the approved local preview for any visual check.
 `;
 
 export type ClyraAgentEvent = {
@@ -46,6 +53,23 @@ type ProjectRuntime = {
   events: ClyraAgentEvent[];
   partStates: Map<string, string>;
   reconciliation: Map<string, { fingerprint: string; idleSince?: number; emptyRetries?: number; completionRetries?: number }>;
+  runs: Map<string, ActiveRun>;
+  checkpointQueue?: Promise<void>;
+};
+
+type ActiveRun = {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  provider: string;
+  model: string;
+  startedAt: number;
+  preflight: VibePreflight;
+  baseMessageCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  toolCallIds: Set<string>;
 };
 
 type TaskComplexity = "trivial" | "small" | "medium" | "large" | "investigative" | "debugging" | "refactor" | "greenfield";
@@ -61,6 +85,7 @@ type TaskLedger = {
   verification: { passed: string[]; failed: string[] };
   createdAt: number;
   updatedAt: number;
+  preflight?: VibePreflight;
 };
 
 function classifyTask(text: string): TaskComplexity {
@@ -121,18 +146,9 @@ function resolveCodingModel(): { providerID: string; modelID: string } {
   return { providerID: status.providerID, modelID: status.modelID };
 }
 
-/**
- * Some DeepSeek Flash tool-use turns can terminate with no assistant part
- * after a legitimate sequence of commands. Keep the configured model for the
- * normal run, but use the available Pro variant only for the bounded recovery
- * continuation so the agent can finish the work it already started.
- */
+/** Recovery always remains on the model the user configured. */
 function resolveRecoveryModel(): { providerID: string; modelID: string } {
-  const model = resolveCodingModel();
-  if (model.providerID === "deepseek" && model.modelID === "deepseek-v4-flash") {
-    return { ...model, modelID: "deepseek-v4-pro" };
-  }
-  return model;
+  return resolveCodingModel();
 }
 
 /**
@@ -159,7 +175,7 @@ export class OpenCodeRuntimeManager {
     }
     const existing = this.projects.get(projectId);
     if (existing && existing.projectPath !== projectPath) throw new Error("Project ID is already associated with a different workspace.");
-    const project = existing ?? { projectId, projectPath, sessions: new Set<string>(), listeners: new Set(), events: [], partStates: new Map<string, string>(), reconciliation: new Map<string, { fingerprint: string; idleSince?: number }>() };
+    const project = existing ?? { projectId, projectPath, sessions: new Set<string>(), listeners: new Set(), events: [], partStates: new Map<string, string>(), reconciliation: new Map<string, { fingerprint: string; idleSince?: number }>(), runs: new Map<string, ActiveRun>() };
     this.projects.set(projectId, project);
     const client = this.client(projectPath);
     const current = await client.path.get({ throwOnError: true });
@@ -192,7 +208,7 @@ export class OpenCodeRuntimeManager {
     let project = this.projects.get(projectId);
     if (!project) {
       if (!projectPath) return [];
-      project = { projectId, projectPath, sessions: new Set<string>(), listeners: new Set<(event: ClyraAgentEvent) => void>(), events: [], partStates: new Map<string, string>(), reconciliation: new Map<string, { fingerprint: string; idleSince?: number; emptyRetries?: number; completionRetries?: number }>() };
+      project = { projectId, projectPath, sessions: new Set<string>(), listeners: new Set<(event: ClyraAgentEvent) => void>(), events: [], partStates: new Map<string, string>(), reconciliation: new Map<string, { fingerprint: string; idleSince?: number; emptyRetries?: number; completionRetries?: number }>(), runs: new Map<string, ActiveRun>() };
       this.projects.set(projectId, project);
     }
     return this.client(project.projectPath).session.list({ throwOnError: true });
@@ -234,11 +250,65 @@ export class OpenCodeRuntimeManager {
   }
 
   /**
+   * Revert the latest agent checkpoint with `git revert`, preserving the
+   * complete local history. This intentionally never resets, force-checks
+   * out, or touches a user-created commit.
+   */
+  async undoLastCheckpoint(projectId: string) {
+    const project = this.requiredProject(projectId);
+    await project.checkpointQueue?.catch(() => undefined);
+    const git = (...args: string[]) =>
+      execFileAsync("git", ["-C", project.projectPath, ...args], { timeout: 20_000 });
+    const status = await git("status", "--porcelain");
+    if (status.stdout.trim()) {
+      throw new Error("Save or commit local changes before undoing the last Clyra checkpoint.");
+    }
+    const subject = (await git("log", "-1", "--format=%s")).stdout.trim();
+    if (!subject.startsWith("Clyra checkpoint:")) {
+      throw new Error("There is no Clyra agent checkpoint to undo.");
+    }
+    await git("revert", "--no-edit", "HEAD");
+    const checkpointId = (await git("rev-parse", "--short", "HEAD")).stdout.trim();
+    return { ok: true, checkpointId, message: "Restored the state before the last Clyra agent action." };
+  }
+
+  /** Queue one durable snapshot after a completed agent tool action. A clean
+   * worktree produces no commit, so reads and no-op commands remain free. */
+  private queueGitCheckpoint(project: ProjectRuntime, event: ClyraAgentEvent) {
+    if (event.type !== "message.part.updated" || !event.sessionId) return;
+    const properties = (event.payload.properties && typeof event.payload.properties === "object" ? event.payload.properties : {}) as Record<string, unknown>;
+    const part = (properties.part && typeof properties.part === "object" ? properties.part : {}) as Record<string, unknown>;
+    const state = (part.state && typeof part.state === "object" ? part.state : {}) as Record<string, unknown>;
+    const completed = String(state.status || "").toLowerCase();
+    if (String(part.type || "") !== "tool" || !["completed", "success"].includes(completed)) return;
+    const tool = String(part.tool || "agent action").replace(/[\r\n]+/g, " ").trim().slice(0, 80) || "agent action";
+    const create = async () => {
+      const git = (...args: string[]) =>
+        execFileAsync("git", ["-C", project.projectPath, ...args], { timeout: 20_000 });
+      const status = await git("status", "--porcelain");
+      if (!status.stdout.trim()) return;
+      await git("add", "-A");
+      await git("commit", "-m", `Clyra checkpoint: ${tool}`);
+      const checkpointId = (await git("rev-parse", "--short", "HEAD")).stdout.trim();
+      this.publish(project, {
+        type: "checkpoint.created",
+        properties: { sessionID: event.sessionId, checkpointID: checkpointId, tool },
+      });
+    };
+    project.checkpointQueue = (project.checkpointQueue ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(create)
+      .catch((error) => {
+        this.lastError = error instanceof Error ? error.message : String(error);
+      });
+  }
+
+  /**
    * Keep a small, durable execution checkpoint outside the conversation. This
    * is deliberately support state for OpenCode—not a second scheduler. The
    * model still selects tools and adapts the plan itself through AGENTS.md.
    */
-  private async beginTaskLedger(projectPath: string, sessionId: string, objective: string) {
+  private async beginTaskLedger(projectPath: string, sessionId: string, objective: string, preflight: VibePreflight) {
     const complexity = classifyTask(objective);
     const agentRoot = path.join(projectPath, ".clyra", "agent", "sessions");
     await fs.promises.mkdir(agentRoot, { recursive: true });
@@ -267,6 +337,7 @@ export class OpenCodeRuntimeManager {
       verification: { passed: [], failed: [] },
       createdAt: now,
       updatedAt: now,
+      preflight,
     };
     await fs.promises.writeFile(path.join(agentRoot, `${sessionId}.json`), JSON.stringify(ledger, null, 2), "utf8");
   }
@@ -351,6 +422,14 @@ export class OpenCodeRuntimeManager {
     const implementationFiles = files.filter((file) => !/(^|\/)(PLAN\.md|AGENTS\.md|\.gitignore|package-lock\.json)$/i.test(file));
     const toolText = JSON.stringify(messages.map((message) => message.parts ?? []));
     const hasValidation = /(?:npm\s+run\s+(?:build|test|typecheck|lint)|\b(?:typecheck|vitest|jest|eslint)\b)/i.test(toolText);
+    // A request explicitly limited to one plain project file is not a
+    // greenfield product. Let the agent complete it once that real file
+    // exists; forcing a multi-file app and build command here causes needless
+    // recovery turns and makes simple Vibe Coder requests feel broken.
+    const singleFileTask = /\b(?:single|one|a)\s+(?:new\s+)?file\b|\b(?:create|add|write)\s+[`\w./-]+\.(?:txt|md|json|ya?ml|css|html|ts|tsx|js|jsx)\b/i.test(ledger.objective);
+    if (singleFileTask) {
+      return implementationFiles.length ? undefined : "the requested file was not created";
+    }
     const minimumFiles = 3;
     if (implementationFiles.length < minimumFiles) {
       return `only ${implementationFiles.length} implementation file${implementationFiles.length === 1 ? "" : "s"} changed (need a real multi-file implementation)`;
@@ -374,14 +453,30 @@ export class OpenCodeRuntimeManager {
     });
   }
 
-  async prompt(projectId: string, sessionId: string, text: string, agent?: string, model?: { providerID: string; modelID: string }) {
+  async prompt(projectId: string, sessionId: string, text: string, agent?: string, model?: { providerID: string; modelID: string }, requestedEffort: VibeEffort = "medium") {
     const project = this.requiredSession(projectId, sessionId);
     // The model always comes from Clyra's server-side provider configuration.
     const selectedModel = model ?? resolveCodingModel();
+    const preflight = createVibePreflight(text, normalizeEffort(requestedEffort));
     // Adaptive behaviour is guided via AGENTS.md (OpenCode reads it), not by
     // injecting preface text into the user turn (which models may echo).
     await this.ensureAgentsGuide(project.projectPath);
-    await this.beginTaskLedger(project.projectPath, sessionId, text);
+    const priorMessages = await this.client(project.projectPath).session.messages({ path: { id: sessionId }, throwOnError: true }).catch(() => []);
+    await this.beginTaskLedger(project.projectPath, sessionId, text, preflight);
+    project.runs.set(sessionId, {
+      id: `${sessionId}:${Date.now()}`,
+      sessionId,
+      projectId,
+      provider: selectedModel.providerID,
+      model: selectedModel.modelID,
+      startedAt: Date.now(),
+      preflight,
+      baseMessageCount: priorMessages.length,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      toolCallIds: new Set(),
+    });
     this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "busy" } } });
     const response = await this.client(project.projectPath).session.promptAsync({
       path: { id: sessionId },
@@ -411,6 +506,7 @@ export class OpenCodeRuntimeManager {
     const project = this.requiredSession(projectId, sessionId);
     const result = await this.client(project.projectPath).session.abort({ path: { id: sessionId }, throwOnError: true });
     await this.checkpointTaskLedger(project, sessionId, "cancelled");
+    void this.finalizeUsage(project, sessionId, "cancelled");
     return result;
   }
 
@@ -509,7 +605,51 @@ export class OpenCodeRuntimeManager {
     };
     project.events.push(event);
     if (project.events.length > 500) project.events.splice(0, project.events.length - 500);
+    this.trackUsageEvent(project, event);
+    this.queueGitCheckpoint(project, event);
     for (const listener of project.listeners) listener(event);
+  }
+
+  /** Capture provider-reported step usage and real tool calls; no prompt or source is persisted. */
+  private trackUsageEvent(project: ProjectRuntime, event: ClyraAgentEvent) {
+    const run = event.sessionId ? project.runs.get(event.sessionId) : undefined;
+    if (!run || event.type !== "message.part.updated") return;
+    const properties = (event.payload.properties && typeof event.payload.properties === "object" ? event.payload.properties : {}) as Record<string, unknown>;
+    const part = (properties.part && typeof properties.part === "object" ? properties.part : {}) as Record<string, unknown>;
+    if (String(part.type || "") === "tool" && event.partId) run.toolCallIds.add(event.partId);
+    if (String(part.type || "") !== "step-finish") return;
+    const tokens = (part.tokens && typeof part.tokens === "object" ? part.tokens : {}) as Record<string, unknown>;
+    const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+    run.inputTokens += finite(tokens.input);
+    run.outputTokens += finite(tokens.output);
+    run.reasoningTokens += finite(tokens.reasoning);
+  }
+
+  private async finalizeUsage(project: ProjectRuntime, sessionId: string, status: ModelUsageEvent["status"], messages?: Array<{ info?: { role?: string } }>) {
+    const run = project.runs.get(sessionId);
+    if (!run) return;
+    project.runs.delete(sessionId);
+    const currentMessages = messages ?? await this.client(project.projectPath).session.messages({ path: { id: sessionId }, throwOnError: true }).catch(() => []);
+    const messageCount = Math.max(1, currentMessages.slice(run.baseMessageCount).filter((message) => message.info?.role === "user" || message.info?.role === "assistant").length);
+    await recordVibeUsage({
+      id: run.id,
+      sessionId,
+      projectId: run.projectId,
+      runId: run.id,
+      model: run.model,
+      provider: run.provider,
+      timestamp: run.startedAt,
+      inputTokens: run.inputTokens,
+      outputTokens: run.outputTokens,
+      reasoningTokens: run.reasoningTokens,
+      totalTokens: run.inputTokens + run.outputTokens + run.reasoningTokens,
+      latencyMs: Math.max(0, Date.now() - run.startedAt),
+      status,
+      toolCallCount: run.toolCallIds.size,
+      messageCount,
+      taskType: run.preflight.mode,
+      effort: run.preflight.effort,
+    });
   }
 
   private findFreePort(): Promise<number> {
@@ -555,7 +695,16 @@ export class OpenCodeRuntimeManager {
       // reconciling through that transition and only complete after a stable
       // quiet window; this is what prevents the UI from stopping after the
       // first tool action of a multi-step DeepSeek task.
-      const quietMs = status?.type === "idle" ? 5_000 : 12_000;
+      const hasVisibleAssistantActivity = messages.some((message) =>
+        message.info?.role === "assistant" && (message.parts ?? []).some((part) =>
+          part.type === "tool" || part.type === "text" || part.type === "reasoning",
+        ),
+      );
+      // Slow providers can take longer than twelve seconds to emit their
+      // first tool or reasoning event. Apply the longer grace period only
+      // before that first visible event; once work is streaming, settle a
+      // stuck-busy provider quickly so the UI does not linger on Thinking.
+      const quietMs = status?.type === "idle" ? 5_000 : hasVisibleAssistantActivity ? 8_000 : 45_000;
       if ((idleSince && now - idleSince >= quietMs) || attempt >= 600) {
         // Detect silent provider failures: assistant turn exists but produced
         // no text and no tool parts (classic OpenCode free-model 401 path).
@@ -614,6 +763,7 @@ export class OpenCodeRuntimeManager {
             || "The configured coding model stopped before completing its final response. Completed work is preserved; retry to continue the same task.";
           this.lastError = message;
           await this.checkpointTaskLedger(project, sessionId, "failed");
+          void this.finalizeUsage(project, sessionId, "error", messages);
           this.publish(project, { type: "session.error", properties: { sessionID: sessionId, error: { message } } });
           project.reconciliation.delete(sessionId);
           return;
@@ -634,11 +784,13 @@ export class OpenCodeRuntimeManager {
           const message = `The coding agent stopped before the requested product was complete: ${gap}. Completed work is preserved; retry to continue the same task.`;
           this.lastError = message;
           await this.checkpointTaskLedger(project, sessionId, "failed");
+          void this.finalizeUsage(project, sessionId, "error", messages);
           this.publish(project, { type: "session.error", properties: { sessionID: sessionId, error: { message } } });
           project.reconciliation.delete(sessionId);
           return;
         }
         await this.checkpointTaskLedger(project, sessionId, "completed");
+        void this.finalizeUsage(project, sessionId, "success", messages);
         this.publish(project, { type: "session.idle", properties: { sessionID: sessionId } });
         project.reconciliation.delete(sessionId);
         return;

@@ -707,7 +707,7 @@ export function useClyraCode() {
   );
 
   const startRun = useCallback(
-    async (prompt: string, agent?: string, options?: { userText?: string; answers?: UserAnswer[] }) => {
+    async (prompt: string, agent?: string, options?: { userText?: string; answers?: UserAnswer[]; effort?: "low" | "medium" | "high" }) => {
       const projectId = activeProjectRef.current;
       if (!projectId || !prompt.trim()) return false;
       const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
@@ -756,7 +756,7 @@ export function useClyraCode() {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, sessionId }));
           } catch { /* storage unavailable */ }
         }
-        await api.sendPrompt(projectId, sessionId, prompt, agent);
+        await api.sendPrompt(projectId, sessionId, prompt, agent, options?.effort);
         setState((prev) =>
           prev.runState === "starting" ? { ...prev, runState: "running" } : prev,
         );
@@ -788,6 +788,31 @@ export function useClyraCode() {
     }));
     if (projectId && sessionId) {
       await api.abortSession(projectId, sessionId).catch(() => undefined);
+    }
+  }, []);
+
+  const undoLastCheckpoint = useCallback(async () => {
+    const projectId = activeProjectRef.current;
+    if (!projectId) return false;
+    try {
+      await api.undoLastCheckpoint(projectId);
+      // OpenCode's historical session diff is immutable, so clear the local
+      // result projection after the reversible Git restore. The next real
+      // agent action repopulates it from the live stream.
+      setState((prev) => ({
+        ...prev,
+        diffs: [],
+        actions: {},
+        log: prev.log.filter((entry) => entry.type !== "action"),
+        restored: false,
+      }));
+      return true;
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : "Could not restore the last checkpoint.",
+      }));
+      return false;
     }
   }, []);
 
@@ -1016,6 +1041,7 @@ export function useClyraCode() {
     newChat,
     startRun,
     cancelRun,
+    undoLastCheckpoint,
     replyPermission,
     recordVisualEdit,
     setState,
