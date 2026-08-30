@@ -48,3 +48,4 @@ data/notes/
 # Local-only Vibe Coder usage records. They contain aggregate model activity,
 # never prompts or source, and are not shared with the repository.
 vibe-agent-v3-usage.json
+vendor/open-silong/

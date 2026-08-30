@@ -696,6 +696,43 @@ export function SettingsModal({
                         <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5"><p className="text-[11px] font-medium text-slate-500">Total cost</p><p className="mt-1 text-[20px] font-semibold tracking-[-.03em] text-slate-900">${Number(usage?.total?.costUsd || 0).toFixed(4)}</p><p className="mt-1 text-[10.5px] text-slate-400">USD · verified rates</p></div>
                         <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5"><p className="text-[11px] font-medium text-slate-500">Today</p><p className="mt-1 text-[20px] font-semibold tracking-[-.03em] text-slate-900">{Number(usage?.today?.tokens || 0).toLocaleString()}</p><p className="mt-1 text-[10.5px] text-slate-400">provider tokens</p></div>
                       </div>
+                      {Array.isArray(usage?.daily) && usage.daily.length ? (
+                        <div className="mt-5">
+                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[.08em] text-slate-400">Last {usage.daily.length} days</p>
+                          <div className="rounded-xl border border-slate-200/80 bg-white p-3.5">
+                            {(() => {
+                              const maxTokens = Math.max(1, ...usage.daily.map((day: any) => Number(day.tokens || 0)));
+                              return (
+                                <div className="flex h-24 items-end gap-1">
+                                  {usage.daily.map((day: any) => {
+                                    const heightPct = Math.max(2, Math.round((Number(day.tokens || 0) / maxTokens) * 100));
+                                    const label = new Date(`${day.date}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                                    return (
+                                      <div
+                                        key={day.date}
+                                        className="group relative flex-1"
+                                        title={`${label}: ${Number(day.tokens || 0).toLocaleString()} tokens · ${day.requests} requests`}
+                                      >
+                                        <div
+                                          className={cn(
+                                            "w-full rounded-[3px] transition-colors",
+                                            day.requests ? "bg-blue-200 group-hover:bg-blue-400" : "bg-slate-100",
+                                          )}
+                                          style={{ height: `${heightPct}%` }}
+                                        />
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                            <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
+                              <span>{new Date(`${usage.daily[0].date}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                              <span>{new Date(`${usage.daily[usage.daily.length - 1].date}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="mt-5">
                         <div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-medium uppercase tracking-[.08em] text-slate-400">By provider & model</p><p className="text-[10.5px] text-slate-400">{usage?.total?.requests || 0} requests</p></div>
                         <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white">

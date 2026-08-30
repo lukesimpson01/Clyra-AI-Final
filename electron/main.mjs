@@ -30,6 +30,10 @@ const appPort = Number(process.env.CLYRA_DESKTOP_PORT || 31_415);
 const cdpPort = Number(process.env.CLYRA_CDP_PORT || 9_223);
 const bridgePort = Number(process.env.CLYRA_BROWSER_BRIDGE_PORT || 9_224);
 const bridgeToken = crypto.randomBytes(24).toString("hex");
+// Capability token for the local Express service (server.ts). Minted fresh
+// per launch, passed to the sidecar via env, and cookied onto the UI origin
+// before load — see lib/security/service-token.ts for the full boundary.
+const serviceToken = crypto.randomBytes(32).toString("hex");
 
 app.setName("Clyra");
 // QA and support launches can use an isolated profile without touching a
@@ -187,6 +191,7 @@ function serviceEnvironment() {
     CLYRA_ELECTRON_BROWSER_BRIDGE: `http://127.0.0.1:${bridgePort}`,
     CLYRA_ELECTRON_BROWSER_TOKEN: bridgeToken,
     CLYRA_BROWSER_CDP_URL: `http://127.0.0.1:${cdpPort}`,
+    CLYRA_SERVICE_TOKEN: serviceToken,
     // The M1 launcher owns several helper processes. In a packaged Electron
     // child it can race macOS process cleanup during boot and terminate the
     // local service before the UI is reachable. Keep the service responsive
@@ -1311,6 +1316,16 @@ async function createWindow() {
     // Register Clyra under System Settings → Privacy (Microphone / Camera).
     // Only prompt when macOS has never asked for this bundle identity.
     void primeMacOsMediaAccess();
+  });
+  // Cookie the per-launch service token onto the UI origin before the first
+  // navigation so every same-origin fetch/XHR/WebSocket the real Clyra
+  // window makes carries it automatically — see lib/security/service-token.ts.
+  await uiView.webContents.session.cookies.set({
+    url: `http://127.0.0.1:${appPort}`,
+    name: "clyra_token",
+    value: serviceToken,
+    httpOnly: true,
+    sameSite: "strict",
   });
   await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`);
   // Pre-warm OpenCluely in the background so ⌘/ toggles instantly.

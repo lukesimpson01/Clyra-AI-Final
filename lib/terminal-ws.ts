@@ -12,6 +12,7 @@ import type { Server } from "node:http";
 import { createRequire } from "node:module";
 import { WebSocket, WebSocketServer } from "ws";
 import { clyraDataPath, clyraResourcePath } from "./runtime-paths";
+import { requestHasValidServiceToken } from "./security/service-token";
 
 const require = createRequire(import.meta.url);
 
@@ -25,6 +26,10 @@ type PtyLike = {
 
 const BUFFER_LIMIT = 64 * 1024;
 const SESSION_TTL_MS = 90_000;
+// A full-permission PTY with no absolute lifetime is an open-ended local
+// exposure window; force a clean restart after a long idle-connected span
+// rather than letting a single shell run forever.
+const MAX_SESSION_LIFETIME_MS = 6 * 60 * 60 * 1000;
 const WS_OPEN = 1;
 
 function spawnShell(cwd: string): PtyLike | null {
@@ -127,6 +132,7 @@ type TerminalSession = {
   shell: PtyLike;
   buffer: string;
   lastActive: number;
+  createdAt: number;
   ws: WebSocket | null;
 };
 
@@ -137,6 +143,15 @@ export function attachTerminalWebSocket(server: Server) {
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname !== "/api/terminal") return;
+    // Full-permission shell access — never allow this upgrade without the
+    // same per-launch capability token every other state-changing route
+    // requires (browsers attach it automatically as a cookie; see
+    // lib/security/service-token.ts).
+    if (!requestHasValidServiceToken(request.headers.cookie)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
     });
@@ -178,7 +193,7 @@ export function attachTerminalWebSocket(server: Server) {
         ws.close();
         return;
       }
-      session = { shell, buffer: "", lastActive: Date.now(), ws };
+      session = { shell, buffer: "", lastActive: Date.now(), createdAt: Date.now(), ws };
       sessions.set(key, session);
       createdSession = true;
       shell.onData((data) => {
@@ -245,8 +260,16 @@ export function attachTerminalWebSocket(server: Server) {
   });
 
   const gc = setInterval(() => {
+    const now = Date.now();
     for (const [key, session] of sessions) {
-      if (!session.ws && Date.now() - session.lastActive > SESSION_TTL_MS) {
+      const idleTooLong = !session.ws && now - session.lastActive > SESSION_TTL_MS;
+      const livedTooLong = now - session.createdAt > MAX_SESSION_LIFETIME_MS;
+      if (idleTooLong || livedTooLong) {
+        if (livedTooLong && session.ws && session.ws.readyState === WS_OPEN) {
+          try {
+            session.ws.send(JSON.stringify({ type: "exit", tabId: key.split(":")[1] ?? "default", code: 0 }));
+          } catch { /* socket already gone */ }
+        }
         session.shell.kill();
         sessions.delete(key);
       }

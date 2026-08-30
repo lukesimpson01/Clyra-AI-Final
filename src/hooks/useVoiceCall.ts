@@ -53,6 +53,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const pendingAssistantTextRef = useRef("");
   const statusRef = useRef<VoiceCallStatus>("idle");
   const everConnectedRef = useRef(false);
+  const turnsRef = useRef<VoiceTurn[]>([]);
 
   const appendCaption = useCallback((chunk: string) => {
     setCaptionLines((prev) => {
@@ -180,7 +181,37 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
             setError(data?.message || "Voice call error.");
           },
           onDisconnected: () => {
-            setStatus("idle");
+            // teardownClient() nulls clientRef *before* calling disconnect(),
+            // so an intentional End Call has already cleared the ref by the
+            // time this fires — clientRef.current === client here means the
+            // transport dropped on its own (exhausted its retries) while the
+            // user still expected to be on the call. Previously this just set
+            // status to "idle", leaving the full-screen call UI open forever
+            // with no explanation of what happened. Surface it as a clear
+            // error and leave "End call" as the way to dismiss, rather than
+            // yanking the overlay closed out from under the user.
+            if (clientRef.current === client) {
+              clientRef.current = null;
+              setError("Voice call disconnected. Tap End Call to close, or start a new call.");
+              setStatus("error");
+              const sessionId = sessionIdRef.current;
+              sessionIdRef.current = null;
+              if (sessionId) {
+                void fetch("/voice/end", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    sessionId,
+                    history: turnsRef.current,
+                    bargeIns: bargeInsRef.current,
+                    reconnects: reconnectsRef.current,
+                    endedReason: "connection-lost",
+                  }),
+                }).catch(() => undefined);
+              }
+            } else {
+              setStatus("idle");
+            }
           },
           onTransportStateChanged: (state) => {
             if (state === "connected" || state === "ready") everConnectedRef.current = true;
@@ -225,6 +256,10 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
 
   useEffect(() => {
     return () => {

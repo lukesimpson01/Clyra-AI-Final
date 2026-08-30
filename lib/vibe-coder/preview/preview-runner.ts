@@ -147,23 +147,13 @@ export async function startDevServer({
   }
   const packageManager = hasPackageJson ? detectPackageManager(projectPath) : "npm";
   const script = hasPackageJson ? await detectDevScript(projectPath) : null;
-  if (hasPackageJson && !script) {
-    const session: PreviewSession = {
-      projectId,
-      projectPath,
-      packageManager,
-      devCommand: "missing",
-      status: "build_failed",
-      lastError: {
-        title: "Preview setup needed",
-        message: "No dev, start, or preview script exists in package.json.",
-      },
-    };
-    const state = { session, logs: [] };
-    addLog(state, "error", session.lastError!.message);
-    sessions.set(projectId, state);
-    return session;
-  }
+  // A package.json without a recognized dev/start/preview script is only a
+  // hard failure when there is no index.html to fall back to serving
+  // statically (vite handles plain HTML + relative-path ES modules with no
+  // config and no node_modules install). That fallback already exists below
+  // — it was previously unreachable for exactly this case, which is common
+  // for agent-generated dependency-free web apps that declare a package.json
+  // for metadata but never add a script.
 
   const port = await findPreviewPort(projectId);
   const viteBinary = getViteBinary(projectPath);

@@ -1721,7 +1721,20 @@ export default function AIClipper({
       anchor.click();
     };
     const wantsCaptionBurn = selected.captions_enabled !== false && captionWords.length > 0 && hasDetachedCaptions(selected);
-    if (!selected.artifact_id || !wantsCaptionBurn) {
+    const pendingZoomEffects = (() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(`clyra.timeline.${selected.id}`) || "null");
+        return Array.isArray(saved?.zoomEffects) ? saved.zoomEffects : [];
+      } catch {
+        return [];
+      }
+    })();
+    // The zoom-pin timeline tool used to silently do nothing: this early
+    // return re-downloaded the clip that was rendered before the editor
+    // ever opened, so any zoom effect the user added never reached export
+    // unless captions also needed burning in. Route through the real
+    // rerender call whenever there's a pending effect to apply.
+    if (!selected.artifact_id || (!wantsCaptionBurn && pendingZoomEffects.length === 0)) {
       // Nothing to composite (captions off, already burned, or no artifacts):
       // the rendered MP4 is already the export.
       setExportState("exporting");
@@ -1750,9 +1763,15 @@ export default function AIClipper({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           artifactId: selected.artifact_id,
-          subtitlesOnly: true,
-          burnCaptions: true,
-          captionsEnabled: true,
+          // subtitlesOnly takes a fast path server-side that composites
+          // captions onto the already-rendered video and never re-runs
+          // face-track/crop planning — so it also never applies zoom-pin
+          // effects (clipper-pipeline.py refine_clip() returns before
+          // reaching apply_editor_zoom_effects when this is set). Only take
+          // that shortcut when there's genuinely nothing else to recompute.
+          subtitlesOnly: pendingZoomEffects.length === 0,
+          burnCaptions: wantsCaptionBurn,
+          captionsEnabled: selected.captions_enabled !== false,
           words: payloadWords,
           font: style?.font ?? draft.font,
           fontSize: style?.font_size ?? draft.fontSize,
@@ -1762,6 +1781,7 @@ export default function AIClipper({
           captionY: style?.caption_y ?? draft.captionY,
           subtitleStyle: style?.subtitle_style ?? draft.subtitleStyle,
           renderQuality: draft.renderQuality,
+          zoomEffects: pendingZoomEffects,
           sfxTracks: (() => {
             try {
               const saved = JSON.parse(localStorage.getItem(`clyra.timeline.${selected.id}`) || "null");

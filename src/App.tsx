@@ -44,7 +44,6 @@ import {
   Loader2,
   MessageCircle,
   MessageCircleDashed,
-  Mail,
   MessagesSquare,
   Mic,
   MoreHorizontal,
@@ -53,9 +52,11 @@ import {
   Pencil,
   Pin,
   Play,
+  Plus,
   Search,
   Share2,
   Settings,
+  Square,
   SquarePen,
   Trash2,
   RotateCcw,
@@ -92,6 +93,7 @@ import { TextFadeIn } from "@/components/ui/text-fade-in";
 import { TextLoop } from "@/components/core/text-loop";
 import { StatusTextReveal } from "@/components/core/status-text-reveal";
 import { MarkdownMessageContent } from "./components/MarkdownMessageContent";
+import { TerminalRunnerProvider } from "./components/terminal/TerminalRunnerProvider";
 import {
   GmailEmailResults,
   WorkspaceResultCard,
@@ -168,6 +170,31 @@ const loadVibeCoderWorkspace = () => import("./components/clyra-code/ClyraCodeWo
     )
   }));
 const VibeCoderWorkspace = lazy(loadVibeCoderWorkspace);
+
+function VibeWorkspaceLoadingSurface() {
+  return (
+    <motion.div
+      aria-label="Opening Vibe Coder"
+      className="flex h-full min-h-0 w-full overflow-hidden bg-[#fbfbfa]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="w-[236px] shrink-0 border-r border-black/[0.055] bg-[#f8f8f7] p-3">
+        <div className="h-8 w-28 animate-pulse rounded-md bg-black/[0.055]" />
+        <div className="mt-5 h-8 animate-pulse rounded-md bg-black/[0.045]" />
+        <div className="mt-4 space-y-3 px-1">
+          <div className="h-3 w-3/4 animate-pulse rounded bg-black/[0.045]" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-black/[0.04]" />
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col p-7">
+        <div className="h-7 w-40 animate-pulse rounded-md bg-black/[0.055]" />
+        <div className="mt-6 flex-1 animate-pulse rounded-xl border border-black/[0.045] bg-white" />
+      </div>
+    </motion.div>
+  );
+}
 let vibeBootPreparation: Promise<{ ready: boolean }> | null = null;
 
 type VibeBootProgressUpdate = {
@@ -367,7 +394,7 @@ function readEmbeddedWorkspace(): WorkspaceTabId {
   if (tool === "vibe" || tool === "clip" || tool === "study") return tool;
   return "chat";
 }
-const WORKSPACE_TAB_WIDTH = 105;
+const WORKSPACE_TAB_WIDTH = 128;
 const WORKSPACE_TAB_GAP = 4;
 const WORKSPACE_TAB_PADDING = 5;
 const ORB_COLOR_THEMES: OrbColorTheme[] = [
@@ -1414,46 +1441,85 @@ function ChatThinkingLabel({
 }
 
 /** Source favicons sit to the right of message actions; hover expands the site name. */
+// Recognizes the small set of built-in "couldn't complete this" fallback
+// replies (network/stream failures, rate limits) so they can be given a
+// quieter, retry-first treatment instead of looking like a normal answer.
+const SOFT_FAILURE_PREFIXES = [
+  "I couldn't reach",
+  "I gathered the source material, but",
+  "Sorry, I've hit a rate limit",
+];
+function isSoftFailureMessage(content: string): boolean {
+  const trimmed = content.trim();
+  return SOFT_FAILURE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 function SourceFaviconChips({ urls }: { urls?: string[] }) {
-  const [hoveredUrl, setHoveredUrl] = useState<string | null>(null);
-  if (!urls?.length) return null;
-  const items = [...new Map(urls.map((url) => [hostnameFromUrl(url), url])).entries()]
-    .filter(([host]) => host)
-    .slice(0, 8);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const items = useMemo(
+    () =>
+      [...new Map((urls ?? []).map((url) => [hostnameFromUrl(url), url])).entries()].filter(
+        ([host]) => host,
+      ),
+    [urls],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   if (!items.length) return null;
 
   return (
-    <div className="clyra-message-source-chips" aria-label="Sources">
-      {items.map(([host, url]) => {
-        const label = host.replace(/^www\./i, "");
-        const expanded = hoveredUrl === url;
-        return (
-          <a
-            key={url}
-            className={cn("clyra-message-source-chip", expanded && "is-expanded")}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Open ${label} in your browser`}
-            title={label}
-            onMouseEnter={() => setHoveredUrl(url)}
-            onMouseLeave={() => setHoveredUrl((current) => (current === url ? null : current))}
-            onFocus={() => setHoveredUrl(url)}
-            onBlur={() => setHoveredUrl((current) => (current === url ? null : current))}
+    <div className="relative" ref={rootRef}>
+      <button
+        type="button"
+        className="clyra-message-source-summary"
+        aria-label={`${items.length} source${items.length === 1 ? "" : "s"} used`}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Globe className="h-3 w-3" strokeWidth={1.8} />
+        Sources · {items.length}
+        <ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} />
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            className="clyra-message-source-popover absolute left-0 top-full z-20"
+            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="clyra-message-source-chip__icon">
-              <img
-                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
-                alt=""
-              />
-            </span>
-            <span className="clyra-message-source-chip__bullet" aria-hidden={!expanded}>
-              <span className="clyra-message-source-chip__dot" />
-              <span className="clyra-message-source-chip__label">{label}</span>
-            </span>
-          </a>
-        );
-      })}
+            {items.map(([host, url]) => {
+              const label = host.replace(/^www\./i, "");
+              return (
+                <a key={url} href={url} target="_blank" rel="noopener noreferrer" title={url}>
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
+                    alt=""
+                  />
+                  <span>{label}</span>
+                </a>
+              );
+            })}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1793,6 +1859,7 @@ export const AnimatedMessage = ({
   fontSizeClass,
   markdownSupport,
   codeHighlighting = true,
+  codeTheme = "dark",
   assistantKind = "chat",
   thinkingMode = "thinking",
   youtubeVideoId,
@@ -1827,6 +1894,7 @@ export const AnimatedMessage = ({
   fontSizeClass?: string;
   markdownSupport?: boolean;
   codeHighlighting?: boolean;
+  codeTheme?: "light" | "dark";
   assistantKind?: "chat" | "vibe";
   thinkingMode?: "thinking" | "youtube" | "search" | "weather" | "google" | "research";
   youtubeVideoId?: string;
@@ -2008,7 +2076,7 @@ export const AnimatedMessage = ({
         <MarkdownMessageContent
           content={preamble}
           codeHighlighting={!!codeHighlighting}
-          codePresentation="default"
+          codePresentation={codeTheme === "light" ? "soft" : "default"}
         />
       )}
       <DocumentCardUI
@@ -2031,7 +2099,7 @@ export const AnimatedMessage = ({
     <MarkdownMessageContent
       content={content}
       codeHighlighting={!!codeHighlighting}
-      codePresentation="default"
+      codePresentation={codeTheme === "light" ? "soft" : "default"}
     />
   ) : useCompletedBlurReveal ? (
     <TextFadeIn
@@ -2324,10 +2392,21 @@ export const FullscreenContext = React.createContext({
 });
 
 export default function App() {
+  interface ChatAttachment {
+    name: string;
+    /** Extracted plain-text content, when the file is a readable text type. */
+    content?: string;
+    /** Set when the file was attached but its content could not be read
+     * (e.g. an image or binary format) — surfaced to the user rather than
+     * silently sending an attachment the model never actually saw. */
+    unreadable?: boolean;
+  }
+
   interface Message {
     id: string;
     role: "user" | "assistant";
     content: string;
+    createdAt?: number;
     reasoningContent?: string;
     isThinking?: boolean;
     isStreaming?: boolean;
@@ -2497,7 +2576,11 @@ export default function App() {
       if (window.__CLYRA_AGENT_BRIDGE__ === bridge) delete window.__CLYRA_AGENT_BRIDGE__;
     };
   }, [activeWorkspaceTab, isEmbeddedToolPreview]);
-  const [isAppLauncherOpen, setIsAppLauncherOpen] = useState(false);
+  // External workspace routes (such as the local Notes surface) can hand the
+  // user back to the same global launcher without relying on iframe focus.
+  const [isAppLauncherOpen, setIsAppLauncherOpen] = useState(() =>
+    new URLSearchParams(window.location.search).get("launcher") === "1",
+  );
   const [isShortsWelcomeOpen, setIsShortsWelcomeOpen] = useState(false);
   const [isTaskViewOpen, setIsTaskViewOpen] = useState(false);
   const [visitedWorkspaceTabs, setVisitedWorkspaceTabs] = useState<WorkspaceTabId[]>(["chat"]);
@@ -3199,6 +3282,8 @@ export default function App() {
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [value, setValue] = useState("");
   const [chatEffort, setChatEffort] = useState<ChatEffort>(() => {
@@ -3221,7 +3306,7 @@ export default function App() {
   });
   const skipDraftPersistRef = useRef(false);
   const canSendMessage = Boolean(value.trim() || selectedCommand || selectedAppAgents.length);
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -3242,6 +3327,7 @@ export default function App() {
   const [feedbackText, setFeedbackText] = useState("");
   const sendMessageRef = useRef<(() => Promise<void>) | null>(null);
   const regenerationRef = useRef<{ messageId: string; userMessageId: string } | null>(null);
+  const activeStreamController = useRef<AbortController | null>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const welcomeComposerAnchorRef = useRef<number | null>(null);
@@ -5228,6 +5314,10 @@ Please analyze the code you just wrote and fix this error.`;
   const handleSendMessage = async () => {
     if (!value.trim() && attachments.length === 0 && !selectedCommand && selectedAppAgents.length === 0) return;
 
+    activeStreamController.current?.abort();
+    const streamController = new AbortController();
+    activeStreamController.current = streamController;
+
     if (value.trim() || selectedCommand || selectedAppAgents.length) {
       const pendingRewrite = pendingDocumentRewriteRef.current;
       if (pendingRewrite && value.trim()) {
@@ -5420,6 +5510,10 @@ Please analyze the code you just wrote and fix this error.`;
           : "") ||
         extractWeatherLocation(rawUserText) ||
         "";
+      // A readable file the user just attached is almost always what a
+      // question like "what's in this file" is actually about — prefer
+      // reading it over routing to a web search that can never see it.
+      const hasReadableAttachments = attachments.some((file) => file.content);
       const autoSearch =
         !isDeepResearchMode &&
         !youtubeCommand &&
@@ -5427,6 +5521,7 @@ Please analyze the code you just wrote and fix this error.`;
         !weatherCommand &&
         !youtubeFollowUp &&
         !isWeatherMode &&
+        !hasReadableAttachments &&
         userCommandId !== "youtube" &&
         userCommandId !== "search" &&
         userCommandId !== "weather" &&
@@ -5477,7 +5572,9 @@ Please analyze the code you just wrote and fix this error.`;
           : null) ||
         rawUserText ||
         (userCommandLabel ? `Execute ${userCommandLabel}` : "");
+      const attachmentsForRequest = attachments;
       setValue("");
+      setAttachments([]);
       setSelectedCommand(null);
       setSelectedAppAgents([]);
       setIsComposerFocused(false);
@@ -5529,11 +5626,13 @@ Please analyze the code you just wrote and fix this error.`;
         id: userMsgId,
         role: "user",
         content: userText,
+        createdAt: Date.now(),
       };
       const assistantMessage: Message = {
         id: aiMsgId,
         role: "assistant",
         content: "",
+        createdAt: Date.now(),
         isThinking: true,
         isStreaming: true,
         assistantKind: isVibeMode ? "vibe" : "chat",
@@ -6285,8 +6384,19 @@ Please analyze the code you just wrote and fix this error.`;
               0.5,
               1800,
               "deepseek-v4-flash",
+              streamController.signal,
             );
           } catch (analysisError) {
+            if (streamController.signal.aborted) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? { ...msg, content: accumulatedText, isThinking: false, isStreaming: false, thinkingMode }
+                    : msg,
+                ),
+              );
+              return;
+            }
             console.error("YouTube/search analysis stream failed:", analysisError);
             setMessages((prev) =>
               prev.map((msg) =>
@@ -6334,7 +6444,14 @@ Please analyze the code you just wrote and fix this error.`;
           role: msg.role === "user" ? "user" : "model",
           parts: [{ text: msg.content }],
         }));
-        contents.push({ role: "user", parts: [{ text: userText }] });
+        // Readable attachments (text/code/markdown/etc.) are sent as extra
+        // context alongside the user's own text; the chat bubble itself
+        // stays clean and only shows what the user actually typed.
+        const readableAttachments = attachmentsForRequest.filter((file) => file.content);
+        const attachmentContext = readableAttachments.length
+          ? `\n\nAttached files:\n${readableAttachments.map((file) => `--- ${file.name} ---\n${file.content}`).join("\n\n")}`
+          : "";
+        contents.push({ role: "user", parts: [{ text: userText + attachmentContext }] });
 
         try {
           let accumulatedText = "";
@@ -6392,7 +6509,7 @@ Please analyze the code you just wrote and fix this error.`;
             temperature,
             8000,
             CHAT_EFFORT_MODEL[chatEffort],
-            undefined,
+            streamController.signal,
             CHAT_EFFORT_THINKING[chatEffort],
           );
 
@@ -6405,6 +6522,16 @@ Please analyze the code you just wrote and fix this error.`;
             ),
           );
         } catch (error) {
+          if (streamController.signal.aborted) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId
+                  ? { ...msg, isStreaming: false, isThinking: false }
+                  : msg,
+              ),
+            );
+            return;
+          }
           console.error("Standard chat stream error:", error);
           setMessages((prev) =>
             prev.map((msg) =>
@@ -6421,6 +6548,14 @@ Please analyze the code you just wrote and fix this error.`;
           );
         }
       } catch (error) {
+        if (streamController.signal.aborted) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === aiMsgId ? { ...msg, isThinking: false, isStreaming: false } : msg,
+            ),
+          );
+          return;
+        }
         console.error("AI Error:", error);
         setMessages((prev) =>
           prev.map((msg) =>
@@ -6441,11 +6576,19 @@ Please analyze the code you just wrote and fix this error.`;
 
   sendMessageRef.current = handleSendMessage;
 
+  const stopGeneration = useCallback(() => {
+    activeStreamController.current?.abort();
+  }, []);
+
   const handleComposerPrimaryAction = (
     event?: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
   ) => {
     event?.preventDefault();
     event?.stopPropagation();
+    if (isAiResponding) {
+      stopGeneration();
+      return;
+    }
     if (canSendMessage) {
       void handleSendMessage();
       return;
@@ -6467,6 +6610,38 @@ Please analyze the code you just wrote and fix this error.`;
       window.setTimeout(() => void sendMessageRef.current?.(), 110);
     });
   }, [messages]);
+
+  const startEditMessage = useCallback((message: Message) => {
+    setEditingMessageId(message.id);
+    setEditingMessageText(message.content);
+  }, []);
+
+  const cancelEditMessage = useCallback(() => {
+    setEditingMessageId(null);
+    setEditingMessageText("");
+  }, []);
+
+  const submitMessageEdit = useCallback(() => {
+    const text = editingMessageText.trim();
+    if (!text || !editingMessageId) {
+      cancelEditMessage();
+      return;
+    }
+    const index = messages.findIndex((message) => message.id === editingMessageId);
+    if (index === -1) {
+      cancelEditMessage();
+      return;
+    }
+    setMessages((current) => current.slice(0, index));
+    setValue(text);
+    setIsInputExpanded(true);
+    cancelEditMessage();
+    requestAnimationFrame(() => {
+      const chatContainer = document.getElementById("chat-container");
+      chatContainer?.scrollTo({ top: chatContainer.scrollHeight, behavior: "smooth" });
+      window.setTimeout(() => void sendMessageRef.current?.(), 110);
+    });
+  }, [editingMessageId, editingMessageText, messages, cancelEditMessage]);
 
   const captureResponseFeedback = useCallback((messageId: string, sentiment: "up" | "down", detail: string) => {
     try {
@@ -6494,13 +6669,27 @@ Please analyze the code you just wrote and fix this error.`;
     fileInputRef.current?.click();
   };
 
-  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const READABLE_TEXT_EXTENSIONS = /\.(txt|md|markdown|csv|tsv|json|jsonc|yaml|yml|xml|html?|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|c|cpp|h|hpp|sh|bash|zsh|sql|log|ini|toml|env)$/i;
+  const MAX_ATTACHMENT_CHARS = 40_000;
+
+  const handleFilesSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
-    if (files.length) {
-      setAttachments((prev) => [...prev, ...files.map((file) => file.name)]);
-      setIsInputExpanded(true);
-    }
     event.target.value = "";
+    if (!files.length) return;
+    setIsInputExpanded(true);
+    const read = await Promise.all(
+      files.map(async (file): Promise<ChatAttachment> => {
+        const looksReadable = file.type.startsWith("text/") || READABLE_TEXT_EXTENSIONS.test(file.name);
+        if (!looksReadable) return { name: file.name, unreadable: true };
+        try {
+          const text = await file.text();
+          return { name: file.name, content: text.slice(0, MAX_ATTACHMENT_CHARS) };
+        } catch {
+          return { name: file.name, unreadable: true };
+        }
+      }),
+    );
+    setAttachments((prev) => [...prev, ...read]);
   };
 
   const removeAttachment = (index: number) => {
@@ -6646,13 +6835,13 @@ Please analyze the code you just wrote and fix this error.`;
   ];
   const workspaceSwipeTransition = {
     type: "tween" as const,
-    duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.2,
+    duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.24,
     ease: workspaceSwipeEase,
   };
   const workspacePanelVariants = {
     enter: (direction: number) => ({
       x: direction === 0 ? 0 : direction > 0 ? workspaceSwipeTravelPx : -workspaceSwipeTravelPx,
-      opacity: direction === 0 ? 1 : 0.01,
+      opacity: direction === 0 ? 1 : 0,
       zIndex: 2,
       pointerEvents: "none" as const,
     }),
@@ -6667,7 +6856,7 @@ Please analyze the code you just wrote and fix this error.`;
     },
     exit: (direction: number) => ({
       x: direction === 0 ? 0 : direction > 0 ? -workspaceSwipeTravelPx : workspaceSwipeTravelPx,
-      opacity: direction === 0 ? 1 : 0.01,
+      opacity: direction === 0 ? 1 : 0,
       zIndex: 1,
       pointerEvents: "none" as const,
     }),
@@ -6805,27 +6994,6 @@ Please analyze the code you just wrote and fix this error.`;
     }));
   }, [filteredProjectChats]);
 
-  const applyQuickPrompt = (prompt: string, skeleton?: string) => {
-    setActiveWorkspaceTab("chat");
-    setSelectedCommand(null);
-    setIsInputExpanded(true);
-
-    setIsFadingInText(true);
-    setValue(prompt);
-    if (skeleton) {
-      setActiveSkeletonText(skeleton);
-    } else {
-      setActiveSkeletonText(null);
-    }
-
-    window.setTimeout(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
-      adjustHeight();
-      setIsFadingInText(false);
-    }, 150);
-  };
-
   useEffect(() => {
     if (messages.length === 0 && value.trim().length === 0 && !isVibeWorkspace) {
       setIsInputExpanded(false);
@@ -6849,6 +7017,9 @@ Please analyze the code you just wrote and fix this error.`;
       window.location.assign("/notes");
       return;
     }
+    // Start resolving the optional workspace before the tab state changes so
+    // the incoming panel always has an immediate, continuous visual handoff.
+    if (tabId === "vibe") void loadVibeCoderWorkspace();
     const fromTaskView = taskViewSelectionRef.current;
     taskViewSelectionRef.current = false;
     if (tabId !== activeWorkspaceTab) {
@@ -6911,6 +7082,7 @@ Please analyze the code you just wrote and fix this error.`;
   };
 
   return (
+    <TerminalRunnerProvider>
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
       <VoiceCallScreen
         call={voiceCall}
@@ -7284,7 +7456,7 @@ Please analyze the code you just wrote and fix this error.`;
                       }}
                       className="overflow-hidden pl-3"
                     >
-                      <div className="mt-0.5 flex flex-col gap-0.5 pl-2">
+                      <div className="mt-0.5 flex flex-col gap-2.5 pl-2">
                         {filteredProjectChats.length > 0 ? (
                           filteredProjectChats.slice(0, 8).map((chat) => (
                             <div
@@ -7691,7 +7863,7 @@ Please analyze the code you just wrote and fix this error.`;
                       }}
                       style={{
                         x: hoverPillX,
-                        width: 101,
+                        width: WORKSPACE_TAB_WIDTH - 4,
                         top: 6,
                         bottom: 6,
                         height: "auto",
@@ -7739,12 +7911,12 @@ Please analyze the code you just wrote and fix this error.`;
                       }}
                       onFocus={() => setHoveredWorkspaceTab(tabItem.id)}
                       className={cn(
-                        "clyra-workflow-tab w-[105px] justify-center",
+                        "clyra-workflow-tab w-[128px] justify-center",
                         isActive && "clyra-workflow-tab--active",
                       )}
                     >
                       <Icon className="relative h-4 w-4 shrink-0" />
-                      <span className="relative truncate">{tabItem.label}</span>
+                      <span className="relative whitespace-nowrap">{tabItem.label}</span>
                     </button>
                   );
                 })}
@@ -7872,9 +8044,7 @@ Please analyze the code you just wrote and fix this error.`;
                       className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
                     >
                       {isVibeWorkspace ? (
-                        <Suspense fallback={
-                          <div className="h-full w-full bg-white" aria-hidden="true" />
-                        }>
+                        <Suspense fallback={<VibeWorkspaceLoadingSurface />}>
                           <VibeCoderWorkspace />
                         </Suspense>
                       ) : isClipWorkspace ? (
@@ -7914,7 +8084,7 @@ Please analyze the code you just wrote and fix this error.`;
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: .32, ease: [0.16, 1, 0.3, 1] }}
-                            className="clyra-primary-chat-welcome flex w-full max-w-[585px] flex-col px-5 sm:px-8"
+                            className="clyra-primary-chat-welcome flex w-full max-w-[800px] flex-col px-5 sm:px-8"
                           >
                             <motion.div
                             initial={false}
@@ -8016,21 +8186,73 @@ Please analyze the code you just wrote and fix this error.`;
                                   )}
                                 >
                                   {message.role === "user" ? (
-                                    <div
-                                      data-invert-ignore="true"
-                                      className={cn(
-                                        "clyra-chat-user-bubble px-5 py-3.5 rounded-[24px] max-w-[85%] sm:max-w-[75%] border border-slate-200/70 whitespace-pre-wrap shadow-none",
-                                        isFirstUserMessage &&
-                                          "clyra-chat-user-bubble--first",
-                                        fontClass,
-                                      )}
-                                      style={{
-                                        backgroundColor: userBubbleColor,
-                                        color: "#1e293b",
-                                      }}
-                                    >
-                                      <UserMessageText text={message.content} />
-                                    </div>
+                                    editingMessageId === message.id ? (
+                                      <div className="clyra-message-edit flex w-full max-w-[85%] flex-col items-end gap-1.5 sm:max-w-[75%]">
+                                        <textarea
+                                          autoFocus
+                                          value={editingMessageText}
+                                          onChange={(event) => setEditingMessageText(event.target.value)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter" && !event.shiftKey) {
+                                              event.preventDefault();
+                                              submitMessageEdit();
+                                            } else if (event.key === "Escape") {
+                                              event.preventDefault();
+                                              cancelEditMessage();
+                                            }
+                                          }}
+                                          className={cn(
+                                            "clyra-chat-user-bubble w-full resize-none rounded-[24px] border border-slate-200/70 px-5 py-3.5 whitespace-pre-wrap shadow-none outline-none",
+                                            fontClass,
+                                          )}
+                                          style={{ backgroundColor: userBubbleColor, color: "#1e293b" }}
+                                          rows={Math.min(8, Math.max(2, editingMessageText.split("\n").length))}
+                                        />
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={cancelEditMessage}
+                                            className="rounded-full px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={submitMessageEdit}
+                                            className="rounded-full bg-[var(--accent-600)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--accent-700)]"
+                                          >
+                                            Save &amp; resend
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="clyra-user-message-group flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => startEditMessage(message)}
+                                          aria-label="Edit message"
+                                          title="Edit message"
+                                          className="clyra-user-message-edit-trigger flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-700"
+                                        >
+                                          <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                        <div
+                                          data-invert-ignore="true"
+                                          className={cn(
+                                            "clyra-chat-user-bubble px-5 py-3.5 rounded-[24px] max-w-[85%] sm:max-w-[75%] border border-slate-200/70 whitespace-pre-wrap shadow-none",
+                                            isFirstUserMessage &&
+                                              "clyra-chat-user-bubble--first",
+                                            fontClass,
+                                          )}
+                                          style={{
+                                            backgroundColor: userBubbleColor,
+                                            color: "#1e293b",
+                                          }}
+                                        >
+                                          <UserMessageText text={message.content} />
+                                        </div>
+                                      </div>
+                                    )
                                   ) : (
                                     <div
                                       data-invert-ignore={
@@ -8065,6 +8287,9 @@ Please analyze the code you just wrote and fix this error.`;
                                           isLastAssistant && "clyra-assistant-message--latest",
                                           message.assistantKind === "vibe" &&
                                             "clyra-assistant-message--vibe",
+                                          !message.isStreaming &&
+                                            isSoftFailureMessage(message.content) &&
+                                            "clyra-assistant-message--error",
                                         )}
                                       >
                                         <AnimatedMessage
@@ -8091,6 +8316,7 @@ Please analyze the code you just wrote and fix this error.`;
                                           fontSizeClass={fontClass}
                                           markdownSupport={markdownSupport}
                                           codeHighlighting={codeHighlighting}
+                                          codeTheme={theme === "Dark" ? "dark" : "light"}
                                           assistantKind={
                                             message.assistantKind === "vibe"
                                               ? "vibe"
@@ -8128,6 +8354,14 @@ Please analyze the code you just wrote and fix this error.`;
                                         {!message.isThinking && !message.isStreaming && message.content ? (
                                           <>
                                           <div className="clyra-message-actions" aria-label="Assistant message actions">
+                                            {message.createdAt ? (
+                                              <span
+                                                className="clyra-message-timestamp"
+                                                title={new Date(message.createdAt).toLocaleString()}
+                                              >
+                                                {new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                                              </span>
+                                            ) : null}
                                             <button type="button" onClick={() => {
                                               void navigator.clipboard?.writeText(message.content);
                                               setCopiedMessageId(message.id);
@@ -8778,17 +9012,21 @@ Please analyze the code you just wrote and fix this error.`;
                                       }}
                                       onClick={handleComposerPrimaryAction}
                                       aria-label={
-                                        canSendMessage ? "Send message" : "Start voice call"
+                                        isAiResponding ? "Stop generating" : canSendMessage ? "Send message" : "Start voice call"
                                       }
                                       whileHover={{ scale: 1.05 }}
                                       whileTap={{ scale: 0.95 }}
                                       className={cn(
                                         "h-9 w-9 rounded-full transition-all duration-700 shrink-0 relative z-10",
                                         "flex items-center justify-center",
-                                        "bg-[var(--accent-600)] text-white hover:bg-[var(--accent-700)] shadow-sm",
+                                        isAiResponding
+                                          ? "bg-slate-800 text-white hover:bg-slate-900 shadow-sm"
+                                          : "bg-[var(--accent-600)] text-white hover:bg-[var(--accent-700)] shadow-sm",
                                       )}
                                     >
-                                      {canSendMessage ? (
+                                      {isAiResponding ? (
+                                        <Square className="h-[13px] w-[13px]" fill="currentColor" />
+                                      ) : canSendMessage ? (
                                         <ArrowUpIcon className="h-[18px] w-[18px]" />
                                       ) : (
                                         <VoiceWaveIcon className="text-white" />
@@ -8808,13 +9046,18 @@ Please analyze the code you just wrote and fix this error.`;
                                       {attachments.map((file, index) => (
                                         <motion.div
                                           key={index}
-                                          className="clyra-file-chip flex items-center gap-2 text-xs font-medium py-1.5 px-3 rounded-xl text-slate-600"
+                                          title={file.unreadable ? `${file.name} — Clyra can't read this file type yet, so it won't be included` : file.name}
+                                          className={cn(
+                                            "clyra-file-chip flex items-center gap-2 text-xs font-medium py-1.5 px-3 rounded-xl",
+                                            file.unreadable ? "text-amber-700" : "text-slate-600",
+                                          )}
                                           initial={{ opacity: 0, scale: 0.9 }}
                                           animate={{ opacity: 1, scale: 1 }}
                                           exit={{ opacity: 0, scale: 0.9 }}
                                         >
-                                          <FileUp className="w-3.5 h-3.5 text-slate-400" />
-                                          <span>{file}</span>
+                                          <FileUp className={cn("w-3.5 h-3.5", file.unreadable ? "text-amber-500" : "text-slate-400")} />
+                                          <span>{file.name}</span>
+                                          {file.unreadable ? <span className="text-[10px] font-normal text-amber-600">not readable</span> : null}
                                           <button
                                             onClick={() =>
                                               removeAttachment(index)
@@ -8856,8 +9099,58 @@ Please analyze the code you just wrote and fix this error.`;
                                         aria-label="Attach files"
                                         title="Attach files"
                                       >
-                                        <Paperclip className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                                        <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                                       </motion.button> : null}
+
+                                      <AnimatePresence>
+                                        {activeInputCommand && (
+                                          <motion.div
+                                            layout
+                                            initial={{
+                                              opacity: 0,
+                                              scale: 0.9,
+                                              filter: "blur(4px)",
+                                            }}
+                                            animate={{
+                                              opacity: 1,
+                                              scale: 1,
+                                              filter: "blur(0px)",
+                                            }}
+                                            exit={{
+                                              opacity: 0,
+                                              scale: 0.9,
+                                              filter: "blur(4px)",
+                                            }}
+                                            transition={{
+                                              type: "spring",
+                                              bounce: 0,
+                                              duration: 0.3,
+                                            }}
+                                            className="clyra-selected-tool-chip flex items-center gap-1.5 text-slate-700 px-2.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold ml-1 transition-colors cursor-default"
+                                          >
+                                            <span className="opacity-70">
+                                              {activeInputCommand.icon(false)}
+                                            </span>
+                                            <span className="hidden sm:inline-block">
+                                              {activeInputCommand.label}
+                                            </span>
+                                            <button
+                                              onClick={() => {
+                                                setSelectedCommand(null);
+                                                if (isVibeWorkspace) {
+                                                  setActiveWorkspaceTab("chat");
+                                                }
+                                              }}
+                                              className="ml-1 -mr-1 text-slate-400 hover:text-slate-600 rounded-full p-0.5 hover:bg-slate-100 transition-colors"
+                                            >
+                                              <XIcon className="w-3.5 h-3.5" />
+                                            </button>
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 sm:gap-2">
                                       {composerDictation.phase === "idle" ? (
                                         <div className="clyra-effort-picker relative">
                                           <motion.button
@@ -8934,107 +9227,18 @@ Please analyze the code you just wrote and fix this error.`;
                                           )}
                                         </div>
                                       ) : null}
-
-                                      <AnimatePresence>
-                                        {activeInputCommand && (
-                                          <motion.div
-                                            layout
-                                            initial={{
-                                              opacity: 0,
-                                              scale: 0.9,
-                                              filter: "blur(4px)",
-                                            }}
-                                            animate={{
-                                              opacity: 1,
-                                              scale: 1,
-                                              filter: "blur(0px)",
-                                            }}
-                                            exit={{
-                                              opacity: 0,
-                                              scale: 0.9,
-                                              filter: "blur(4px)",
-                                            }}
-                                            transition={{
-                                              type: "spring",
-                                              bounce: 0,
-                                              duration: 0.3,
-                                            }}
-                                            className="clyra-selected-tool-chip flex items-center gap-1.5 text-slate-700 px-2.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold ml-1 transition-colors cursor-default"
-                                          >
-                                            <span className="opacity-70">
-                                              {activeInputCommand.icon(false)}
-                                            </span>
-                                            <span className="hidden sm:inline-block">
-                                              {activeInputCommand.label}
-                                            </span>
-                                            <button
-                                              onClick={() => {
-                                                setSelectedCommand(null);
-                                                if (isVibeWorkspace) {
-                                                  setActiveWorkspaceTab("chat");
-                                                }
-                                              }}
-                                              className="ml-1 -mr-1 text-slate-400 hover:text-slate-600 rounded-full p-0.5 hover:bg-slate-100 transition-colors"
-                                            >
-                                              <XIcon className="w-3.5 h-3.5" />
-                                            </button>
-                                          </motion.div>
-                                        )}
-                                      </AnimatePresence>
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                      <AnimatePresence mode="wait">
-                                        {commandPaletteEnabled &&
-                                        (value.trim() || selectedCommand || selectedAppAgents.length) ? (
-                                          <motion.div
-                                            key="send-hint"
-                                            initial={{ opacity: 0, x: 5 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: 5 }}
-                                            className="hidden sm:flex items-center gap-2 text-[10px] text-slate-400/80 font-medium mr-1"
-                                          >
-                                            <span className="flex items-center gap-1">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                Esc
-                                              </kbd>
-                                              to clear
-                                            </span>
-                                            <span className="text-slate-300">
-                                              •
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                ↵
-                                              </kbd>
-                                              to send
-                                            </span>
-                                          </motion.div>
-                                        ) : commandPaletteEnabled ? (
-                                          <motion.button
-                                            key="cmd-hint"
-                                            type="button"
-                                            aria-label="Open quick commands"
-                                            onClick={() => {
-                                              setIsAppLauncherOpen(false);
-                                              setIsCommandPalettePinned(true);
-                                              setIsInputExpanded(true);
-                                              requestAnimationFrame(() => textareaRef.current?.focus());
-                                            }}
-                                            initial={{ opacity: 0, x: 5 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: 5 }}
-                                            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[10px] font-medium text-slate-400/80 transition-colors hover:bg-slate-100/80 hover:text-slate-600 mr-1"
-                                          >
-                                            <span className="flex items-center gap-1.5">
-                                              <kbd className="font-sans px-1 py-[1.5px] rounded-sm bg-slate-100/50 border border-slate-200/50 shadow-[0_1px_0.5px_rgba(0,0,0,0.02)] text-slate-400">
-                                                /
-                                              </kbd>
-                                              Commands
-                                            </span>
-                                          </motion.button>
-                                        ) : null}
-                                      </AnimatePresence>
+                                      {composerDictation.phase === "idle" && (
+                                        <motion.button
+                                          type="button"
+                                          onClick={() => void composerDictation.start()}
+                                          whileHover={{ scale: 1.05 }}
+                                          whileTap={{ scale: 0.95 }}
+                                          className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                                          aria-label="Dictate a prompt"
+                                        >
+                                          <Mic className="h-4 w-4" />
+                                        </motion.button>
+                                      )}
                                       <motion.button
                                         type="button"
                                         onPointerDown={handleComposerVoicePointerDown}
@@ -9044,19 +9248,23 @@ Please analyze the code you just wrote and fix this error.`;
                                         }}
                                         onClick={handleComposerPrimaryAction}
                                         aria-label={
-                                          canSendMessage ? "Send message" : "Start voice call"
+                                          isAiResponding ? "Stop generating" : canSendMessage ? "Send message" : "Start voice call"
                                         }
                                         whileHover={{ scale: 1.05 }}
                                         whileTap={{ scale: 0.95 }}
                                         className={cn(
                                           "h-10 w-10 rounded-full transition-all duration-200 shrink-0 relative z-10",
                                           "flex items-center justify-center shadow-sm",
-                                          canSendMessage
-                                            ? "bg-[var(--accent-600)] text-white shadow-md hover:bg-[var(--accent-700)] hover:shadow-lg"
-                                            : "bg-[var(--accent-50)] text-[var(--accent-600)] shadow-none hover:bg-[var(--accent-600)] hover:text-white hover:shadow-md",
+                                          isAiResponding
+                                            ? "bg-slate-800 text-white shadow-md hover:bg-slate-900"
+                                            : canSendMessage
+                                              ? "bg-[var(--accent-600)] text-white shadow-md hover:bg-[var(--accent-700)] hover:shadow-lg"
+                                              : "bg-[var(--accent-50)] text-[var(--accent-600)] shadow-none hover:bg-[var(--accent-600)] hover:text-white hover:shadow-md",
                                         )}
                                       >
-                                        {canSendMessage ? (
+                                        {isAiResponding ? (
+                                          <Square className="h-[14px] w-[14px]" fill="currentColor" />
+                                        ) : canSendMessage ? (
                                           <ArrowUpIcon className="h-5 w-5" />
                                         ) : (
                                           <VoiceWaveIcon className="text-current" />
@@ -9418,6 +9626,7 @@ Please analyze the code you just wrote and fix this error.`;
         }}
       />
     </FullscreenContext.Provider>
+    </TerminalRunnerProvider>
   );
 }
 

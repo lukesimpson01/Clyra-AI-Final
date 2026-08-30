@@ -73,6 +73,21 @@
   --clyra-radius-xl: 14px;
   --clyra-shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.08);
   --clyra-transition-fast: 140ms ease;
+
+  /* Additional surface roles for the shared shell/inspector/sidebar system.
+     Additive on top of the tokens above — existing consumers are untouched. */
+  --clyra-sidebar: #f7f7f6;
+  --clyra-inspector: #fbfbfa;
+  --clyra-floating: #ffffff;
+  --clyra-overlay: rgba(15, 15, 14, 0.32);
+  --clyra-pressed: rgba(0, 0, 0, 0.07);
+  --clyra-glass: rgba(255, 255, 255, 0.72);
+  --clyra-focus-ring: rgba(0, 82, 251, 0.35);
+  --clyra-text-disabled: #b7b8ba;
+  --clyra-success: #1a8a4a;
+  --clyra-warning: #b87918;
+  --clyra-danger: #c0392b;
+  --clyra-shadow-elevated: 0 1px 2px rgba(15, 23, 42, 0.03), 0 5px 18px rgba(15, 23, 42, 0.05);
 }
 
 /* Real dark tokens — distinct surfaces and text colors, not an inverted
@@ -92,6 +107,19 @@
   --clyra-text: #f2f3f5;
   --clyra-text-secondary: #a6acb8;
   --clyra-text-tertiary: #767c88;
+
+  --clyra-sidebar: #15161b;
+  --clyra-inspector: #131419;
+  --clyra-floating: #1c1d24;
+  --clyra-overlay: rgba(0, 0, 0, 0.5);
+  --clyra-pressed: rgba(255, 255, 255, 0.1);
+  --clyra-glass: rgba(23, 24, 30, 0.72);
+  --clyra-focus-ring: rgba(88, 139, 247, 0.4);
+  --clyra-text-disabled: #4d5260;
+  --clyra-success: #4bb474;
+  --clyra-warning: #d99a3f;
+  --clyra-danger: #e0716f;
+  --clyra-shadow-elevated: 0 1px 2px rgba(0, 0, 0, 0.2), 0 5px 18px rgba(0, 0, 0, 0.28);
 }
 
 .clyra-app-shell {
@@ -481,6 +509,10 @@
 
 html, body, #root {
   height: 100%;
+  /* Safety-net default so any element that forgets to set its own text
+     color (browser default is pure black) still reads correctly against
+     a dark-theme background instead of rendering near-invisible. */
+  color: var(--clyra-text);
 }
 
 .clyra-workflow-tabs--vertical .clyra-workflow-tab {
@@ -2753,6 +2785,21 @@ body,
   opacity: 1;
 }
 
+.clyra-user-message-group:hover .clyra-user-message-edit-trigger,
+.clyra-user-message-edit-trigger:focus-visible {
+  opacity: 1;
+}
+
+.clyra-message-timestamp {
+  margin-right: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--clyra-text-tertiary);
+  white-space: nowrap;
+  user-select: none;
+}
+
 .clyra-message-actions button {
   width: 26px;
   height: 26px;
@@ -4886,6 +4933,33 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+/* Vibe Coder previously had no dark variant at all — every one of its
+   tokens above was a light-only literal, so switching Clyra to dark theme
+   left this workspace visually broken (white surfaces, near-black text
+   unreadable against a dark app chrome). This mirrors the canonical
+   --clyra-* dark values defined at :root[data-clyra-theme="dark"] above. */
+:root[data-clyra-theme="dark"] .clyra-code-root {
+  --app-background: #0e0f13;
+  --sidebar-background: #15161b;
+  --main-background: #17181e;
+  --preview-background: #17181e;
+  --composer-surface: #1c1d24;
+  --surface-muted: #1e2027;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-selected: rgba(255, 255, 255, 0.1);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.14);
+  --text-primary: #f2f3f5;
+  --text-secondary: #a6acb8;
+  --text-tertiary: #767c88;
+  --text-disabled: #4d5260;
+  --accent-blue: #588bf7;
+  --clyra-code-user-bubble: #24262e;
+  --addition-green: #4bb474;
+  --deletion-red: #e0716f;
+  --warning-amber: #d99a3f;
+}
+
 .clyra-code-root .cc-mono {
   font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
@@ -6714,7 +6788,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  color: #17223a;
+  color: var(--clyra-text);
   font-size: 22px;
   font-weight: 600;
   line-height: 30px;
@@ -6807,7 +6881,7 @@ body,
 .clyra-chat-welcome__recent {
   width: 100%;
   margin: 42px 0 64px;
-  color: #17223a;
+  color: var(--clyra-text);
   text-align: left;
 }
 .clyra-chat-welcome__recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -6854,7 +6928,7 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #17223a;
+  color: var(--clyra-text);
   font-size: 14px;
   font-weight: 650;
 }
@@ -7141,7 +7215,7 @@ body,
   position: relative;
   z-index: 1;
   gap: 9px;
-  color: #17223a;
+  color: var(--clyra-text);
   font-size: 15px;
   font-weight: 650;
   line-height: 24px;
@@ -7244,6 +7318,7 @@ body,
 .clyra-composer-sources img,
 .clyra-composer-sources svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .clyra-composer-sources svg:last-of-type { color: var(--accent-600); }
+
 .clyra-chat-welcome__recent {
   position: relative;
   z-index: 1;
@@ -8282,3 +8357,267 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .clyra-ask-pulse { animation: none; }
 }
+
+/* ==========================================================================
+   Chat surface remaster — final pass.
+   The cascade above accumulated several competing width/height systems for
+   the same handful of selectors (#chat-container, .clyra-composer-transition,
+   .clyra-chat-user-bubble, .input-wrapper …) written at different times.
+   Rather than hunt down and delete every superseded rule, this block — the
+   last one touching the chat surface — is the single source of truth for
+   geometry going forward. Every declaration here intentionally wins the
+   cascade because it is the last matching rule in the stylesheet.
+   ========================================================================== */
+
+/* One shared reading column for the message thread and the active-chat
+   composer. Previously #chat-container (780px) and .clyra-composer-transition
+   (680px) disagreed, so replies and the input visually belonged to two
+   different rails. */
+.clyra-chat-page #chat-container,
+.clyra-chat-page .clyra-composer-transition {
+  width: min(800px, calc(100% - 64px)) !important;
+  max-width: none !important;
+  margin-inline: auto;
+}
+
+@media (max-width: 760px) {
+  .clyra-chat-page #chat-container,
+  .clyra-chat-page .clyra-composer-transition {
+    width: min(800px, calc(100% - 28px)) !important;
+  }
+}
+
+/* The welcome screen has no message thread to align with, so its composer
+   is narrower and more deliberate rather than stretching to the active-chat
+   column width. */
+.clyra-chat-page .clyra-composer-welcome,
+.clyra-chat-page .clyra-primary-chat-welcome {
+  width: min(640px, calc(100% - 64px)) !important;
+  max-width: none !important;
+  margin-inline: auto;
+}
+
+@media (max-width: 760px) {
+  .clyra-chat-page .clyra-composer-welcome,
+  .clyra-chat-page .clyra-primary-chat-welcome {
+    width: min(640px, calc(100% - 28px)) !important;
+  }
+}
+
+/* Reserve enough room below the thread for the composer (up to ~260px when
+   fully expanded, plus its floating tool chip and a breathing gutter) so the
+   last reply is never hidden behind the input instead of scrolling above it. */
+.clyra-chat-page #chat-container {
+  padding-bottom: 188px !important;
+}
+
+/* --- User message alignment -------------------------------------------- */
+/* Root cause of "user bubble floats away from the right edge": the bubble's
+   max-width was a percentage (e.g. 74%). A percentage max-width on a child
+   is indefinite while the browser computes the *intrinsic* width of its flex
+   parent (.clyra-user-message-group), so the group expanded to fill the
+   entire row and — lacking its own justify-content — left-aligned the
+   bubble inside that empty space instead of hugging it to the right edge.
+   Fixed width removes the circular dependency; justify-content is kept as a
+   second line of defence. */
+.clyra-user-message-group {
+  display: inline-flex;
+  justify-content: flex-end;
+  max-width: 100%;
+  margin-left: auto;
+}
+.clyra-chat-page .clyra-chat-user-bubble {
+  max-width: 560px !important;
+}
+@media (max-width: 760px) {
+  .clyra-chat-page .clyra-chat-user-bubble {
+    max-width: min(440px, 82vw) !important;
+  }
+}
+
+/* --- Composer proportions ------------------------------------------------ */
+/* A leaner default height: the text row and the tool row no longer carry
+   extra breathing room on top of each other's padding. */
+.clyra-chat-page .input-wrapper:not(.loading) {
+  min-height: 60px !important;
+}
+.clyra-chat-page .clyra-composer-welcome .input-wrapper {
+  min-height: 68px !important;
+}
+.clyra-chat-page .input-wrapper textarea {
+  min-height: 26px !important;
+}
+
+/* --- Web search tool chip: attach it to the composer instead of floating
+   several pixels above it with its own shadow and rhythm. --- */
+.clyra-chat-page .clyra-composer-tools {
+  bottom: calc(100% + 6px);
+  left: 6px;
+}
+.clyra-chat-page .clyra-composer-tools button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 11.5px;
+  box-shadow: none;
+  background: var(--clyra-surface, #fff);
+}
+
+/* --- Welcome composer: fuse the "available sources" strip to the bottom of
+   the input instead of floating it as a separate rounded card with its own
+   shadow and gap. One outline, one shadow, a hairline divider between the
+   two zones — reads as a single surface. --- */
+.clyra-chat-page .clyra-composer-welcome .input-wrapper {
+  border-radius: 22px 22px 0 0 !important;
+  border-bottom-color: transparent !important;
+}
+.clyra-chat-page .clyra-composer-welcome .input-wrapper.clyra-composer-expanded {
+  border-radius: 22px 22px 0 0 !important;
+}
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources {
+  position: relative;
+  z-index: 1;
+  margin-top: 0;
+  padding: 11px 20px;
+  border: 1px solid #dfe7f1;
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 0 0 22px 22px;
+  background: #fafbfc;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .05);
+}
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources img,
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources svg {
+  width: 14px;
+  height: 14px;
+}
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources span {
+  color: var(--clyra-text-tertiary, #94a3b8);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+/* --- Source chips: a quiet "Sources · N" control rather than a row of
+   unexplained favicons sitting beside like/dislike. --- */
+.clyra-message-actions .clyra-message-source-summary {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  width: auto;
+  margin-left: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--clyra-border, rgba(0,0,0,.08));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--clyra-text-tertiary, #8a93a3);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.clyra-message-source-summary:hover,
+.clyra-message-source-summary[aria-expanded="true"] {
+  border-color: var(--clyra-border-strong, rgba(0,0,0,.14));
+  background: var(--clyra-hover, rgba(0,0,0,.035));
+  color: var(--clyra-text-secondary, #55606e);
+}
+.clyra-message-source-summary svg { flex: 0 0 auto; }
+.clyra-message-source-popover {
+  display: flex;
+  flex-direction: column;
+  width: min(280px, 78vw);
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid var(--clyra-border, rgba(0,0,0,.08));
+  border-radius: 12px;
+  background: var(--clyra-surface, #fff);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .1);
+}
+.clyra-message-source-popover a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--clyra-text, #1c1c1c);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.clyra-message-source-popover a:hover { background: var(--clyra-hover, rgba(0,0,0,.035)); }
+.clyra-message-source-popover img { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
+.clyra-message-source-popover span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- Soft-failure responses: same layout as a normal reply, just softened
+   text so it doesn't read identically to a confident answer. Use the
+   existing Regenerate action in the message toolbar to retry. --- */
+.clyra-assistant-message--error .markdown-body,
+.clyra-assistant-message--error .markdown-body p {
+  color: var(--clyra-text-secondary, #6b7280);
+}
+
+/* --- Code block header: language label + copy, so blocks stop looking like
+   unlabelled black rectangles. --- */
+.clyra-code-block { position: relative; }
+.clyra-code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px 10px 0 0;
+  background: #23252b;
+  color: rgba(255,255,255,.55);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: lowercase;
+}
+.clyra-code-block--soft .clyra-code-block__header {
+  border-bottom-color: rgba(15,23,42,.08);
+  background: rgba(15,23,42,.03);
+  color: #7c8698;
+}
+.clyra-code-block__header + pre,
+.clyra-code-block__header + div {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  margin-top: 0 !important;
+}
+.clyra-code-block__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+.clyra-code-block__copy:hover { background: rgba(255,255,255,.08); }
+.clyra-code-block--soft .clyra-code-block__copy:hover { background: rgba(15,23,42,.06); }
+.clyra-code-block__copy svg { width: 12px; height: 12px; }
+.clyra-code-block__actions { display: flex; align-items: center; gap: 4px; }
+.clyra-code-block__run {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.85);
+  font-size: 11px;
+  font-weight: 600;
+  transition: background-color .12s ease;
+}
+.clyra-code-block__run:hover { background: rgba(255,255,255,.14); }
+.clyra-code-block--soft .clyra-code-block__run {
+  border-color: rgba(15,23,42,.16);
+  background: #fff;
+  color: #334155;
+}
+.clyra-code-block--soft .clyra-code-block__run:hover { background: rgba(15,23,42,.04); }
+.clyra-code-block__run svg { width: 10px; height: 10px; }

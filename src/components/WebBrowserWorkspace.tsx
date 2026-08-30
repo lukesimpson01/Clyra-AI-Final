@@ -2150,28 +2150,28 @@ export default function WebBrowserWorkspace() {
                         onMouseDown={handleSnipCardDragStart}
                         className="flex cursor-grab items-center justify-between gap-2 border-b border-black/[0.06] px-3.5 py-2.5 active:cursor-grabbing"
                       >
-                        <span className="text-[11.5px] font-semibold tracking-[-0.01em] text-[#1d1d1f]">Clyra</span>
+                        <span className="text-[11.5px] font-semibold tracking-[-0.01em] text-[var(--clyra-text)]">Clyra</span>
                         <button
                           type="button"
                           onClick={() => setSnipCard(null)}
                           aria-label="Close"
-                          className="grid h-6 w-6 place-items-center rounded-full text-[#9a9a9f] transition-colors hover:bg-black/[0.05] hover:text-[#1d1d1f]"
+                          className="grid h-6 w-6 place-items-center rounded-full text-[var(--clyra-text-tertiary)] transition-colors hover:bg-black/[0.05] hover:text-[var(--clyra-text)]"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                       <div className="max-h-[340px] overflow-y-auto px-3.5 py-3">
                         {snipCard.status === "loading" ? (
-                          <div className="flex items-center gap-2 text-[13px] text-[#6e6e73]">
+                          <div className="flex items-center gap-2 text-[13px] text-[var(--clyra-text-secondary)]">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading selection…
                           </div>
                         ) : snipCard.status === "error" ? (
                           <p className="text-[13px] leading-relaxed text-rose-600">{snipCard.error}</p>
                         ) : (
                           <>
-                            <p className="text-[13.5px] leading-relaxed text-[#1d1d1f]">{snipCard.direct}</p>
+                            <p className="text-[13.5px] leading-relaxed text-[var(--clyra-text)]">{snipCard.direct}</p>
                             {snipCard.explanation ? (
-                              <p className="mt-2.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#6e6e73]">
+                              <p className="mt-2.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--clyra-text-secondary)]">
                                 {snipCard.explanation}
                               </p>
                             ) : null}
@@ -2184,7 +2184,7 @@ export default function WebBrowserWorkspace() {
                             <button
                               type="button"
                               onClick={() => void navigator.clipboard?.writeText([snipCard.direct, snipCard.explanation].filter(Boolean).join("\n\n"))}
-                              className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium text-[#6e6e73] transition-colors hover:bg-black/[0.05] hover:text-[#1d1d1f]"
+                              className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--clyra-text-secondary)] transition-colors hover:bg-black/[0.05] hover:text-[var(--clyra-text)]"
                             >
                               Copy
                             </button>
@@ -2197,14 +2197,14 @@ export default function WebBrowserWorkspace() {
                                 if (event.key === "Enter") void handleSnipFollowUp();
                               }}
                               placeholder="Ask a follow-up…"
-                              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-[#1d1d1f] outline-none placeholder:text-[#9a9a9f]"
+                              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-[var(--clyra-text)] outline-none placeholder:text-[var(--clyra-text-tertiary)]"
                             />
                             <button
                               type="button"
                               onClick={() => void handleSnipFollowUp()}
                               disabled={snipFollowUpBusy || !snipFollowUp.trim()}
                               aria-label="Ask follow-up"
-                              className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#1d1d1f] text-white transition-opacity disabled:opacity-25"
+                              className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--clyra-text)] text-[var(--clyra-canvas)] transition-opacity disabled:opacity-25"
                             >
                               {snipFollowUpBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowUp className="h-3 w-3" />}
                             </button>

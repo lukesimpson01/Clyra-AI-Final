@@ -4,28 +4,35 @@
  * Every editor surface (clips sidebar, centre stage, timeline, word-timing
  * inspector) reads from this single palette so the layout stays cohesive.
  * No gradients, no glassmorphism — flat white surfaces with 1px hairlines.
+ *
+ * These resolve to the app-wide --clyra-* CSS custom properties (see
+ * src/index.css) rather than static hex, so the editor actually follows
+ * light/dark theme instead of staying hard-light regardless of the app's
+ * theme setting. `karaoke` is the one deliberate exception: it's burned
+ * into the exported video pixels by FFmpeg, not rendered UI, so it must
+ * stay a real fixed color.
  */
 export const CLIP_EDITOR = {
-  /** Base page background — matches the app's slate-50 shell. */
-  bg: "#F8FAFC",
+  /** Base page background. */
+  bg: "var(--clyra-canvas)",
   /** Secondary panel background (fields, quiet wells). */
-  panel: "#F6F8FC",
-  /** Primary text — near-black, matches text-slate-950 elsewhere in the app. */
-  textPrimary: "#111318",
+  panel: "var(--clyra-surface-muted)",
+  /** Primary text. */
+  textPrimary: "var(--clyra-text)",
   /** Secondary text. */
-  textSecondary: "#68707C",
+  textSecondary: "var(--clyra-text-secondary)",
   /** Muted/metadata text. */
-  textMuted: "#8A909A",
+  textMuted: "var(--clyra-text-tertiary)",
   /** Standard 1px border. */
-  border: "#E2E5EA",
+  border: "var(--clyra-border)",
   /** Extra-light separator for row dividers. */
-  separator: "#ECEEF2",
+  separator: "var(--clyra-border)",
   /** Primary action blue — the same accent used across Clyra's other workspaces. */
-  blue: "#4169F6",
-  /** Selected surface — pale blue. */
-  selected: "#EDF2FF",
+  blue: "var(--clyra-accent)",
+  /** Selected surface. */
+  selected: "var(--clyra-selected)",
   /** Hover surface. */
-  hover: "#F3F4F6",
+  hover: "var(--clyra-hover)",
   /** Karaoke active-word highlight used by the FFmpeg burn-in (unrelated to app chrome). */
   karaoke: "#FFD54A",
 } as const;

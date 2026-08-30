@@ -46,4 +46,29 @@ assert.ok(sevenDays.heatmap.some((cell) => cell.level === 0));
 
 await fs.rm(usageTestFile, { force: true });
 
-console.log(JSON.stringify({ ok: true, assertions: 16 }, null, 2));
+/* Recovery nudges are real user turns to the model, so they must be
+   identifiable — otherwise they surface in the transcript as if the person
+   had typed the agent's own scaffolding. */
+const { internalPrompt, isInternalPrompt, INTERNAL_PROMPT_MARK } =
+  await import("../lib/vibe-agent-v3/internal-prompt.ts");
+const nudge = internalPrompt("Continue this exact task from the persisted project state.");
+assert.ok(isInternalPrompt(nudge));
+assert.ok(nudge.startsWith(INTERNAL_PROMPT_MARK));
+assert.ok(nudge.includes("Continue this exact task"));
+assert.equal(isInternalPrompt("Build a Pomodoro focus timer"), false);
+assert.equal(isInternalPrompt(""), false);
+assert.equal(isInternalPrompt(undefined), false);
+/* The marker is invisible, so a leak would not be obvious in the UI. */
+assert.equal(INTERNAL_PROMPT_MARK.trim().replace(/[\u2060-\u206f\u200b-\u200f]/g, ""), "clyra-internal");
+
+/* The seeded agent guide has to carry the shipped-quality rules, and the
+   upgrade marker must match them so existing projects adopt the revision. */
+const runtimeSource = await fs.readFile(
+  new URL("../lib/opencode/OpenCodeRuntimeManager.ts", import.meta.url), "utf8");
+assert.ok(runtimeSource.includes("Finished-product quality"));
+assert.ok(runtimeSource.includes("0.6666666666666666m"));
+assert.ok(runtimeSource.includes("!/Finished-product quality/.test(existing)"));
+assert.ok(runtimeSource.includes("internalPrompt("));
+assert.equal(/text: "Continue this exact task/.test(runtimeSource), false);
+
+console.log(JSON.stringify({ ok: true, assertions: 27 }, null, 2));

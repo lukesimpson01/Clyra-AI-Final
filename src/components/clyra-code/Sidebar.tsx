@@ -122,7 +122,7 @@ export function Sidebar({
           const isExpanded = expanded.has(project.id);
           const selected = project.id === activeProjectId;
           const projectEditing = editing?.type === "project" && editing.projectId === project.id;
-          return <div key={project.id} className="group/project relative mb-2.5 last:mb-1">
+          return <div key={project.id} className="group/project relative mb-4 last:mb-1">
             <div role="button" tabIndex={0} onClick={() => { setExpanded((old) => { const next = new Set(old); next.has(project.id) ? next.delete(project.id) : next.add(project.id); return next; }); onSelectProject(project.id); }} onKeyDown={(event) => event.key === "Enter" && onSelectProject(project.id)} className={cn("flex h-[30px] w-full cursor-pointer select-none items-center gap-1 rounded-[7px] px-1.5 text-left transition-colors duration-[120ms] ease-out", selected ? "bg-black/[0.045]" : "hover:bg-black/[0.03] active:bg-black/[0.04]")}>
               <ChevronDown className={cn("h-3 w-3 shrink-0 text-[#929499] transition-transform duration-150", !isExpanded && "-rotate-90")} strokeWidth={1.7} />
               <Folder className="h-[13px] w-[13px] shrink-0 text-[#77797E]" strokeWidth={1.65} />

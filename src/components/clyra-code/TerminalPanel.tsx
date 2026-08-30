@@ -5,15 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { AGENT_EASE } from "./motion";
-
-type TerminalBridge = {
-  open: (projectId: string, tabId: string) => Promise<void>;
-  write: (tabId: string, data: string) => void;
-  resize: (tabId: string, cols: number, rows: number) => void;
-  kill: (tabId: string) => void;
-  onData: (cb: (tabId: string, data: string) => void) => () => void;
-  onExit: (cb: (tabId: string, code: number) => void) => () => void;
-};
+import { createTerminalBridge, type TerminalBridge } from "../../lib/terminalBridge";
 
 type SessionTab = { id: string; label: string; failed?: boolean; busy?: boolean };
 
@@ -21,69 +13,6 @@ function shellLabel() {
   if (navigator.userAgent.includes("Windows")) return "PowerShell";
   if (navigator.userAgent.includes("Linux")) return "bash";
   return "zsh";
-}
-
-function electronBridge(): TerminalBridge | null {
-  const bridge = window.clyraDesktop?.terminal;
-  if (!bridge) return null;
-  return {
-    open: async (projectId, tabId) => { await bridge.open({ projectId, tabId }); },
-    write: (tabId, data) => void bridge.write({ tabId, data }),
-    resize: (tabId, cols, rows) => void bridge.resize({ tabId, cols, rows }),
-    kill: (tabId) => void bridge.kill({ tabId }),
-    onData: (cb) => bridge.onData((payload) => {
-      if (typeof payload === "string") cb("default", payload);
-      else if (payload.data) cb(payload.tabId || "default", payload.data);
-    }),
-    onExit: (cb) => bridge.onExit((payload) => {
-      if (typeof payload === "number") cb("default", payload);
-      else cb(payload.tabId || "default", payload.code ?? 0);
-    }),
-  };
-}
-
-function websocketBridge(): TerminalBridge {
-  const sockets = new Map<string, WebSocket>();
-  const dataCbs = new Set<(tabId: string, data: string) => void>();
-  const exitCbs = new Set<(tabId: string, code: number) => void>();
-  return {
-    open: async (projectId, tabId) => {
-      const existing = sockets.get(tabId);
-      if (existing?.readyState === WebSocket.OPEN) return;
-      if (existing?.readyState === WebSocket.CONNECTING) {
-        await new Promise<void>((resolve, reject) => {
-          existing.addEventListener("open", () => resolve(), { once: true });
-          existing.addEventListener("error", () => reject(new Error("Terminal connection failed.")), { once: true });
-        });
-        return;
-      }
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const socket = new WebSocket(`${protocol}://${window.location.host}/api/terminal?projectId=${encodeURIComponent(projectId)}&tabId=${encodeURIComponent(tabId)}`);
-      sockets.set(tabId, socket);
-      socket.onmessage = (message) => {
-        try {
-          const payload = JSON.parse(String(message.data)) as { type?: string; tabId?: string; data?: string; code?: number };
-          if (payload.type === "data" && payload.data) for (const cb of dataCbs) cb(payload.tabId || tabId, payload.data);
-          if (payload.type === "exit") for (const cb of exitCbs) cb(payload.tabId || tabId, payload.code ?? 0);
-        } catch { /* ignore malformed frames */ }
-      };
-      await new Promise<void>((resolve, reject) => {
-        socket.addEventListener("open", () => resolve(), { once: true });
-        socket.addEventListener("error", () => reject(new Error("Terminal connection failed.")), { once: true });
-      });
-    },
-    write: (tabId, data) => {
-      const socket = sockets.get(tabId);
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "input", data }));
-    },
-    resize: (tabId, cols, rows) => {
-      const socket = sockets.get(tabId);
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols, rows }));
-    },
-    kill: (tabId) => { sockets.get(tabId)?.close(); sockets.delete(tabId); },
-    onData: (cb) => { dataCbs.add(cb); return () => dataCbs.delete(cb); },
-    onExit: (cb) => { exitCbs.add(cb); return () => exitCbs.delete(cb); },
-  };
 }
 
 const TERM_THEME = { background: "#FFFFFF", foreground: "#282B2F", cursor: "#3977F6", cursorAccent: "#FFFFFF", selectionBackground: "rgba(57,119,246,0.16)", black: "#3F4347", red: "#C24949", green: "#268A50", yellow: "#B87918", blue: "#3977F6", magenta: "#9A5CC9", cyan: "#1F8A9A", white: "#B7B9BD", brightBlack: "#96989D", brightRed: "#E07B7B", brightGreen: "#4FAE74", brightYellow: "#D9A04C", brightBlue: "#7CA6F8", brightMagenta: "#BC8FDF", brightCyan: "#57B6C4", brightWhite: "#FFFFFF" };
@@ -132,7 +61,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
 
   const connect = useCallback((tabId: string) => {
     if (!termRef.current) return;
-    const bridge = bridgeRef.current ?? (bridgeRef.current = electronBridge() ?? websocketBridge());
+    const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
     const hasLiveOutput = Boolean(outputRef.current.get(tabId));
     // A collapsed/reselected tab already has a real shell and scrollback.
     // Don't turn it back into a "starting" session or arm a stale timeout.
@@ -194,7 +123,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
       termRef.current = term;
       fitAddonRef.current = fitAddon;
     }
-    const bridge = bridgeRef.current ?? (bridgeRef.current = electronBridge() ?? websocketBridge());
+    const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
     const offData = bridge.onData((tabId, data) => {
       const timer = startupTimersRef.current.get(tabId);
       if (timer) {

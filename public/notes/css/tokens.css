@@ -1,0 +1,138 @@
+/* Design tokens for the Clyra Notes workspace.
+   Hierarchy comes from spacing, weight and hover state — not from borders
+   and shadows on every surface — so the token set is deliberately small. */
+
+:root {
+  --background-main: #ffffff;
+  --background-sidebar: #ffffff;
+  --background-hover: #f1f0ef;
+  --background-selected: #eeeceb;
+  --background-menu: #ffffff;
+  --background-subtle: #f7f6f5;
+  --background-input: #f2f1f0;
+  --background-scrim: rgba(15, 15, 15, 0.32);
+
+  --text-primary: #37352f;
+  --text-secondary: #787774;
+  --text-tertiary: #a7a5a2;
+  --text-placeholder: #b8b6b3;
+  --text-on-accent: #ffffff;
+
+  --border-soft: rgba(55, 53, 47, 0.09);
+  --border-medium: rgba(55, 53, 47, 0.14);
+  --border-strong: rgba(55, 53, 47, 0.24);
+
+  --accent: #2383e2;
+  --accent-hover: #1a72c9;
+  --accent-soft: rgba(35, 131, 226, 0.14);
+  --accent-text: #2383e2;
+  --danger: #d44c47;
+  --danger-soft: rgba(212, 76, 71, 0.12);
+  --success: #448361;
+  --warning: #cb912f;
+
+  --shadow-menu: 0 0 0 1px rgba(15, 15, 15, 0.05), 0 3px 6px rgba(15, 15, 15, 0.1), 0 9px 24px rgba(15, 15, 15, 0.2);
+  --shadow-peek: 0 0 0 1px rgba(15, 15, 15, 0.06), -12px 0 32px rgba(15, 15, 15, 0.12);
+  --shadow-soft: 0 1px 2px rgba(15, 15, 15, 0.08);
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+
+  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-serif: Lyon-Text, Georgia, ui-serif, serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+
+  --sidebar-width: 300px;
+  --content-width: 780px;
+  --tab-height: 40px;
+  --toolbar-height: 44px;
+
+  --duration-hover: 110ms;
+  --duration-menu: 150ms;
+  --duration-panel: 220ms;
+  /* One ease for small state changes, one with a longer tail for panels that
+     travel a distance — the difference is what stops a sliding sidebar from
+     reading as a jump. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasis: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Tab travel: eases in gently, spends most of the curve decelerating, and
+     settles rather than stopping. A front-loaded curve covers most of the
+     distance in the first frames and reads as a snap, not a slide. */
+  --ease-settle: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-slide: 260ms;
+
+  /* Option colours are shared by select chips, callouts and text colour so
+     one palette drives every coloured surface in the product. */
+  --c-gray: #787774;      --c-gray-bg: #f1f1ef;
+  --c-brown: #9f6b53;     --c-brown-bg: #f4eeee;
+  --c-orange: #d9730d;    --c-orange-bg: #fbecdd;
+  --c-yellow: #cb912f;    --c-yellow-bg: #fbf3db;
+  --c-green: #448361;     --c-green-bg: #edf3ec;
+  --c-blue: #337ea9;      --c-blue-bg: #e7f3f8;
+  --c-purple: #9065b0;    --c-purple-bg: #f4f0f7;
+  --c-pink: #c14c8a;      --c-pink-bg: #fbf2f5;
+  --c-red: #d44c47;       --c-red-bg: #fdebec;
+  --c-default: var(--text-primary); --c-default-bg: transparent;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  background: var(--background-main);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* A display rule in a component stylesheet otherwise beats the browser's
+   default for [hidden], which silently leaves "hidden" elements on screen. */
+[hidden] { display: none !important; }
+
+button, input, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+::selection { background: var(--accent-soft); }
+
+/* Thin overlay scrollbars keep dense lists from gaining a heavy grey rail. */
+.scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scroll:hover { scrollbar-color: rgba(55, 53, 47, 0.2) transparent; }
+.scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+.scroll:hover::-webkit-scrollbar-thumb { background: rgba(55, 53, 47, 0.2); background-clip: content-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 8px);
+  background: #2f2f2c; color: #fff; font-size: 13.5px; padding: 8px 14px;
+  border-radius: var(--radius-md); box-shadow: var(--shadow-menu);
+  opacity: 0; pointer-events: none; z-index: 300;
+  transition: opacity var(--duration-menu) var(--ease), transform var(--duration-menu) var(--ease);
+  max-width: 420px;
+}
+.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+.toast.error { background: var(--danger); }

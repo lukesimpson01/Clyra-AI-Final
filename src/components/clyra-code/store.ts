@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type VibeProject } from "./api";
+import { isInternalPrompt } from "../../../lib/vibe-agent-v3/internal-prompt";
 
 export type ActionKind =
   | "read"
@@ -1073,6 +1074,9 @@ function rebuildMessage(
   for (const part of message.parts ?? []) {
     if (part.type === "text" && part.text) {
       if (role === "user") {
+        /* Recovery nudges Clyra injects on the user's behalf are real user
+           turns to the model, but they are not something the person said. */
+        if (isInternalPrompt(part.text)) continue;
         log.push({ type: "user", id: `user-${message.info.id}-${part.id}`, text: part.text, ts });
       } else {
         log.push({

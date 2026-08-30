@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, MessageCircle, Search, SquarePen } from "lucide-react";
+import { X, MessageCircle, Search, SquarePen, type LucideIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface ChatSession {
@@ -10,6 +10,20 @@ interface ChatSession {
   updatedAt: number;
 }
 
+/** A non-chat command-palette result: jump to a tool, a settings section, or
+ * run a quick action. Kept separate from chat search rather than a whole
+ * parallel component, since chat search already had the real search UI,
+ * animation, and keyboard handling this just needed to grow into. */
+export interface PaletteCommand {
+  id: string;
+  label: string;
+  detail?: string;
+  icon: LucideIcon;
+  /** Extra words this command should match on besides its label. */
+  keywords?: string[];
+  run: () => void;
+}
+
 interface ChatSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -17,6 +31,10 @@ interface ChatSearchModalProps {
   currentChatId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat?: () => void;
+  /** Tools/settings/actions searchable alongside chats — omit to keep this
+   * as pure chat search. */
+  commands?: PaletteCommand[];
+  placeholder?: string;
 }
 
 function escapeRegex(s: string) {
@@ -111,6 +129,27 @@ const ChatRow = React.memo(function ChatRow({
   );
 });
 
+const CommandRow = React.memo(function CommandRow({ command, onRun }: { command: PaletteCommand; onRun: (command: PaletteCommand) => void }) {
+  const Icon = command.icon;
+  return (
+    <motion.button
+      type="button"
+      layout="position"
+      variants={rowVariants}
+      onClick={() => onRun(command)}
+      className="flex w-full items-center gap-4 rounded-xl px-4 py-3 text-left hover:bg-slate-100/80 active:bg-slate-200/60 focus-visible:bg-slate-100 focus-visible:outline-none"
+    >
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+        <Icon className="h-5 w-5 stroke-[1.5] text-slate-900" />
+      </div>
+      <div className="min-w-0 flex-1 pr-2">
+        <span className="block truncate text-[15px] leading-snug text-slate-900">{command.label}</span>
+        {command.detail ? <span className="mt-0.5 block truncate text-[13px] text-slate-500">{command.detail}</span> : null}
+      </div>
+    </motion.button>
+  );
+});
+
 const GroupLabel = ({ title }: { title: string }) => (
   <motion.h3 
     variants={rowVariants}
@@ -127,9 +166,26 @@ export function ChatSearchModal({
   currentChatId,
   onSelectChat,
   onNewChat,
+  commands = [],
+  placeholder = "Search chats...",
 }: ChatSearchModalProps) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const runCommand = useCallback((command: PaletteCommand) => {
+    command.run();
+    onClose();
+  }, [onClose]);
+
+  const filteredCommands = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+    return commands.filter((command) =>
+      command.label.toLowerCase().includes(q) ||
+      command.detail?.toLowerCase().includes(q) ||
+      command.keywords?.some((keyword) => keyword.toLowerCase().includes(q)),
+    );
+  }, [query, commands]);
 
   useEffect(() => {
     if (isOpen) {
@@ -224,7 +280,7 @@ export function ChatSearchModal({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search chats..."
+                placeholder={placeholder}
                 className="flex-1 bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder:text-slate-400"
                 onKeyDown={(e) => {
                   if (e.key === "Escape") initiateClose();
@@ -309,18 +365,33 @@ export function ChatSearchModal({
                           </>
                         ) : (
                           <>
-                            {filteredChats.length === 0 ? (
+                            {filteredCommands.length === 0 && filteredChats.length === 0 ? (
                               <motion.div
                                 variants={rowVariants}
                                 className="py-16 text-center flex flex-col items-center text-slate-400"
                               >
                                 <Search className="w-10 h-10 mb-4 opacity-20 stroke-[1.5]" />
-                                <p className="text-[15px] font-medium text-slate-500">No chats found for "{query}"</p>
+                                <p className="text-[15px] font-medium text-slate-500">No results for "{query}"</p>
                               </motion.div>
                             ) : (
-                              filteredChats.map(chat => (
-                                <ChatRow key={chat.id} chat={chat} query={query} currentChatId={currentChatId} onSelect={handleSelect} />
-                              ))
+                              <>
+                                {filteredCommands.length > 0 && (
+                                  <>
+                                    <GroupLabel title="Actions" />
+                                    {filteredCommands.map(command => (
+                                      <CommandRow key={command.id} command={command} onRun={runCommand} />
+                                    ))}
+                                  </>
+                                )}
+                                {filteredChats.length > 0 && (
+                                  <>
+                                    {filteredCommands.length > 0 && <GroupLabel title="Chats" />}
+                                    {filteredChats.map(chat => (
+                                      <ChatRow key={chat.id} chat={chat} query={query} currentChatId={currentChatId} onSelect={handleSelect} />
+                                    ))}
+                                  </>
+                                )}
+                              </>
                             )}
                           </>
                         )}

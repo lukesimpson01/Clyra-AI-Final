@@ -199,6 +199,21 @@ function BrowserView({
     if (failed && session?.lastError?.message) onPreviewError?.(session.lastError.message);
   }, [failed, onPreviewError, session?.lastError?.message]);
 
+  /* The frame is unmounted while a run is in flight, so when the run ends it
+     has to come back pointed at the finished files. Reloading on the falling
+     edge of agentRunning is the one signal this component can always see —
+     without it the preview keeps showing whatever existed when it last
+     mounted, which reads as "the agent built nothing". */
+  const wasAgentRunning = useRef(agentRunning);
+  useEffect(() => {
+    if (wasAgentRunning.current && !agentRunning) {
+      const timer = window.setTimeout(() => onReload(), 400);
+      wasAgentRunning.current = agentRunning;
+      return () => window.clearTimeout(timer);
+    }
+    wasAgentRunning.current = agentRunning;
+  }, [agentRunning, onReload]);
+
   useEffect(() => {
     if (!url) return;
     setHistory((prev) => {

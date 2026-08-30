@@ -1,0 +1,534 @@
+/* Application frame: sidebar, tab strip, page toolbar, menus, peek panels. */
+
+/* The sidebar collapses by animating its grid track. The content keeps its
+   own fixed width inside an overflow-hidden shell, so it slides out cleanly
+   instead of reflowing to nothing on the way. */
+.workspace {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  height: 100vh;
+  background: var(--background-main);
+  transition: grid-template-columns var(--duration-panel) var(--ease-emphasis);
+}
+.workspace.sidebar-hidden { grid-template-columns: 0px minmax(0, 1fr); }
+/* Dragging the resizer sets the width every frame; a transition there would
+   make the handle lag behind the cursor. */
+.workspace.resizing { transition: none; }
+
+/* ------------------------------------------------------------- sidebar */
+
+.sidebar {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--background-sidebar);
+  border-right: 1px solid var(--border-soft);
+  user-select: none;
+}
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  height: 100%;
+  transition: transform var(--duration-panel) var(--ease-emphasis),
+              opacity calc(var(--duration-panel) * 0.6) var(--ease);
+}
+.workspace.resizing .sidebar-inner { transition: none; }
+.workspace.sidebar-hidden .sidebar { border-right-color: transparent; }
+.workspace.sidebar-hidden .sidebar-inner { transform: translateX(-24px); opacity: 0; }
+
+.sidebar-resize {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 20;
+}
+.sidebar-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 2px;
+  background: var(--accent); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease);
+}
+.sidebar-resize:hover::after, .sidebar-resize.dragging::after { opacity: 1; }
+
+.workspace-header {
+  display: flex; align-items: center; gap: 2px;
+  padding: 8px 8px 4px 8px;
+}
+.workspace-button {
+  display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;
+  height: 30px; padding: 0 6px; border-radius: var(--radius);
+  transition: background var(--duration-hover) var(--ease);
+}
+.workspace-button:hover { background: var(--background-hover); }
+.workspace-avatar {
+  width: 20px; height: 20px; border-radius: var(--radius-sm); flex: none;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
+  display: grid; place-items: center;
+}
+.workspace-name {
+  font-size: 14px; font-weight: 500; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.workspace-header .icon-button { flex: none; }
+
+.icon-button {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: var(--radius); color: var(--text-secondary);
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease),
+              transform var(--duration-hover) var(--ease);
+}
+.icon-button:hover { background: var(--background-hover); color: var(--text-primary); }
+.icon-button:active { transform: scale(0.94); }
+.icon-button[aria-pressed="true"], .icon-button.active { color: var(--accent); }
+.icon-button[disabled] { opacity: 0.35; cursor: default; }
+.icon-button[disabled]:hover { background: none; color: var(--text-secondary); }
+.icon-button svg { width: 16px; height: 16px; }
+
+/* Home is the one labelled destination; the rest are compact icon buttons,
+   which is what keeps six study areas from becoming six banner rows. */
+/* One row: the selected item wears its name, the others reveal theirs on
+   hover. The label animates its own width so the row reflows smoothly. */
+.sidebar-nav { display: flex; align-items: center; gap: 2px; padding: 0 8px 8px; }
+.nav-item {
+  display: flex; align-items: center; min-width: 0;
+  height: 32px; padding: 0 6px; border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.nav-item:hover { background: var(--background-hover); color: var(--text-primary); }
+.nav-item.selected { background: var(--background-selected); color: var(--text-primary); }
+.nav-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
+.nav-name {
+  display: grid; grid-template-columns: 0fr; overflow: hidden;
+  transition: grid-template-columns var(--duration-slide) var(--ease-settle);
+}
+.nav-name-text {
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  font-size: 14.5px; font-weight: 500; padding-right: 0;
+  transition: padding var(--duration-slide) var(--ease-settle);
+}
+.nav-item.selected .nav-name,
+.nav-item:hover .nav-name,
+.nav-item:focus-visible .nav-name { grid-template-columns: 1fr; }
+.nav-item.selected .nav-name-text,
+.nav-item:hover .nav-name-text,
+.nav-item:focus-visible .nav-name-text { padding: 0 6px 0 5px; }
+
+/* Exactly one item is ever expanded: the one being pointed at wins, and the
+   selected item steps aside while that is true. */
+.sidebar-nav:has(.nav-item:hover) .nav-item.selected:not(:hover) .nav-name,
+.sidebar-nav:has(.nav-item:focus-visible) .nav-item.selected:not(:focus-visible) .nav-name {
+  grid-template-columns: 0fr;
+}
+.sidebar-nav:has(.nav-item:hover) .nav-item.selected:not(:hover) .nav-name-text,
+.sidebar-nav:has(.nav-item:focus-visible) .nav-item.selected:not(:focus-visible) .nav-name-text {
+  padding: 0;
+}
+/* The current tab stays legible as the current tab even while collapsed. */
+.nav-item.selected .nav-name-text { font-weight: 600; }
+.nav-item.selected .nav-icon { color: var(--text-primary); }
+
+.nav-item.has-unread .nav-icon { position: relative; }
+.nav-item.has-unread .nav-icon::after {
+  content: ""; position: absolute; top: 2px; right: 1px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+
+.subjects-cta { margin-top: 4px; }
+.sidebar-add-subject {
+  display: flex; align-items: center; gap: 8px; width: calc(100% - 16px);
+  margin: 2px 8px 0; height: 30px; padding: 0 8px; border-radius: var(--radius);
+  color: var(--text-tertiary); font-size: 13.5px; text-align: left;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.sidebar-add-subject:hover { background: var(--background-hover); color: var(--text-primary); }
+.add-subject-icon { flex: none; display: grid; place-items: center; width: 18px; height: 18px; }
+.add-subject-label { font-size: 13.5px; }
+
+.section-header.drop-into {
+  background: var(--accent-soft); border-radius: var(--radius);
+}
+
+.sidebar-body { flex: 1; min-height: 0; padding: 4px 0 8px; }
+
+.sidebar-section { margin-top: 10px; }
+.sidebar-section:first-child { margin-top: 2px; }
+.section-header {
+  display: flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 14px 0 10px; color: var(--text-tertiary);
+  font-size: 12px; font-weight: 500; letter-spacing: 0.01em;
+}
+.section-header > button:first-child {
+  flex: 1; text-align: left; color: inherit; font: inherit; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: var(--radius-sm); padding: 2px 4px; margin-left: -4px;
+}
+.section-header > button:first-child:hover { background: var(--background-hover); color: var(--text-secondary); }
+.section-actions { display: flex; gap: 1px; opacity: 0; transition: opacity var(--duration-hover) var(--ease); }
+.sidebar-section:hover .section-actions, .section-actions:focus-within { opacity: 1; }
+.section-actions .icon-button { width: 21px; height: 21px; }
+.section-actions .icon-button svg { width: 13px; height: 13px; }
+.section-actions .icon-button:hover { background: var(--border-medium); }
+
+.page-row {
+  display: flex; align-items: center; gap: 2px;
+  height: 30px; padding-right: 8px; border-radius: var(--radius);
+  margin: 0 8px; color: var(--text-secondary); cursor: pointer;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.page-row:hover { background: var(--background-hover); color: var(--text-primary); }
+.page-row.selected { background: var(--background-selected); color: var(--text-primary); font-weight: 500; }
+.page-row.drop-into { background: var(--accent-soft); }
+
+.page-caret {
+  display: grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border-radius: var(--radius-sm); color: var(--text-tertiary); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease), transform var(--duration-menu) var(--ease);
+}
+.page-row:hover .page-caret, .page-caret.open { opacity: 1; }
+.page-caret.open { transform: rotate(90deg); }
+.page-caret.leaf { visibility: hidden; }
+.page-caret svg { width: 12px; height: 12px; }
+
+.page-icon {
+  display: grid; place-items: center; width: 20px; height: 20px; flex: none;
+  font-size: 14px; line-height: 1; color: var(--text-tertiary);
+}
+.page-icon svg { width: 15px; height: 15px; }
+.page-title {
+  flex: 1; min-width: 0; font-size: 14px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.page-row-actions { display: flex; gap: 1px; opacity: 0; transition: opacity var(--duration-hover) var(--ease); }
+.page-row:hover .page-row-actions, .page-row-actions:focus-within { opacity: 1; }
+.page-row-actions .icon-button { width: 21px; height: 21px; }
+.page-row-actions .icon-button svg { width: 13px; height: 13px; }
+.page-row-actions .icon-button:hover { background: var(--border-medium); }
+
+.page-children { position: relative; }
+.sidebar-empty { padding: 3px 10px 3px 32px; font-size: 13.5px; color: var(--text-tertiary); }
+
+.drop-line {
+  position: absolute; height: 2px; background: var(--accent);
+  border-radius: 1px; pointer-events: none; z-index: 40;
+}
+
+.sidebar-section.utilities { margin-top: 14px; }
+.sidebar-footer {
+  padding: 8px; border-top: 1px solid var(--border-soft);
+  background: var(--background-sidebar);
+}
+.sidebar-utils { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+.sidebar-util {
+  display: flex; align-items: center; gap: 9px; height: 28px; padding: 0 8px;
+  border-radius: var(--radius); color: var(--text-secondary); font-size: 13.5px;
+  text-align: left;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.sidebar-util:hover { background: var(--background-hover); color: var(--text-primary); }
+.sidebar-util-icon { flex: none; display: grid; place-items: center; width: 18px; height: 18px; }
+.sidebar-util-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-util-badge {
+  flex: none; font-size: 11.5px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One primary action, with its variants behind a caret rather than a second
+   full-width button. */
+.sidebar-compose-row { display: flex; align-items: center; gap: 2px; }
+.sidebar-compose {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px;
+  height: 32px; padding: 0 9px; border-radius: var(--radius-md);
+  font-size: 13.5px; color: var(--text-primary); background: var(--background-hover);
+  transition: background var(--duration-hover) var(--ease);
+}
+.sidebar-compose:hover { background: var(--background-selected); }
+.sidebar-compose-icon { flex: none; display: grid; place-items: center; color: var(--text-secondary); }
+.sidebar-compose-label { flex: 1; min-width: 0; text-align: left; font-weight: 500; }
+.sidebar-compose-more { flex: none; width: 30px; height: 32px; border-radius: var(--radius-md); }
+.sidebar-compose-more:hover { background: var(--background-hover); }
+
+/* Inline rename keeps the row's exact metrics so nothing shifts. */
+.page-rename {
+  flex: 1; min-width: 0; height: 22px; padding: 0 5px; margin: 0;
+  border: 0; outline: none; border-radius: var(--radius-sm);
+  background: var(--background-main); color: var(--text-primary);
+  font: inherit; font-size: 14px;
+  box-shadow: 0 0 0 2px var(--accent-soft), inset 0 0 0 1px var(--accent);
+}
+
+.shortcut { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
+
+/* ----------------------------------------------------------- main area */
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.tabstrip {
+  display: flex; align-items: center; gap: 2px; height: var(--tab-height);
+  padding: 0 8px; border-bottom: 1px solid var(--border-soft); flex: none;
+}
+.tabstrip-nav { display: flex; gap: 1px; flex: none; }
+.tab-list { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 1; }
+.tab-scroll {
+  display: flex; align-items: center; gap: 2px; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar { display: none; }
+.tab-new { flex: none; }
+
+.tab-scroll { position: relative; }
+
+/* The hover/active surface is one element that travels between tabs. */
+/* Chrome's tab motion decelerates hard at the end rather than easing evenly,
+   which is what makes it feel like the indicator settles into place. */
+.tab-indicator {
+  position: absolute; top: 0; left: 0; height: 28px; width: 0;
+  border-radius: var(--radius); background: var(--background-hover);
+  opacity: 0; pointer-events: none; z-index: 0;
+  transition: transform var(--duration-slide) var(--ease-settle),
+              width var(--duration-slide) var(--ease-settle),
+              opacity var(--duration-hover) var(--ease);
+}
+
+.tab {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 6px; max-width: 200px;
+  height: 28px; padding: 0 6px 0 8px; border-radius: var(--radius);
+  color: var(--text-secondary); font-size: 13.5px; cursor: pointer;
+  /* Opening and closing animate width, so a tab grows into the strip and
+     collapses out of it rather than appearing and vanishing. */
+  /* Width is fixed and max-width animates: a flex item's width is only a
+     hint, so animating it directly does nothing once the row shrinks. */
+  flex: 0 0 auto; width: 168px; max-width: 0;
+  padding: 0; opacity: 0; overflow: hidden; white-space: nowrap;
+  transition: max-width var(--duration-slide) var(--ease-settle),
+              padding var(--duration-slide) var(--ease-settle),
+              opacity var(--duration-menu) var(--ease),
+              color var(--duration-hover) var(--ease);
+}
+.tab.settled { max-width: 200px; opacity: 1; padding: 0 6px 0 8px; }
+/* The fill is painted on the tab itself while it is opening, so a sliding
+   tab is grey for the whole journey instead of turning grey on arrival. */
+.tab.active { background: var(--background-selected); }
+.tab.closing { max-width: 0; opacity: 0; padding: 0; }
+.tab.active { color: var(--text-primary); }
+.tab.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+.tab-icon { flex: none; display: grid; place-items: center; width: 16px; height: 16px; font-size: 13px; }
+.tab-icon svg { width: 14px; height: 14px; }
+.tab-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-close {
+  display: grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border-radius: var(--radius-sm); color: var(--text-tertiary); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease);
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--border-medium); color: var(--text-primary); }
+.tab-close svg { width: 11px; height: 11px; }
+
+.doc-toolbar {
+  display: flex; align-items: center; gap: 4px; height: var(--toolbar-height);
+  padding: 0 12px; flex: none;
+}
+.breadcrumbs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 1; }
+.crumb {
+  display: flex; align-items: center; gap: 6px; max-width: 340px;
+  height: 26px; padding: 0 6px; border-radius: var(--radius);
+  font-size: 14px; color: var(--text-secondary);
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.crumb:hover { background: var(--background-hover); color: var(--text-primary); }
+.crumb.current { color: var(--text-primary); }
+.crumb span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb-sep { color: var(--text-tertiary); font-size: 13px; flex: none; }
+.toolbar-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.text-button {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px;
+  border-radius: var(--radius); font-size: 14px; color: var(--text-secondary);
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.text-button:hover { background: var(--background-hover); color: var(--text-primary); }
+.text-button svg { width: 15px; height: 15px; }
+.save-state { font-size: 12.5px; color: var(--text-tertiary); padding: 0 6px; }
+
+.surface { flex: 1; min-height: 0; position: relative; }
+
+/* -------------------------------------------------------------- menus */
+
+.layer { position: fixed; inset: 0; z-index: 200; }
+.layer.scrim {
+  background: var(--background-scrim);
+  animation: scrim-in var(--duration-panel) var(--ease);
+}
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.menu {
+  position: fixed; z-index: 210; min-width: 200px; max-width: 340px;
+  padding: 6px; background: var(--background-menu);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
+  animation: menu-in var(--duration-menu) var(--ease-out);
+  transform-origin: top center;
+  max-height: min(70vh, 520px); overflow: auto;
+  will-change: transform, opacity;
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.menu-label {
+  padding: 6px 8px 4px; font-size: 12px; font-weight: 500;
+  color: var(--text-tertiary);
+}
+.menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  height: 30px; padding: 0 8px; border-radius: var(--radius);
+  font-size: 14px; color: var(--text-primary); text-align: left;
+  transition: background var(--duration-hover) var(--ease);
+}
+.menu-item:hover, .menu-item.active { background: var(--background-hover); }
+.menu-item[disabled] { color: var(--text-tertiary); cursor: default; }
+.menu-item[disabled]:hover { background: none; }
+.menu-item .m-icon { display: grid; place-items: center; width: 18px; flex: none; color: var(--text-secondary); font-size: 14px; }
+.menu-item .m-icon svg { width: 16px; height: 16px; }
+.menu-item .m-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-item .m-sub { font-size: 12px; color: var(--text-tertiary); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger .m-icon { color: var(--danger); }
+.menu-item.checked .m-check { color: var(--accent); }
+.menu-separator { height: 1px; margin: 6px 4px; background: var(--border-soft); }
+.menu-search {
+  width: 100%; height: 30px; padding: 0 8px; margin-bottom: 4px;
+  border: 0; border-radius: var(--radius); background: var(--background-input);
+  font-size: 14px; outline: none;
+}
+.menu-search::placeholder { color: var(--text-placeholder); }
+.menu-empty { padding: 10px 8px; font-size: 13.5px; color: var(--text-tertiary); }
+
+.tooltip {
+  position: fixed; z-index: 260; padding: 5px 8px; border-radius: var(--radius);
+  background: #2f2f2c; color: #fff; font-size: 12px; pointer-events: none;
+  box-shadow: var(--shadow-soft); max-width: 260px;
+}
+.tooltip .shortcut { color: rgba(255, 255, 255, 0.55); margin-left: 6px; }
+
+/* ------------------------------------------------------- modals + peek */
+
+.modal {
+  position: fixed; z-index: 220; left: 50%; top: 14vh; transform: translateX(-50%);
+  width: min(720px, calc(100vw - 48px)); max-height: 72vh;
+  display: flex; flex-direction: column;
+  background: var(--background-menu); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu); overflow: hidden;
+  animation: modal-in var(--duration-panel) var(--ease-out);
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.985); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+.modal-header {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft); flex: none;
+}
+.modal-title { font-size: 14px; font-weight: 500; flex: 1; }
+.modal-body { padding: 12px 14px; overflow: auto; }
+.modal-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid var(--border-soft); flex: none;
+}
+
+.button {
+  height: 32px; padding: 0 12px; border-radius: var(--radius);
+  font-size: 14px; background: var(--background-hover); color: var(--text-primary);
+  transition: background var(--duration-hover) var(--ease), transform var(--duration-hover) var(--ease);
+}
+.button:hover { background: var(--background-selected); }
+.button:active { transform: scale(0.985); }
+.button.primary { background: var(--accent); color: var(--text-on-accent); }
+.button.primary:hover { background: var(--accent-hover); }
+.button.danger { background: var(--danger); color: #fff; }
+.button[disabled] { opacity: 0.5; cursor: default; }
+.button[disabled]:hover { background: var(--background-hover); }
+.button.primary[disabled]:hover { background: var(--accent); }
+
+.field { display: block; margin-bottom: 12px; }
+.field-label { display: block; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 4px; }
+.input, .textarea, .select {
+  width: 100%; padding: 7px 9px; border-radius: var(--radius);
+  border: 1px solid var(--border-medium); background: var(--background-main);
+  font-size: 14px; outline: none;
+  transition: border-color var(--duration-hover) var(--ease), box-shadow var(--duration-hover) var(--ease);
+}
+.input:focus, .textarea:focus, .select:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.textarea { min-height: 76px; resize: vertical; font-family: inherit; }
+
+.peek {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 215;
+  width: min(56vw, 720px); background: var(--background-main);
+  box-shadow: var(--shadow-peek); display: flex; flex-direction: column;
+  animation: peek-in var(--duration-panel) var(--ease-emphasis);
+}
+@keyframes peek-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.peek.center {
+  top: 8vh; right: auto; bottom: 8vh; left: 50%; transform: translateX(-50%);
+  width: min(920px, calc(100vw - 80px)); border-radius: var(--radius-lg);
+  animation: modal-in var(--duration-panel) var(--ease-out);
+}
+.peek-header {
+  display: flex; align-items: center; gap: 4px; height: var(--toolbar-height);
+  padding: 0 10px; border-bottom: 1px solid var(--border-soft); flex: none;
+}
+.peek-body { flex: 1; min-height: 0; }
+
+/* --------------------------------------------------------- empty state */
+
+.empty-state { padding: 40px 0; color: var(--text-tertiary); font-size: 14px; }
+.empty-state .actions { display: flex; gap: 8px; margin-top: 12px; }
+
+.loading-row { display: flex; align-items: center; gap: 8px; color: var(--text-tertiary); font-size: 13.5px; }
+.spinner {
+  width: 13px; height: 13px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border-medium); border-top-color: var(--text-secondary);
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------- responsive */
+
+@media (max-width: 1080px) {
+  :root { --sidebar-width: 260px; }
+}
+/* Reaching the sidebar again has to be possible once it is collapsed, so
+   the menu button appears in the tab strip whenever it is out of view. */
+.sidebar-menu { display: none; }
+.workspace.sidebar-hidden .sidebar-menu { display: grid; }
+.sidebar-scrim { display: none; }
+
+/* Below this width the sidebar leaves the grid and slides over the page, so
+   the workspace becomes a single column — otherwise the main area would be
+   laid out into a zero-width track. */
+@media (max-width: 860px) {
+  .workspace, .workspace.sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
+  .sidebar {
+    position: fixed; z-index: 150; top: 0; bottom: 0; left: 0; width: 288px;
+    display: flex; box-shadow: var(--shadow-menu); transform: translateX(-100%);
+    transition: transform var(--duration-panel) var(--ease);
+  }
+  .workspace.sidebar-open .sidebar { transform: none; }
+  .sidebar-resize { display: none; }
+  .sidebar-menu { display: grid; }
+  .workspace.sidebar-open .sidebar-scrim {
+    display: block; position: fixed; inset: 0; z-index: 140;
+    background: var(--background-scrim);
+    animation: menu-in var(--duration-panel) var(--ease);
+  }
+  .doc-toolbar { padding: 0 8px; }
+  .crumb { max-width: 190px; }
+  /* Only the settled width narrows: capping the base max-width would give a
+     newly opened tab nothing to grow from. */
+  .tab { width: 150px; }
+  .tab.settled { max-width: 150px; }
+}

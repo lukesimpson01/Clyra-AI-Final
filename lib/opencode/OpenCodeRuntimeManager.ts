@@ -7,6 +7,7 @@ import os from "node:os";
 import { promisify } from "node:util";
 import { createVibePreflight, normalizeEffort, type VibeEffort, type VibePreflight } from "../vibe-agent-v3/preflight";
 import { recordVibeUsage, type ModelUsageEvent } from "../vibe-agent-v3/usage-analytics";
+import { internalPrompt } from "../vibe-agent-v3/internal-prompt";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,6 +31,15 @@ Project architecture rules — for every coding request:
 - Run the project's build/typecheck/tests after changes and fix every error before finishing.
 - For greenfield web apps, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files.
 - Never navigate to a file: URL, start your own preview server, or kill background processes. Clyra owns project previews; complete the implementation and let Clyra provide the approved local preview for any visual check.
+
+Finished-product quality — the user judges the running product, not the diff. Before you finish, read the code you wrote as if you were the person using it:
+- Format every value a person reads. Never render a raw float, timestamp, or enum key in the interface: round durations and counts, label units, and give dates a readable format. A label like "0.6666666666666666m" is a defect, not a detail.
+- Wire every visible control. A button, tab, filter or field that renders must do the thing it names. If a feature is not implemented, do not put a control for it on screen.
+- Give every list, chart and panel a real empty state, and a loading and error state where data can be absent or fail. Never ship a blank region.
+- Keep one consistent visual system: a single spacing rhythm, type scale and colour set across every screen. No placeholder text, no lorem ipsum, no leftover TODO copy, no dummy rows in the shipped view.
+- Make it usable: labels on icon-only controls, visible focus, keyboard access for primary actions, sensible behaviour at narrow widths.
+- Handle the empty, single-item, long-text and large-number cases in anything that renders a collection.
+- Where a preview is available, inspect the rendered result before declaring completion and fix what looks wrong. Shipping something that runs but reads as unfinished is not done.
 `;
 
 export type ClyraAgentEvent = {
@@ -446,7 +456,7 @@ export class OpenCodeRuntimeManager {
         model: resolveRecoveryModel(),
         parts: [{
           type: "text",
-          text: `Do not complete this task yet: ${reason}. Continue the same task now. Implement the remaining product across the appropriate real files, make the visible interactions work, run a relevant validation command, inspect the preview where available, and repair any failure. Do not only describe a plan or change configuration.`,
+          text: internalPrompt(`Do not complete this task yet: ${reason}. Continue the same task now. Implement the remaining product across the appropriate real files, make the visible interactions work, run a relevant validation command, inspect the preview where available, and repair any failure. Do not only describe a plan or change configuration.`),
         }],
       },
       throwOnError: true,
@@ -493,8 +503,11 @@ export class OpenCodeRuntimeManager {
       // Upgrade projects still carrying the original seeded guidance so the
       // multi-file architecture rules apply to existing workspaces too.
       const existing = await fs.promises.readFile(agentsPath, "utf8");
+      // The marker tracks the newest section so existing workspaces adopt
+      // each revision of the guidance instead of keeping the first one they
+      // were created with.
       if (/Be an adaptive expert coding agent\.|Clyra Code Agent/.test(existing)
-        && !/PLAN\.md as durable task memory/.test(existing)) {
+        && !/Finished-product quality/.test(existing)) {
         await fs.promises.writeFile(agentsPath, DEFAULT_AGENTS_MD, "utf8").catch(() => undefined);
       }
     } catch {
@@ -747,7 +760,7 @@ export class OpenCodeRuntimeManager {
                   model: resolveRecoveryModel(),
                   parts: [{
                     type: "text",
-                    text: "Continue this exact task from the persisted project state. Do not repeat discovery or narrate a plan. Inspect the current files, complete the smallest remaining implementation, run the relevant validation and preview check, repair real failures, then give a concise final result.",
+                    text: internalPrompt("Continue this exact task from the persisted project state. Do not repeat discovery or narrate a plan. Inspect the current files, complete the smallest remaining implementation, run the relevant validation and preview check, repair real failures, then give a concise final result."),
                   }],
                 },
                 throwOnError: true,

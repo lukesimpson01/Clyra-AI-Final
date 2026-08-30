@@ -1487,6 +1487,7 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
   const [generating, setGenerating] = useState(false);
   const [messageDraft, setMessageDraft] = useState("");
   const [messageDraftSide, setMessageDraftSide] = useState<"left" | "right">("right");
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const playback = useRef<AbortController | null>(null);
   const previewFrame = useRef<number | null>(null);
   const renderTask = useRef<AbortController | null>(null);
@@ -1744,6 +1745,37 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
     }
   };
 
+  const regenerateLine = async (index: number) => {
+    if (project.type !== "fake_text_story" || regeneratingId) return;
+    const message = project.messages[index];
+    if (!message) return;
+    setRegeneratingId(message.id);
+    setError("");
+    try {
+      const response = await fetch("/api/creator/regenerate-line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "fake_text_story", lines: project.messages.map((m) => m.text), index }),
+      });
+      const payload = await response.json() as { text?: string; error?: string };
+      if (!response.ok || !payload.text) throw new Error(payload.error || "The line could not be rewritten");
+      const text = payload.text;
+      edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].text = text.slice(0, 600); });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRegeneratingId(null);
+    }
+  };
+
+  const moveMessage = (index: number, direction: -1 | 1) => edit((draft) => {
+    if (draft.type !== "fake_text_story") return;
+    const target = index + direction;
+    if (target < 0 || target >= draft.messages.length) return;
+    const [item] = draft.messages.splice(index, 1);
+    draft.messages.splice(target, 0, item);
+  });
+
   const importScript = async (file?: File) => {
     if (!file) return;
     try {
@@ -1855,7 +1887,7 @@ function TemplateCreatorEditor({ initial }: { initial: WouldRatherProject | Fake
                     </div>
                     <div className="flex min-h-[76px] items-center justify-between border-b border-[#e2e5ea]"><p className="text-[21px] font-semibold">Messages</p><div className="flex gap-2.5"><button type="button" onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages.forEach((message) => { message.side = message.side === "left" ? "right" : "left"; }); })} className="h-[38px] rounded-full border border-[#e0e4e9] px-4 text-[14px] font-medium text-[#303642] transition-colors hover:bg-[#f6f8fc]">Swap All <span className="ml-1.5 text-[17px]">⇄</span></button><button type="button" onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages = [{ id: crypto.randomUUID(), side: "left", text: "New message", typingSeconds: 0.8, pauseSeconds: 0.25, narration: true }]; })} className="flex h-[38px] items-center gap-2 rounded-full border border-[#e0e4e9] px-4 text-[14px] font-medium text-[#303642] transition-colors hover:bg-[#f6f8fc]">Delete All <Trash2 className="h-4 w-4" /></button></div></div>
                     <div className="mt-4 max-h-[132px] space-y-3 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#dfe3ea_transparent]">
-                      {project.messages.map((message, index) => <div key={message.id} className="grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] transition-[border-color,box-shadow] focus-within:border-[#4169f6] focus-within:ring-2 focus-within:ring-blue-100"><span className="mr-4 text-[19px] leading-none text-[#111318]">♫</span><input aria-label={`Message ${index + 1}`} value={message.text} onFocus={() => setSelectedId(message.id)} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].text = event.target.value.slice(0, 600); })} className="min-w-0 flex-1 bg-transparent text-[16px] outline-none" /></div><MessageSpeakerToggle side={message.side} label={`Swap sender for message ${index + 1}`} onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].side = draft.messages[index].side === "left" ? "right" : "left"; })} /><button type="button" aria-label={`Delete message ${index + 1}`} disabled={project.messages.length <= 1} onClick={() => edit((draft) => { if (draft.type === "fake_text_story" && draft.messages.length > 1) draft.messages.splice(index, 1); })} className="grid h-11 w-11 place-items-center rounded-full bg-[#f3f4f6] text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-[18px] w-[18px]" /></button></div>)}
+                      {project.messages.map((message, index) => <div key={message.id} className="grid grid-cols-[minmax(0,1fr)_64px_auto] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] transition-[border-color,box-shadow] focus-within:border-[#4169f6] focus-within:ring-2 focus-within:ring-blue-100"><span className="mr-4 text-[19px] leading-none text-[#111318]">♫</span><input aria-label={`Message ${index + 1}`} value={message.text} onFocus={() => setSelectedId(message.id)} onChange={(event) => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].text = event.target.value.slice(0, 600); })} className="min-w-0 flex-1 bg-transparent text-[16px] outline-none" /></div><MessageSpeakerToggle side={message.side} label={`Swap sender for message ${index + 1}`} onClick={() => edit((draft) => { if (draft.type === "fake_text_story") draft.messages[index].side = draft.messages[index].side === "left" ? "right" : "left"; })} /><div className="flex items-center gap-1"><button type="button" aria-label={`Move message ${index + 1} up`} disabled={index === 0} onClick={() => moveMessage(index, -1)} className="grid h-9 w-9 place-items-center rounded-full text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-25"><ArrowUp className="h-4 w-4" /></button><button type="button" aria-label={`Move message ${index + 1} down`} disabled={index === project.messages.length - 1} onClick={() => moveMessage(index, 1)} className="grid h-9 w-9 place-items-center rounded-full text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-25"><ArrowDown className="h-4 w-4" /></button><button type="button" aria-label={`Regenerate message ${index + 1}`} title="Regenerate this line" disabled={regeneratingId !== null} onClick={() => void regenerateLine(index)} className="grid h-9 w-9 place-items-center rounded-full text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-40">{regeneratingId === message.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}</button><button type="button" aria-label={`Delete message ${index + 1}`} disabled={project.messages.length <= 1} onClick={() => edit((draft) => { if (draft.type === "fake_text_story" && draft.messages.length > 1) draft.messages.splice(index, 1); })} className="grid h-9 w-9 place-items-center rounded-full bg-[#f3f4f6] text-[#68707c] transition-colors hover:bg-[#e8ebef] disabled:opacity-35"><Trash2 className="h-4 w-4" /></button></div></div>)}
                     </div>
                     <div className="mt-3 grid grid-cols-[minmax(0,1fr)_64px_44px] items-center gap-3"><div className="flex h-[48px] min-w-0 items-center rounded-[10px] border border-[#dfe3e8] bg-white px-4 shadow-[0_2px_6px_rgba(15,23,42,.035)] focus-within:border-[#4169f6] focus-within:ring-2 focus-within:ring-blue-100"><ImagePlus className="mr-4 h-[19px] w-[19px] text-[#7b8492]" /><input value={messageDraft} onChange={(event) => setMessageDraft(event.target.value.slice(0, 600))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitMessageDraft(); } }} placeholder="Type your message here..." aria-label="New message" className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-[#8a909a]" /></div><MessageSpeakerToggle side={messageDraftSide} label="Swap sender for new message" onClick={() => setMessageDraftSide((side) => side === "left" ? "right" : "left")} /><button type="button" aria-label="Send message" disabled={!messageDraft.trim()} onClick={submitMessageDraft} className={cn("grid h-11 w-11 place-items-center rounded-full transition-[background-color,color,transform] active:scale-95", messageDraft.trim() ? "bg-[#4169f6] text-white" : "bg-[#f3f4f6] text-[#8a909a]")}><Send className="h-[18px] w-[18px]" /></button></div>
                   </>

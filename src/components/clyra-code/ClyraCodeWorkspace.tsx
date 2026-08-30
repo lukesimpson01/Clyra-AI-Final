@@ -223,15 +223,38 @@ export default function ClyraCodeWorkspace() {
     if (state.activeProjectId === projectId) selectProject(null);
   }, [selectProject, state.activeProjectId]);
 
-  // Successful runs bump buildVersion so the browser preview reloads.
+  // A finished run bumps buildVersion so the browser preview reloads.
   const [buildVersion, setBuildVersion] = useState(0);
   const previousRunState = useRef(state.runState);
   useEffect(() => {
-    if (previousRunState.current !== "complete" && state.runState === "complete") {
-      setBuildVersion((v) => v + 1);
-    }
+    const wasBusy = previousRunState.current === "running" || previousRunState.current === "starting";
+    const settled = state.runState !== "running" && state.runState !== "starting";
+    // Any way out of a run refreshes the preview, not just a clean finish —
+    // a cancelled or partially failed run still left real files on disk, and
+    // leaving the frame stale makes it look like nothing was built.
+    if (wasBusy && settled) setBuildVersion((v) => v + 1);
     previousRunState.current = state.runState;
   }, [state.runState]);
+
+  /* Files landing mid-run refresh the preview too, so a long build shows its
+     product as it appears rather than only at the end. Debounced so a burst
+     of edits reloads the frame once. */
+  const editedFileCount = useMemo(
+    () => new Set(
+      Object.values(state.actions)
+        .filter((action) => action.kind === "edit" && action.target)
+        .map((action) => action.target),
+    ).size,
+    [state.actions],
+  );
+  const lastEditedCount = useRef(0);
+  useEffect(() => {
+    if (editedFileCount === lastEditedCount.current) return;
+    lastEditedCount.current = editedFileCount;
+    if (!editedFileCount) return;
+    const timer = window.setTimeout(() => setBuildVersion((v) => v + 1), 1200);
+    return () => window.clearTimeout(timer);
+  }, [editedFileCount]);
 
   useEffect(() => {
     setAgentActivityCount(Object.values(state.actions).filter((action) => /^(command|build|check|test|preview)$/.test(action.kind)).length);
@@ -583,7 +606,13 @@ export default function ClyraCodeWorkspace() {
 
   /* -------------------- render -------------------- */
   return (
-    <div ref={shellRef} className="clyra-code-root flex h-full w-full flex-col overflow-hidden">
+    <motion.div
+      ref={shellRef}
+      className="clyra-code-root flex h-full w-full flex-col overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+    >
       <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
       <Sidebar
         projects={visibleProjects}
@@ -678,7 +707,7 @@ export default function ClyraCodeWorkspace() {
           {activeProject ? (
             <>
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[#343539]">
+                <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[var(--text-primary)]">
                   {taskTitle || "New task"}
                 </h1>
               </div>
@@ -699,14 +728,14 @@ export default function ClyraCodeWorkspace() {
               >
                 <div className="mx-auto flex w-full max-w-[620px] flex-col items-center px-5 text-center">
                   <ClyraMark size={40} />
-                  <h2 className="mt-4 text-[25px] font-medium leading-[1.18] tracking-[-0.03em] text-[#202124]">
+                  <h2 className="mt-4 text-[25px] font-medium leading-[1.18] tracking-[-0.03em] text-[var(--text-primary)]">
                     What do you want to build?
                   </h2>
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="mt-2 text-[14px] leading-[1.5] text-[#818388]">
-                    {welcomeSubtitle[0]}<span className="text-[#3977F6]">{welcomeSubtitle[1]}</span>{welcomeSubtitle[2]}
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="mt-2 text-[14px] leading-[1.5] text-[var(--text-tertiary)]">
+                    {welcomeSubtitle[0]}<span className="text-[var(--accent-blue)]">{welcomeSubtitle[1]}</span>{welcomeSubtitle[2]}
                   </motion.p>
                   {activeProject ? (
-                    <p className="mt-1.5 text-[11.5px] text-[#9A9CA0]">
+                    <p className="mt-1.5 text-[11.5px] text-[var(--text-tertiary)]">
                       Working in {activeProject.name || activeProject.id}
                     </p>
                   ) : null}
@@ -764,7 +793,7 @@ export default function ClyraCodeWorkspace() {
                           else if (event.key === "Escape") { event.preventDefault(); setImportPathDraft(null); setImportError(null); }
                         }}
                         placeholder="/path/to/your/project"
-                        className="h-[34px] flex-1 rounded-[9px] border border-black/[0.08] bg-white px-3 text-[12.5px] text-[#343539] outline-none placeholder:text-[#B7B9BD] focus:border-[#3977F6]/40"
+                        className="h-[34px] flex-1 rounded-[9px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-3 text-[12.5px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent-blue)]/40"
                       />
                       <button
                         type="button"
@@ -930,6 +959,6 @@ export default function ClyraCodeWorkspace() {
           </motion.div>
         ) : null}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }

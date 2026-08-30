@@ -101,7 +101,7 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
           transition={{ type: "spring", stiffness: 380, damping: 28 }}
           className="fixed bottom-6 right-6 z-[85] flex items-center gap-3 rounded-full bg-white/90 px-4 py-2.5 shadow-[0_8px_28px_rgba(15,23,42,0.16)] ring-1 ring-black/5 backdrop-blur-xl"
         >
-          <Bloub state={bloubState} size={28} color={avatarColor} background="#ffffff" audioLevel={call.status === "speaking" ? call.botLevel : 0} />
+          <Bloub state={bloubState} size={28} color={avatarColor} background="var(--clyra-surface)" audioLevel={call.status === "speaking" ? call.botLevel : 0} />
           <span className="text-sm font-medium text-slate-700">
             {call.status === "speaking" ? "Speaking…" : call.status === "thinking" ? "Thinking…" : "Clyra call"}
           </span>
@@ -114,7 +114,7 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.22 }}
-          className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-[#fbfbfa]"
+          className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-[var(--clyra-canvas)]"
         >
           <motion.div
             initial={{ y: 60, opacity: 0 }}
@@ -176,7 +176,7 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
                 state={bloubState}
                 size={100}
                 color={avatarColor}
-                background="#fbfbfa"
+                background="var(--clyra-canvas)"
                 audioLevel={call.status === "speaking" ? call.botLevel : 0}
                 animateEntrance
               />

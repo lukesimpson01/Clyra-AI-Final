@@ -21,6 +21,15 @@ import { AGENT_EASE, LABEL_MORPH, SUBTLE_ENTER } from "./motion";
 
 type Phase = "header" | "open" | "settled" | "closed" | "failed";
 
+/** Cadence for revealing real diff lines after the box opens. Capped by
+ * tick count so a very large change still completes in about a second. */
+const REVEAL_TICK_MS = 26;
+const REVEAL_MAX_TICKS = 40;
+/** Beat held after the last line lands, before the box collapses. */
+const SETTLE_HOLD_MS = 1000;
+/** Beat after collapsing before the transcript moves to the next action. */
+const RESUME_DELAY_MS = 850;
+
 function linesFor(action: AgentAction): DiffLine[] {
   if (action.patch) return linesFromPatch(action.patch);
   if (action.before || action.after) {
@@ -153,11 +162,14 @@ export const AgentFileEdit = memo(function AgentFileEdit({
       return () => window.clearTimeout(timer);
     }
     if (phase === "settled") {
-      const timer = window.setTimeout(() => {
-        setPhase("closed");
-        notifyClosed();
-      }, 1000);
-      return () => window.clearTimeout(timer);
+      // Hold the finished diff for a beat, collapse, then leave a second
+      // beat before releasing the transcript so actions don't run together.
+      const collapse = window.setTimeout(() => setPhase("closed"), SETTLE_HOLD_MS);
+      const resume = window.setTimeout(notifyClosed, SETTLE_HOLD_MS + RESUME_DELAY_MS);
+      return () => {
+        window.clearTimeout(collapse);
+        window.clearTimeout(resume);
+      };
     }
   }, [completed, manualOpen, phase, typedCount, changeCount, action.id]);
 
@@ -187,14 +199,35 @@ export const AgentFileEdit = memo(function AgentFileEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historical, completed, hasLines, phase, action.id]);
 
-  // Whenever the body opens, render the full real diff in one update.
+  // Progressive reveal of the real diff.
+  //
+  // The box opens empty, then the harness's actual lines are revealed in
+  // order at a readable cadence, so a change reads as it lands instead of
+  // snapping in fully-formed. This animates *when* real lines appear — it
+  // never invents source: `lines` is always the tool payload, and a
+  // historical or manually-opened box shows everything immediately.
   useEffect(() => {
     if (!open) {
       if (phase !== "header") setTypedCount(0);
       return;
     }
-    setTypedCount(changeCount);
-  }, [open, changeCount, phase]);
+    if (historical || manualOpen !== null || reducedMotion) {
+      setTypedCount(changeCount);
+      return;
+    }
+    if (changeCount === 0) return;
+    setTypedCount(0);
+    // Long diffs reveal several lines per tick so a 400-line change still
+    // finishes in about a second rather than crawling.
+    const step = Math.max(1, Math.ceil(changeCount / REVEAL_MAX_TICKS));
+    let shown = 0;
+    const timer = window.setInterval(() => {
+      shown = Math.min(changeCount, shown + step);
+      setTypedCount(shown);
+      if (shown >= changeCount) window.clearInterval(timer);
+    }, REVEAL_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [open, changeCount, phase, historical, manualOpen, reducedMotion]);
 
   /* ---------------- internal auto-follow ---------------- */
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
@@ -233,7 +266,25 @@ export const AgentFileEdit = memo(function AgentFileEdit({
   const additions = action.additions ?? 0;
   const deletions = action.deletions ?? 0;
 
-  const renderedLines = lines.map((line, index) => <DiffBodyLine key={index} line={line} index={index} animate={!historical} />);
+  // Only the lines revealed so far. `typedCount` counts changed lines, so
+  // walk the full list and stop once that many non-context lines are in —
+  // context lines ride along with the change they belong to.
+  const visibleLines = useMemo(() => {
+    if (historical || manualOpen !== null || reducedMotion) return lines;
+    if (typedCount >= changeCount) return lines;
+    const out: DiffLine[] = [];
+    let changed = 0;
+    for (const line of lines) {
+      if (line.kind !== "context") {
+        if (changed >= typedCount) break;
+        changed += 1;
+      }
+      out.push(line);
+    }
+    return out;
+  }, [lines, typedCount, changeCount, historical, manualOpen, reducedMotion]);
+
+  const renderedLines = visibleLines.map((line, index) => <DiffBodyLine key={index} line={line} index={index} animate={!historical} />);
 
   const toggle = () => {
     if (hasLines) {

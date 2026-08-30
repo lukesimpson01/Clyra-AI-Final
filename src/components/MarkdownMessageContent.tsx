@@ -1,16 +1,54 @@
-import type { ComponentPropsWithoutRef } from "react";
+import { useState, type ComponentPropsWithoutRef } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light.js";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
+import { Check, Copy, Play } from "lucide-react";
 import { cn } from "../lib/utils";
+import { useTerminalRunner } from "./terminal/TerminalRunnerProvider";
+import { getLanguageDisplayName, isRunnableLanguage } from "../lib/runnableLanguages";
 
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
   inline?: boolean;
   className?: string;
   children?: React.ReactNode;
 };
+
+function CodeBlockHeader({ language, text, soft }: { language: string; text: string; soft: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const { runInTerminal } = useTerminalRunner();
+  const runnable = isRunnableLanguage(language);
+  return (
+    <div className={cn("clyra-code-block__header", soft && "clyra-code-block--soft")}>
+      <span>{getLanguageDisplayName(language)}</span>
+      <span className="clyra-code-block__actions">
+        <button
+          type="button"
+          className="clyra-code-block__copy"
+          onClick={() => {
+            void navigator.clipboard?.writeText(text);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1600);
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {runnable ? (
+          <button
+            type="button"
+            className="clyra-code-block__run"
+            onClick={() => runInTerminal(text, language)}
+          >
+            <Play fill="currentColor" strokeWidth={0} />
+            Run
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+}
 
 export function MarkdownMessageContent({
   content,
@@ -98,29 +136,29 @@ export function MarkdownMessageContent({
 
       if (!inline && match && codeHighlighting) {
         return (
-          <SyntaxHighlighter
-            {...props}
-            style={soft ? oneLight : vscDarkPlus}
-            language={match[1]}
-            PreTag="div"
-            className={cn(
-              soft
-                ? "my-3 rounded-xl border border-slate-200/90 shadow-[0_1px_3px_rgba(15,23,42,0.06)] !bg-[hsl(230,1%,98%)]"
-                : "my-2 rounded-lg border border-slate-700/50 !bg-[#1E1E1E]",
-            )}
-            customStyle={
-              soft
-                ? {
-                    margin: 0,
-                    padding: "1rem 1.05rem",
-                    fontSize: "13px",
-                    lineHeight: 1.55,
-                  }
-                : undefined
-            }
-          >
-            {text}
-          </SyntaxHighlighter>
+          <div className={cn("clyra-code-block", soft ? "my-3" : "my-2")}>
+            <CodeBlockHeader language={match[1]} text={text} soft={soft} />
+            <SyntaxHighlighter
+              {...props}
+              style={soft ? oneLight : vscDarkPlus}
+              language={match[1]}
+              PreTag="div"
+              className={cn(
+                soft
+                  ? "!my-0 rounded-xl !bg-[hsl(230,1%,98%)]"
+                  : "!my-0 rounded-lg !bg-[#1E1E1E]",
+              )}
+              customStyle={{
+                margin: 0,
+                padding: soft ? "1rem 1.05rem" : undefined,
+                fontSize: soft ? "13px" : undefined,
+                lineHeight: soft ? 1.55 : undefined,
+                overflowX: "auto",
+              }}
+            >
+              {text}
+            </SyntaxHighlighter>
+          </div>
         );
       }
       return (

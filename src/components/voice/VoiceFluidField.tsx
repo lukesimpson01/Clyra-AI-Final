@@ -1,6 +1,19 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import { Application, BlurFilter, Graphics } from "pixi.js";
 
+/** Energy follow rates. Attack is fast so a voice reads as immediate;
+ * release is slow so the surface keeps moving between syllables. */
+const ATTACK = 16;
+const RELEASE = 3.4;
+
+/** Back-to-front wave layers. Deeper layers sit higher, blur more and move
+ * slower; the crest is brighter, tighter and quicker. */
+const LAYERS = [
+  { color: 0x2a4bd0, alpha: 0.5, blur: 30, amp: 30, speed: 0.62, offset: 0, rest: 0.66, lift: 0.1, blend: "screen" as const },
+  { color: 0x4c8dff, alpha: 0.46, blur: 18, amp: 24, speed: 1, offset: 2.1, rest: 0.7, lift: 0.15, blend: "screen" as const },
+  { color: 0x8fd0ff, alpha: 0.34, blur: 10, amp: 17, speed: 1.45, offset: 4.3, rest: 0.75, lift: 0.2, blend: "screen" as const },
+];
+
 export type VoiceFluidHandle = {
   /** 0-1 smoothed audio energy. Imperative so a 60fps mic/TTS analyser loop
    * never triggers a React re-render. */
@@ -37,8 +50,16 @@ export const VoiceFluidField = forwardRef<VoiceFluidHandle, { className?: string
       let live = true;
       let destroyed = false;
       const app = new Application();
-      const blob = new Graphics();
-      const blur = new BlurFilter({ strength: 18, quality: 3 });
+      // Three stacked wave layers instead of one flat band: a deep, heavily
+      // blurred bed for glow, a mid body carrying most of the motion, and a
+      // brighter crest on top. Different speeds and phase offsets keep them
+      // from ever moving as one rigid shape.
+      const layers = LAYERS.map((layer) => {
+        const graphic = new Graphics();
+        graphic.filters = [new BlurFilter({ strength: layer.blur, quality: 3 })];
+        graphic.blendMode = "screen";
+        return { ...layer, graphic };
+      });
       let resizeObserver: ResizeObserver | null = null;
 
       const destroyOnce = () => {
@@ -62,8 +83,7 @@ export const VoiceFluidField = forwardRef<VoiceFluidHandle, { className?: string
             return;
           }
           host.appendChild(app.canvas);
-          blob.filters = [blur];
-          app.stage.addChild(blob);
+          layers.forEach((layer) => app.stage.addChild(layer.graphic));
 
           resizeObserver = new ResizeObserver(([entry]) => {
             const { width, height } = entry.contentRect;
@@ -72,33 +92,48 @@ export const VoiceFluidField = forwardRef<VoiceFluidHandle, { className?: string
           resizeObserver.observe(host);
 
           app.ticker.add((ticker) => {
-            const dt = ticker.deltaTime / 60;
-            // Critically-damped spring toward the latest energy sample keeps
-            // motion elastic rather than snapping frame to frame.
-            displayEnergyRef.current += (energyRef.current - displayEnergyRef.current) * Math.min(1, dt * 6);
-            phaseRef.current += dt * (0.6 + displayEnergyRef.current * 1.8);
+            const dt = Math.min(ticker.deltaTime / 60, 0.05);
+            // Asymmetric follow: rise almost immediately on a new sample so
+            // speech reads as instant, then fall away slowly so the surface
+            // keeps settling instead of snapping flat between syllables.
+            const target = energyRef.current;
+            const current = displayEnergyRef.current;
+            const rate = target > current ? ATTACK : RELEASE;
+            displayEnergyRef.current = current + (target - current) * Math.min(1, dt * rate);
+            phaseRef.current += dt * (0.55 + displayEnergyRef.current * 2.1);
 
             const { width, height } = app.renderer;
             const energy = displayEnergyRef.current;
-            const baseline = height * (0.6 - energy * 0.18);
-            const amplitude = 14 + energy * 54;
-            const points = 40;
+            const phase = phaseRef.current;
+            const points = 48;
 
-            blob.clear();
-            const path: [number, number][] = [];
-            for (let i = 0; i <= points; i++) {
-              const x = (width / points) * i;
-              const wave =
-                Math.sin(phaseRef.current + i * 0.35) * amplitude +
-                Math.sin(phaseRef.current * 1.7 + i * 0.18) * amplitude * 0.4;
-              path.push([x, baseline + wave]);
+            for (const layer of layers) {
+              const graphic = layer.graphic;
+              // Each layer sits a little lower and swells a little more than
+              // the one behind it, so louder audio opens a sense of depth
+              // rather than just making one band taller.
+              const baseline = height * (layer.rest - energy * layer.lift);
+              // Keeps a visible swell at rest so an idle call still breathes
+              // rather than flattening into a static band.
+              const amplitude = layer.amp * (0.58 + energy * 1.3);
+              const layerPhase = phase * layer.speed + layer.offset;
+
+              graphic.clear();
+              graphic.moveTo(0, height);
+              for (let i = 0; i <= points; i++) {
+                const x = (width / points) * i;
+                // Three incommensurate harmonics: the surface never repeats
+                // on a visible loop the way a single sine does.
+                const wave =
+                  Math.sin(layerPhase + i * 0.31) * amplitude +
+                  Math.sin(layerPhase * 1.63 + i * 0.17) * amplitude * 0.42 +
+                  Math.sin(layerPhase * 0.47 + i * 0.09) * amplitude * 0.28;
+                graphic.lineTo(x, baseline + wave);
+              }
+              graphic.lineTo(width, height);
+              graphic.closePath();
+              graphic.fill({ color: layer.color, alpha: layer.alpha * (0.78 + energy * 0.45) });
             }
-            blob.moveTo(0, height);
-            blob.lineTo(path[0][0], path[0][1]);
-            for (let i = 1; i < path.length; i++) blob.lineTo(path[i][0], path[i][1]);
-            blob.lineTo(width, height);
-            blob.closePath();
-            blob.fill({ color: 0x5b9dff, alpha: 0.4 + energy * 0.32 });
           });
         })
         .catch(() => undefined);
