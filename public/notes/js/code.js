@@ -92,14 +92,24 @@ function highlightMarkup(code) {
     if (close === -1) { out += escapeHtml(code.slice(open)); break; }
     const tag = code.slice(open, close + 1);
     if (tag.startsWith("<!--")) { out += span("comment", tag); index = close + 1; continue; }
-    out += tag.replace(/("[^"]*"|'[^']*')|([\w:-]+)(?==)|(<\/?)([\w:-]+)|(\/?>)/g,
-      (match, string, attr, bracket, name, tail) => {
-        if (string) return span("string", string);
-        if (attr) return span("attr", attr);
-        if (name) return escapeHtml(bracket) + span("tag", name);
-        if (tail) return escapeHtml(tail);
-        return escapeHtml(match);
-      });
+    /* Walk the matches and escape the gaps between them explicitly. A plain
+       `tag.replace(...)` emits every unmatched run VERBATIM, which is how a
+       `<!doctype html>` line used to disappear from a rendered block: its
+       leading `<!` matched no alternative, went out raw, and the browser
+       swallowed it as a bogus comment. Nothing may reach innerHTML unescaped. */
+    const pattern = /("[^"]*"|'[^']*')|([\w:-]+)(?==)|(<\/?)([\w:-]+)|(\/?>)/g;
+    let cursor = 0;
+    for (const match of tag.matchAll(pattern)) {
+      const [text, string, attr, bracket, name, tail] = match;
+      out += escapeHtml(tag.slice(cursor, match.index));
+      if (string) out += span("string", string);
+      else if (attr) out += span("attr", attr);
+      else if (name) out += escapeHtml(bracket) + span("tag", name);
+      else if (tail) out += escapeHtml(tail);
+      else out += escapeHtml(text);
+      cursor = match.index + text.length;
+    }
+    out += escapeHtml(tag.slice(cursor));
     index = close + 1;
   }
   return out;

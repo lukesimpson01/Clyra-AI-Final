@@ -52,7 +52,8 @@
     "test:opencluely": "node tools/opencluely-electron-tour.mjs",
     "test:browser-companion-visual": "node tools/browser-companion-visual-smoke.mjs",
     "test:study-brain": "tsx tools/study-brain-unit-tests.ts",
-    "test:notes": "tsx tools/notes-workspace-unit-tests.ts"
+    "test:notes": "tsx tools/notes-workspace-unit-tests.ts",
+    "notes:vendor": "node -e \"const f=require('fs');f.mkdirSync('public/notes/vendor',{recursive:true});f.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js','public/notes/vendor/xterm.js');f.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js','public/notes/vendor/addon-fit.js');f.copyFileSync('node_modules/@xterm/xterm/css/xterm.css','public/notes/vendor/xterm.css');console.log('notes vendor refreshed')\""
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",

@@ -66,6 +66,12 @@
 
 /* --------------------------------------------------------- flashcards */
 
+/* A deck row is a row plus its own actions button, so the two can't be
+   nested buttons — they sit side by side and share the hover highlight. */
+.deck-row { display: flex; align-items: center; gap: 2px; border-radius: var(--radius); }
+.deck-row .view-row { flex: 1; min-width: 0; }
+.deck-row .icon-button { flex: none; }
+
 .card-list { display: flex; flex-direction: column; }
 .card-row {
   display: flex; align-items: flex-start; gap: 14px; padding: 10px 8px;
@@ -122,8 +128,9 @@
 .study-hint { font-size: 14px; color: var(--text-tertiary); }
 .study-source { color: var(--text-tertiary); }
 
-.study-grade {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
+/* One quiet line under the card: flip, then move on. */
+.study-cue {
+  display: flex; align-items: center; justify-content: center;
   width: min(680px, 100%); min-height: 46px; margin-top: 18px;
 }
 .study-reveal-hint { font-size: 13.5px; color: var(--text-tertiary); }
@@ -131,25 +138,8 @@
   font: inherit; padding: 1px 5px; border-radius: 4px;
   background: var(--background-subtle); color: var(--text-secondary);
 }
-/* Grades read as keyboard hints, not as four competing buttons. */
-.study-grade.ready { animation: grade-in 220ms var(--ease-out) both; }
-@keyframes grade-in { from { opacity: 0; transform: translateY(4px); } }
-.grade-key {
-  display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px;
-  border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary);
-  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
-}
-.grade-key:hover { background: var(--background-hover); color: var(--text-primary); }
-.grade-key kbd {
-  font: inherit; font-size: 11px; min-width: 16px; text-align: center;
-  padding: 1px 4px; border-radius: 4px;
-  background: var(--background-subtle); color: var(--text-tertiary);
-}
-.grade-interval { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-.grade-key.r1:hover .grade-label { color: var(--c-red); }
-.grade-key.r2:hover .grade-label { color: var(--c-orange); }
-.grade-key.r3:hover .grade-label { color: var(--c-blue); }
-.grade-key.r4:hover .grade-label { color: var(--c-green); }
+.study-cue.ready { animation: cue-in 220ms var(--ease-out) both; }
+@keyframes cue-in { from { opacity: 0; transform: translateY(4px); } }
 
 .gen-setup { display: flex; flex-direction: column; gap: 14px; }
 .gen-field { display: flex; flex-direction: column; gap: 5px; }

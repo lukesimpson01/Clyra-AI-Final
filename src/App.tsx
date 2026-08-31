@@ -117,7 +117,7 @@ import { VoiceWaveform } from "./components/voice/VoiceWaveform";
 import { VoicePcmCapturer } from "./lib/voicePcmCapture";
 import { useVoiceCall } from "./hooks/useVoiceCall";
 import { type OrbColorTheme } from "./components/AiOrb";
-import { Bloub, type BloubHandle, type BloubState } from "./components/bloub/Bloub";
+import { Bloub, type BloubExpression, type BloubHandle, type BloubState } from "./components/bloub/Bloub";
 import { BloubBootAvatar } from "./components/bloub/BloubBootAvatar";
 
 // Maps the app's existing orb colour themes to a single Bloub accent hex.
@@ -3144,35 +3144,62 @@ export default function App() {
     };
   }, [activeWorkspaceTab, messages.length, bloubLanded]);
 
-  // Click reactions cycle through a small set of the engine's built-in
-  // preset animations, never repeating the one just played, and refuse to
-  // start a new one until the current performance has actually finished —
-  // per-preset durations come straight from the engine's own state table.
-  const HOME_BLOUB_CLICK_PRESETS: Array<{ state: BloubState; ms: number }> = [
-    { state: "burst", ms: 2600 },
-    { state: "swirl", ms: 1300 },
-    { state: "comet", ms: 2400 },
-    { state: "exclaim", ms: 2000 },
-    { state: "wide", ms: 1800 },
-    { state: "orbit", ms: 3400 },
+  // Clicking the welcome avatar plays one short facial reaction, then settles
+  // back to rest: either a wink (a catalogue animation — 0.3s entry morph,
+  // 1.6s hold) or one of three rest-face expressions, which the engine eases
+  // in and out over `SHAPE_MORPH` (0.45s) instead of snapping. A reaction
+  // never repeats the one just played, and a new one can't start until the
+  // current one has finished — same rule the old preset pool used.
+  type HomeBloubReaction =
+    | { kind: "state"; state: BloubState; ms: number }
+    | { kind: "expression"; expression: BloubExpression; ms: number };
+  const HOME_BLOUB_REACTIONS: HomeBloubReaction[] = [
+    { kind: "state", state: "wink", ms: 1900 },
+    { kind: "expression", expression: "happy", ms: 1400 },
+    { kind: "expression", expression: "surprised", ms: 1250 },
+    { kind: "expression", expression: "curious", ms: 1400 },
   ];
+  const homeBloubReactionKey = (reaction: HomeBloubReaction) =>
+    reaction.kind === "state" ? reaction.state : reaction.expression;
   const homeBloubBusyRef = useRef(false);
-  const homeBloubLastPresetRef = useRef<BloubState | null>(null);
-  const playHomeBloubPreset = useCallback((pool: Array<{ state: BloubState; ms: number }>) => {
+  const homeBloubLastReactionRef = useRef<string | null>(null);
+  const homeBloubReactionTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (homeBloubReactionTimerRef.current != null) {
+        window.clearTimeout(homeBloubReactionTimerRef.current);
+      }
+    },
+    [],
+  );
+  const handleHomeBloubClick = useCallback(() => {
     if (homeBloubBusyRef.current) return;
-    const choices = pool.filter((p) => p.state !== homeBloubLastPresetRef.current);
-    const pick = (choices.length ? choices : pool)[Math.floor(Math.random() * (choices.length ? choices.length : pool.length))];
-    homeBloubLastPresetRef.current = pick.state;
+    const bloub = homeBloubRef.current;
+    if (!bloub) return;
+    const choices = HOME_BLOUB_REACTIONS.filter(
+      (r) => homeBloubReactionKey(r) !== homeBloubLastReactionRef.current,
+    );
+    const pool = choices.length ? choices : HOME_BLOUB_REACTIONS;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    homeBloubLastReactionRef.current = homeBloubReactionKey(pick);
     homeBloubBusyRef.current = true;
-    homeBloubRef.current?.setState(pick.state);
-    window.setTimeout(() => {
+    if (pick.kind === "state") {
+      bloub.setState(pick.state);
+    } else {
+      // Expressions only ride on the resting face, so the state stays `idle`
+      // and just the eyes/head pose morph.
+      bloub.setExpression(pick.expression);
+    }
+    homeBloubReactionTimerRef.current = window.setTimeout(() => {
+      homeBloubReactionTimerRef.current = null;
       homeBloubBusyRef.current = false;
-      homeBloubRef.current?.setState("idle");
+      if (pick.kind === "state") {
+        homeBloubRef.current?.setState("idle");
+      } else {
+        homeBloubRef.current?.setExpression("neutral");
+      }
     }, pick.ms);
   }, []);
-  const handleHomeBloubClick = useCallback(() => {
-    playHomeBloubPreset(HOME_BLOUB_CLICK_PRESETS);
-  }, [playHomeBloubPreset]);
 
   // The composer gets the same cursor-follow treatment as the header
   // buttons (see `handleHomeGaze*` above), plus — while actively typing —
@@ -9279,11 +9306,21 @@ Please analyze the code you just wrote and fix this error.`;
                             </motion.div>
                             {messages.length === 0 && (
                               <div className="clyra-composer-sources" aria-label="Available Clyra sources">
-                                <GoogleProductIcon product="drive" />
-                                <GoogleProductIcon product="docs" />
-                                <YouTubeBrandIcon />
-                                <Globe strokeWidth={1.7} />
-                                <span>Web, YouTube, and your Google sources</span>
+                                {/* A stacked cluster of source marks, then a
+                                    divider, then the label — so the icons read
+                                    as one connected set rather than four loose
+                                    favicons drifting beside the sentence. */}
+                                <span className="clyra-composer-sources__icons" aria-hidden>
+                                  <span className="clyra-composer-sources__icon"><GoogleProductIcon product="drive" /></span>
+                                  <span className="clyra-composer-sources__icon"><GoogleProductIcon product="docs" /></span>
+                                  <span className="clyra-composer-sources__icon"><YouTubeBrandIcon /></span>
+                                  <span className="clyra-composer-sources__icon"><Globe strokeWidth={1.9} /></span>
+                                </span>
+                                <span className="clyra-composer-sources__divider" aria-hidden />
+                                <span className="clyra-composer-sources__label">
+                                  <strong>Connected</strong>
+                                  <span>Web, YouTube and your Google files</span>
+                                </span>
                               </div>
                             )}
                             </div>

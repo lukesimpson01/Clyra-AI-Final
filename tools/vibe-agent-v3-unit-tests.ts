@@ -49,7 +49,7 @@ await fs.rm(usageTestFile, { force: true });
 /* Recovery nudges are real user turns to the model, so they must be
    identifiable — otherwise they surface in the transcript as if the person
    had typed the agent's own scaffolding. */
-const { internalPrompt, isInternalPrompt, INTERNAL_PROMPT_MARK } =
+const { internalPrompt, isInternalPrompt, stripInternalMark, INTERNAL_PROMPT_MARK } =
   await import("../lib/vibe-agent-v3/internal-prompt.ts");
 const nudge = internalPrompt("Continue this exact task from the persisted project state.");
 assert.ok(isInternalPrompt(nudge));
@@ -58,8 +58,26 @@ assert.ok(nudge.includes("Continue this exact task"));
 assert.equal(isInternalPrompt("Build a Pomodoro focus timer"), false);
 assert.equal(isInternalPrompt(""), false);
 assert.equal(isInternalPrompt(undefined), false);
-/* The marker is invisible, so a leak would not be obvious in the UI. */
-assert.equal(INTERNAL_PROMPT_MARK.trim().replace(/[\u2060-\u206f\u200b-\u200f]/g, ""), "clyra-internal");
+
+/* The mark must be plain ASCII. The first version wrapped it in U+2063 so a
+   leak would at least be invisible; the provider round-trip normalised those
+   away, which both broke the prefix test and printed the bare word
+   "clyra-internal" at the top of a real reply. Nothing in the detection path
+   may depend on a character a transport is free to strip. */
+assert.equal(INTERNAL_PROMPT_MARK, "[clyra:internal]");
+assert.match(INTERNAL_PROMPT_MARK, /^[\x20-\x7e]+$/);
+
+/* Detection survives a transport that pads, trims or re-encodes the head. */
+assert.ok(isInternalPrompt(`  ${nudge}`));
+assert.ok(isInternalPrompt(`\n\t${nudge}`));
+assert.ok(isInternalPrompt(`\u200b\ufeff${nudge}`));
+/* Sessions written before the change still filter. */
+assert.ok(isInternalPrompt("clyra-internalContinue this exact task from the persisted state."));
+assert.ok(isInternalPrompt("\u2063clyra-internal\u2063Continue this exact task."));
+
+/* A render path that forgets to ask must still never print the mark. */
+assert.equal(stripInternalMark(nudge), "Continue this exact task from the persisted project state.");
+assert.equal(stripInternalMark("Build a Pomodoro focus timer"), "Build a Pomodoro focus timer");
 
 /* The seeded agent guide has to carry the shipped-quality rules, and the
    upgrade marker must match them so existing projects adopt the revision. */
@@ -71,4 +89,37 @@ assert.ok(runtimeSource.includes("!/Finished-product quality/.test(existing)"));
 assert.ok(runtimeSource.includes("internalPrompt("));
 assert.equal(/text: "Continue this exact task/.test(runtimeSource), false);
 
-console.log(JSON.stringify({ ok: true, assertions: 27 }, null, 2));
+/* The completed-work card once reported "Edited 1 file" for a run that wrote
+   six: the tool-payload fallback only ran when the diff endpoint returned
+   NOTHING, so a run whose endpoint saw one tracked file dropped every
+   untracked one it also wrote. */
+const { mergeFileDiffs } = await import("../src/components/clyra-code/store.ts");
+
+const action = (target: string, extra: Record<string, unknown> = {}) => ({
+  id: target, kind: "create", tool: "write", target, status: "success",
+  startedAt: 0, endedAt: 1, ...extra,
+}) as never;
+
+// The reported case: one file from the endpoint, five more written by tools.
+const endpoint = [{ file: "/x/projects/p/files/index.html", before: "", after: "a", additions: 10, deletions: 0 }];
+const wrote = ["index.html", "css/styles.css", "js/app.js", "js/heatmap.js", "js/storage.js", "js/streak.js"];
+const merged = mergeFileDiffs(endpoint, wrote.map((f) => action(f, { additions: 4, deletions: 1 })));
+assert.equal(merged.length, 6);
+// The endpoint's own entry is preserved untouched — its counts are the real ones.
+const html = merged.find((d) => d.file.endsWith("index.html"));
+assert.equal(html?.additions, 10);
+assert.equal(html?.deletions, 0);
+assert.equal(html?.after, "a");
+
+// An empty endpoint still synthesises from the payloads (the old behaviour).
+assert.equal(mergeFileDiffs([], wrote.map((f) => action(f))).length, 6);
+// No file actions at all: the endpoint's report passes through untouched.
+assert.equal(mergeFileDiffs(endpoint, []), endpoint);
+// Failed and placeholder actions never become rows.
+assert.equal(mergeFileDiffs([], [action("a.js", { status: "error" }), action("…")]).length, 0);
+// Repeated writes to one file collapse into a single row with summed counts.
+const twice = mergeFileDiffs([], [action("a.js", { additions: 3 }), action("a.js", { additions: 2 })]);
+assert.equal(twice.length, 1);
+assert.equal(twice[0].additions, 5);
+
+console.log(JSON.stringify({ ok: true, assertions: 45 }, null, 2));

@@ -1,7 +1,7 @@
 /* Flashcards: deck list and the study screen.
 
-   The study screen is deliberately plain — a question, an answer and four
-   honest interval labels from the scheduler. No streaks, no confetti. */
+   The study screen is deliberately plain — a question, an answer, and one
+   way forward. No difficulty grading, no streaks, no confetti. */
 import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, append } from "../dom.js";
 import { api } from "../api.js";
 import { state, withError, loadWorkspace } from "../state.js";
@@ -9,21 +9,10 @@ import { notePicker, withProgress } from "./generation.js";
 import { section, row, empty } from "./home.js";
 import { formatRelative } from "../app.js";
 
-const RATINGS = [
-  { rating: 1, label: "Again", key: "1" },
-  { rating: 2, label: "Hard", key: "2" },
-  { rating: 3, label: "Good", key: "3" },
-  { rating: 4, label: "Easy", key: "4" },
-];
-
-const formatInterval = (days) => {
-  if (!Number.isFinite(days)) return "";
-  if (days < 1 / 24) return `${Math.max(1, Math.round(days * 24 * 60))} min`;
-  if (days < 1) return `${Math.round(days * 24)} h`;
-  if (days < 30) return `${Math.round(days)} d`;
-  if (days < 365) return `${Math.round(days / 30)} mo`;
-  return `${(days / 365).toFixed(1)} y`;
-};
+/* The scheduler still wants a grade per review, but the study screen no
+   longer asks for one: every card answered counts as a plain "Good", which
+   is the neutral middle of the 1–4 scale the API expects. */
+const DEFAULT_RATING = 3;
 
 export function renderFlashcards(host, app) {
   const view = { destroy() { document.removeEventListener("keydown", onKey); } };
@@ -66,16 +55,36 @@ export function renderFlashcards(host, app) {
         ].filter(Boolean))]));
   };
 
-  const deckRow = (deck) => {
-    const node = row({
-      icon: "cards",
-      title: deck.name,
-      badge: deck.due_count ? `${deck.due_count} due` : null,
-      meta: `${deck.card_count} card${deck.card_count === 1 ? "" : "s"}${deck.last_reviewed ? ` · ${formatRelative(deck.last_reviewed)}` : ""}`,
-      onClick: () => openDeck(deck),
-    });
-    return node;
-  };
+  /* Rename and delete are offered on the list itself as well as inside a
+     deck, so tidying up doesn't mean opening every deck first. */
+  const deckActions = (deck, cardCount, { afterRename, afterDelete }) => [
+    { label: "Rename deck", icon: "text", onSelect: () => renameDeck(deck, afterRename) },
+    { label: "Delete deck", icon: "trash", danger: true, onSelect: async () => {
+      const ok = await confirmDialog({
+        title: "Delete deck",
+        message: `"${deck.name}" and its ${cardCount} card${cardCount === 1 ? "" : "s"} are deleted permanently.`,
+        confirmLabel: "Delete",
+      });
+      if (!ok) return;
+      await withError(() => api.del(`/api/notes/decks/${deck.id}`), "Could not delete the deck");
+      afterDelete();
+    } },
+  ];
+
+  const deckRow = (deck) =>
+    el("div", { class: "deck-row" },
+      row({
+        icon: "cards",
+        title: deck.name,
+        badge: deck.due_count ? `${deck.due_count} due` : null,
+        meta: `${deck.card_count} card${deck.card_count === 1 ? "" : "s"}${deck.last_reviewed ? ` · ${formatRelative(deck.last_reviewed)}` : ""}`,
+        onClick: () => openDeck(deck),
+      }),
+      iconButton("dots", "Deck actions", (event) => menu(
+        event.currentTarget,
+        deckActions(deck, deck.card_count, { afterRename: draw, afterDelete: draw }),
+        { align: "end" },
+      )));
 
   /* Creating a deck asks what it should be built from: an empty deck is
      rarely what anyone wants, and the notes are already right there. */
@@ -162,15 +171,11 @@ export function renderFlashcards(host, app) {
           state.aiConfigured
             ? el("button", { class: "button", type: "button", onclick: () => app.generate("flashcards", { deckId: deck.id }) }, "Generate")
             : null,
-          iconButton("dots", "Deck actions", (event) => menu(event.currentTarget, [
-            { label: "Rename deck", icon: "text", onSelect: () => renameDeck(deck) },
-            { label: "Delete deck", icon: "trash", danger: true, onSelect: async () => {
-              const ok = await confirmDialog({ title: "Delete deck", message: `"${deck.name}" and its ${cards.length} cards are deleted permanently.`, confirmLabel: "Delete" });
-              if (!ok) return;
-              await withError(() => api.del(`/api/notes/decks/${deck.id}`), "Could not delete the deck");
-              draw();
-            } },
-          ], { align: "end" })))),
+          iconButton("dots", "Deck actions", (event) => menu(
+            event.currentTarget,
+            deckActions(deck, cards.length, { afterRename: () => openDeck(deck), afterDelete: draw }),
+            { align: "end" },
+          )))),
     );
 
     append(column, el("div", { class: "card-list" }, cards.length
@@ -197,7 +202,7 @@ export function renderFlashcards(host, app) {
         ].filter(Boolean))]));
   };
 
-  const renameDeck = (deck) => {
+  const renameDeck = (deck, after = () => openDeck(deck)) => {
     const field = el("input", { class: "input", value: deck.name });
     let entry;
     entry = modal({
@@ -211,7 +216,7 @@ export function renderFlashcards(host, app) {
           await withError(() => api.patch(`/api/notes/decks/${deck.id}`, { name }), "Could not rename");
           entry.close("saved");
           deck.name = name;
-          openDeck(deck);
+          after();
         } }, "Save"),
       ],
     });
@@ -284,24 +289,29 @@ export function renderFlashcards(host, app) {
       );
     };
 
+    /* `rate` is async and the same key/click now drives it, so a second
+       press while the review is in flight must not skip a card. */
+    let saving = false;
     const rate = async (rating) => {
       const card = queue[index];
-      if (!card) return;
+      if (!card || saving) return;
+      saving = true;
       done += 1;
       await withError(() => api.post(`/api/notes/cards/${card.id}/review`, { rating, responseMs: Date.now() - shownAt }), "Could not save the review");
       index += 1;
       revealed = false;
       shownAt = Date.now();
+      saving = false;
       if (index >= queue.length) { finish(); return; }
       paint();
     };
 
-    let reveal = () => {};
+    /* One key, one click: the card flips, then the same gesture moves on. */
+    let advance = () => {};
     onKey = (event) => {
       if (event.target?.closest?.("input, textarea")) return;
-      if (event.key === " " || event.key === "Enter") { event.preventDefault(); reveal(); return; }
+      if (event.key === " " || event.key === "Enter") { event.preventDefault(); advance(); return; }
       if (event.key === "Escape") { event.preventDefault(); document.removeEventListener("keydown", onKey); draw(); return; }
-      if (revealed && ["1", "2", "3", "4"].includes(event.key)) { event.preventDefault(); rate(Number(event.key)); }
     };
     document.addEventListener("keydown", onKey);
 
@@ -330,33 +340,31 @@ export function renderFlashcards(host, app) {
               }, icon("link", 13), "Show source")
             : null),
       );
-      const grades = el("div", { class: `study-grade${revealed ? " ready" : ""}` });
-      const paintGrades = () => {
-        clear(grades);
-        grades.classList.toggle("ready", revealed);
-        append(grades, revealed
-          ? RATINGS.map(({ rating, label, key }) =>
-              el("button", { class: `grade-key r${rating}`, type: "button", onclick: () => rate(rating) },
-                el("kbd", { text: key }),
-                el("span", { class: "grade-label", text: label }),
-                el("span", { class: "grade-interval", text: formatInterval(card.intervals?.[rating]) })))
-          : el("span", { class: "study-reveal-hint" }, "Click the card or press ", el("kbd", { text: "space" }), " to flip"));
+      const cue = el("div", { class: "study-cue" });
+      const last = index + 1 >= total;
+      const paintCue = () => {
+        clear(cue);
+        cue.classList.toggle("ready", revealed);
+        append(cue, el("span", { class: "study-reveal-hint" },
+          "Click the card or press ",
+          el("kbd", { text: "space" }),
+          revealed ? (last ? " to finish" : " for the next card") : " to flip"));
       };
 
       /* Revealing toggles a class on the existing box rather than rebuilding
          it — a freshly built card is already flipped and has nothing to
          rotate from. */
-      reveal = () => {
-        if (revealed) return;
+      advance = () => {
+        if (revealed) { rate(DEFAULT_RATING); return; }
         revealed = true;
         flipper.classList.add("flipped");
-        board.setAttribute("aria-label", "Rate this card");
-        paintGrades();
+        board.setAttribute("aria-label", last ? "Finish the session" : "Next card");
+        paintCue();
       };
       const board = el("div", {
         class: "study-card-board", role: "button", tabindex: "0",
-        "aria-label": revealed ? "Rate this card" : "Show the answer",
-        onclick: () => reveal(),
+        "aria-label": revealed ? (last ? "Finish the session" : "Next card") : "Show the answer",
+        onclick: () => advance(),
       }, flipper);
 
       append(stage,
@@ -365,11 +373,9 @@ export function renderFlashcards(host, app) {
           el("span", { class: "study-progress", text: `${index + 1} / ${total}` }),
           el("span", { class: "study-deck", text: deck?.name || "All decks" })),
         board,
-        /* Scheduling still needs a judgement, so the four grades survive as a
-           quiet keyboard row rather than four buttons under every card. */
-        grades,
+        cue,
       );
-      paintGrades();
+      paintCue();
       if (!revealed) queueMicrotask(() => board.focus());
     };
 

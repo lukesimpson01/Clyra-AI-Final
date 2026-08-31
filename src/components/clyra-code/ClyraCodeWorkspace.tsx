@@ -883,6 +883,7 @@ export default function ClyraCodeWorkspace() {
                   onQuestionBack={handleQuestionBack}
                   effort={effort}
                   onEffortChange={setEffort}
+                  plan={plan}
                 />
               </motion.div>
             )}

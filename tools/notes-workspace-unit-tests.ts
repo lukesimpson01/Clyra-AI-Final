@@ -265,6 +265,37 @@ async function main() {
   store.markInbox(null, "read_all");
   check("mark all read", store.listInbox({ unread: true }).length === 0);
 
+  /* The markup highlighter emitted any UNMATCHED run of a tag verbatim, so a
+     `<!doctype html>` line reached innerHTML raw and the browser swallowed it
+     as a bogus comment — the line simply vanished from the rendered block.
+     Nothing may reach innerHTML unescaped. */
+  console.log("\n[code highlighting]");
+  const { highlight } = await import(new URL("../public/notes/js/code.js", import.meta.url).href);
+
+  const doctype = highlight("<!doctype html>", "html");
+  check("doctype survives highlighting", doctype.includes("&lt;!doctype html&gt;"), doctype);
+
+  const onlySpanMarkup = (out: string) =>
+    (out.match(/<[^>]*>/g) ?? []).every((tag) => /^<\/?span( class="tok-[a-z]+")?>$/.test(tag));
+
+  for (const [label, source] of [
+    ["doctype", "<!doctype html><p>after</p>"],
+    ["stray bracket", "< img src=x onerror=alert(1)>"],
+    ["unclosed tag", "<div class="],
+    ["bare comparison", "a < b && c > d"],
+    ["processing instruction", "<?php echo 1; ?>"],
+    ["cdata", "<![CDATA[ <b>x</b> ]]>"],
+  ] as const) {
+    const out = highlight(source, "html");
+    check(`${label}: only span markup reaches innerHTML`, onlySpanMarkup(out), out);
+  }
+
+  // It must still COLOUR ordinary markup, not merely escape everything.
+  const coloured = highlight('<a href="/x">hi</a>', "html");
+  check("tags still highlighted", coloured.includes('class="tok-tag"'), coloured);
+  check("attributes still highlighted", coloured.includes('class="tok-attr"'), coloured);
+  check("strings still highlighted", coloured.includes('class="tok-string"'), coloured);
+
   console.log(`\n${failures ? `${failures} FAILURES` : "all checks passed"}`);
   process.exit(failures ? 1 : 0);
 }

@@ -987,25 +987,16 @@ export function useClyraCode() {
     const pendingPermissions = actionList.filter(
       (a) => a.kind === "permission" && a.status === "active",
     );
-    // When the harness diff endpoint has nothing (e.g. older projects without
-    // git baselines), synthesize file summaries from the real tool payloads:
-    // write content and edit patches — never invented numbers.
-    let effectiveDiffs: FileDiff[] = state.diffs;
-    if (!effectiveDiffs.length && fileActions.length) {
-      const byFile = new Map<string, FileDiff>();
-      for (const action of fileActions) {
-        if (action.status !== "success" || !action.target || action.target === "…") continue;
-        const existing = byFile.get(action.target);
-        byFile.set(action.target, {
-          file: action.target,
-          before: "",
-          after: action.contentAfter ?? "",
-          additions: (existing?.additions ?? 0) + (action.additions ?? 0),
-          deletions: (existing?.deletions ?? 0) + (action.deletions ?? 0),
-        });
-      }
-      effectiveDiffs = [...byFile.values()];
-    }
+    // The harness diff endpoint only reports files it can compare against a
+    // git baseline, so a run that also wrote untracked or ignored files comes
+    // back short — the summary card said "Edited 1 file" for a run that wrote
+    // six.  Union the endpoint's diffs with the files the tool payloads prove
+    // were written: an endpoint entry wins wherever both exist (it carries the
+    // real before/after and the authoritative counts) and a tool-derived entry
+    // fills every gap.  Paths are keyed through stripProjectPrefix because the
+    // endpoint returns absolute paths while a tool target is project-relative.
+    // Nothing here invents numbers: an action with no counts contributes none.
+    let effectiveDiffs: FileDiff[] = mergeFileDiffs(state.diffs, fileActions);
     // Keep direct Visual Edit writes visible beside harness-generated diffs.
     // When the same file has a session diff, preserve its original before
     // snapshot and layer the latest real visual edit over it.
@@ -1064,6 +1055,50 @@ function finalizeActions(
   return next;
 }
 
+
+/**
+ * Unions the harness diff endpoint's report with the files the tool payloads
+ * prove were written.
+ *
+ * The endpoint only reports files it can compare against a git baseline, so a
+ * run that also wrote untracked or ignored files comes back short — the
+ * completed-work card once said "Edited 1 file" for a run that wrote six. An
+ * endpoint entry wins wherever both describe the same file (it carries the
+ * real before/after and the authoritative counts); a tool-derived entry fills
+ * every gap. Nothing here invents numbers: an action with no counts
+ * contributes none.
+ *
+ * Paths are keyed through stripProjectPrefix because the endpoint returns
+ * absolute paths while a tool target is project-relative.
+ *
+ * @param endpointDiffs - What the session diff endpoint reported.
+ * @param fileActions - Every edit/create/delete action in the session.
+ * @returns One entry per file that was actually changed.
+ */
+export function mergeFileDiffs(
+  endpointDiffs: FileDiff[],
+  fileActions: AgentAction[],
+): FileDiff[] {
+  if (!fileActions.length) return endpointDiffs;
+  const authoritative = new Set(endpointDiffs.map((diff) => stripProjectPrefix(diff.file)));
+  const byFile = new Map<string, FileDiff>();
+  for (const diff of endpointDiffs) byFile.set(stripProjectPrefix(diff.file), diff);
+  for (const action of fileActions) {
+    if (action.status !== "success" || !action.target || action.target === "…") continue;
+    const key = stripProjectPrefix(action.target);
+    if (authoritative.has(key)) continue;
+    const existing = byFile.get(key);
+    byFile.set(key, {
+      file: action.target,
+      before: "",
+      after: action.contentAfter ?? existing?.after ?? "",
+      additions: (existing?.additions ?? 0) + (action.additions ?? 0),
+      deletions: (existing?.deletions ?? 0) + (action.deletions ?? 0),
+    });
+  }
+  return [...byFile.values()];
+}
+
 function rebuildMessage(
   message: OpenCodeMessage,
   log: LogEntry[],
@@ -1073,10 +1108,13 @@ function rebuildMessage(
   const ts = message.info?.time?.created ?? Date.now();
   for (const part of message.parts ?? []) {
     if (part.type === "text" && part.text) {
+      /* Recovery nudges Clyra injects on the user's behalf are real turns to
+         the model, but they are not something the person said — and not
+         something the person should read. Checked for BOTH roles: the nudge
+         arrives as a user turn, but a model that echoes its instruction back
+         would otherwise print it as prose. */
+      if (isInternalPrompt(part.text)) continue;
       if (role === "user") {
-        /* Recovery nudges Clyra injects on the user's behalf are real user
-           turns to the model, but they are not something the person said. */
-        if (isInternalPrompt(part.text)) continue;
         log.push({ type: "user", id: `user-${message.info.id}-${part.id}`, text: part.text, ts });
       } else {
         log.push({

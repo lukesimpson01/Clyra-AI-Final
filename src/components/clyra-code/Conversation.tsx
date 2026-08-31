@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDown, FilePlus2, Undo2 } from "lucide-react";
+import { ArrowDown, FilePlus2, Sparkle, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
-import { ShiningText } from "../ShiningText";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
+import { DisclosureRow } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
 import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
 
 /**
- * A single quiet reasoning marker. It only shows the durable elapsed label
- * after a real reasoning event completes; no disclosure UI or grouped state.
+ * One reasoning phase, in the same row language as every tool call: the think
+ * text is the row's summary while it streams (clipped, not ellipsized, so the
+ * moving tail reads), the running sweep marks it live, and the full text is
+ * the expanded body.  Extracted from deepseek-harness `ui-chat/ReasoningRow`.
  */
 function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning" }> }) {
   const completed = Boolean(entry.endedAt);
+  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (completed) return;
@@ -23,22 +26,33 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
     return () => window.clearInterval(interval);
   }, [completed]);
   const seconds = Math.max(1, Math.round(((entry.endedAt ?? now) - entry.ts) / 1000));
-  const showDuration = completed || seconds >= 3;
+  const text = entry.text?.trim() ?? "";
+  // While it streams the tail is the interesting part; once settled the head
+  // reads as a summary of what the phase was about.
+  const summary = completed ? text.replace(/\s+/g, " ") : text.replace(/\s+/g, " ").slice(-220);
 
   return (
-    <motion.div layout className="flex min-h-[22px] items-center py-[2px]">
-      {completed ? (
-        <motion.span initial={{ opacity: 0, y: -1 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16, ease: AGENT_EASE }} className="text-[13px] leading-5 text-[#8A8D92]">
-          Thought · {seconds}s
-        </motion.span>
-      ) : (
-        <>
-          <ShiningText text="Thinking" play className="truncate text-[13px] font-medium leading-5 tracking-normal" />
-          <span className="ml-1 inline-block min-w-[2.5ch] text-[11px] tabular-nums text-[#8A8D92]">
-            {showDuration ? `${seconds}s` : ""}
-          </span>
-        </>
-      )}
+    <motion.div layout className="dsh-row-root" data-state={completed ? "ok" : "running"}>
+      <DisclosureRow
+        icon={<Sparkle />}
+        title={completed ? "Thought" : "Thinking"}
+        open={expanded && text !== ""}
+        expandable={text !== ""}
+        expandOnRowClick
+        keepContentWhenOpen
+        onToggle={() => setExpanded((v) => !v)}
+        collapsedContent={
+          <>
+            <span className="dsh-sep" aria-hidden />
+            <span className="dsh-summary" data-follow-end={!completed || undefined}>
+              {summary}
+            </span>
+            {completed || seconds >= 3 ? <span className="dsh-suffix dsh-suffix-stat">{seconds}s</span> : null}
+          </>
+        }
+      >
+        <div className="dsh-think-body">{text}</div>
+      </DisclosureRow>
     </motion.div>
   );
 }
@@ -101,17 +115,18 @@ function PendingThinking({
         ? {}
         : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
     >
-      <ShiningText
-        text={starting ? "Starting agent" : "Thinking"}
-        play
-        className="text-[12px] font-medium tracking-[-0.01em]"
-      />
+      {/* The same sweep every running row carries, so the pending gap reads as
+          part of the stream rather than a differently-animated placeholder. */}
+      <span className="dsh-row-root" data-state="running">
+        <span className="dsh-row">
+          <span className="dsh-leading"><Sparkle /></span>
+          <span className="dsh-title" style={{ fontWeight: 500 }}>
+            {starting ? "Starting agent" : "Thinking"}
+          </span>
+        </span>
+      </span>
       {onStop ? (
-        <button
-          type="button"
-          onClick={onStop}
-          className="ml-0.5 h-5 rounded-[6px] px-1.5 text-[10.5px] text-[#5F6368] transition-colors hover:bg-black/[0.035]"
-        >
+        <button type="button" onClick={onStop} className="dsh-pill ml-1">
           Stop
         </button>
       ) : null}

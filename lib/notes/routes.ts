@@ -1,6 +1,7 @@
 /* HTTP surface for the notes workspace. Registered by server.ts so the
    routes live beside the store they call rather than in the main file. */
 import path from "node:path";
+import os from "node:os";
 import { promises as fsp } from "node:fs";
 import type express from "express";
 import * as store from "./store";
@@ -104,6 +105,71 @@ function sanitiseProvenance<T extends { sourcePageId?: string; sourceBlockId?: s
   }));
 }
 
+
+/* ---------------------------------------------------------------- preview
+
+   A code block's Preview needs a real address, not a `srcdoc:` frame: the
+   panel carries the same URL bar as the Vibe Coder preview, and that bar has
+   to name something the Open-externally button can actually open. Snippets are
+   held in memory only — they are a transient view of a block the database
+   already owns, so nothing here is persisted or survives a restart. */
+
+type PreviewEntry = { html: string; created: number };
+const previews = new Map<string, PreviewEntry>();
+const PREVIEW_TTL_MS = 60 * 60 * 1000;
+const PREVIEW_MAX = 60;
+
+function prunePreviews() {
+  const cutoff = Date.now() - PREVIEW_TTL_MS;
+  for (const [id, entry] of previews) if (entry.created < cutoff) previews.delete(id);
+  // Oldest-first eviction keeps a long editing session from growing forever.
+  while (previews.size > PREVIEW_MAX) {
+    const oldest = [...previews.entries()].sort((a, b) => a[1].created - b[1].created)[0];
+    if (!oldest) break;
+    previews.delete(oldest[0]);
+  }
+}
+
+/** Wraps a bare fragment so a CSS-only or SVG-only block still renders, and
+ *  guarantees a doctype: without one the page is in quirks mode, where a
+ *  `height: 100vh` body does not re-measure when the panel goes full screen. */
+function previewDocument(language: string, code: string): string {
+  const key = language.toLowerCase();
+  if (key === "css") {
+    return `<!doctype html>\n<meta charset="utf-8"><style>${code}</style>` +
+      `<body><main><h1>Heading</h1><p>Paragraph text for the styles above.</p><button>Button</button></main>`;
+  }
+  if (key === "svg") {
+    return `<!doctype html>\n<meta charset="utf-8">` +
+      `<style>html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}</style><body>${code}`;
+  }
+  return /^\s*<!doctype/i.test(code) ? code : `<!doctype html>\n${code}`;
+}
+
+
+/* ------------------------------------------------------------- run files
+
+   A code block's Run writes the snippet to a scratch file and then runs it.
+   The write happens HERE rather than in the terminal because the drawer talks
+   to a real PTY, and a PTY echoes everything sent to it: piping the snippet in
+   from the browser meant the user watched a heredoc — or a screen-filling
+   base64 blob — scroll past before their own output appeared. With the file
+   already on disk, the terminal receives one short, readable line.
+
+   The shell the drawer opens is already a full-permission shell on this
+   machine, so writing one file the user just asked to run adds no reach; the
+   only constraints are that it lands in the OS temp directory under a name
+   this process generates. */
+
+const RUN_EXTENSIONS: Record<string, string> = {
+  python: "py", python3: "py", py: "py",
+  javascript: "js", js: "js", mjs: "mjs",
+  typescript: "ts", ts: "ts",
+  bash: "sh", sh: "sh", shell: "sh", zsh: "sh",
+  ruby: "rb", rb: "rb",
+  go: "go", php: "php", r: "R", sql: "sql",
+};
+
 export function registerNotesRoutes(app: express.Application, express_: typeof express, recordUsage: ai.UsageRecorder) {
   ai.setUsageRecorder(recordUsage);
 
@@ -118,6 +184,67 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.get("/api/notes/inbox", wrap((req) => store.listInbox(req.query)));
   app.post("/api/notes/inbox/:id/:action", wrap((req) => store.markInbox(req.params.id, req.params.action as "read" | "archive")));
   app.post("/api/notes/inbox/read-all", wrap(() => store.markInbox(null, "read_all")));
+
+  /* ---- code block preview ---- */
+  app.post("/api/notes/run-file", wrap(async (req) => {
+    const language = String(req.body?.language ?? "").toLowerCase();
+    const code = String(req.body?.code ?? "");
+    const ext = RUN_EXTENSIONS[language];
+    if (!ext) return { error: `${language || "This language"} cannot be run` };
+    if (!code.trim()) return { error: "Nothing to run" };
+    const name = `clyra-notes-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    const file = path.join(os.tmpdir(), name);
+    await fsp.writeFile(file, code, "utf8");
+    return { path: file };
+  }));
+
+  app.post("/api/notes/preview", wrap((req, res) => {
+    const language = String(req.body?.language ?? "html");
+    const code = String(req.body?.code ?? "");
+    if (!code.trim()) return { error: "Nothing to preview" };
+    prunePreviews();
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
+    const html = previewDocument(language, code);
+    previews.set(id, { html, created: Date.now() });
+    res.status(201);
+    /* `html` comes back with the URL because the panel renders through the
+       frame's `srcdoc`, not by navigating to the URL — see the comment on the
+       GET route. The URL is still real: it backs the address bar and the
+       open-externally button. */
+    return { id, url: `/notes/preview/${id}`, html };
+  }));
+
+  app.get("/notes/preview/:id", (req, res) => {
+    const entry = previews.get(req.params.id);
+    if (!entry) {
+      res.status(404).type("html").send(
+        "<!doctype html><meta charset=\"utf-8\"><style>body{font:14px system-ui;display:grid;place-items:center;height:100vh;margin:0;color:#96989D}</style><body>This preview has expired. Press Preview again.");
+      return;
+    }
+    /* Isolation comes from the `sandbox` ATTRIBUTE on the preview frame:
+       without `allow-same-origin` the snippet gets an opaque origin, so it
+       cannot touch this app's storage, cookies or API even though it is served
+       from the same host. That matters here in a way it does not for the Vibe
+       Coder preview, which frames a separate dev-server origin and can afford
+       `allow-same-origin`; a note's snippet framed same-origin WITH that flag
+       could call /api/notes and delete the user's pages.
+
+       The panel therefore renders through the frame's `srcdoc` rather than by
+       navigating to this URL: an opaque-origin document loaded by navigation
+       is refused by the app's global `X-Frame-Options: SAMEORIGIN` (an opaque
+       origin is not "same origin"), which left the panel blank. `srcdoc`
+       inherits the sandbox without that conflict.
+
+       This route still serves the real page, for the address bar's
+       open-externally button — a top-level navigation the user asked for, to
+       their own code, deliberately not sandboxed. */
+    res.removeHeader("X-Frame-Options");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(entry.html);
+  });
 
   /* ---- pages ---- */
   app.get("/api/notes/pages", wrap(() => store.listPages()));

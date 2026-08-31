@@ -1,0 +1,607 @@
+/* Vibe Coder agent-activity chrome.
+ *
+ * The visual language here is extracted from deepseek-ai/deepseek-harness
+ * (MIT) — its ToolRow / DisclosureRow / TodoPanel / InputBar / ModelSelect
+ * sheets — and rebound onto Clyra's own --text-*, --border-* and --surface-*
+ * tokens so it themes with the rest of the workspace instead of shipping a
+ * second palette.  The harness ships these as CSS modules inside a cordis DI
+ * graph; this is a plain sheet with `dsh-` prefixed classes because Clyra's
+ * Vibe Coder is a single React tree with no module pipeline.
+ *
+ * What is deliberately reproduced: the 24px single-line row rhythm, the
+ * running sweep-glare, the dot separator, the hover chevron swap, the IN/OUT
+ * card with sticky gutter labels, the three todo status glyphs, and the
+ * composer's chip/menu chrome.  What is deliberately dropped: the model
+ * catalogue (Clyra offers effort levels only).
+ */
+
+.clyra-code-root {
+  /* The harness's row axis. Clyra has no font-size preference, so the delta
+     is pinned to 0 and the tiers resolve to the design's default sizes. */
+  --dsh-row-height: 24px;
+  --dsh-row-font: 13px;
+  --dsh-sweep-width: 300px;
+}
+
+/* ============================================================
+   Disclosure row — the shared chrome for every agent action.
+   [16 leading] gap6 [title 13/24] gap8 [2x2 dot] gap8 [summary fill]
+   ============================================================ */
+
+.dsh-row-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-row {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-height: var(--dsh-row-height);
+  min-width: 0;
+}
+
+.dsh-row[data-expandable] {
+  cursor: pointer;
+}
+
+/* Running sweep: a fixed-width glare band at 60% of the surface colour glides
+   across the row, washing the glyphs toward the background as it passes. The
+   10% end hold gives each pass a beat before the next one starts. This
+   replaces the previous per-glyph shimmer, which animated every active row at
+   once and read as noise during a busy phase. */
+.dsh-row-root[data-state="running"] .dsh-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--dsh-sweep-width);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--main-background) 62%, transparent) 55%,
+    transparent 100%
+  );
+  animation: dsh-row-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dsh-row-sweep {
+  0% { left: calc(-1 * var(--dsh-sweep-width)); }
+  90%, 100% { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-row-root[data-state="running"] .dsh-row::after { animation: none; opacity: 0; }
+}
+
+.dsh-leading {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.dsh-leading svg:not([data-state]) {
+  width: 14px;
+  height: 14px;
+}
+
+button.dsh-leading { cursor: pointer; }
+
+/* Hover swaps the tool glyph for the disclosure chevron in place, so an
+   expandable row advertises itself without adding a second control. */
+.dsh-icon-idle {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
+}
+
+.dsh-chevron-hover {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.dsh-row:hover .dsh-icon-idle { opacity: 0; }
+.dsh-row:hover .dsh-chevron-hover { opacity: 1; }
+
+.dsh-title {
+  flex: none;
+  font-size: var(--dsh-row-font);
+  line-height: var(--dsh-row-height);
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.dsh-row-root[data-state="running"] .dsh-title { font-weight: 500; }
+.dsh-row-root[data-state="error"] .dsh-title { color: var(--deletion-red); font-weight: 500; }
+
+/* 2×2 dot separating the title from its summary. */
+.dsh-sep {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  margin: 0 8px;
+  background: var(--text-tertiary);
+}
+
+.dsh-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dsh-row-font);
+  line-height: var(--dsh-row-height);
+  color: var(--text-tertiary);
+}
+
+.dsh-summary-mono {
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.dsh-summary-error { color: var(--deletion-red); }
+
+/* Trailing fragment kept outside the summary's ellipsis, for values whose
+   whole point is surviving a narrow row (diff totals, durations). */
+.dsh-suffix {
+  flex: none;
+  margin-left: 8px;
+  white-space: nowrap;
+  font-size: var(--dsh-row-font);
+  line-height: var(--dsh-row-height);
+  color: var(--text-tertiary);
+}
+
+.dsh-suffix-stat {
+  margin-left: 10px;
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(0.5px);
+}
+
+/* File path with a persistent, quiet link affordance: dotted and dimmed, so a
+   long path never reads as one heavy rule under the row. Shrink-to-fit keeps
+   the row's empty remainder as the expand target. */
+.dsh-file-link {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: var(--dsh-row-height);
+  color: var(--text-secondary);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-tertiary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dsh-file-link:hover {
+  color: var(--text-primary);
+  text-decoration-color: currentColor;
+}
+
+/* ============================================================
+   State dot — solid core inside a same-colour 10% halo.
+   ============================================================ */
+
+.dsh-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.dsh-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+}
+
+.dsh-dot::after {
+  content: "";
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dsh-dot[data-state="done"] { color: var(--addition-green); }
+.dsh-dot[data-state="warning"] { color: var(--warning-amber); }
+.dsh-dot[data-state="error"] { color: var(--deletion-red); }
+
+/* ============================================================
+   Expanded body: the IN/OUT card.
+   ============================================================ */
+
+.dsh-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsh-io-card {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0 6px 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  line-height: 18px;
+  overflow: hidden;
+}
+
+/* Each section scrolls alone, so a long input never buries a short output. */
+.dsh-io-section {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  align-items: baseline;
+  padding: 10px 14px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.dsh-io-section::-webkit-scrollbar { width: 9px; }
+
+.dsh-io-section::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background-color: var(--border-medium);
+  border-radius: 6px;
+}
+
+.dsh-io-section::-webkit-scrollbar-track { margin: 6px 0; }
+
+/* Sticky so the gutter label stays readable while its payload scrolls. */
+.dsh-io-label {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  user-select: none;
+}
+
+.dsh-io-divider {
+  flex: none;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.dsh-io-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
+.dsh-io-text[data-error="true"] { color: var(--deletion-red); }
+
+/* Hover-revealed row actions: they reserve their line, so revealing one never
+   shifts the layout underneath. */
+.dsh-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px 4px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.dsh-row-root:hover .dsh-row-actions,
+.dsh-row-actions:focus-within { opacity: 1; }
+
+.dsh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--main-background);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.dsh-pill:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.dsh-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Todo checklist — the composer's docked plan card.
+   ============================================================ */
+
+.dsh-todo {
+  box-sizing: border-box;
+  flex: none;
+  overflow: hidden;
+  margin: 0 auto 6px;
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--composer-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.dsh-todo-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.dsh-todo-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dsh-todo-lead {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.dsh-todo-title {
+  flex: none;
+  font-size: 13px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.dsh-todo-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-todo-chevron {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-tertiary);
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dsh-todo-chevron[data-open="true"] { transform: rotate(180deg); }
+
+.dsh-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.dsh-todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.dsh-todo-item[data-status="completed"] .dsh-todo-content { color: var(--text-tertiary); }
+.dsh-todo-item[data-status="in_progress"] .dsh-todo-content { color: var(--text-primary); font-weight: 500; }
+
+.dsh-todo-glyph {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.dsh-glyph-completed { color: var(--addition-green); }
+.dsh-glyph-pending { color: var(--text-disabled); }
+
+.dsh-glyph-progress {
+  color: var(--accent-blue);
+  animation: dsh-todo-spin 1s linear infinite;
+}
+
+@keyframes dsh-todo-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-glyph-progress { animation: none; }
+}
+
+.dsh-todo-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Composer chips and menus.
+   ============================================================ */
+
+.dsh-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 6px 0 9px;
+  border: none;
+  border-radius: 24px;
+  outline: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.dsh-chip:hover:not(:disabled) { background: var(--surface-hover); }
+.dsh-chip:focus-visible { box-shadow: 0 0 0 2px var(--border-medium); }
+.dsh-chip:disabled { color: var(--text-disabled); cursor: default; }
+
+.dsh-chip-value { flex: 0 0 auto; color: var(--text-tertiary); }
+
+.dsh-chip-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform 120ms ease;
+}
+
+.dsh-chip-chevron[data-open="true"] { transform: rotate(180deg); }
+
+.dsh-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 232px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--composer-surface);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.13);
+  color: var(--text-primary);
+}
+
+.dsh-menu-option {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  min-width: 100%;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 10px;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dsh-menu-option:hover,
+.dsh-menu-option:focus-visible { background: var(--surface-hover); }
+
+.dsh-menu-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dsh-menu-name {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-menu-detail {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-tertiary);
+}
+
+/* Selection marker is the trailing check, not a fill. */
+.dsh-menu-check {
+  display: grid;
+  place-items: center;
+  flex: 0 0 18px;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Reasoning row — the same chrome as a tool row, with the think
+   text as its summary and an indented body when expanded.
+   ============================================================ */
+
+.dsh-think-body {
+  /* Indent under the title: leading (16) + its 6px gap. */
+  padding: 4px 0 6px 22px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* A streaming summary follows its own tail, so clipping beats an ellipsis
+   that would sit permanently at the end of moving text. */
+.dsh-summary[data-follow-end="true"] { text-overflow: clip; }

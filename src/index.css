@@ -8621,3 +8621,98 @@ body,
 }
 .clyra-code-block--soft .clyra-code-block__run:hover { background: rgba(15,23,42,.04); }
 .clyra-code-block__run svg { width: 10px; height: 10px; }
+
+/* ============================================================
+   Chat welcome: composer width and the connected-sources strip.
+   ============================================================ */
+
+/* The welcome composer was sharing the welcome column's own 640px width, so
+   the input read as a wide slab under a centred heading.  The column keeps
+   its width for the greeting and the recents list; the input capsule itself
+   is narrower and more deliberate. */
+.clyra-chat-page .clyra-composer-welcome {
+  width: min(552px, calc(100% - 64px)) !important;
+}
+
+@media (max-width: 760px) {
+  .clyra-chat-page .clyra-composer-welcome {
+    width: min(552px, calc(100% - 28px)) !important;
+  }
+}
+
+/* The strip was four bare 14px favicons and a grey sentence at even 9px
+   gaps, so nothing grouped and nothing led.  Now: one overlapping cluster of
+   tiles reading as a set of connected accounts, a hairline, then a label with
+   an actual hierarchy. */
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources {
+  gap: 0;
+  padding: 9px 16px 10px;
+}
+
+.clyra-composer-sources__icons {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.clyra-composer-sources__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: 0 1px 1.5px rgba(15, 23, 42, 0.04);
+}
+
+/* Overlap the tiles into a stack; each one sits above the tile to its right
+   so the leftmost reads as the front of the set. */
+.clyra-composer-sources__icon + .clyra-composer-sources__icon { margin-left: -6px; }
+.clyra-composer-sources__icon:nth-child(1) { z-index: 4; }
+.clyra-composer-sources__icon:nth-child(2) { z-index: 3; }
+.clyra-composer-sources__icon:nth-child(3) { z-index: 2; }
+.clyra-composer-sources__icon:nth-child(4) { z-index: 1; }
+
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources__icon img,
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources__icon:last-child svg {
+  color: var(--accent-600);
+}
+
+.clyra-composer-sources__divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  margin: 0 11px;
+  background: rgba(15, 23, 42, 0.09);
+}
+
+.clyra-composer-sources__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources__label strong {
+  flex: 0 0 auto;
+  color: var(--clyra-text-secondary, #64748b);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.clyra-chat-page .clyra-composer-welcome .clyra-composer-sources__label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--clyra-text-tertiary, #94a3b8);
+  font-size: 11.5px;
+  font-weight: 450;
+}

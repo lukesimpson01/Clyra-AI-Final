@@ -1,30 +1,78 @@
+/**
+ * One agent action in the transcript.
+ *
+ * The row language is extracted from deepseek-ai/deepseek-harness (MIT) —
+ * `ui-tool/tool/components/ToolRow`: a 24px single line reading
+ * `[glyph] Title · summary   suffix`, expanding into an IN/OUT card, with a
+ * running row marked by a sweep of glare rather than animated glyphs, and a
+ * failure marked by a state dot whose summary is replaced by the error's
+ * first line.  Clyra's own action model, permission rows and streaming file
+ * edits are kept; the harness's cordis/i18n plumbing is not.
+ */
+
 import { memo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronRight } from "lucide-react";
+import {
+  Braces,
+  CheckCircle2,
+  Download,
+  FileText,
+  FolderTree,
+  Globe,
+  Hammer,
+  ListChecks,
+  Pencil,
+  Play,
+  Search,
+  ShieldQuestion,
+  Terminal,
+  Trash2,
+} from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { AgentAction } from "./store";
-import { ShimmerText } from "./Shimmer";
 import { DiffCounters } from "./AnimatedCounter";
 import { AgentFileEdit, hasRenderableActionDiff } from "./AgentFileEdit";
-import { AGENT_EASE, LABEL_MORPH, ROW_ENTER } from "./motion";
+import { DisclosureRow, IoCard, StateDot } from "./harness";
+import { AGENT_EASE, ROW_ENTER } from "./motion";
 
-const VERBS: Record<string, { active: string; done: string; failed: string; min: string }> = {
-  read: { active: "Reading", done: "Read", failed: "Failed reading", min: "0" },
-  edit: { active: "Editing", done: "Edited", failed: "Failed editing", min: "0" },
-  create: { active: "Editing", done: "Edited", failed: "Failed editing", min: "0" },
-  delete: { active: "Deleting", done: "Deleted", failed: "Failed deleting", min: "0" },
-  search: { active: "Searching", done: "Searched", failed: "Failed searching", min: "0" },
-  research: { active: "Researching", done: "Researched", failed: "Research failed", min: "0" },
-  list: { active: "Exploring", done: "Explored", failed: "Failed exploring", min: "0" },
-  command: { active: "Running", done: "Ran", failed: "Failed", min: "0" },
-  build: { active: "Building", done: "Built", failed: "Build failed", min: "0" },
-  check: { active: "Checking", done: "Checked", failed: "Failed checking", min: "0" },
-  test: { active: "Testing", done: "Tested", failed: "Failed testing", min: "0" },
-  preview: { active: "Previewing", done: "Previewed", failed: "Preview failed", min: "0" },
-  fetch: { active: "Fetching", done: "Fetched", failed: "Failed fetching", min: "0" },
-  todo: { active: "Planning", done: "Planned", failed: "Failed planning", min: "0" },
-  permission: { active: "Awaiting approval", done: "Approved", failed: "Denied", min: "0" },
-  generic: { active: "Working on", done: "Completed", failed: "Failed", min: "0" },
+/** Title verb per phase. The harness row keeps the title short and constant
+ *  in width, letting the summary carry everything variable. */
+const VERBS: Record<string, { active: string; done: string; failed: string }> = {
+  read: { active: "Reading", done: "Read", failed: "Read failed" },
+  edit: { active: "Editing", done: "Edited", failed: "Edit failed" },
+  create: { active: "Creating", done: "Created", failed: "Create failed" },
+  delete: { active: "Deleting", done: "Deleted", failed: "Delete failed" },
+  search: { active: "Searching", done: "Searched", failed: "Search failed" },
+  research: { active: "Researching", done: "Researched", failed: "Research failed" },
+  list: { active: "Exploring", done: "Explored", failed: "Explore failed" },
+  command: { active: "Running", done: "Ran", failed: "Command failed" },
+  build: { active: "Building", done: "Built", failed: "Build failed" },
+  check: { active: "Checking", done: "Checked", failed: "Check failed" },
+  test: { active: "Testing", done: "Tested", failed: "Tests failed" },
+  preview: { active: "Previewing", done: "Previewed", failed: "Preview failed" },
+  fetch: { active: "Fetching", done: "Fetched", failed: "Fetch failed" },
+  todo: { active: "Planning", done: "Planned", failed: "Planning failed" },
+  permission: { active: "Awaiting approval", done: "Approved", failed: "Denied" },
+  generic: { active: "Working", done: "Done", failed: "Failed" },
+};
+
+const ICONS: Record<string, typeof FileText> = {
+  read: FileText,
+  edit: Pencil,
+  create: Pencil,
+  delete: Trash2,
+  search: Search,
+  research: Globe,
+  list: FolderTree,
+  command: Terminal,
+  build: Hammer,
+  check: CheckCircle2,
+  test: Play,
+  preview: Globe,
+  fetch: Download,
+  todo: ListChecks,
+  permission: ShieldQuestion,
+  generic: Braces,
 };
 
 function formatDuration(ms: number) {
@@ -34,24 +82,12 @@ function formatDuration(ms: number) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-/** Label that morphs in place (Running → Ran) instead of remounting the row. */
-function MorphLabel({
-  label,
-  settled,
-  className,
-}: {
-  label: string;
-  settled?: boolean;
-  className?: string;
-}) {
-  if (settled) return <span className={cn("inline-block", className)}>{label}</span>;
-  return (
-    <AnimatePresence mode="popLayout" initial={false}>
-      <motion.span key={label} {...LABEL_MORPH} className={cn("inline-block", className)}>
-        {label}
-      </motion.span>
-    </AnimatePresence>
-  );
+/** The failure's first line — the harness replaces, never supplements, the
+ *  normal summary with it, so a broken row reads as one statement. */
+function firstLine(text: string | undefined | null): string | null {
+  if (!text) return null;
+  const line = text.trim().split("\n", 1)[0]?.trim();
+  return line ? line : null;
 }
 
 export const AgentActionRow = memo(function AgentActionRow({
@@ -75,12 +111,13 @@ export const AgentActionRow = memo(function AgentActionRow({
   onEditClosed?: (id: string) => void;
   /** Render an expanded completed phase without replaying its animation. */
   settled?: boolean;
-  /** Only the current live action gets the moving activity treatment. */
+  /** Only the current live action gets the running treatment. */
   primaryActive?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const reduced = useReducedMotion();
   const verbs = VERBS[action.kind] ?? VERBS.generic;
+  const Icon = ICONS[action.kind] ?? ICONS.generic;
   const isActive = action.status === "active" || action.status === "queued";
   const isPrimaryActive = isActive && primaryActive;
   const isError = action.status === "error";
@@ -94,276 +131,212 @@ export const AgentActionRow = memo(function AgentActionRow({
     return Date.now() - ended > 4000;
   });
   const enterProps = reduced || historical ? {} : ROW_ENTER;
-  const rowTransition =
-    reduced || historical
-      ? { layout: { duration: 0.28, ease: AGENT_EASE } }
-      : { ...ROW_ENTER.transition, layout: { duration: 0.28, ease: AGENT_EASE } };
 
-  const verb = revisiting && action.kind === "read"
-    ? isActive
-      ? "Revisiting"
-      : isError
-        ? verbs.failed
-        : isCancelled
-          ? "Cancelled"
-          : "Revisited"
-    : isActive ? verbs.active : isError ? verbs.failed : isCancelled ? "Cancelled" : verbs.done;
-  // Never render an empty mini-diff shell. A normal action row is more honest
-  // when OpenCode performed a file operation but did not provide changed text.
-  const isStreamingEdit = /^(edit|create)$/.test(action.kind) && hasRenderableActionDiff(action);
-  const isFileAction = /^(edit|create|delete)$/.test(action.kind);
-  const isTerminalAction = /^(command|build|check|test|preview)$/.test(action.kind);
-  const isMonoTarget = /^(command|build|check|test|preview|edit|create|delete|read|list)$/.test(action.kind);
-  const hasDetails = Boolean(action.output?.trim() || action.error?.trim());
-  const duration = action.endedAt && action.startedAt ? action.endedAt - action.startedAt : null;
-  // A tool's completed transport state is not proof that its build or test
-  // passed: shell pipelines can intentionally return zero after a failing
-  // compiler. Only use a pass label when the real tool output proves it.
-  const terminalEvidence = `${action.output ?? ""}\n${action.error ?? ""}`;
-  const terminalPassConfirmed = /\b(?:exit(?:\s+code)?\s*[:=]?\s*0|tests?\s+passed|build\s+(?:passed|succeeded)|checks?\s+passed|typecheck\s+passed)\b/i.test(terminalEvidence);
-  const terminalStatus = isTerminalAction
-    ? isActive
-      ? "Running"
-      : isError
-        ? "Failed"
-        : isCancelled
-          ? "Cancelled"
-          : terminalPassConfirmed
-            ? action.kind === "build"
-              ? "Build passed"
-              : action.kind === "test"
-                ? "Tests passed"
-                : action.kind === "check"
-                  ? "Checks passed"
-                  : "Completed"
-            : action.kind === "preview"
-              ? "Preview ready"
-              : "Completed"
-    : null;
-
+  // Permission rows are a decision, not a report: they keep their own inline
+  // control set rather than the disclosure chrome.
   if (action.kind === "permission") {
     return (
-      <motion.div {...enterProps} className="flex h-[26px] items-center gap-1.5 text-[12px]">
-        <span className="font-medium text-[color:var(--warning-amber)]">
-          {action.status === "active" ? "Approval needed" : "Approval"}
-        </span>
-        <ShimmerText text={action.target} active={action.status === "active"} className="min-w-0" />
-        {action.status === "active" && action.permissionId && onReplyPermission ? (
-          <span className="ml-auto flex items-center gap-1">
-            {(["allow", "always", "deny"] as const).map((response) => (
-              <button
-                key={response}
-                type="button"
-                onClick={() => onReplyPermission(action.permissionId!, response)}
-                className={cn(
-                  "rounded-[6px] border border-black/[0.06] px-1.5 py-px text-[10.5px] transition-colors hover:bg-black/[0.035]",
-                  response === "deny" ? "text-[#B94B4B]" : "text-[#202124]",
-                )}
-              >
-                {response === "allow" ? "Allow" : response === "always" ? "Always" : "Deny"}
-              </button>
-            ))}
+      <motion.div {...enterProps} className="dsh-row-root" data-state={action.status === "active" ? "running" : undefined}>
+        <div className="dsh-row">
+          <span className="dsh-leading" style={{ color: "var(--warning-amber)" }}>
+            <ShieldQuestion />
           </span>
-        ) : action.permissionResolved ? (
-          <span className="ml-auto text-[10.5px] text-[#96989D]">{action.permissionResolved}</span>
-        ) : null}
+          <span className="dsh-title" style={{ color: "var(--warning-amber)", fontWeight: 500 }}>
+            {action.status === "active" ? "Approval needed" : "Approval"}
+          </span>
+          <span className="dsh-sep" aria-hidden />
+          <span className="dsh-summary dsh-summary-mono">{action.target}</span>
+          {action.status === "active" && action.permissionId && onReplyPermission ? (
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+              {(["allow", "always", "deny"] as const).map((response) => (
+                <button
+                  key={response}
+                  type="button"
+                  onClick={() => onReplyPermission(action.permissionId!, response)}
+                  className="dsh-pill"
+                  style={response === "deny" ? { color: "var(--deletion-red)" } : undefined}
+                >
+                  {response === "allow" ? "Allow" : response === "always" ? "Always" : "Deny"}
+                </button>
+              ))}
+            </span>
+          ) : action.permissionResolved ? (
+            <span className="dsh-suffix">{action.permissionResolved}</span>
+          ) : null}
+        </div>
       </motion.div>
     );
   }
 
-  if (isStreamingEdit) {
+  // A real streaming diff keeps its own richer presentation.
+  if (/^(edit|create)$/.test(action.kind) && hasRenderableActionDiff(action)) {
     return <AgentFileEdit action={action} onOpenFile={onOpenFile} onClosed={onEditClosed} settled={settled} />;
   }
 
-  const completionLabel =
-    !isActive && !isError && !isCancelled
-      && !isTerminalAction
-      ? action.kind === "build"
-        ? "Build passed"
-        : action.kind === "test"
-          ? "Tests passed"
-          : action.kind === "check"
-            ? "Checks passed"
-            : action.kind === "preview"
-              ? "Preview checked"
-              : null
-      : null;
+  const isFileAction = /^(edit|create|delete)$/.test(action.kind);
+  const isTerminalAction = /^(command|build|check|test|preview)$/.test(action.kind);
+  const isMonoTarget = isFileAction || isTerminalAction || /^(read|list)$/.test(action.kind);
+
+  const title =
+    revisiting && action.kind === "read"
+      ? isActive
+        ? "Revisiting"
+        : isError
+          ? verbs.failed
+          : isCancelled
+            ? "Cancelled"
+            : "Revisited"
+      : isActive
+        ? verbs.active
+        : isError
+          ? verbs.failed
+          : isCancelled
+            ? "Cancelled"
+            : verbs.done;
+
+  const rowState = isPrimaryActive ? "running" : isError ? "error" : isCancelled ? "stopped" : "ok";
+  const failureLine = isError ? firstLine(action.error) ?? firstLine(action.output) : null;
+  const summaryText = failureLine ?? action.target;
+
+  // A tool's completed transport state is not proof that its build or test
+  // passed: shell pipelines can intentionally return zero after a failing
+  // compiler.  Only claim a pass when the real output proves it.
+  const terminalEvidence = `${action.output ?? ""}\n${action.error ?? ""}`;
+  const passConfirmed =
+    /\b(?:exit(?:\s+code)?\s*[:=]?\s*0|tests?\s+passed|build\s+(?:passed|succeeded)|checks?\s+passed|typecheck\s+passed)\b/i.test(
+      terminalEvidence,
+    );
+
+  const duration = action.endedAt && action.startedAt ? action.endedAt - action.startedAt : null;
+  const hasDetails = Boolean(action.output?.trim() || action.error?.trim());
+  const canOpenFile = isFileAction && Boolean(onOpenFile) && !isError;
+
+  // The trailing fragment, kept outside the summary's ellipsis so it survives
+  // a narrow row: a confirmed pass, else a duration worth reading.
+  const suffix =
+    failureLine !== null
+      ? null
+      : isTerminalAction && !isActive && !isCancelled && passConfirmed
+        ? "passed"
+        : duration !== null && duration > 900
+          ? formatDuration(duration)
+          : null;
+
+  const leading = isError ? <StateDot state="error" /> : isCancelled ? <StateDot state="warning" /> : <Icon />;
 
   return (
     <motion.div
       {...enterProps}
       layout
-      transition={rowTransition}
-      className={cn("group", isPrimaryActive && !isStreamingEdit && "cc-active-row", !isActive && !isError && "opacity-[0.8] transition-opacity duration-200")}
+      transition={
+        reduced || historical
+          ? { layout: { duration: 0.28, ease: AGENT_EASE } }
+          : { ...ROW_ENTER.transition, layout: { duration: 0.28, ease: AGENT_EASE } }
+      }
+      className="dsh-row-root"
+      data-state={rowState}
     >
-      <div
-        className={cn(
-          "grid min-h-[30px] items-center gap-x-2 py-[3px] text-[13px] leading-[18px] tracking-[-0.01em]",
-          "grid-cols-[max-content_minmax(0,1fr)_auto]",
-          hasDetails && "cursor-pointer",
-        )}
-        onClick={
-          isFileAction && onOpenFile && !isError
-            ? () => onOpenFile(action.target)
-            : hasDetails
-              ? () => setExpanded((v) => !v)
-              : undefined
-        }
-        role={isFileAction && onOpenFile && !isError ? "button" : hasDetails ? "button" : undefined}
-        title={isFileAction && onOpenFile && !isError ? "Open file changes" : undefined}
-      >
-        <span
-          className={cn(
-            "flex shrink-0 items-center",
-            isTerminalAction
-              ? "cc-mono text-[#85878C]"
-              : isError
-              ? "font-medium text-[#B94B4B]"
-              : isCancelled
-                ? "text-[#96989D]"
-                : isActive
-                  ? "font-medium text-[#55575C]"
-                  : "font-normal text-[#73757A]",
-          )}
-          // Compact command labels should sit next to their command, not in a
-          // wide faux-table column. File/terminal details still truncate.
-            style={{ minWidth: isTerminalAction ? undefined : verbs.min }}
-        >
-          {isTerminalAction ? <span aria-hidden>›</span> : <MorphLabel label={verb} settled={historical} />}
+      {/* The state dot and the sweep are colour-only, so assistive technology
+          needs this text to know a row is running, failed or interrupted. */}
+      {rowState !== "ok" && (
+        <span className="dsh-visually-hidden">
+          {rowState === "running" ? "Running" : rowState === "error" ? "Failed" : "Stopped"}
         </span>
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ShimmerText
-            text={action.target}
-            active={isPrimaryActive}
-            tone={isPrimaryActive && isFileAction ? "blue" : "neutral"}
-            mono={isMonoTarget}
-            className={cn(
-              "text-[12.5px] tracking-normal",
-              isTerminalAction && "font-normal text-[#404247]",
-              !isActive && !isTerminalAction && "text-[#6D7076]",
-            )}
-          />
-          {isFileAction ? (
-            <DiffCounters
-              additions={
-                action.kind === "delete"
-                  ? undefined
-                  : action.additions !== undefined
-                    ? action.additions
-                    : action.kind === "create"
-                      ? undefined
-                      : 0
-              }
-              deletions={
-                action.kind === "create"
-                  ? undefined
-                  : action.deletions !== undefined
-                    ? action.deletions
-                    : action.kind === "delete"
-                      ? undefined
-                      : 0
-              }
-              showZero={action.kind !== "create" && action.kind !== "delete"}
-              animate={!historical}
-              className="text-[11.5px] font-medium"
-            />
-          ) : null}
-        </span>
-        <span className="flex min-w-[4.5ch] items-center justify-end gap-1.5 text-[11px] text-[#8A8D92]">
-          {terminalStatus ? (
-            <span className={cn("whitespace-nowrap", isError && "text-[#B94B4B]", !isActive && !isError && !isCancelled && "text-[#65796A]")}>
-              {isError ? "× " : !isActive && !isCancelled ? "✓ " : ""}
-              {isActive ? <ShimmerText text={terminalStatus} active={isPrimaryActive} className="text-[11px]" /> : terminalStatus}
-            </span>
-          ) : null}
-          {duration !== null && duration > 900 ? (
-            <span className="cc-counter whitespace-nowrap tabular-nums">
-              {formatDuration(duration)}
-            </span>
-          ) : null}
-          {hasDetails ? (
-            <ChevronRight
-              className={cn(
-                "h-3 w-3 text-[#B0B0B0] transition-colors duration-150 group-hover:text-[#5F6368]",
-                expanded && "rotate-90",
+      )}
+      <DisclosureRow
+        icon={leading}
+        title={title}
+        open={expanded && hasDetails}
+        expandable={hasDetails}
+        expandOnRowClick
+        keepContentWhenOpen
+        onToggle={() => setExpanded((v) => !v)}
+        collapsedContent={
+          summaryText ? (
+            <>
+              <span className="dsh-sep" aria-hidden />
+              {canOpenFile ? (
+                <button
+                  type="button"
+                  className="dsh-file-link"
+                  title="Open file changes"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenFile?.(action.target);
+                  }}
+                  onKeyDown={(event) => {
+                    // Enter/Space on the focused link must not bubble to the
+                    // row, which would preventDefault and expand instead.
+                    if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+                  }}
+                >
+                  {summaryText}
+                </button>
+              ) : (
+                <span
+                  className={cn(
+                    "dsh-summary",
+                    isMonoTarget && failureLine === null && "dsh-summary-mono",
+                    failureLine !== null && "dsh-summary-error",
+                  )}
+                >
+                  {summaryText}
+                </span>
               )}
-            />
+              {isFileAction && failureLine === null ? (
+                <DiffCounters
+                  additions={action.kind === "delete" ? undefined : action.additions ?? (action.kind === "create" ? undefined : 0)}
+                  deletions={action.kind === "create" ? undefined : action.deletions ?? (action.kind === "delete" ? undefined : 0)}
+                  showZero={action.kind !== "create" && action.kind !== "delete"}
+                  animate={!historical}
+                  className="dsh-suffix dsh-suffix-stat"
+                />
+              ) : null}
+              {suffix !== null ? <span className="dsh-suffix dsh-suffix-stat">{suffix}</span> : null}
+            </>
+          ) : null
+        }
+      >
+        <div className="dsh-body">
+          <IoCard
+            input={isTerminalAction ? action.target : null}
+            output={(action.error ? `${action.error}\n\n` : "") + (action.output ?? "")}
+            error={isError}
+          />
+          {isError || canOpenFile || (onOpenTerminal && isTerminalAction) ? (
+            <div className="dsh-row-actions">
+              {isError && onRetry ? (
+                <button type="button" className="dsh-pill" onClick={() => onRetry(action)}>
+                  Ask agent to fix
+                </button>
+              ) : null}
+              {onOpenTerminal && isTerminalAction ? (
+                <button type="button" className="dsh-pill" onClick={onOpenTerminal}>
+                  Open terminal
+                </button>
+              ) : null}
+              {canOpenFile ? (
+                <button type="button" className="dsh-pill" onClick={() => onOpenFile?.(action.target)}>
+                  View diff
+                </button>
+              ) : null}
+            </div>
           ) : null}
-        </span>
-      </div>
+        </div>
+      </DisclosureRow>
 
+      {/* A failure with no expandable body still has to state itself. */}
       <AnimatePresence initial={false}>
-        {completionLabel ? (
+        {isError && !hasDetails && action.error ? (
           <motion.div
-            key="result"
-            initial={historical ? { opacity: 1, y: 0 } : { opacity: 0, y: 3 }}
+            key="error"
+            initial={historical ? { opacity: 1 } : { opacity: 0, y: 3 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, ease: AGENT_EASE }}
-            className="ml-[1px] pb-[2px] text-[13px] leading-5 text-[#65796A]"
+            className="dsh-summary dsh-summary-error"
+            style={{ paddingLeft: 22, whiteSpace: "normal" }}
           >
-            ✓ {completionLabel}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-      {isError && action.error ? (
-        <div
-          className={cn(
-            "ml-[1px] max-w-[600px] pb-[2px] text-[13px] leading-5 text-[#8A8D92]",
-            historical && "opacity-100",
-          )}
-        >
-          <span className="mr-1 font-medium text-[#B94B4B]">×</span>
-          {action.error}
-        </div>
-      ) : null}
-
-      <AnimatePresence initial={false}>
-        {expanded && hasDetails ? (
-          <motion.div
-            key="details"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{
-              height: { duration: 0.24, ease: AGENT_EASE },
-              opacity: { duration: 0.16 },
-            }}
-            className="mb-1 overflow-hidden"
-          >
-            <pre className="cc-mono max-h-48 overflow-auto cc-scroll whitespace-pre-wrap rounded-[7px] bg-[#F7F7F6] px-2.5 py-2 text-[10.75px] leading-[1.55] text-[#5F6368]">
-              {(action.error ? `${action.error}\n\n` : "") + (action.output ?? "")}
-            </pre>
-            {isError ? (
-              <div className="mt-1 flex items-center gap-1.5">
-                {onRetry ? (
-                  <button
-                    type="button"
-                    onClick={() => onRetry(action)}
-                    className="rounded-[6px] border border-black/[0.06] px-2 py-[2px] text-[10.5px] text-[#202124] hover:bg-black/[0.035]"
-                  >
-                    Ask agent to fix
-                  </button>
-                ) : null}
-                {onOpenTerminal && isTerminalAction ? (
-                  <button
-                    type="button"
-                    onClick={onOpenTerminal}
-                    className="rounded-[6px] px-2 py-[2px] text-[10.5px] text-[#5F6368] hover:bg-black/[0.035]"
-                  >
-                    Open terminal
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {isFileAction && onOpenFile && !isError ? (
-              <button
-                type="button"
-                onClick={() => onOpenFile(action.target)}
-                className="mt-1 rounded-[6px] px-2 py-[2px] text-[10.5px] text-[#5F6368] hover:bg-black/[0.035]"
-              >
-                View diff
-              </button>
-            ) : null}
+            {action.error}
           </motion.div>
         ) : null}
       </AnimatePresence>

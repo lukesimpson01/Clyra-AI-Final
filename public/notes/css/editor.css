@@ -174,8 +174,18 @@
   color: var(--text-tertiary);
 }
 .code-lang:hover { background: var(--background-hover); }
-.code-copy { position: absolute; top: 5px; right: 6px; opacity: 0; }
-.code-block:hover .code-copy { opacity: 1; }
+/* Copy and Run share one trailing cluster in the code block's header strip,
+   copy first. They fade in on hover — but stay put while hidden, so revealing
+   them never shifts the block. Keyboard focus reveals them too, otherwise the
+   only way to reach Run would be a mouse. */
+.code-actions {
+  position: absolute; top: 5px; right: 6px;
+  display: inline-flex; align-items: center; gap: 2px;
+  opacity: 0; transition: opacity 140ms ease;
+}
+.code-block:hover .code-actions,
+.code-actions:focus-within { opacity: 1; }
+.code-run:hover { color: var(--accent); }
 
 .equation-block {
   padding: 12px; margin: 4px 0; border-radius: var(--radius);
@@ -563,4 +573,195 @@
   flex: none; font-family: var(--font-ui); font-size: 11px;
   color: var(--text-tertiary); max-width: 46%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Code runner: the terminal drawer and the GUI preview.
+
+   Both wear the Vibe Coder's chrome — the same light terminal palette and
+   tab strip as TerminalPanel.tsx, and the same preview toolbar as the
+   RightPanel browser tab — so a code block behaves like one product rather
+   than a second, differently-styled tool.
+   ============================================================ */
+
+/* Anchored to the bottom of the window and slid in on a transform, so the
+   note behind it never reflows while it moves. */
+.code-terminal {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  height: min(320px, 46vh);
+  background: #fff;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+  box-shadow: 0 -10px 30px rgba(15, 23, 42, 0.09);
+  transform: translateY(100%);
+  transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.code-terminal.open { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .code-terminal { transition: none; }
+}
+
+/* The 32px tab strip from the Vibe Coder terminal. */
+.code-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.055);
+}
+
+.code-terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 120px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.055);
+  color: #292B30;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
+
+.code-terminal-tab svg { flex: none; }
+.code-terminal-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.code-terminal-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 6px;
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+.code-terminal-status[data-tone="busy"] { color: #3977F6; }
+.code-terminal-status[data-tone="ok"] { color: #268A50; }
+.code-terminal-status[data-tone="error"] { color: #C24949; }
+
+.code-terminal-mount {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #fff;
+  padding: 4px 8px 6px 10px;
+}
+
+.code-terminal-mount .xterm { height: 100%; }
+
+/* The preview rises into the middle of the window rather than appearing at
+   full size: it scales and lifts from just below its resting place. */
+.code-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  background: rgba(15, 23, 42, 0);
+  opacity: 0;
+  transition: opacity 240ms ease, background-color 240ms ease;
+}
+
+.code-preview-backdrop.open {
+  opacity: 1;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.code-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  height: min(640px, 100%);
+  overflow: hidden;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+  transform: translateY(14px) scale(0.985);
+  transition: transform 280ms cubic-bezier(0.32, 0.72, 0, 1),
+              width 280ms cubic-bezier(0.32, 0.72, 0, 1),
+              height 280ms cubic-bezier(0.32, 0.72, 0, 1),
+              border-radius 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.code-preview-backdrop.open .code-preview { transform: translateY(0) scale(1); }
+
+/* Full screen grows the same element instead of swapping in a second one, so
+   the frame is never reloaded and the running page keeps its state. */
+.code-preview-backdrop.full { padding: 0; }
+.code-preview-backdrop.full .code-preview {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-preview-backdrop, .code-preview { transition: none; }
+}
+
+/* The 40px toolbar from the Vibe Coder preview: nav, centred address pill,
+   open-externally, full screen. */
+.code-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: 40px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.code-preview-nav {
+  flex: none;
+  border-radius: 7px;
+  color: #93959A;
+}
+
+.code-preview-nav:hover { background: var(--background-hover); color: var(--text-primary); }
+
+.code-preview-url {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  margin: 0 8px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.code-preview-address {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.code-preview-address[data-error] { color: #C24949; font-family: var(--font-ui); }
+
+.code-preview-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }

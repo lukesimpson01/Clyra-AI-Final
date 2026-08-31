@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, ChevronDown, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
+import { Check16, ChevronDown14, TodoChecklist, type TodoRow } from "./harness";
 
 export type ComposerContext = {
   id: string;
@@ -25,6 +26,15 @@ const CODING_COMMANDS: Array<{ id: ComposerCommand; name: string; description: s
   { id: "test", name: "Test", description: "Test the current implementation", icon: CheckCircle2 },
   { id: "debug", name: "Debug", description: "Find and fix a problem", icon: Bug },
   { id: "explain", name: "Explain", description: "Analyse selected project code", icon: FileSearch },
+];
+
+/** The only agent axis Clyra exposes. Deliberately no model catalogue: the
+ *  runtime picks the model, and offering a choice that changes nothing the
+ *  user can reason about would be a control that lies. */
+const EFFORT_LEVELS: Array<{ id: "low" | "medium" | "high"; name: string; detail: string }> = [
+  { id: "low", name: "Low", detail: "Fast passes for small, well-scoped edits" },
+  { id: "medium", name: "Medium", detail: "Balanced planning and execution" },
+  { id: "high", name: "High", detail: "Plans deeply and verifies its own work" },
 ];
 
 const readableSize = (bytes: number) => bytes < 1024 * 1024
@@ -50,6 +60,7 @@ export function Composer({
   onQuestionBack,
   effort = "medium",
   onEffortChange,
+  plan,
 }: {
   running: boolean;
   model: string | null;
@@ -67,6 +78,8 @@ export function Composer({
   onQuestionBack?: () => void;
   effort?: "low" | "medium" | "high";
   onEffortChange?: (effort: "low" | "medium" | "high") => void;
+  /** The agent's current plan, docked directly above the input card. */
+  plan?: readonly TodoRow[] | null;
 }) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -175,8 +188,20 @@ export function Composer({
   };
 
   const attached = attachments.length > 0 || contexts.length > 0;
+  const activeEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[1];
   return (
     <div className={cn("relative px-3", welcome ? "pt-0" : "pb-2 pt-1")}>
+      {plan?.length ? (
+        <motion.div
+          layout
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className={cn("mx-auto", welcome ? "max-w-[620px]" : "max-w-[680px]")}
+        >
+          <TodoChecklist todos={plan} />
+        </motion.div>
+      ) : null}
       <motion.div
         layout
         transition={{ layout: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
@@ -206,10 +231,49 @@ export function Composer({
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"><IconComponent className="h-3.5 w-3.5 text-[var(--text-tertiary)]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
-          <span className="text-[10.5px] font-medium text-[var(--text-tertiary)]">Agent</span>
           <div className="relative">
-            <button type="button" aria-label={`Effort: ${effort}`} aria-expanded={effortMenu} onClick={() => setEffortMenu((open) => !open)} className="flex h-6 items-center gap-0.5 rounded-[6px] px-1 text-[10.5px] font-medium capitalize text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]">{effort}<ChevronDown className="h-3 w-3" strokeWidth={1.7} /></button>
-            <AnimatePresence>{effortMenu ? <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 3 }} transition={{ duration: 0.14 }} className="absolute bottom-8 left-0 z-30 w-[112px] rounded-[9px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">{(["low", "medium", "high"] as const).map((value) => <button key={value} type="button" onClick={() => { onEffortChange?.(value); setEffortMenu(false); }} className={cn("flex h-7 w-full items-center rounded-[6px] px-2 text-left text-[11.5px] capitalize transition-colors", effort === value ? "bg-[var(--accent-blue)]/[0.1] text-[var(--accent-blue)]" : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]")}>{value}</button>)}</motion.div> : null}</AnimatePresence>
+            <button
+              type="button"
+              className="dsh-chip"
+              aria-label={`Effort: ${activeEffort.name}`}
+              aria-haspopup="menu"
+              aria-expanded={effortMenu}
+              onClick={() => setEffortMenu((open) => !open)}
+            >
+              Agent
+              <span className="dsh-chip-value">{activeEffort.name}</span>
+              <ChevronDown14 className="dsh-chip-chevron" />
+            </button>
+            <AnimatePresence>
+              {effortMenu ? (
+                <motion.div
+                  role="menu"
+                  aria-label="Effort"
+                  initial={{ opacity: 0, y: 4, scale: 0.985 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 3, scale: 0.985 }}
+                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                  className="dsh-menu"
+                >
+                  {EFFORT_LEVELS.map((level) => (
+                    <button
+                      key={level.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={effort === level.id}
+                      className="dsh-menu-option"
+                      onClick={() => { onEffortChange?.(level.id); setEffortMenu(false); }}
+                    >
+                      <span className="dsh-menu-copy">
+                        <span className="dsh-menu-name">{level.name}</span>
+                        <span className="dsh-menu-detail">{level.detail}</span>
+                      </span>
+                      <span className="dsh-menu-check">{effort === level.id ? <Check16 /> : null}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </div><span className="flex-1" />
           <button type="button" aria-label="Voice input" onClick={() => textareaRef.current?.focus()} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><Mic className="h-3.5 w-3.5" strokeWidth={1.65} /></button>
           {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--app-background)] transition-colors duration-150 hover:opacity-90 active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[var(--accent-blue)] text-white hover:brightness-110" : "bg-[var(--surface-muted)] text-[var(--text-disabled)]")}><ArrowUp className="h-3.5 w-3.5" strokeWidth={2.15} /></button>}

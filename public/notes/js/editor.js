@@ -5,6 +5,7 @@
    and IME composition are the browser's to manage. Structural edits change
    the model, re-render, and then place the caret explicitly. */
 import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, position, modKey, mod, append } from "./dom.js";
+import { executeBlock, isExecutable, isPreviewable, runnerLabel } from "./runner.js";
 import {
   renderSpans, readSpans, plain, spansText, spansLength, sliceSpans, applyMark,
   markState, caretOffset, setCaret, selectionRangeIn, normalizeSpans, replaceRange,
@@ -256,9 +257,20 @@ export class Editor {
             onSelect: () => { block.props = { ...block.props, language }; event.currentTarget.textContent = language; this.commit("code-lang"); },
           })), { search: true, searchPlaceholder: "Language…" }),
         }, block.props?.language || "plain"),
-        iconButton("copy", "Copy code", () => {
-          navigator.clipboard.writeText(spansText(block.text)).then(() => toast("Code copied"));
-        }, { className: "code-copy", size: 14 }),
+        /* Copy sits to the left of Run: the safe action first, and the one
+           that changes nothing stays in the same place whether or not the
+           language happens to be executable. */
+        el("span", { class: "code-actions" },
+          iconButton("copy", "Copy code", () => {
+            navigator.clipboard.writeText(spansText(block.text)).then(() => toast("Code copied"));
+          }, { className: "code-copy", size: 14 }),
+          isExecutable(block.props?.language) ? iconButton(
+            isPreviewable(block.props?.language) ? "panel" : "play",
+            runnerLabel(block.props?.language),
+            () => executeBlock(block.props?.language || "plain", spansText(block.text), this.page?.title || "Preview"),
+            { className: "code-run", size: 14 },
+          ) : null,
+        ),
         line,
       );
       append(content, wrapper);
