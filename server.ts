@@ -13,11 +13,8 @@ import {
   createClipperPublishingFoundation,
   isSocialPlatform,
 } from "./lib/clipper/social-publishing";
-import {
-  createLicensedFootageService,
-  FootageSearchValidationError,
-  isFootageProvider,
-} from "./lib/clipper/licensed-footage";
+import { BrandKitStore, BrandKitValidationError } from "./lib/clipper/brand-kits";
+import { registerCoworkRoutes } from "./lib/bots/routes";
 import {
   autoClipStatusMessage,
   configuredAutoClipBaseUrl,
@@ -1349,10 +1346,7 @@ async function startServer() {
   const clipperPublishing = createClipperPublishingFoundation(
     clyraDataPath(".clyra", "clipper-publishing"),
   );
-  // Provider keys remain in this backend process. The footage service returns
-  // explicit unavailable states for Pexels/Pixabay until a local server key is
-  // configured; it never falls back to scraping or client-side credentials.
-  const licensedFootage = createLicensedFootageService();
+  const brandKits = new BrandKitStore(clyraDataPath(".clyra", "clipper-brand-kits"));
 
   // Camera / screen vision posts base64 data-URLs (often 2–8 MB before parse).
   app.use(express.json({ limit: "16mb" }));
@@ -3997,31 +3991,139 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     }
   });
 
-  app.get("/api/clipper/footage/search", async (req, res) => {
-    const rawProvider = String(req.query.provider || "all").trim().toLowerCase();
-    const providers = rawProvider === "all"
-      ? undefined
-      : rawProvider.split(",").map((value) => value.trim()).filter(Boolean);
-    if (providers && (!providers.length || providers.some((provider) => !isFootageProvider(provider)))) {
-      res.status(400).json({ ok: false, error: "Choose a supported licensed-footage provider." });
+  // Clyra Cowork: bots reach existing Clyra tools through the capability
+  // gateway rather than getting their own duplicate implementations.
+  // Registered here, after express.json(), so request bodies are parsed.
+  registerCoworkRoutes(app, {
+    runWebSearchResearch,
+    recordUsage: (input) => { void recordApiUsage(input).catch(() => undefined); },
+  });
+
+  app.get("/api/clipper/brand-kits", async (_req, res) => {
+    try {
+      res.json({ ok: true, kits: await brandKits.list() });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Could not read brand kits." });
+    }
+  });
+
+  app.post("/api/clipper/brand-kits", async (req, res) => {
+    try {
+      const kit = await brandKits.save(req.body);
+      res.json({ ok: true, kit });
+    } catch (error) {
+      const validation = error instanceof BrandKitValidationError;
+      res.status(validation ? 400 : 500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not save the brand kit.",
+      });
+    }
+  });
+
+  app.put("/api/clipper/brand-kits/:id", async (req, res) => {
+    try {
+      const kit = await brandKits.save(req.body, String(req.params.id));
+      res.json({ ok: true, kit });
+    } catch (error) {
+      const validation = error instanceof BrandKitValidationError;
+      res.status(validation ? 400 : 500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not save the brand kit.",
+      });
+    }
+  });
+
+  app.delete("/api/clipper/brand-kits/:id", async (req, res) => {
+    try {
+      const removed = await brandKits.remove(String(req.params.id));
+      if (!removed) {
+        res.status(404).json({ ok: false, error: "That brand kit no longer exists." });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Could not delete the brand kit." });
+    }
+  });
+
+  app.post("/api/clipper/voiceover", async (req, res) => {
+    const script = String((req.body || {}).text || "").trim();
+    const referenceId = typeof (req.body || {}).referenceId === "string" ? (req.body || {}).referenceId.trim() : "";
+    if (!script) {
+      res.status(400).json({ ok: false, error: "Enter a script to narrate." });
       return;
     }
-    const rawLimit = Number(req.query.limit);
-    try {
-      const result = await licensedFootage.search({
-        query: String(req.query.q || req.query.query || ""),
-        limit: Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : undefined,
-        providers: providers as Array<"wikimedia" | "pexels" | "pixabay"> | undefined,
-        cursor: typeof req.query.cursor === "string" ? req.query.cursor : undefined,
-      });
-      res.setHeader("Cache-Control", "private, max-age=45");
-      res.json({ ok: true, ...result });
-    } catch (error) {
-      const message = error instanceof FootageSearchValidationError
-        ? error.message
-        : "Licensed footage search could not be completed safely.";
-      res.status(error instanceof FootageSearchValidationError ? 400 : 502).json({ ok: false, error: message });
+    if (script.length > 4_000) {
+      res.status(400).json({ ok: false, error: "Scripts are limited to 4,000 characters per voiceover." });
+      return;
     }
+    await fs.mkdir(clipperOutputDir(), { recursive: true });
+    const filename = `voiceover-${crypto.randomUUID()}.mp4`;
+    const outputPath = path.join(clipperOutputDir(), filename);
+    // Runs under the voice virtualenv, not the clipper pipeline's system
+    // python3 — it is the only interpreter in this repo with the websockets
+    // client Fish Audio's live TTS protocol needs. See clipper_voiceover.py.
+    const voicePython = clyraResourcePath(".venv-voice311", "bin", "python3");
+    const args = [clyraResourcePath("clipper_voiceover.py"), script, outputPath];
+    if (referenceId) args.push("--reference-id", referenceId);
+
+    const proc = spawn(voicePython, args, {
+      cwd: clyraResourcePath(),
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let buf = "";
+    let stderr = "";
+    let outcome: { error?: string; durationSeconds?: number } | null = null;
+    proc.stdout.on("data", (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split("\n");
+      buf = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed.status === "error") outcome = { error: parsed.message || "Voiceover generation failed." };
+          else if (parsed.status === "complete") outcome = { durationSeconds: parsed.durationSeconds };
+        } catch {
+          // Non-JSON stdout is unexpected here; stderr carries the real diagnostics.
+        }
+      }
+    });
+    proc.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-4_000);
+    });
+    proc.on("close", (code) => {
+      if (res.headersSent) return;
+      if (outcome?.error) {
+        res.status(502).json({ ok: false, error: outcome.error });
+        return;
+      }
+      if (code !== 0 || !outcome) {
+        res.status(502).json({ ok: false, error: stderr.trim().split("\n").at(-1) || `Voiceover generation failed (code ${code}).` });
+        return;
+      }
+      // Only a successful synthesis is billable. Fish charges TTS by the
+      // UTF-8 byte length of the submitted text, so that is what is recorded
+      // rather than the character count — the two differ for any non-Latin
+      // script, and characters would undercharge it.
+      void recordApiUsage({
+        provider: "fish-audio",
+        model: process.env.FISH_TTS_MODEL || "s2-pro",
+        feature: "clipper-voiceover",
+        usage: { totalTokens: 0 },
+        units: {
+          inputUtf8Bytes: Buffer.byteLength(script, "utf8"),
+          inputCharacters: script.length,
+          requests: 1,
+        },
+      }).catch(() => undefined);
+      res.json({ ok: true, url: `/output/${filename}`, durationSeconds: outcome.durationSeconds });
+    });
+    proc.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ ok: false, error: err.message });
+    });
   });
 
   app.post("/api/clipper/upload", async (req, res) => {
@@ -4122,6 +4224,20 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
         if (!t) continue;
         try {
           const d = JSON.parse(t);
+          // The Python pipeline cannot reach the Node credit ledger directly,
+          // so it reports billable provider calls on its existing stdout
+          // protocol and they are recorded here. Kept out of the SSE stream:
+          // this is internal accounting, not clip progress the UI renders.
+          if (d.step === "usage" && d.provider) {
+            void recordApiUsage({
+              provider: String(d.provider),
+              model: String(d.model || "unknown"),
+              feature: String(d.feature || "clipper"),
+              usage: { totalTokens: 0 },
+              units: d.units && typeof d.units === "object" ? d.units : undefined,
+            }).catch(() => undefined);
+            continue;
+          }
           send(d.type || "progress", d);
         } catch {
           send("log", { message: t });

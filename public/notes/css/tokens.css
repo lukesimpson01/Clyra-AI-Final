@@ -43,6 +43,11 @@
   --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
     "Helvetica Neue", Arial, sans-serif;
   --font-serif: Lyon-Text, Georgia, ui-serif, serif;
+  /* Comfortaa if the reader has it installed, otherwise the closest thing
+     already on the machine: SF Pro Rounded via ui-rounded, then the usual
+     rounded web faces. Nothing is downloaded — Notes stays offline-first. */
+  --font-rounded: Comfortaa, ui-rounded, "SF Pro Rounded", "Varela Round",
+    Quicksand, "Trebuchet MS", var(--font-ui);
   --font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
 
   --sidebar-width: 300px;
@@ -50,9 +55,12 @@
   --tab-height: 40px;
   --toolbar-height: 44px;
 
-  --duration-hover: 110ms;
-  --duration-menu: 150ms;
-  --duration-panel: 220ms;
+  --duration-hover: 150ms;
+  --duration-menu: 170ms;
+  /* Panels are the slowest thing that moves. A sidebar sweeping open is the
+     one animation a reader watches from start to finish, so it is given a
+     long, evenly decelerating curve rather than a quick snap. */
+  --duration-panel: 380ms;
   /* One ease for small state changes, one with a longer tail for panels that
      travel a distance — the difference is what stops a sliding sidebar from
      reading as a jump. */
@@ -63,7 +71,15 @@
      settles rather than stopping. A front-loaded curve covers most of the
      distance in the first frames and reads as a snap, not a slide. */
   --ease-settle: cubic-bezier(0.4, 0, 0.2, 1);
-  --duration-slide: 260ms;
+  /* Long tail, no overshoot: what makes a panel read as weighted rather
+     than springy. Used by both sidebars and the tab strip. */
+  --ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-slide: 320ms;
+  /* Tabs are their own timing. Chrome opens and closes a tab in about a
+     sixth of a second and never bounces it — the width is the whole
+     animation, so anything slower reads as floaty rather than crisp. */
+  --duration-tab: 165ms;
+  --ease-tab: cubic-bezier(0.25, 0.1, 0.25, 1);
 
   /* Option colours are shared by select chips, callouts and text colour so
      one palette drives every coloured surface in the product. */
@@ -77,6 +93,48 @@
   --c-pink: #c14c8a;      --c-pink-bg: #fbf2f5;
   --c-red: #d44c47;       --c-red-bg: #fdebec;
   --c-default: var(--text-primary); --c-default-bg: transparent;
+}
+
+/* Notes keeps the same restrained hierarchy in dark mode: near-black canvas,
+   soft graphite surfaces, and no neon accents. The shared Chat settings write
+   the resolved theme to this attribute so Notes never has a second theme
+   control that can drift out of sync. */
+:root[data-notes-theme="dark"] {
+  --background-main: #191a1c;
+  --background-sidebar: #151617;
+  --background-hover: #242527;
+  --background-selected: #2b2d30;
+  --background-menu: #222326;
+  --background-subtle: #202124;
+  --background-input: #292b2e;
+  --background-scrim: rgba(0, 0, 0, 0.58);
+  --text-primary: #f1f1ef;
+  --text-secondary: #b5b5b0;
+  --text-tertiary: #858681;
+  --text-placeholder: #686963;
+  --border-soft: rgba(241, 241, 239, 0.11);
+  --border-medium: rgba(241, 241, 239, 0.17);
+  --border-strong: rgba(241, 241, 239, 0.27);
+  --accent: #4b9bea;
+  --accent-hover: #67aaf0;
+  --accent-soft: rgba(75, 155, 234, 0.18);
+  --accent-text: #75b5f1;
+  --danger: #ef716b;
+  --danger-soft: rgba(239, 113, 107, 0.17);
+  --success: #79b08d;
+  --warning: #e0ae58;
+  --shadow-menu: 0 0 0 1px rgba(0, 0, 0, 0.26), 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-peek: 0 0 0 1px rgba(0, 0, 0, 0.28), -12px 0 32px rgba(0, 0, 0, 0.34);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --c-gray: #aaa9a2; --c-gray-bg: #2a2a28;
+  --c-brown: #ca987c; --c-brown-bg: #322a27;
+  --c-orange: #eda15a; --c-orange-bg: #382d23;
+  --c-yellow: #e0ae58; --c-yellow-bg: #383124;
+  --c-green: #79b08d; --c-green-bg: #27352c;
+  --c-blue: #73b1cf; --c-blue-bg: #25343b;
+  --c-purple: #bf9bda; --c-purple-bg: #322a39;
+  --c-pink: #e48cb8; --c-pink-bg: #382a32;
+  --c-red: #ef716b; --c-red-bg: #3a2929;
 }
 
 * { box-sizing: border-box; }

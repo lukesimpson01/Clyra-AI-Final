@@ -4,7 +4,8 @@ import { promises as fs } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { clyraDataPath } from "../runtime-paths";
 
-export type BrowserSearchEngine = "bing" | "google" | "duckduckgo";
+/* Google only. The alias survives so stored profiles and callers still type-check. */
+export type BrowserSearchEngine = "google";
 
 export type ElementTarget = {
   elementId?: string;
@@ -432,7 +433,9 @@ async function loadProfile() {
     profile = {
       ...profileDefaults(),
       ...raw,
-      settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) },
+      /* Google is the only search engine now, so a profile saved when the
+         setting was configurable is migrated rather than trusted. */
+      settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}), defaultSearchEngine: "google" as const },
       history: Array.isArray(raw.history) ? raw.history.filter((entry) => isRecordableUrl(entry.url)).slice(0, 2_000) : [],
       bookmarks: Array.isArray(raw.bookmarks) ? raw.bookmarks.slice(0, 500) : [],
       recentlyClosed: Array.isArray(raw.recentlyClosed) ? raw.recentlyClosed.filter((entry) => isRecordableUrl(entry.url)).slice(0, 20) : [],
@@ -538,11 +541,9 @@ export async function getManagedBrowserAgentSession() {
   return agentSession ? JSON.parse(JSON.stringify(agentSession)) as BrowserAgentSession : null;
 }
 
-function searchUrl(query: string, engine: BrowserSearchEngine) {
-  const encoded = encodeURIComponent(query.trim());
-  if (engine === "google") return `https://www.google.com/search?q=${encoded}`;
-  if (engine === "duckduckgo") return `https://duckduckgo.com/?q=${encoded}`;
-  return `https://www.bing.com/search?q=${encoded}`;
+/** Google is the browser's search engine. There is no other. */
+function searchUrl(query: string, _engine?: BrowserSearchEngine) {
+  return `https://www.google.com/search?q=${encodeURIComponent(String(query).trim())}`;
 }
 
 function isInternalErrorUrl(url: string) {
@@ -555,14 +556,31 @@ function isInternalErrorUrl(url: string) {
   }
 }
 
-export function normalizeBrowserInput(input: string, engine: BrowserSearchEngine = "bing") {
-  const value = input.trim();
+/**
+ * The single rule for turning what someone typed into somewhere to go. Kept
+ * byte-for-byte equivalent to the desktop resolver in
+ * electron/browser-manager.mjs so the same input goes to the same place in
+ * both runtimes.
+ *
+ * Whitespace means search, checked before any domain matching, so a sentence
+ * containing a dot can never be mistaken for a host.
+ */
+export function normalizeBrowserInput(input: string, _engine?: BrowserSearchEngine) {
+  const value = String(input ?? "").trim();
   if (!value) return HOME_URL;
   if (isInternalErrorUrl(value) || value === "about:blank") return HOME_URL;
+
   if (/^https?:\/\//i.test(value)) return value;
-  if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/.*)?$/i.test(value)) return `http://${value}`;
-  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:\/.*)?$/i.test(value)) return `https://${value}`;
-  return searchUrl(value, engine);
+  if (/\s/.test(value)) return searchUrl(value);
+
+  const loopback = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(value);
+  const bareIpv4 = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:[/?#].*)?$/.test(value);
+  if (loopback || bareIpv4) return `http://${value}`;
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return searchUrl(value);
+  if (/^(?:[\w-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(value)) return `https://${value}`;
+
+  return searchUrl(value);
 }
 
 function tabId(activePage: Page) {
@@ -1170,7 +1188,7 @@ export function validateBrowserAction(action: BrowserAction, observation: Struct
     if (!observed && !fallback) throw new Error("The target is not present in the latest page observation");
   }
   if (action.type === "navigate" || (action.type === "open_tab" && action.url)) {
-    const value = normalizeBrowserInput(action.type === "navigate" ? action.url : action.url!, profile?.settings.defaultSearchEngine || "bing");
+    const value = normalizeBrowserInput(action.type === "navigate" ? action.url : action.url!, profile?.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine);
     if (!/^https?:\/\//i.test(value)) throw new Error("Only HTTP and HTTPS navigation is allowed");
   }
   if (action.type === "wait" && (action.milliseconds || 0) > 5_000) throw new Error("Wait exceeds the five second limit");
@@ -1570,7 +1588,7 @@ async function verifyAction(action: BrowserAction, before: StructuredObservation
     };
   }
   if (action.type === "navigate") {
-    const expected = normalizeBrowserInput(action.url, profile?.settings.defaultSearchEngine || "bing");
+    const expected = normalizeBrowserInput(action.url, profile?.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine);
     const ok = before.page.url !== after.page.url || after.page.url === expected;
     return { ok, summary: ok ? `Navigation reached ${after.page.url}` : "Navigation did not reach the requested address", changed };
   }
@@ -2061,7 +2079,16 @@ const EMPTY_OBSERVATION: StructuredObservation = {
 export function navigateManagedBrowser(input: string) {
   if (USE_ELECTRON_BROWSER) {
     return serializeOperation(async () => {
-      const action: BrowserAction = { type: "navigate", url: input };
+      /* The Electron surface used to receive the address bar's raw text, so
+         anything that was not already a URL never became a search at all.
+         It is normalised here for the same reason the Playwright path below
+         normalises: what the user typed is a query until proven otherwise. */
+      const profile = await loadProfile();
+      const url = normalizeBrowserInput(
+        input,
+        profile.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine,
+      );
+      const action: BrowserAction = { type: "navigate", url };
       validateBrowserAction(action, EMPTY_OBSERVATION, "user");
       const result = await runElectronAction(action, EMPTY_OBSERVATION, "user");
       return result.state;
@@ -2076,7 +2103,7 @@ export function navigateManagedBrowser(input: string) {
   return serializeOperation(async () => {
     const activePage = await ensurePage();
     const currentProfile = await loadProfile();
-    const normalized = normalizeBrowserInput(input, currentProfile.settings.defaultSearchEngine || "bing");
+    const normalized = normalizeBrowserInput(input, currentProfile.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine);
     if (!/^https?:\/\//i.test(normalized)) throw new Error("Only HTTP and HTTPS navigation is allowed");
     await activePage.goto(normalized, { waitUntil: "domcontentloaded" });
     await recordHistory(activePage, /^https?:\/\//i.test(input) ? undefined : input);

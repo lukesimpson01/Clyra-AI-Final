@@ -70,6 +70,19 @@ export type ClyraDesktopBridge = {
     }>;
     onToggle: (callback: () => void) => () => void;
   };
+  /** The global ⌘K launcher chord, forwarded from the main process so it
+   *  still fires when a native browser view owns the keyboard. */
+  launcher?: {
+    onToggle: (callback: () => void) => () => void;
+  };
+  /** Clyra Anywhere: whether closing the window quits the app or leaves the
+   *  system-wide background layer (dictation, selection overlay, agent
+   *  overlay) running via a tray icon. */
+  anywhere?: {
+    getEnabled: () => Promise<{ ok: boolean; enabled: boolean }>;
+    setEnabled: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>;
+    onState: (callback: (state: { enabled: boolean }) => void) => () => void;
+  };
   dictation: {
     toggle?: () => Promise<{ ok: boolean }>;
     shortcutStatus?: () => Promise<{ registered: boolean }>;

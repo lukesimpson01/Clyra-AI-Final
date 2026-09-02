@@ -9,7 +9,16 @@ export const el = (tag, props = {}, ...children) => {
     if (key === "class") node.className = value;
     else if (key === "html") node.innerHTML = value;
     else if (key === "text") node.textContent = value;
-    else if (key === "style" && typeof value === "object") Object.assign(node.style, value);
+    /* Object.assign skips CSS custom properties, so "--table-header-color"
+       silently did nothing. Anything starting with "--" goes through
+       setProperty; the rest keeps the cheap camelCase assignment. */
+    else if (key === "style" && typeof value === "object") {
+      for (const [name, rule] of Object.entries(value)) {
+        if (rule === null || rule === undefined || rule === false) continue;
+        if (name.startsWith("--")) node.style.setProperty(name, String(rule));
+        else node.style[name] = rule;
+      }
+    }
     else if (key === "dataset") Object.assign(node.dataset, value);
     else if (key.startsWith("on")) node.addEventListener(key.slice(2).toLowerCase(), value);
     else if (key === "ref") value(node);
@@ -42,6 +51,8 @@ const PATHS = {
   sparkle: "M12 3.5 13.8 9l5.5 1.8-5.5 1.8L12 18l-1.8-5.4L4.7 10.8 10.2 9 12 3.5ZM18.5 16.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z",
   cards: "M4 7.5A1.5 1.5 0 0 1 5.5 6h9A1.5 1.5 0 0 1 16 7.5v9A1.5 1.5 0 0 1 14.5 18h-9A1.5 1.5 0 0 1 4 16.5v-9ZM8 3.5h10A2.5 2.5 0 0 1 20.5 6v10",
   check_square: "M9 11.5 11.5 14 15.5 9.5M5 4.5h14a.5.5 0 0 1 .5.5v14a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5Z",
+  check: "m5 12.5 4.5 4.5L19 7",
+  flag: "M6 21V4.5h11l-2 4 2 4H6",
   inbox: "M3.5 13.5h4l1.5 3h6l1.5-3h4M3.5 13.5 6 5h12l2.5 8.5v5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-5Z",
   page: "M6 3.5h7l5 5v12a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5ZM13 3.5v5h5",
   plus: "M12 5v14M5 12h14",
@@ -51,6 +62,10 @@ const PATHS = {
   arrow_left: "M19 12H5M11 6l-6 6 6 6",
   arrow_right: "M5 12h14M13 6l6 6-6 6",
   arrow_up: "M12 19V5M6 11l6-6 6 6",
+  arrow_down: "M12 5v14M6 13l6 6 6-6",
+  align_left: "M4 6h16M4 10.5h10M4 15h16M4 19.5h10",
+  align_center: "M4 6h16M7 10.5h10M4 15h16M7 19.5h10",
+  align_right: "M4 6h16M10 10.5h10M4 15h16M10 19.5h10",
   kind_keyword: "M6 4.5h12M6 12h12M6 19.5h7",
   kind_variable: "M8.5 5.5C6 8 6 16 8.5 18.5M15.5 5.5C18 8 18 16 15.5 18.5M9.5 12h5",
   kind_function: "M9.5 19.5c-1.5 0-2-1-2-2.5v-3c0-1.2-.6-2-1.5-2 .9 0 1.5-.8 1.5-2V7c0-1.5.5-2.5 2-2.5M14.5 4.5c1.5 0 2 1 2 2.5v3c0 1.2.6 2 1.5 2-.9 0-1.5.8-1.5 2v3c0 1.5-.5 2.5-2 2.5",
@@ -286,6 +301,29 @@ export function position(node, anchor, { align = "start", side = "bottom", gap =
   node.style.visibility = "";
 }
 
+/* ------------------------------------------------------------- search */
+
+/* One relevance rule for every searchable menu. An exact label beats a label
+   that starts with the term, which beats a word inside the label, which beats
+   the keyword aliases — so "table" can never rank below "table of contents"
+   just because the catalogue declares it later. Returns -1 for no match. */
+export function matchScore(label, keywords, term) {
+  if (!term) return 0;
+  const name = String(label || "").toLowerCase();
+  const aliases = String(keywords || "").toLowerCase();
+  if (name === term) return 100;
+  if (name.startsWith(term)) return 90 - Math.min(20, name.length - term.length);
+  if (new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(name)) return 60;
+  if (name.includes(term)) return 45;
+  for (const word of aliases.split(/\s+/)) {
+    if (!word) continue;
+    if (word === term) return 40;
+    if (word.startsWith(term)) return 30;
+  }
+  if (aliases.includes(term)) return 15;
+  return -1;
+}
+
 /* --------------------------------------------------------------- menu */
 
 export function menu(anchor, items, options = {}) {
@@ -306,11 +344,14 @@ export function menu(anchor, items, options = {}) {
       queueMicrotask(() => input.focus());
     }
     const term = query.trim().toLowerCase();
-    const visible = items.filter((item) =>
-      !term || item.type === "separator" || item.type === "label"
-        ? !term || !(item.label && item.type !== "separator") || String(item.label).toLowerCase().includes(term) ||
-          String(item.keywords || "").toLowerCase().includes(term)
-        : false);
+    /* Idle, the menu keeps its authored order and its section labels. With a
+       term typed, the labels and separators drop out and what is left is
+       ranked, so the first row is always the closest match. */
+    const visible = !term ? items : items
+      .map((item, index) => ({ item, index, rank: item.type ? -1 : matchScore(item.label, item.keywords, term) }))
+      .filter((scored) => scored.rank >= 0)
+      .sort((a, b) => b.rank - a.rank || a.index - b.index)
+      .map((scored) => scored.item);
     let lastWasSeparator = true;
     let rendered = 0;
     for (const item of visible) {

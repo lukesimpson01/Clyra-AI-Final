@@ -11,7 +11,7 @@
  */
 
 import { memo, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import {
   Braces,
   CheckCircle2,
@@ -31,7 +31,6 @@ import {
 import { cn } from "../../lib/utils";
 import type { AgentAction } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
-import { AgentFileEdit, hasRenderableActionDiff } from "./AgentFileEdit";
 import { DisclosureRow, IoCard, StateDot } from "./harness";
 import { AGENT_EASE, ROW_ENTER } from "./motion";
 
@@ -97,7 +96,6 @@ export const AgentActionRow = memo(function AgentActionRow({
   onOpenTerminal,
   onOpenFile,
   revisiting = false,
-  onEditClosed,
   settled = false,
   primaryActive = true,
 }: {
@@ -108,7 +106,6 @@ export const AgentActionRow = memo(function AgentActionRow({
   onOpenFile?: (path: string) => void;
   /** A real read that follows an edit to the same file. */
   revisiting?: boolean;
-  onEditClosed?: (id: string) => void;
   /** Render an expanded completed phase without replaying its animation. */
   settled?: boolean;
   /** Only the current live action gets the running treatment. */
@@ -168,11 +165,6 @@ export const AgentActionRow = memo(function AgentActionRow({
     );
   }
 
-  // A real streaming diff keeps its own richer presentation.
-  if (/^(edit|create)$/.test(action.kind) && hasRenderableActionDiff(action)) {
-    return <AgentFileEdit action={action} onOpenFile={onOpenFile} onClosed={onEditClosed} settled={settled} />;
-  }
-
   const isFileAction = /^(edit|create|delete)$/.test(action.kind);
   const isTerminalAction = /^(command|build|check|test|preview)$/.test(action.kind);
   const isMonoTarget = isFileAction || isTerminalAction || /^(read|list)$/.test(action.kind);
@@ -208,7 +200,23 @@ export const AgentActionRow = memo(function AgentActionRow({
     );
 
   const duration = action.endedAt && action.startedAt ? action.endedAt - action.startedAt : null;
-  const hasDetails = Boolean(action.output?.trim() || action.error?.trim());
+  const changeDetails =
+    action.patch?.trim() ||
+    (action.before !== undefined || action.after !== undefined
+      ? `${action.before ?? ""}\n--- after ---\n${action.after ?? ""}`.trim()
+      : action.contentAfter?.trim()) ||
+    null;
+  // A file action's raw tool output is protocol status text ("Created file"),
+  // not content — once there is a real diff/content to show, that is the
+  // whole story and the status text would only repeat or contradict it.
+  const detailOutput = [
+    action.error?.trim(),
+    isFileAction && changeDetails ? null : action.output?.trim(),
+    changeDetails,
+  ]
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+    .join("\n\n");
+  const hasDetails = Boolean(detailOutput);
   const canOpenFile = isFileAction && Boolean(onOpenFile) && !isError;
 
   // The trailing fragment, kept outside the summary's ellipsis so it survives
@@ -300,8 +308,9 @@ export const AgentActionRow = memo(function AgentActionRow({
         <div className="dsh-body">
           <IoCard
             input={isTerminalAction ? action.target : null}
-            output={(action.error ? `${action.error}\n\n` : "") + (action.output ?? "")}
+            output={detailOutput}
             error={isError}
+            outputLabel={isFileAction && changeDetails ? "DIFF" : "OUT"}
           />
           {isError || canOpenFile || (onOpenTerminal && isTerminalAction) ? (
             <div className="dsh-row-actions">
@@ -325,21 +334,6 @@ export const AgentActionRow = memo(function AgentActionRow({
         </div>
       </DisclosureRow>
 
-      {/* A failure with no expandable body still has to state itself. */}
-      <AnimatePresence initial={false}>
-        {isError && !hasDetails && action.error ? (
-          <motion.div
-            key="error"
-            initial={historical ? { opacity: 1 } : { opacity: 0, y: 3 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.18, ease: AGENT_EASE }}
-            className="dsh-summary dsh-summary-error"
-            style={{ paddingLeft: 22, whiteSpace: "normal" }}
-          >
-            {action.error}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
     </motion.div>
   );
 });

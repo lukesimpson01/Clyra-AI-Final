@@ -83,7 +83,8 @@ type AgentStatus =
   | "cancelled";
 
 type BrowserSettings = {
-  defaultSearchEngine: "bing" | "google" | "duckduckgo";
+  /* Google only. Kept in the type so stored profiles still parse. */
+  defaultSearchEngine: "google";
   restoreTabs: boolean;
   saveHistory: boolean;
   showBookmarksBar: boolean;
@@ -711,6 +712,14 @@ export default function WebBrowserWorkspace() {
   const [findResult, setFindResult] = useState<{ total: number; current: number } | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const [omniboxFocused, setOmniboxFocused] = useState(false);
+  /* What the reader has typed and what the page is showing are two different
+     things. Browser state streams in continuously while a page loads, and
+     every one of those updates used to overwrite the address bar — so a query
+     typed during a load was silently replaced by the current URL, and Enter
+     then "did nothing" because it re-navigated to where we already were.
+     A ref rather than state: it must be readable inside applyState without
+     making applyState depend on it, and it must never trigger a render. */
+  const editingAddressRef = useRef(false);
   const [agentDemo] = useState(() => {
     if (typeof window === "undefined") return false;
     const mode = new URLSearchParams(window.location.search).get("browserDemo");
@@ -736,7 +745,6 @@ export default function WebBrowserWorkspace() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [planDisclosureOpen, setPlanDisclosureOpen] = useState(false);
   const [browserMenuOpen, setBrowserMenuOpen] = useState(false);
-  const [hoveredBrowserTabId, setHoveredBrowserTabId] = useState<string | null>(null);
   // These pages deliberately live in the tab strip rather than the utility
   // drawer. They are browser destinations in their own right, while still
   // using the same persisted local profile as the native Chromium tabs.
@@ -791,6 +799,7 @@ export default function WebBrowserWorkspace() {
   }, []);
 
   const focusOmnibox = useCallback(() => {
+    editingAddressRef.current = true;
     setOmniboxFocused(true);
     setAddress(browserState?.url || address);
     window.requestAnimationFrame(() => {
@@ -804,7 +813,7 @@ export default function WebBrowserWorkspace() {
     const previousActive = previousActiveTabRef.current;
     previousActiveTabRef.current = state.activeTabId || previousActive;
     setBrowserState(state);
-    setAddress(state.url);
+    if (!editingAddressRef.current) setAddress(state.url);
     setAgentPhase(state.agent.status);
     setError(null);
     setFrameTick((value) => value + 1);
@@ -1049,13 +1058,30 @@ export default function WebBrowserWorkspace() {
     setAgentStatus("You have control");
   }, [browserState?.agent.manualControl, isAgentBusy, requestBrowser]);
 
+  /* The one navigation path. The form's submit, the Enter key and every
+     programmatic caller land here, so there is a single place where a
+     navigation can start and a single place it can fail. */
   const navigate = async (event?: FormEvent, target = address) => {
     event?.preventDefault();
-    if (!target.trim()) return;
+    const input = String(target ?? "").trim();
+    if (!input) return;
+    editingAddressRef.current = false;
     // Typing an address from a Clyra page returns to the last real browser tab.
     setActiveInternalTabId(null);
+    const startedAt = performance.now();
     await takeManualControl();
-    await requestBrowser("/api/openbrowser/navigate", { body: { target } }).catch(() => undefined);
+    try {
+      await requestBrowser("/api/openbrowser/navigate", { body: { target: input } });
+      if (process.env.NODE_ENV !== "production") {
+        console.debug(`[browser] navigate "${input}" dispatched in ${Math.round(performance.now() - startedAt)}ms`);
+      }
+    } catch (error) {
+      /* A navigation that fails used to disappear into .catch(() => undefined),
+         which is why "search does nothing" was invisible rather than reported. */
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[browser] navigate failed for "${input}":`, message);
+      setError(`Could not open “${input}”. ${message}`);
+    }
   };
 
   // "Snip & Ask": the toolbar crop icon and the "Ask Clyra about selection"
@@ -1605,9 +1631,6 @@ export default function WebBrowserWorkspace() {
   const agentTaskTitle = agentDemo
     ? (agentDemoKind === "ebay" ? "Searching MacBook M2 on eBay" : agentDemoKind === "typing" ? "Typing a search query" : agentDemoKind === "click" ? "Opening a result" : "Fulfilling beach essentials request")
     : (runTask || browserState?.agent.task || agentStatus || "Working");
-  const restingHost = activeInternalTab
-    ? `Clyra ${activeInternalTab.page === "history" ? "History" : activeInternalTab.page === "bookmarks" ? "Bookmarks" : "Settings"}`
-    : pageHost || "Search or enter address";
   const demoCursor = agentDemo
     ? {
         x: Math.round((browserState?.viewport.width || 1440) * (agentDemoKind === "ebay" ? 0.48 : agentDemoKind === "typing" ? 0.46 : agentDemoKind === "click" ? 0.52 : 0.42)),
@@ -1642,7 +1665,7 @@ export default function WebBrowserWorkspace() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 bg-[var(--atlas-window-bg)]">
+    <div className="nui flex min-h-0 flex-1 bg-[var(--atlas-window-bg)]">
       <motion.div
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1651,10 +1674,15 @@ export default function WebBrowserWorkspace() {
       >
         {/* Tab strip — full width */}
         <div
-          className="flex shrink-0 items-end gap-0.5 overflow-x-auto px-2 pt-0.5 [scrollbar-width:none]"
+          className="nui-tabs shrink-0 px-2"
           style={{ height: "var(--atlas-titlebar-height)", background: "var(--atlas-titlebar-bg)" }}
         >
-          <AnimatePresence initial={false} mode="popLayout">
+          {/* No layout animation on the strip. `layout="position"` re-sprang
+              every tab on each render, and browser state streams continuously
+              while a page loads — which is what made the tabs drift and jump.
+              Width is the whole animation, as it is in Chrome, and the CSS in
+              notes-ui.css owns it. */}
+          <AnimatePresence initial={false}>
             {browserState?.tabs.map((tab) => {
               const agentOwnsTab = Boolean(
                 agentControlledTabId
@@ -1665,14 +1693,11 @@ export default function WebBrowserWorkspace() {
               return (
               <motion.button
                 key={tab.id}
-                layout="position"
-                initial={{ opacity: 0, scale: 0.98, x: -12 }}
-                animate={{ opacity: 1, scale: 1, x: 0 }}
-                exit={{ opacity: 0, scale: 0.98, x: -12 }}
-                transition={{ type: "spring", stiffness: 440, damping: 34, mass: 0.5 }}
+                initial={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
+                animate={{ opacity: 1, maxWidth: 200, paddingLeft: 8, paddingRight: 6 }}
+                exit={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
+                transition={{ duration: 0.165, ease: [0.25, 0.1, 0.25, 1] }}
                 type="button"
-                onPointerEnter={() => setHoveredBrowserTabId(tab.id)}
-                onPointerLeave={() => setHoveredBrowserTabId(null)}
                 onClick={() => {
                   setActiveInternalTabId(null);
                   void performAction({ type: "switch_tab", tabId: tab.id });
@@ -1681,20 +1706,14 @@ export default function WebBrowserWorkspace() {
                   if (event.button === 1 && browserState.tabs.length > 1) void performAction({ type: "close_tab", tabId: tab.id });
                 }}
                 className={cn(
-                  "group/tab isolate relative mb-0 flex min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden px-[15px] text-left font-medium transition-[background-color,color] duration-150 ease-out",
-                  tab.active && !activeInternalTab
-                    ? agentOwnsTab
-                      ? "h-[36px] rounded-t-[10px] bg-transparent text-[var(--atlas-text-secondary)]"
-                      : "h-[36px] rounded-t-[10px] bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)]"
-                    : "mb-px h-[34px] rounded-[9px] text-[var(--atlas-text-secondary)]",
+                  "nui-tab group/tab",
+                  tab.active && !activeInternalTab && "is-active",
                   agentOwnsTab && "clyra-browser-agent-tab",
                 )}
-                style={{ fontSize: "13px" }}
                 title={agentOwnsTab ? "Clyra is controlling this tab" : undefined}
               >
-                {hoveredBrowserTabId === tab.id && !(tab.active && !activeInternalTab) ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[9px] bg-black/[0.045]" /> : null}
-                <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[6px] bg-[#f3f5f7] text-[var(--atlas-text-secondary)]">
-                  {tab.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe2 className="h-3 w-3" strokeWidth={1.8} />}
+                <span className="nui-tab-icon">
+                  {tab.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" strokeWidth={1.8} />}
                 </span>
                 {agentOwnsTab ? (
                   <ShiningText
@@ -1704,7 +1723,7 @@ export default function WebBrowserWorkspace() {
                     className="min-w-0 flex-1 truncate !text-[13px]"
                   />
                 ) : (
-                  <span className="min-w-0 flex-1 truncate">{tab.title || "New tab"}</span>
+                  <span className="nui-tab-label">{tab.title || "New tab"}</span>
                 )}
                 <span
                   role="button"
@@ -1714,7 +1733,7 @@ export default function WebBrowserWorkspace() {
                     event.stopPropagation();
                     if ((browserState?.tabs.length || 0) > 1) void performAction({ type: "close_tab", tabId: tab.id });
                   }}
-                  className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-[var(--atlas-text-tertiary)] opacity-0 transition-[opacity,background-color,color] hover:bg-black/[0.06] hover:text-[var(--atlas-text-primary)] group-hover/tab:opacity-100"
+                  className="nui-tab-close"
                 >
                   <X className="h-2.5 w-2.5" />
                 </span>
@@ -1728,31 +1747,22 @@ export default function WebBrowserWorkspace() {
               return (
                 <motion.button
                   key={tab.id}
-                  layout="position"
-                  initial={{ opacity: 0, scale: 0.98, x: -12 }}
-                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.98, x: -12 }}
-                  transition={{ type: "spring", stiffness: 440, damping: 34, mass: 0.5 }}
+                  initial={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
+                  animate={{ opacity: 1, maxWidth: 200, paddingLeft: 8, paddingRight: 6 }}
+                  exit={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
+                  transition={{ duration: 0.165, ease: [0.25, 0.1, 0.25, 1] }}
                   type="button"
-                  onPointerEnter={() => setHoveredBrowserTabId(tab.id)}
-                  onPointerLeave={() => setHoveredBrowserTabId(null)}
                   onClick={() => setActiveInternalTabId(tab.id)}
-                  className={cn(
-                    "group/tab isolate relative mb-0 flex min-w-[170px] max-w-[210px] items-center gap-2 overflow-hidden px-[15px] text-left text-[13px] font-medium transition-[background-color,color] duration-150 ease-out",
-                    selected
-                      ? "h-[36px] rounded-t-[10px] bg-[var(--atlas-tab-active)] text-[var(--atlas-text-primary)]"
-                      : "mb-px h-[34px] rounded-[9px] text-[var(--atlas-text-secondary)]",
-                  )}
+                  className={cn("nui-tab group/tab", selected && "is-active")}
                 >
-                  {hoveredBrowserTabId === tab.id && !selected ? <motion.span layoutId="browser-tab-hover" transition={{ type: "spring", stiffness: 580, damping: 42, mass: 0.42 }} className="pointer-events-none absolute inset-0 rounded-[9px] bg-black/[0.045]" /> : null}
-                  <PageIcon className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" />
-                  <span className="min-w-0 flex-1 truncate">{pageTitle}</span>
+                  <span className="nui-tab-icon"><PageIcon className="h-3.5 w-3.5" /></span>
+                  <span className="nui-tab-label">{pageTitle}</span>
                   <span
                     role="button"
                     tabIndex={0}
                     aria-label={`Close ${pageTitle}`}
                     onClick={(event) => { event.stopPropagation(); closeInternalPage(tab.id); }}
-                    className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-[var(--atlas-text-tertiary)] opacity-0 transition-[opacity,background-color,color] hover:bg-black/[0.06] hover:text-[var(--atlas-text-primary)] group-hover/tab:opacity-100"
+                    className="nui-tab-close"
                   >
                     <X className="h-2.5 w-2.5" />
                   </span>
@@ -1760,7 +1770,7 @@ export default function WebBrowserWorkspace() {
               );
             })}
           </AnimatePresence>
-          <IconButton label="New tab" onClick={() => void performAction({ type: "open_tab" })} className="mb-0.5 h-8 w-8 rounded-[9px] text-[var(--atlas-text-secondary)] hover:bg-black/[0.05] hover:text-[var(--atlas-text-primary)]">
+          <IconButton label="New tab" onClick={() => void performAction({ type: "open_tab" })} className="nui-icon-button">
             <Plus className="h-4 w-4" />
           </IconButton>
         </div>
@@ -1774,58 +1784,62 @@ export default function WebBrowserWorkspace() {
             borderColor: "var(--atlas-divider)",
           }}
         >
-          <IconButton label="Back" disabled={Boolean(activeInternalTab) || !browserState?.canGoBack} onClick={() => void performAction({ type: "back" })} className="h-8 w-8">
+          <IconButton label="Back" disabled={Boolean(activeInternalTab) || !browserState?.canGoBack} onClick={() => void performAction({ type: "back" })} className="nui-icon-button">
             <ArrowLeft className="h-4 w-4" />
           </IconButton>
-          <IconButton label="Forward" disabled={Boolean(activeInternalTab) || !browserState?.canGoForward} onClick={() => void performAction({ type: "forward" })} className="h-8 w-8">
+          <IconButton label="Forward" disabled={Boolean(activeInternalTab) || !browserState?.canGoForward} onClick={() => void performAction({ type: "forward" })} className="nui-icon-button">
             <ArrowRight className="h-4 w-4" />
           </IconButton>
-          <IconButton label={browserState?.loading ? "Stop loading" : "Reload"} disabled={Boolean(activeInternalTab)} onClick={() => void performAction({ type: browserState?.loading ? "stop_loading" : "reload" })} className="h-8 w-8">
+          <IconButton label={browserState?.loading ? "Stop loading" : "Reload"} disabled={Boolean(activeInternalTab)} onClick={() => void performAction({ type: browserState?.loading ? "stop_loading" : "reload" })} className="nui-icon-button">
             {browserState?.loading ? <X className="h-4 w-4" /> : <RefreshCw className={cn("h-4 w-4", isBrowserBusy && "animate-spin")} />}
           </IconButton>
           <form onSubmit={(event) => void navigate(event)} className="relative min-w-0 flex-1 px-1.5">
-            <div
-              className={cn(
-                "group/omnibox flex h-9 items-center transition-[background-color,box-shadow,border-radius] duration-150",
-                omniboxFocused
-                  ? "w-full gap-2 rounded-[10px] bg-white px-3 shadow-[inset_0_0_0_1px_var(--atlas-divider)]"
-                  : "w-full justify-center gap-0 rounded-[10px] bg-transparent px-3 hover:bg-black/[0.035]",
-              )}
-            >
-              {omniboxFocused ? (
-                browserState?.secure
-                  ? <LockKeyhole className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.8} />
-                  : <Search className="h-4 w-4 shrink-0 text-[var(--atlas-text-tertiary)]" />
-              ) : null}
+            <div className="nui-addressbar w-full">
+              {browserState?.secure
+                ? <LockKeyhole className="ml-2 h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.8} />
+                : <Search className="ml-2 h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" />}
               <input
                 data-browser-omnibox
-                value={omniboxFocused ? address : restingHost}
-                onChange={(event) => setAddress(event.target.value)}
+                value={address}
+                onChange={(event) => {
+                  /* Typing only ever updates local state — no IPC, no
+                     navigation, no bounds work until Enter. */
+                  editingAddressRef.current = true;
+                  setAddress(event.target.value);
+                }}
                 onFocus={(event) => {
+                  editingAddressRef.current = true;
                   setOmniboxFocused(true);
                   setAddress(browserState?.url || address);
                   event.currentTarget.select();
                 }}
-                onBlur={() => setOmniboxFocused(false)}
+                onBlur={() => {
+                  editingAddressRef.current = false;
+                  setOmniboxFocused(false);
+                  /* Give the field back to the page it is showing. */
+                  if (browserState?.url) setAddress(browserState.url);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
+                    editingAddressRef.current = false;
+                    if (browserState?.url) setAddress(browserState.url);
                     event.currentTarget.blur();
                     return;
                   }
                   if (event.key !== "Enter") return;
                   event.preventDefault();
-                  void navigate(undefined, event.currentTarget.value);
+                  event.stopPropagation();
+                  /* Read the value off the element rather than React state so
+                     a keystroke that has not yet been committed to state
+                     cannot be lost between render and Enter. */
+                  const typed = event.currentTarget.value;
+                  editingAddressRef.current = false;
+                  void navigate(undefined, typed);
                   event.currentTarget.blur();
                 }}
-                className={cn(
-                  "min-w-0 flex-1 bg-transparent outline-none",
-                  omniboxFocused
-                    ? "text-left text-[13px] font-medium text-[var(--atlas-text-primary)]"
-                    : "cursor-text text-center text-[13px] font-medium text-[var(--atlas-text-tertiary)]",
-                )}
-                placeholder="Search or enter address"
+                className="nui-address"
+                placeholder="Search Google or enter an address"
                 aria-label="Address and search bar"
-                readOnly={!omniboxFocused}
                 onClick={() => {
                   if (!omniboxFocused) {
                     setOmniboxFocused(true);
@@ -1840,12 +1854,12 @@ export default function WebBrowserWorkspace() {
                 disabled={Boolean(activeInternalTab) || !browserState?.url}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => void toggleBookmark()}
-                className={cn(
-                  "grid h-7 w-7 shrink-0 place-items-center rounded-[7px] text-[var(--atlas-text-tertiary)] transition-[background-color,color,transform] duration-150 hover:bg-black/[0.05] hover:text-[var(--atlas-text-primary)] active:scale-95 disabled:pointer-events-none disabled:opacity-30",
-                  currentPageBookmark && "text-[var(--atlas-clyra-blue)]",
-                )}
+                className={cn("nui-icon-button", currentPageBookmark && "is-active")}
               >
-                <Star className={cn("h-[15px] w-[15px]", currentPageBookmark && "fill-current")} strokeWidth={1.8} />
+                <Star
+                  className={cn("h-[15px] w-[15px]", currentPageBookmark && "fill-current text-[var(--atlas-clyra-blue)]")}
+                  strokeWidth={1.8}
+                />
               </button>
             </div>
           </form>
@@ -2482,31 +2496,47 @@ export default function WebBrowserWorkspace() {
                     </div>
                   </div>
 
-                  <div className="shrink-0 border-t border-[var(--atlas-divider)] px-3 pb-3 pt-2">
-                    {messages.length === 0 && pageContextReady ? (
-                      <div className="mb-2 flex items-center gap-1.5">
-                        <span className="grid h-4 w-4 shrink-0 place-items-center overflow-hidden rounded-[3px] border border-[var(--atlas-divider)] bg-white">
-                          {activeTab?.favicon ? <img src={activeTab.favicon} alt="" className="h-2.5 w-2.5" /> : <Globe2 className="h-2.5 w-2.5 text-[var(--atlas-text-tertiary)]" />}
+                  {/* The workspace composer: the page in view is carried as a
+                      chip the same way an attached note is in Notes chat, and
+                      the bar itself is the notes bar. */}
+                  <div className="nui-composer shrink-0 border-t border-[var(--atlas-divider)] px-3 pb-3 pt-2">
+                    {pageContextReady && pageName ? (
+                      <div className="nui-composer-chips">
+                        <span className="nui-chip">
+                          {activeTab?.favicon
+                            ? <img src={activeTab.favicon} alt="" className="h-3 w-3 rounded-[2px]" />
+                            : <Globe2 className="h-3 w-3" />}
+                          <span className="max-w-[190px] truncate">{pageName}</span>
                         </span>
-                        <span className="truncate text-[10px] font-medium text-[var(--atlas-text-tertiary)]">{pageName}</span>
                       </div>
                     ) : null}
                     <form
                       onSubmit={(event) => { event.preventDefault(); void runAgentTask(); }}
-                      className="flex min-h-[76px] flex-col rounded-none bg-transparent"
+                      className="nui-bar"
                     >
+                      <span className="nui-bar-mark"><Bloub size={20} /></span>
                       <textarea
                         value={task}
-                        onChange={(event) => setTask(event.target.value)}
+                        onChange={(event) => {
+                          setTask(event.target.value);
+                          const node = event.currentTarget;
+                          node.style.height = "auto";
+                          node.style.height = `${Math.min(140, node.scrollHeight)}px`;
+                        }}
                         onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void runAgentTask(); } }}
-                        rows={2}
-                        placeholder="Describe a task"
-                        className="w-full flex-1 resize-none bg-transparent px-0.5 py-1 text-[13px] font-normal leading-5 text-[var(--atlas-text-primary)] outline-none placeholder:text-[var(--atlas-text-tertiary)]"
+                        rows={1}
+                        placeholder="Ask about this page, or describe a task"
+                        aria-label="Ask Clyra"
+                        className="nui-input"
                       />
-                      <div className="flex items-center justify-between pt-1">
-                        <span className="text-[10px] font-medium text-[var(--atlas-text-tertiary)]">Agent · Sources</span>
-                        <button type="submit" disabled={isAgentBusy || !task.trim()} className="grid h-6 w-6 place-items-center rounded-full bg-[var(--atlas-agent-black)] text-white transition-[opacity,transform] hover:opacity-90 active:scale-95 disabled:bg-black/[0.08] disabled:text-[var(--atlas-text-tertiary)]" aria-label="Run browser task"><ArrowUp className="h-3 w-3" /></button>
-                      </div>
+                      <button
+                        type="submit"
+                        disabled={isAgentBusy || !task.trim()}
+                        className="nui-send"
+                        aria-label="Run browser task"
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </button>
                     </form>
                   </div>
                 </>
@@ -2553,7 +2583,6 @@ export default function WebBrowserWorkspace() {
 
               {sideView === "settings" ? (
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                  <SettingSelect label="Search engine" value={settings.defaultSearchEngine} options={["bing", "google", "duckduckgo"]} onChange={(value) => void updateSettings({ defaultSearchEngine: value as BrowserSettings["defaultSearchEngine"] })} />
                   <SettingSelect label="Performance" value={settings.performanceMode} options={["quality", "balanced", "efficient"]} onChange={(value) => void updateSettings({ performanceMode: value as BrowserSettings["performanceMode"] })} />
                   <div className="mt-3 divide-y divide-[var(--atlas-divider)] border-y border-[var(--atlas-divider)]">
                     <SettingToggle label="Restore tabs" checked={settings.restoreTabs} onChange={(value) => void updateSettings({ restoreTabs: value })} />
@@ -2696,7 +2725,6 @@ function BrowserInternalPage({
             </header>
             <div className="space-y-8">
               <InternalSettingsSection title="General" icon={Search}>
-                <InternalSettingSelect label="Search engine" description="Used when you enter a search in the address bar." value={settings.defaultSearchEngine} options={["google", "bing", "duckduckgo"]} onChange={(value) => onUpdateSettings({ defaultSearchEngine: value as BrowserSettings["defaultSearchEngine"] })} />
                 <InternalSettingToggle label="Restore tabs" description="Reopen your last browser tabs when Clyra starts." checked={settings.restoreTabs} onChange={(value) => onUpdateSettings({ restoreTabs: value })} />
                 <InternalSettingToggle label="Show bookmarks bar" description="Keep saved pages one click away." checked={settings.showBookmarksBar} onChange={(value) => onUpdateSettings({ showBookmarksBar: value })} />
               </InternalSettingsSection>

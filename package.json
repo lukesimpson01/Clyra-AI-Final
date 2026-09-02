@@ -6,9 +6,9 @@
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "node tools/dev-full.mjs",
-    "dev:app": "npm run build && NODE_ENV=production tsx server.ts",
-    "dev:source": "node tools/dev-source.mjs",
-    "desktop:dev": "node tools/electron-dev.mjs",
+    "dev:app": "node tools/sqlite-abi.mjs node && npm run build && NODE_ENV=production tsx server.ts",
+    "dev:source": "node tools/sqlite-abi.mjs node && node tools/dev-source.mjs",
+    "desktop:dev": "node tools/sqlite-abi.mjs electron && node tools/electron-dev.mjs",
     "desktop:build": "npm run desktop:prepare && electron-builder",
     "desktop:prepare": "npm run build && node tools/build-electron-sidecar.mjs && node tools/seed-desktop-runtime-config.mjs",
     "desktop:prepare:win": "node tools/prepare-electron-target.mjs win32-x64",
@@ -25,6 +25,9 @@
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
+    "notes:template-shots": "node tools/notes-template-shots.mjs",
+    "sqlite:node": "node tools/sqlite-abi.mjs node",
+    "sqlite:electron": "node tools/sqlite-abi.mjs electron",
     "test:voice": "tsx tools/voice-unit-tests.ts",
     "test:voice-e2e:dictation": "node tools/voice-call-e2e.mjs --dictation",
     "test:voice-call-e2e": "node tools/voice-call-webrtc-e2e.mjs",
@@ -37,7 +40,11 @@
     "test:clipper": "tsx tools/clipper-unit-tests.ts",
     "test:clip-zoom": "tsx tools/clip-zoom-effect-unit-tests.ts",
     "test:clipper-publishing": "tsx tools/clipper-publishing-unit-tests.ts",
-    "test:licensed-footage": "tsx tools/licensed-footage-unit-tests.ts",
+    "test:clipper-brand-kits": "tsx tools/clipper-brand-kit-unit-tests.ts",
+    "test:usage-pricing": "node tools/usage-pricing-unit-tests.mjs",
+    "test:bots": "tsx tools/bots-unit-tests.ts",
+    "test:bots-workspace": "tsx tools/bots-workspace-unit-tests.ts",
+    "test:face-tracking": "python3 tools/face-tracking-quality-tests.py",
     "test:smart-camera": "tsx tools/smart-camera-unit-tests.ts",
     "test:agent-controller": "tsx tools/agent-controller-unit-tests.ts",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
@@ -52,7 +59,7 @@
     "test:opencluely": "node tools/opencluely-electron-tour.mjs",
     "test:browser-companion-visual": "node tools/browser-companion-visual-smoke.mjs",
     "test:study-brain": "tsx tools/study-brain-unit-tests.ts",
-    "test:notes": "tsx tools/notes-workspace-unit-tests.ts",
+    "test:notes": "node tools/sqlite-abi.mjs node && tsx tools/notes-workspace-unit-tests.ts",
     "notes:vendor": "node -e \"const f=require('fs');f.mkdirSync('public/notes/vendor',{recursive:true});f.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js','public/notes/vendor/xterm.js');f.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js','public/notes/vendor/addon-fit.js');f.copyFileSync('node_modules/@xterm/xterm/css/xterm.css','public/notes/vendor/xterm.css');console.log('notes vendor refreshed')\""
   },
   "devDependencies": {
@@ -171,6 +178,10 @@
         "to": "clipper_intelligence.py"
       },
       {
+        "from": "clipper_voiceover.py",
+        "to": "clipper_voiceover.py"
+      },
+      {
         "from": "package-lock.json",
         "to": "package-lock.json"
       }
@@ -205,6 +216,12 @@
     }
   },
   "dependencies": {
+    "@deepseek-ai/dsh": "^0.1.2-alpha.3",
+    "@deepseek-ai/dsh-invariants": "^0.1.2-alpha.3",
+    "@deepseek-ai/dsh-llm": "^0.1.2-alpha.3",
+    "@deepseek-ai/dsh-sdk-client": "^0.1.2-alpha.3",
+    "@deepseek-ai/dsh-sdk-protocol": "^0.1.2-alpha.3",
+    "@deepseek-ai/dsh-session": "^0.1.2-alpha.3",
     "@dimforge/rapier2d-compat": "^0.18.2",
     "@dimforge/rapier3d-compat": "^0.18.2",
     "@opencode-ai/sdk": "^1.18.12",

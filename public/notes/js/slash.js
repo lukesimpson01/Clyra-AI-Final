@@ -1,7 +1,7 @@
 /* The slash command menu. Positioned under the caret, filtered as you type,
    and driven entirely from the block catalogue so it can never offer a block
    the editor cannot build. */
-import { el, icon, menu, position, pushLayer, toast } from "./dom.js";
+import { el, icon, matchScore, menu, position, pushLayer, toast } from "./dom.js";
 import { BLOCK_TYPES } from "./block-types.js";
 import { caretOffset, setCaret, spansText, sliceSpans, spansLength } from "./richtext.js";
 import { state } from "./state.js";
@@ -54,7 +54,7 @@ function insertType(editor, block, type) {
   editor.turnInto(block, type);
   /* Blocks with no text of their own leave a fresh paragraph behind so the
      caret has somewhere to land. */
-  if (["divider", "toc", "breadcrumb", "image", "video", "audio", "file", "pdf", "bookmark", "embed", "transcript", "source", "table"].includes(type)) {
+  if (["divider", "toc", "breadcrumb", "image", "video", "audio", "file", "pdf", "bookmark", "embed", "transcript", "source", "table", "chart"].includes(type)) {
     editor.insertAfter(block, editor.blank());
   }
 }
@@ -78,8 +78,12 @@ export function openSlashMenu({ editor, block, line, triggerOffset, onClose }) {
 
   const visible = () => {
     const term = query.trim().toLowerCase();
-    return commands.filter((command) =>
-      !term || command.label.toLowerCase().includes(term) || command.keywords.toLowerCase().includes(term));
+    if (!term) return commands.slice();
+    return commands
+      .map((command, index) => ({ command, index, rank: matchScore(command.label, command.keywords, term) }))
+      .filter((scored) => scored.rank >= 0)
+      .sort((a, b) => b.rank - a.rank || a.index - b.index)
+      .map((scored) => scored.command);
   };
 
   const build = () => {
@@ -96,7 +100,15 @@ export function openSlashMenu({ editor, block, line, triggerOffset, onClose }) {
       if (!groups.has(command.group)) groups.set(command.group, []);
       groups.get(command.group).push(command);
     }
-    for (const group of [...groups.keys()].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b))) {
+    /* While searching, the group holding the best match leads, so the top row
+       of the menu is always the best answer. Idle, the catalogue order is
+       what a student learns to scan. */
+    const searching = Boolean(query.trim());
+    const best = new Map([...groups].map(([group, list]) => [group, matched.indexOf(list[0])]));
+    const order = [...groups.keys()].sort((a, b) => searching
+      ? best.get(a) - best.get(b)
+      : GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b));
+    for (const group of order) {
       list.append(el("div", { class: "menu-label", text: group }));
       for (const command of groups.get(group)) {
         const row = el("button", {

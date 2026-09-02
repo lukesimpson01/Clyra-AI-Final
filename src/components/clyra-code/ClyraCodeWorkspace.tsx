@@ -844,7 +844,6 @@ export default function ClyraCodeWorkspace() {
                 <Conversation
                   state={state}
                   running={running}
-                  onCancel={() => void cancelRun()}
                   onReplyPermission={(id, response) => void replyPermission(id, response)}
                   onRetry={retryAction}
                   onOpenTerminal={() => setTerminalOpen(true)}

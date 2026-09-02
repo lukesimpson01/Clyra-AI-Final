@@ -8,19 +8,19 @@ type LiquidGlassButtonProps = {
   onClick: () => void;
   active?: boolean;
   danger?: boolean;
-  /** Present but not wired to a real capability yet -- dimmed, no magnification, native tooltip explains why. */
-  disabled?: boolean;
   size?: "md" | "sm";
 };
 
-/** Circular Liquid Glass call control (mic, camera, share, end-call). */
+/** Circular Liquid Glass call control (mic, end-call). Every control this
+ *  renders is expected to actually work — see the note on the call-control
+ *  row in VoiceCallScreen about why camera/share aren't offered here at all
+ *  rather than shown disabled. */
 export function LiquidGlassButton({
   icon,
   label,
   onClick,
   active,
   danger,
-  disabled,
   size = "md",
 }: LiquidGlassButtonProps) {
   const padding = size === "sm" ? "14px" : "18px";
@@ -30,14 +30,12 @@ export function LiquidGlassButton({
     <motion.button
       type="button"
       aria-label={label}
-      title={disabled ? `${label} — not connected to this call yet` : label}
-      aria-disabled={disabled}
-      onClick={disabled ? undefined : onClick}
-      whileHover={disabled ? undefined : { scale: 1.06 }}
-      whileTap={disabled ? undefined : { scale: 0.92 }}
+      title={label}
+      onClick={onClick}
+      whileHover={{ scale: 1.06 }}
+      whileTap={{ scale: 0.92 }}
       transition={{ type: "spring", stiffness: 420, damping: 24 }}
       className="relative"
-      style={disabled ? { cursor: "default" } : undefined}
     >
       {/* liquid-glass-react measures its own box once and lays out a couple of
           full-size tint layers as normal-flow (not absolutely positioned)
@@ -54,13 +52,10 @@ export function LiquidGlassButton({
           blurAmount={14}
           saturation={140}
           aberrationIntensity={danger ? 1.4 : 0.8}
-          elasticity={disabled ? 0 : 0.18}
+          elasticity={0.18}
           mode="standard"
         >
-          <span
-            className={`flex items-center justify-center text-white/90 ${iconBox}`}
-            style={disabled ? { opacity: 0.4 } : undefined}
-          >
+          <span className={`flex items-center justify-center text-white/90 ${iconBox}`}>
             {icon}
           </span>
         </LiquidGlass>

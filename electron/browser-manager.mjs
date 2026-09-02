@@ -158,6 +158,8 @@ function injectionSignals(lines) {
 }
 
 const DEFAULT_SETTINGS = {
+  /* Retained so existing stored profiles still parse; the value is no longer
+     consulted, because normalizeInput() always searches Google. */
   defaultSearchEngine: "google",
   restoreTabs: true,
   saveHistory: true,
@@ -170,16 +172,43 @@ const DEFAULT_SETTINGS = {
   privateMode: false,
 };
 
-function normalizeInput(input, engine = "google") {
-  const value = String(input || "").trim();
+/** Google is the browser's search engine. There is no other. */
+function searchUrl(query) {
+  return `https://www.google.com/search?q=${encodeURIComponent(String(query).trim())}`;
+}
+
+/**
+ * The single rule for turning what someone typed into somewhere to go, shared
+ * by the address bar, the Go button, agent actions and deep links.
+ *
+ * The ordering matters. Anything containing whitespace is a search before any
+ * domain matching is attempted, so "best laptop 2026" cannot be mistaken for a
+ * host just because it has a dot in it somewhere; and a bare TLD-shaped token
+ * is only treated as a domain when it ends in a real alphabetic TLD.
+ */
+function normalizeInput(input) {
+  const value = String(input ?? "").trim();
   if (!value || value === "about:blank" || /^(chrome|edge|devtools|chrome-error):/i.test(value)) return HOME_URL;
+
+  // Already absolute — leave it exactly as typed.
   if (/^https?:\/\//i.test(value)) return value;
-  if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/.*)?$/i.test(value)) return `http://${value}`;
-  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:\/.*)?$/i.test(value)) return `https://${value}`;
-  const query = encodeURIComponent(value);
-  if (engine === "duckduckgo") return `https://duckduckgo.com/?q=${query}`;
-  if (engine === "bing") return `https://www.bing.com/search?q=${query}`;
-  return `https://www.google.com/search?q=${query}`;
+
+  // A query is anything with a space in it. This is checked before domain
+  // matching so a sentence can never be mistaken for a host.
+  if (/\s/.test(value)) return searchUrl(value);
+
+  const loopback = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(value);
+  const bareIpv4 = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:[/?#].*)?$/.test(value);
+  if (loopback || bareIpv4) return `http://${value}`;
+
+  // "mailto:x", "ftp://y" and friends are not this browser's business, but
+  // "localhost:5173" only looks like a scheme — it was handled above.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return searchUrl(value);
+
+  // A domain is labels joined by dots ending in an alphabetic TLD.
+  if (/^(?:[\w-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(value)) return `https://${value}`;
+
+  return searchUrl(value);
 }
 
 function safeUrl(value) {
@@ -301,7 +330,9 @@ export class ChromiumBrowserManager {
       this.bookmarks = Array.isArray(profile.bookmarks) ? profile.bookmarks.slice(0, 500) : [];
       this.closedTabs = Array.isArray(profile.closedTabs) ? profile.closedTabs.slice(0, 20) : [];
       this.downloads = Array.isArray(profile.downloads) ? profile.downloads.slice(0, 100) : [];
-      this.settings = { ...DEFAULT_SETTINGS, ...(profile.settings || {}) };
+      /* Google is the only search engine now, so a profile saved while the
+         setting was configurable is migrated rather than trusted. */
+      this.settings = { ...DEFAULT_SETTINGS, ...(profile.settings || {}), defaultSearchEngine: "google" };
       this.lastTabs = Array.isArray(profile.lastTabs) ? profile.lastTabs.map((tab) => ({ url: safeUrl(tab.url) })) : [];
     } catch {
       this.lastTabs = [];
@@ -376,7 +407,7 @@ export class ChromiumBrowserManager {
     // Do not attach the Electron debugger before the first navigation: an
     // emulation command issued against an uninitialised renderer can block the
     // desktop boot sequence and competes with the agent's CDP session.
-    void view.webContents.loadURL(normalizeInput(url, this.settings.defaultSearchEngine)).catch(() => undefined);
+    void view.webContents.loadURL(normalizeInput(url)).catch(() => undefined);
     if (activate) this.activateTab(id, { persist: false });
     if (persist) this.scheduleSave();
     this.emitState();
@@ -588,9 +619,18 @@ export class ChromiumBrowserManager {
   }
 
   async navigate(target, tabId = this.activeTabId) {
-    const contents = this.contentsFor(tabId);
+    /* Tabs are created lazily when the browser surface is first shown, so a
+       navigation that arrives before that — a search typed the moment the
+       app opens, a deep link, or anything after the last tab was closed —
+       used to throw "No active browser tab" and silently do nothing. A
+       navigation with nowhere to go should open somewhere to go. */
+    let contents = this.contentsFor(tabId);
+    if (!contents) {
+      await this.createTab(HOME_URL, { activate: true, persist: true });
+      contents = this.contentsFor(this.activeTabId);
+    }
     if (!contents) throw new Error("No active browser tab.");
-    const destination = normalizeInput(target, this.settings.defaultSearchEngine);
+    const destination = normalizeInput(target);
     // contents.loadURL()'s promise only resolves once the whole page has
     // finished loading (did-finish-load) or rejects on failure — awaiting it
     // here kept every caller (the IPC handler, and therefore the renderer's
@@ -634,6 +674,14 @@ export class ChromiumBrowserManager {
   }
 
   async action(action) {
+    /* Opening a tab is the one action that must work with no tabs open, so
+       it runs before the active-tab guard — but it still answers with the
+       state every other action returns, or the caller waits forever. */
+    if (action?.type === "open_tab") {
+      await this.createTab(action.url || HOME_URL);
+      this.emitState();
+      return { state: this.getState() };
+    }
     const contents = this.activeContents();
     if (!contents) throw new Error("No active browser tab.");
     contents.focus();

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "7b3424f4-baeb-46f3-9906-9416a91b4b3a",
+    "fromBotId": "7b5d2b26-08ed-41f3-8287-87ffc78a8e53",
+    "fromBotName": "Researcher",
+    "toBotId": "ee808910-e6c6-446c-8063-5e2f71afeb13",
+    "task": "@Coder please fix the login bug, cc @Ghost",
+    "context": "",
+    "attachments": [],
+    "expectedResult": "Reply to the requesting bot when done.",
+    "state": "queued",
+    "result": null,
+    "createdAt": "2026-09-02T00:11:45.894Z",
+    "updatedAt": "2026-09-02T00:11:45.894Z",
+    "parentId": null
+  },
+  {
+    "id": "852d101d-b57d-4713-8842-1e49101ee9e5",
+    "fromBotId": "7b5d2b26-08ed-41f3-8287-87ffc78a8e53",
+    "fromBotName": "Researcher",
+    "toBotId": "ee808910-e6c6-446c-8063-5e2f71afeb13",
+    "task": "@Coder’s covered the pipeline issue; my biggest risk is that recent upstream API changes or data-source updates haven’t been fully verified, which could break features right after release.",
+    "context": "",
+    "attachments": [],
+    "expectedResult": "Reply to the requesting bot when done.",
+    "state": "queued",
+    "result": null,
+    "createdAt": "2026-09-02T00:35:48.251Z",
+    "updatedAt": "2026-09-02T00:35:48.251Z",
+    "parentId": null
+  }
+]

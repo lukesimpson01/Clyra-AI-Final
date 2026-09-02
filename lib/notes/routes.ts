@@ -8,7 +8,25 @@ import * as store from "./store";
 import * as ai from "./ai";
 import { runWebSearchResearch } from "../research/research-handlers";
 import { blocksToMarkdown, markdownToBlocks, spanText, parseSpans, type Block } from "./blocks";
+import { registerNotesBrowseRoutes } from "./browse";
 import type { Rating } from "./fsrs";
+
+/* Drafts carry no ids; the store needs them before it can write parent
+   links, so they are minted on the way in. */
+function draftsToPageBlocks(drafts: Array<Record<string, unknown>>): Block[] {
+  let sequence = 0;
+  const walk = (list: Array<Record<string, unknown>>): Block[] => list.map((draft) => ({
+    id: `d${Date.now().toString(36)}${(sequence += 1).toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    page_id: "",
+    parent_id: null,
+    type: draft.type as Block["type"],
+    text: (draft.text || []) as Block["text"],
+    props: (draft.props || {}) as Record<string, unknown>,
+    sort: 0,
+    children: walk((draft.children || []) as Array<Record<string, unknown>>),
+  }));
+  return walk(drafts);
+}
 
 const fail = (res: express.Response, error: unknown) => {
   const status = error instanceof ai.AiError ? error.status : 400;
@@ -182,6 +200,7 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.get("/api/notes/search", wrap((req) => store.search(String(req.query.q || ""), req.query)));
   app.get("/api/notes/trash", wrap(() => store.listTrash()));
   app.get("/api/notes/inbox", wrap((req) => store.listInbox(req.query)));
+  app.delete("/api/notes/workspace", wrap(() => store.clearWorkspace()));
   app.post("/api/notes/inbox/:id/:action", wrap((req) => store.markInbox(req.params.id, req.params.action as "read" | "archive")));
   app.post("/api/notes/inbox/read-all", wrap(() => store.markInbox(null, "read_all")));
 
@@ -246,6 +265,10 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
     res.type("html").send(entry.html);
   });
 
+  /* The reading proxy for the browser panel. Registered here so it shares
+     the workspace's route prefix and lifecycle. */
+  registerNotesBrowseRoutes(app);
+
   /* ---- pages ---- */
   app.get("/api/notes/pages", wrap(() => store.listPages()));
   app.get("/api/notes/pages/:id", wrap((req) => store.getPage(req.params.id)));
@@ -259,6 +282,7 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.delete("/api/notes/pages/:id/forever", wrap((req) => store.deletePageForever(req.params.id)));
   app.post("/api/notes/pages/:id/versions", wrap((req) => store.saveVersion(req.params.id)));
   app.post("/api/notes/pages/:id/versions/:versionId/restore", wrap((req) => store.restoreVersion(req.params.id, req.params.versionId)));
+  app.get("/api/notes/pages/:id/links", wrap((req) => store.pageLinks(req.params.id)));
   app.get("/api/notes/pages/:id/markdown", wrap((req, res) => {
     const markdown = store.pageMarkdown(req.params.id);
     if (markdown === null) return null;
@@ -301,7 +325,12 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.post("/api/notes/decks/:id/cards", wrap((req) => store.addCards(req.params.id, req.body.cards || [])));
   app.patch("/api/notes/cards/:id", wrap((req) => store.updateCard(req.params.id, req.body)));
   app.delete("/api/notes/cards/:id", wrap((req) => store.deleteCard(req.params.id)));
-  app.get("/api/notes/study/queue", wrap((req) => store.studyQueue(req.query.deckId ? String(req.query.deckId) : undefined)));
+  app.get("/api/notes/study/queue", wrap((req) => store.studyQueue(
+    req.query.deckId ? String(req.query.deckId) : undefined,
+    /* The session length is a workspace preference, clamped here so a bad
+       value cannot ask the database for everything. */
+    Math.min(200, Math.max(5, Number(req.query.limit) || 60)),
+  )));
   app.get("/api/notes/study/stats", wrap(() => store.studyStats()));
   app.post("/api/notes/cards/:id/review", wrap((req) => store.reviewCard(req.params.id, Number(req.body.rating) as Rating, req.body.responseMs)));
 
@@ -494,6 +523,29 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
       markdown: generated.markdown,
     });
     return { page, generated };
+  }));
+
+  /* One document endpoint for every "make me a page" path: the chat's
+     Create page, the study-guide generator and the composer all go through
+     the harness so they produce the same quality of page. */
+  app.post("/api/notes/ai/document", wrap(async (req) => {
+    const instruction = String(req.body.instruction || "").trim();
+    if (!instruction) return { error: "Say what the document should cover" };
+    const context = contextFor((req.body.sources || []) as Array<Record<string, unknown>>);
+    const composed = await ai.composeStructuredDocument({
+      instruction,
+      context,
+      title: req.body.title ? String(req.body.title) : undefined,
+      maxRevisions: req.body.maxRevisions === undefined ? undefined : Number(req.body.maxRevisions),
+    });
+    if (req.body.create === false) return composed;
+    const page = store.createPage({
+      parentId: req.body.parentId ?? null,
+      classId: req.body.classId ?? null,
+      title: composed.title,
+      blocks: draftsToPageBlocks(composed.blocks),
+    });
+    return { page, passes: composed.passes, outstanding: composed.outstanding };
   }));
 
   app.post("/api/notes/ai/formula", wrap(async (req) => ai.generateFormula(String(req.body.request || ""), (req.body.properties || []) as string[])));

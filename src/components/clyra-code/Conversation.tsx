@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
-import { DisclosureRow } from "./harness";
+import { DisclosureRow, StateDot } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
 import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
@@ -95,45 +95,6 @@ function suppressBriefThoughts(entries: LogEntry[]) {
   return compacted;
 }
 
-/** Bottom-of-transcript thinking gap while the next reasoning phase is pending. */
-function PendingThinking({
-  startedAt,
-  starting,
-  onStop,
-  reduced,
-}: {
-  startedAt: number;
-  starting: boolean;
-  onStop?: () => void;
-  reduced: boolean | null;
-}) {
-  return (
-    <motion.div
-      layout
-      className="flex min-w-0 items-center gap-1.5 py-[3px]"
-      {...(reduced
-        ? {}
-        : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
-    >
-      {/* The same sweep every running row carries, so the pending gap reads as
-          part of the stream rather than a differently-animated placeholder. */}
-      <span className="dsh-row-root" data-state="running">
-        <span className="dsh-row">
-          <span className="dsh-leading"><Sparkle /></span>
-          <span className="dsh-title" style={{ fontWeight: 500 }}>
-            {starting ? "Starting agent" : "Thinking"}
-          </span>
-        </span>
-      </span>
-      {onStop ? (
-        <button type="button" onClick={onStop} className="dsh-pill ml-1">
-          Stop
-        </button>
-      ) : null}
-    </motion.div>
-  );
-}
-
 export function CompletionSummary({
   diffs,
   actions,
@@ -191,7 +152,8 @@ export function CompletionSummary({
   );
 }
 
-type TranscriptItem = { type: "entry"; entry: LogEntry; id: string };
+type VisibleLogEntry = Exclude<LogEntry, { type: "reasoning" }>;
+type TranscriptItem = { type: "entry"; entry: VisibleLogEntry; id: string };
 
 /**
  * Keeps the activity stream readable during a busy OpenCode phase. A later
@@ -234,11 +196,8 @@ function SequencedActionRows({
 
   useEffect(() => {
     if (instant || !current || revealed >= actions.length) return;
-    const editing = /^(edit|create)$/.test(current.kind);
     const running = current.status === "active" || current.status === "queued";
-    // Edit cards control their own close animation and call releaseNext. All
-    // other settled real actions receive the same calm 0.5s hand-off.
-    if (!editing && !running) releaseNext();
+    if (!running) releaseNext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, current?.status, revealed, actions.length, instant]);
 
@@ -253,7 +212,6 @@ function SequencedActionRows({
           action={action}
           onOpenFile={onOpenFile}
           revisiting={revisitedActionIds.has(action.id)}
-          onEditClosed={action.id === current?.id ? releaseNext : undefined}
           settled={instant}
         />
       ))}
@@ -382,7 +340,6 @@ function PhaseGroup({
 export function Conversation({
   state,
   running,
-  onCancel,
   onReplyPermission,
   onRetry,
   onOpenTerminal,
@@ -392,7 +349,6 @@ export function Conversation({
 }: {
   state: ClyraCodeState;
   running: boolean;
-  onCancel: () => void;
   onReplyPermission: (permissionId: string, response: "allow" | "always" | "deny") => void;
   onRetry: (action: AgentAction) => void;
   onOpenTerminal: () => void;
@@ -472,28 +428,6 @@ export function Conversation({
       (action) => /^(build|check|test|preview)$/.test(action.kind) && action.status === "success",
     )
   );
-  const hasActiveTool = Object.values(state.actions).some(
-    (action) => action.status === "active" || action.status === "queued",
-  );
-  const hasOpenReasoning = state.log.some(
-    (entry) => entry.type === "reasoning" && !entry.endedAt,
-  );
-  // A provider can settle a reasoning part a frame before it emits the next
-  // tool. Keep that real Thought marker as the single visual owner of the
-  // state during the hand-off instead of briefly mounting a second “Thinking”
-  // row beneath it.
-  const latestReasoning = [...state.log].reverse().find(
-    (entry): entry is Extract<LogEntry, { type: "reasoning" }> => entry.type === "reasoning",
-  );
-  const reasoningJustSettled = Boolean(
-    latestReasoning?.endedAt && Date.now() - latestReasoning.endedAt < 1_800,
-  );
-  const showThinking =
-    running &&
-    !!state.runStartedAt &&
-    !hasActiveTool &&
-    !hasOpenReasoning &&
-    !reasoningJustSettled;
   const revisitedActionIds = useMemo(() => {
     const editedFiles = new Set<string>();
     const revisited = new Set<string>();
@@ -509,10 +443,12 @@ export function Conversation({
     return revisited;
   }, [state.actions, state.log]);
   const transcriptItems = useMemo<TranscriptItem[]>(() => {
-    const log = suppressBriefThoughts(dedupeConsecutiveAssistantEntries(state.log));
-    // Keep the transcript literal: each OpenCode event owns one row. In
-    // particular, do not suppress unfamiliar provider tools; they are often
-    // the only visible record of real browser, file, or project work.
+    // Keep the user-visible stream limited to prompts, assistant responses,
+    // and concrete tool actions. Reasoning parts may contain verbose internal
+    // planning and are neither an answer nor an action the user needs to
+    // review. Unknown tool kinds remain visible as real work records.
+    const log = dedupeConsecutiveAssistantEntries(state.log)
+      .filter((entry): entry is VisibleLogEntry => entry.type !== "reasoning");
     return log.map((entry) => ({ type: "entry" as const, entry, id: entry.id }));
   }, [state.actions, state.log, density]);
 
@@ -577,24 +513,14 @@ export function Conversation({
             }
             if (entry.type === "assistant") {
               return (
-                <motion.div
+                <div
                   key={entry.id}
-                  {...(reduced || !fresh ? {} : SUBTLE_ENTER)}
                   className={cn(
-                    "text-[14px] font-normal leading-[21px] tracking-normal text-[#303136]",
-                    "[&_p]:my-[9px] [&_ul]:my-[9px] [&_ol]:my-[9px] [&_li]:my-[3px] [&_pre]:my-2 [&_code]:text-[12px]",
-                    "[&_strong]:font-medium",
+                    "dsh-assistant-message",
                     nextKindGap ? "mt-2.5" : "mt-1.5",
                   )}
                 >
                   <MarkdownMessageContent content={entry.text} />
-                </motion.div>
-              );
-            }
-            if (entry.type === "reasoning") {
-              return (
-                <div key={entry.id} className={cn(nextKindGap ? "mt-2" : "mt-0.5")}>
-                  <ThinkingEvent entry={entry} />
                 </div>
               );
             }
@@ -618,30 +544,14 @@ export function Conversation({
             );
           })}
 
-          <AnimatePresence initial={false}>
-            {showThinking ? (
-              <motion.div
-                key="thinking-gap"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18, ease: AGENT_EASE }}
-                className="mt-1.5 overflow-hidden"
-              >
-                <PendingThinking
-                  startedAt={state.runStartedAt!}
-                  starting={state.runState === "starting"}
-                  onStop={onCancel}
-                  reduced={reduced}
-                />
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-
-          {state.runState === "failed" && state.error ? (
-            <div className="mt-2 text-[12px] leading-[1.5]">
-              <span className="font-medium text-[#B94B4B]">Failed</span>{" "}
-              <span className="text-[#787A7F]">{state.error}</span>
+          {state.runState === "failed" ? (
+            <div className="dsh-row-root mt-2" data-state="error" role="status" aria-label="Run failed">
+              <div className="dsh-row">
+                <span className="dsh-leading"><StateDot state="error" /></span>
+                <span className="dsh-title">Run failed</span>
+                <span className="dsh-sep" aria-hidden />
+                <span className="dsh-summary">Open the failed action for details</span>
+              </div>
             </div>
           ) : null}
 

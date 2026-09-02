@@ -28,6 +28,7 @@ import {
   Minus,
   RefreshCw,
   Search,
+  ScanFace,
   SlidersHorizontal,
   Scissors,
   Magnet,
@@ -77,6 +78,7 @@ type SubtitleStyle = "word" | "phrase-highlight";
 type CaptionCollisionMode = "auto" | "keep-existing" | "allow-overlap";
 type RenderQuality = "premium" | "balanced" | "master";
 type CropFocus = "left" | "center" | "right";
+type ProcessingProfile = "auto" | "low_memory" | "balanced" | "quality";
 type FaceTrackingMode = "off" | "smooth" | "responsive";
 type FaceTrackingPreset = "auto" | "follow" | "select" | "locked" | "none";
 type SceneMode = "strict" | "flexible";
@@ -213,6 +215,14 @@ type ClipDraft = {
   trackingPreset?: FaceTrackingPreset;
   sceneMode: SceneMode;
   selectedPersonId: string;
+  /** Frame two speakers at once, stacked, instead of following one crop. */
+  splitScreen: boolean;
+  /** Migration stamp for persisted drafts; see DRAFT_SCHEMA_VERSION. */
+  schemaVersion?: number;
+  /** Analysis budget: transcription model size, proxy height, thread caps. */
+  processingProfile: ProcessingProfile;
+  /** High-pass + denoise ahead of loudness normalisation. */
+  speechCleanup: boolean;
   captionsEnabled: boolean;
   removeFillers: boolean;
   font: string;
@@ -328,13 +338,16 @@ const DEFAULT_DRAFT: ClipDraft = {
   clipCount: 3,
   aspect: "9:16",
   cropFocus: "center",
-  // Transcript-first clipping should remain fast by default. Continuous
-  // person tracking is optional and can be selected in Look when a moving
-  // subject crop is worth the extra local analysis time.
-  faceTracking: "responsive",
-  trackingPreset: "auto",
+  // Transcript-first clipping stays fast by default: face tracking is off
+  // until the user turns it on in the Track face step, so no face analysis
+  // or automatic crop runs at all unless it was actually asked for.
+  faceTracking: "off",
+  trackingPreset: "none",
   sceneMode: "flexible",
   selectedPersonId: "",
+  splitScreen: false,
+  processingProfile: "auto",
+  speechCleanup: true,
   captionsEnabled: true,
   removeFillers: false,
   font: "Impact",
@@ -353,6 +366,8 @@ const DEFAULT_DRAFT: ClipDraft = {
 };
 
 const DRAFT_KEY = "clyra.clip.draft.v2";
+/** Bumped when a saved draft needs migrating (see loadDraft). */
+const DRAFT_SCHEMA_VERSION = 1;
 const RESULT_KEY = "clyra.clip.results.v2";
 
 function pipelineStageFor(step?: string): PipelineStageId | null {
@@ -446,6 +461,17 @@ function loadDraft(initialUrl: string): ClipDraft {
   try {
     const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null") as Partial<ClipDraft> | null;
     const merged = saved ? { ...DEFAULT_DRAFT, ...saved, source: { ...DEFAULT_DRAFT.source, ...(saved.source || {}) } } : DEFAULT_DRAFT;
+    // Face tracking used to default on and had no dedicated step. A draft
+    // saved under that default would silently opt an existing user into face
+    // analysis they never asked for, so drafts written before the Track face
+    // step are migrated to off. Everything else they configured is kept, and
+    // the stamped version stops the migration re-running once applied.
+    if (saved && (saved.schemaVersion ?? 0) < DRAFT_SCHEMA_VERSION) {
+      merged.faceTracking = DEFAULT_DRAFT.faceTracking;
+      merged.trackingPreset = DEFAULT_DRAFT.trackingPreset;
+      merged.selectedPersonId = "";
+    }
+    merged.schemaVersion = DRAFT_SCHEMA_VERSION;
     if (initialUrl) merged.source = { mode: "url", url: initialUrl };
     return merged;
   } catch {
@@ -784,6 +810,226 @@ function SourcePicker({
           <input ref={fileInput} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.m4v" className="hidden" onChange={(event) => acceptFile(event.target.files?.[0])} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The Track Face step.
+ *
+ * Off by default and deliberately so: face analysis is the most expensive
+ * stage in the pipeline, and a talking-head clip that is already framed well
+ * gains nothing from a moving crop. Turning it on scans the source for
+ * distinct people and asks the user to pick exactly one — the tracker then
+ * locks to that person for the whole clip rather than following whoever is
+ * largest or nearest, which is what makes multi-person footage usable.
+ */
+function TrackFaceStep({
+  enabled,
+  onToggle,
+  people,
+  scanning,
+  selectedPersonId,
+  onSelect,
+  onScan,
+  canScan,
+  sourceMode,
+  splitScreen,
+  onSplitScreen,
+}: {
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  people: AvailableFace[];
+  scanning: boolean;
+  selectedPersonId: string;
+  onSelect: (id: string) => void;
+  onScan: () => void;
+  canScan: boolean;
+  sourceMode: string;
+  splitScreen: boolean;
+  onSplitScreen: (on: boolean) => void;
+}) {
+  const onlyPerson = people.length === 1 ? (people[0].personId || people[0].id) : null;
+  return (
+    <div className="grid h-full min-h-0 gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.72fr)]">
+      <div className="grid content-start gap-4">
+        <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white px-4 py-3.5">
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium text-slate-900">Track face</p>
+            <p className="mt-1 text-[12px] leading-5 text-slate-500">
+              Follow one person as they move, lean or turn. Left off, Clyra keeps the
+              source framing and runs no face analysis at all.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Track face"
+            onClick={() => onToggle(!enabled)}
+            className={cn(
+              "relative mt-1 h-[26px] w-[46px] shrink-0 rounded-full transition-colors duration-150",
+              enabled ? "bg-[#4169f6]" : "bg-slate-200",
+            )}
+          >
+            <span
+              className="absolute top-[3px] h-[20px] w-[20px] rounded-full bg-white shadow-sm transition-[left] duration-150"
+              style={{ left: enabled ? 23 : 3 }}
+            />
+          </button>
+        </div>
+
+        {enabled ? (
+          <>
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-slate-900">Who should Clyra follow?</p>
+                  <p className="mt-0.5 text-[11.5px] leading-5 text-slate-500">
+                    {people.length
+                      ? "Clyra stays locked to this person even when others cross the frame."
+                      : sourceMode === "upload"
+                        ? "Scan the video to find the people in it."
+                        : "People are detected from the source once analysis begins."}
+                  </p>
+                </div>
+                {sourceMode === "upload" ? (
+                  <button
+                    type="button"
+                    disabled={!canScan || scanning}
+                    onClick={onScan}
+                    className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 text-[12px] font-semibold text-slate-700 transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {scanning ? "Scanning…" : people.length ? "Rescan" : "Scan people"}
+                  </button>
+                ) : null}
+              </div>
+
+              {scanning ? (
+                <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
+                  {[0, 1, 2, 3].map((key) => (
+                    <div key={key} className="aspect-[3/4] animate-pulse rounded-xl bg-slate-100" />
+                  ))}
+                </div>
+              ) : people.length ? (
+                <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
+                  {people.map((person) => {
+                    const id = person.personId || person.id;
+                    const active = selectedPersonId === id;
+                    const thumb = person.thumbnailUrl || person.thumbnail || "";
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => onSelect(id)}
+                        aria-pressed={active}
+                        className={cn(
+                          "group relative overflow-hidden rounded-xl border text-left transition-all",
+                          active
+                            ? "border-[#4169f6] ring-2 ring-[#4169f6]/25"
+                            : "border-slate-200 hover:border-slate-300",
+                        )}
+                      >
+                        <div className="aspect-[3/4] w-full bg-slate-100">
+                          {thumb ? (
+                            <img src={thumb} alt={person.label || id} className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-slate-300">
+                              <ScanFace className="h-6 w-6" />
+                            </div>
+                          )}
+                        </div>
+                        {active ? (
+                          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[#4169f6] text-white shadow-sm">
+                            <Check className="h-3 w-3" strokeWidth={3} />
+                          </span>
+                        ) : null}
+                        <span className="block truncate border-t border-slate-100 px-2 py-1.5 text-[11px] font-medium text-slate-700">
+                          {person.label || id}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-4 rounded-xl bg-slate-50 px-3 py-3 text-[11.5px] leading-5 text-slate-500">
+                  No people detected yet. Clyra will detect them during analysis and follow the
+                  clearest speaker unless you pick someone here.
+                </p>
+              )}
+
+              {onlyPerson && selectedPersonId !== onlyPerson ? (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#eef3ff] px-3 py-2.5">
+                  <p className="text-[11.5px] leading-5 text-[#2c4bb8]">
+                    Only one person appears in this video. Confirm to follow them.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(onlyPerson)}
+                    className="h-8 shrink-0 rounded-lg bg-[#4169f6] px-3 text-[11.5px] font-semibold text-white transition-colors hover:bg-[#3158ea]"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {people.length >= 2 ? (
+              <div className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3.5">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-slate-900">Split screen</p>
+                  <p className="mt-0.5 text-[11.5px] leading-5 text-slate-500">
+                    Stack the two most prominent speakers, each framed independently.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={splitScreen}
+                  aria-label="Split screen"
+                  onClick={() => onSplitScreen(!splitScreen)}
+                  className={cn(
+                    "relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150",
+                    splitScreen ? "bg-[#4169f6]" : "bg-slate-200",
+                  )}
+                >
+                  <span
+                    className="absolute top-[3px] h-[16px] w-[16px] rounded-full bg-white shadow-sm transition-[left] duration-150"
+                    style={{ left: splitScreen ? 21 : 3 }}
+                  />
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+
+      <aside className="hidden lg:flex min-h-0 items-start justify-center">
+        <div className="w-full max-w-[300px] rounded-2xl border border-slate-200/80 bg-white p-4">
+          <p className="text-[12px] font-semibold text-slate-900">How tracking behaves</p>
+          <ul className="mt-3 grid gap-2.5">
+            {[
+              ["Locked to one person", "Never switches to a nearer or larger face."],
+              ["Predicts through gaps", "Holds the path through a turn or brief occlusion."],
+              ["Smoothed, not jittery", "Small movements settle; real movement is followed."],
+              ["Natural headroom", "Frames like an operator, not centred on the nose."],
+            ].map(([title, detail]) => (
+              <li key={title} className="flex gap-2.5">
+                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#4169f6]" />
+                <span className="min-w-0">
+                  <span className="block text-[11.5px] font-medium text-slate-800">{title}</span>
+                  <span className="block text-[11px] leading-4 text-slate-500">{detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {!enabled ? (
+            <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2.5 text-[11px] leading-4 text-slate-500">
+              Tracking is off, so none of this analysis runs and generation stays faster.
+            </p>
+          ) : null}
+        </div>
+      </aside>
     </div>
   );
 }
@@ -1350,11 +1596,13 @@ export default function AIClipper({
               reframeMode: reframeModeFor(draft),
               speakerMode: speakerModeFor(draft),
               trackingQuality: draft.faceTracking === "off" ? "low_memory" : "balanced",
-              splitScreen: false,
+              splitScreen: draft.faceTracking !== "off" && draft.splitScreen,
             },
             captions_enabled: draft.captionsEnabled,
             caption_collision_mode: draft.captionCollisionMode || "keep-existing",
             remove_fillers: draft.removeFillers,
+            processing_profile: draft.processingProfile,
+            speech_cleanup: draft.speechCleanup,
             clip_name: draft.source.name || "clyra-clip",
           },
         }),
@@ -1604,7 +1852,7 @@ export default function AIClipper({
           reframeMode: reframeModeFor(draft),
           speakerMode: speakerModeFor(draft),
           trackingQuality: "balanced",
-          splitScreen: false,
+          splitScreen: draft.faceTracking !== "off" && draft.splitScreen,
           cropFocus: draft.cropFocus,
           aspectRatio: draft.aspect,
           captionsEnabled: draft.captionsEnabled,
@@ -1831,8 +2079,10 @@ export default function AIClipper({
   const wizardMeta = [
     { id: "source" as const, title: "Source", detail: "Paste a link or upload a file" },
     { id: "subtitles" as const, title: "Subtitles", detail: "Captions, framing and safe placement" },
+    { id: "track" as const, title: "Track face", detail: "Optionally follow one person through the clip" },
     { id: "output" as const, title: "Output", detail: "Length and clip count" },
   ];
+  const lastWizardStep = wizardMeta.length - 1;
   const canContinue = wizardStep === 0 ? sourceReady && !uploading : true;
   const legacyCreateView = (
     <div className="relative h-full overflow-hidden bg-[#f8fafc] px-4 py-5 sm:px-6">
@@ -2023,6 +2273,32 @@ export default function AIClipper({
                         })}
                       </div>
                     ) : null}
+                    {draft.faceTracking !== "off" && wizardPeople.length >= 2 ? (
+                      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-slate-700">Split screen</p>
+                          <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                            Stack the two most prominent speakers, each independently framed, instead of following one crop.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={draft.splitScreen}
+                          aria-label="Split screen"
+                          onClick={() => updateDraft("splitScreen", !draft.splitScreen)}
+                          className={cn(
+                            "relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150",
+                            draft.splitScreen ? "bg-[#4169f6]" : "bg-slate-200",
+                          )}
+                        >
+                          <span
+                            className="absolute top-[3px] h-[16px] w-[16px] rounded-full bg-white shadow-sm transition-[left] duration-150"
+                            style={{ left: draft.splitScreen ? 21 : 3 }}
+                          />
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="text-[10px] font-semibold text-slate-500">Caption font
@@ -2056,6 +2332,38 @@ export default function AIClipper({
                       <div className="flex rounded-lg border border-slate-200 bg-slate-100/70 p-1">
                         {(["left", "center", "right"] as CropFocus[]).map((value) => <Segment key={value} value={value} current={draft.cropFocus} onClick={(next) => updateDraft("cropFocus", next)}>{value}</Segment>)}
                       </div>
+                    </div>
+                    <label className="text-[10px] font-semibold text-slate-500">Processing profile
+                      <select value={draft.processingProfile} onChange={(event) => updateDraft("processingProfile", event.target.value as ProcessingProfile)} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-medium outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                        <option value="auto">Auto · match this computer</option>
+                        <option value="low_memory">Low memory · 4 GB machines, fastest</option>
+                        <option value="balanced">Balanced · better transcription</option>
+                        <option value="quality">Quality · most accurate, slowest</option>
+                      </select>
+                    </label>
+                    <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-slate-700">Speech cleanup</p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                          Remove rumble and hiss, then normalise loudness for social delivery.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={draft.speechCleanup}
+                        aria-label="Speech cleanup"
+                        onClick={() => updateDraft("speechCleanup", !draft.speechCleanup)}
+                        className={cn(
+                          "relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150",
+                          draft.speechCleanup ? "bg-[#4169f6]" : "bg-slate-200",
+                        )}
+                      >
+                        <span
+                          className="absolute top-[3px] h-[16px] w-[16px] rounded-full bg-white shadow-sm transition-[left] duration-150"
+                          style={{ left: draft.speechCleanup ? 21 : 3 }}
+                        />
+                      </button>
                     </div>
                   </div>
                   <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-2">
@@ -2394,10 +2702,10 @@ export default function AIClipper({
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-[clamp(20px,2vw,26px)] font-semibold tracking-0 text-[#111318]">
-                  {wizardStep === 0 ? "Video source" : wizardStep === 1 ? "Caption appearance" : "Output settings"}
+                  {wizardStep === 0 ? "Video source" : wizardStep === 1 ? "Caption appearance" : wizardStep === 2 ? "Track a face" : "Output settings"}
                 </h2>
                 <p className="mt-1 text-[13px] leading-5 text-slate-500 max-w-sm">
-                  {wizardStep === 0 ? "Clyra uses the full source, transcript, audio and visuals together." : wizardStep === 1 ? "Both word-by-word and dynamic phrase captions remain available." : "Clyra will preserve context and avoid abrupt sentence cuts."}
+                  {wizardStep === 0 ? "Clyra uses the full source, transcript, audio and visuals together." : wizardStep === 1 ? "Both word-by-word and dynamic phrase captions remain available." : wizardStep === 2 ? "Off by default. Turn it on to keep one person framed as they move." : "Clyra will preserve context and avoid abrupt sentence cuts."}
                 </p>
               </div>
             </div>
@@ -2471,12 +2779,45 @@ export default function AIClipper({
             ) : null}
 
             {wizardStep === 2 ? (
+              <TrackFaceStep
+                enabled={draft.faceTracking !== "off"}
+                onToggle={(on) => setFaceTrackingPreset(on ? "follow" : "none")}
+                people={wizardPeople}
+                scanning={peopleScanning}
+                selectedPersonId={draft.selectedPersonId}
+                onSelect={(id) => selectTrackedFace(id)}
+                onScan={() => void scanPeopleForUpload(draft.source.uploadId)}
+                canScan={Boolean(draft.source.uploadId)}
+                sourceMode={draft.source.mode}
+                splitScreen={draft.splitScreen}
+                onSplitScreen={(on) => updateDraft("splitScreen", on)}
+              />
+            ) : null}
+
+            {wizardStep === 3 ? (
               <div className="grid h-full min-h-0 gap-8 lg:grid-cols-[minmax(0,.9fr)_minmax(320px,1.1fr)]">
                 <div className="grid content-start gap-4">
                   <div><p className="mb-2 text-[12px] font-medium text-slate-600">Amount of videos</p><div className="grid grid-cols-3 rounded-xl border border-slate-200 bg-slate-50 p-1">{[1,2,3].map((count) => <button key={count} type="button" onClick={() => updateDraft("clipCount", count)} className={cn("h-10 rounded-lg text-[13px] font-semibold transition-colors", draft.clipCount === count ? "bg-white text-[#4169f6] shadow-sm ring-1 ring-slate-200" : "text-slate-500 hover:text-slate-800")}>{count}</button>)}</div></div>
                   <label className="block"><span className="mb-2 block text-[12px] font-medium text-slate-600">Aspect ratio</span><select value={draft.aspect} onChange={(event) => updateDraft("aspect", event.target.value as ClipAspect)} className="h-11 w-full rounded-xl border border-slate-200/80 bg-white px-3.5 text-[13px] font-medium text-slate-800 outline-none focus:border-blue-400"><option value="9:16">9:16 · Vertical</option><option value="1:1">1:1 · Square</option><option value="16:9">16:9 · Landscape</option></select></label>
                   <label className="block"><span className="mb-2 block text-[12px] font-medium text-slate-600">Clip length</span><select value={draft.clipLength} onChange={(event) => updateDraft("clipLength", Number(event.target.value))} className="h-11 w-full rounded-xl border border-slate-200/80 bg-white px-3.5 text-[13px] font-medium text-slate-800 outline-none focus:border-blue-400"><option value={15}>15 seconds</option><option value={30}>30 seconds</option><option value={45}>45 seconds</option><option value={60}>60 seconds</option></select></label>
                   <label className="block"><span className="mb-2 block text-[12px] font-medium text-slate-600">Render quality</span><select value={draft.renderQuality === "premium" || draft.renderQuality === "master" ? "1080" : "720"} onChange={(event) => updateDraft("renderQuality", event.target.value === "1080" ? "premium" : "balanced")} className="h-11 w-full rounded-xl border border-slate-200/80 bg-white px-3.5 text-[13px] font-medium text-slate-800 outline-none focus:border-blue-400"><option value="1080">1080p · recommended</option><option value="720">720p · faster export</option></select></label>
+                  <label className="block"><span className="mb-2 block text-[12px] font-medium text-slate-600">Processing profile</span><select value={draft.processingProfile} onChange={(event) => updateDraft("processingProfile", event.target.value as ProcessingProfile)} className="h-11 w-full rounded-xl border border-slate-200/80 bg-white px-3.5 text-[13px] font-medium text-slate-800 outline-none focus:border-blue-400"><option value="auto">Auto · match this computer</option><option value="low_memory">Low memory · 4 GB machines</option><option value="balanced">Balanced · better transcription</option><option value="quality">Quality · most accurate</option></select></label>
+                  <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3.5 py-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-slate-800">Speech cleanup</p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-slate-500">Remove rumble and hiss, then normalise loudness.</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={draft.speechCleanup}
+                      aria-label="Speech cleanup"
+                      onClick={() => updateDraft("speechCleanup", !draft.speechCleanup)}
+                      className={cn("relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150", draft.speechCleanup ? "bg-[#4169f6]" : "bg-slate-200")}
+                    >
+                      <span className="absolute top-[3px] h-[16px] w-[16px] rounded-full bg-white shadow-sm transition-[left] duration-150" style={{ left: draft.speechCleanup ? 21 : 3 }} />
+                    </button>
+                  </div>
                 </div>
                 <aside className="flex min-h-0 items-start justify-center p-0">
                   <ClipperMockVideoFrame aspect={draft.aspect} clipCount={draft.clipCount} quality={draft.renderQuality === "balanced" ? "720p" : "1080p"} captionsEnabled={draft.captionsEnabled} captionX={draft.captionX} captionY={draft.captionY} subtitleStyle={draft.subtitleStyle} font={draft.font} fontSize={draft.fontSize} colour={draft.colour} copy="YOUR CLIP STARTS HERE" />
@@ -2495,7 +2836,7 @@ export default function AIClipper({
         <footer className="mt-4 shrink-0">
           <div className="flex min-h-[88px] items-center gap-2 rounded-[22px] border border-[#e2e5ea] bg-white px-5 shadow-[0_12px_38px_rgba(15,23,42,.05)] sm:px-7">
             {wizardMeta.map((item, index) => {
-              const StepIcon = item.id === "source" ? Video : item.id === "subtitles" ? MessageSquare : SlidersHorizontal;
+              const StepIcon = item.id === "source" ? Video : item.id === "subtitles" ? MessageSquare : item.id === "track" ? ScanFace : SlidersHorizontal;
               const active = wizardStep === index;
               return (
                 <div key={item.id} className="flex items-center">
@@ -2516,11 +2857,11 @@ export default function AIClipper({
                 </div>
               );
             })}
-            {wizardStep < 2 ? (
+            {wizardStep < lastWizardStep ? (
               <button
                 type="button"
                 disabled={!canContinue}
-                onClick={() => setWizardStep((step) => Math.min(2, step + 1))}
+                onClick={() => setWizardStep((step) => Math.min(lastWizardStep, step + 1))}
                 className="ml-auto flex h-[52px] min-w-[145px] items-center justify-center gap-3 rounded-full bg-[#4169f6] px-7 text-[16px] font-medium text-white shadow-[0_10px_22px_rgba(65,105,246,.25)] transition-[transform,background-color] hover:bg-[#3158ea] active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Continue

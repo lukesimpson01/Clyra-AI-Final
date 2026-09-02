@@ -6,6 +6,7 @@
    the model, re-render, and then place the caret explicitly. */
 import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, position, modKey, mod, append } from "./dom.js";
 import { executeBlock, isExecutable, isPreviewable, runnerLabel } from "./runner.js";
+import { detectCodeLanguage, solveMath, evaluateMathFunction } from "./smart-input.js";
 import {
   renderSpans, readSpans, plain, spansText, spansLength, sliceSpans, applyMark,
   markState, caretOffset, setCaret, selectionRangeIn, normalizeSpans, replaceRange,
@@ -19,6 +20,7 @@ import { highlight, handlePairs, handleNewline, completionsFor } from "./code.js
 import { openInlineToolbar } from "./inline-toolbar.js";
 import { runAiComposer } from "./ai-composer.js";
 import { state, getPageMeta, queueBlockSave } from "./state.js";
+import { prefOn } from "./preferences.js";
 
 export const newBlockId = () =>
   `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -39,6 +41,14 @@ function propsFor(type, props = {}) {
   if (type === "todo" && next.checked === undefined) next.checked = false;
   if (type === "code" && next.language === undefined) next.language = "plain";
   if (type === "callout" && next.icon === undefined) next.icon = "💡";
+  if (type === "chart") Object.assign(next, {
+    kind: "cartesian", title: "Untitled graph", xLabel: "x", yLabel: "y",
+    color: "#6e7bf2", gridColor: "#d8dbe5", axisColor: "#606776",
+    xMin: -10, xMax: 10, yMin: -10, yMax: 10, dataSourceId: null,
+    function: "",
+    data: [{ x: -6, y: 3 }, { x: -3, y: -1 }, { x: 0, y: 2 }, { x: 3, y: 1 }, { x: 6, y: 5 }],
+    ...props,
+  });
   return next;
 }
 
@@ -93,12 +103,28 @@ export class Editor {
   /* ----------------------------------------------------------- render */
 
   render(focus) {
+    this.ensureTrailingLine();
     this.reconcile(this.container, this.blocks, null);
     for (const [id, node] of [...this.nodes]) {
       if (!node.isConnected) this.nodes.delete(id);
     }
+    // Browsers are allowed to leave a <br> inside an empty contenteditable.
+    // Keep the empty state as explicit data rather than relying on :empty so
+    // the new-page "Press space" hint remains visible after focus changes,
+    // undo and newly-created page hydration.
+    this.refreshPlaceholders();
     if (focus) this.focus(focus.id, focus.offset);
     this.updateSelectionStyles();
+  }
+
+  /* A document that ends in a table, an image or a divider has nowhere to
+     put the caret, so clicking below it or arrowing past it does nothing.
+     One trailing paragraph fixes that for every void block at once. The
+     change is local until the next edit commits it. */
+  ensureTrailingLine() {
+    if (this.readOnly) return;
+    const last = this.blocks[this.blocks.length - 1];
+    if (last && !isTextBlock(last)) this.blocks.push(makeBlock());
   }
 
   reconcile(host, list, parentBlock) {
@@ -117,6 +143,7 @@ export class Editor {
         const marker = node.querySelector(":scope > .block-row > .block-marker");
         if (marker) marker.textContent = `${counter}.`;
       }
+      if (block.type === "bulleted") node.dataset.listStyle = block.props?.listStyle || "bullet";
       wanted.push(node);
       const childHost = node.__childrenHost;
       if (childHost) this.reconcile(childHost, block.children || [], block);
@@ -191,6 +218,7 @@ export class Editor {
       append(content, this.renderMedia(block)); return { leading };
     }
     if (block.type === "table") { append(content, this.renderTable(block)); return { leading }; }
+    if (block.type === "chart") { append(content, this.renderChart(block)); return { leading }; }
     if (block.type === "source") { append(content, this.renderSource(block)); return { leading }; }
     if (block.type === "transcript") { append(content, this.renderTranscript(block)); return { leading }; }
     if (block.type === "exam_checklist") { append(content, this.renderChecklistHeader(block)); return { leading }; }
@@ -265,7 +293,7 @@ export class Editor {
             navigator.clipboard.writeText(spansText(block.text)).then(() => toast("Code copied"));
           }, { className: "code-copy", size: 14 }),
           isExecutable(block.props?.language) ? iconButton(
-            isPreviewable(block.props?.language) ? "panel" : "play",
+            "play",
             runnerLabel(block.props?.language),
             () => executeBlock(block.props?.language || "plain", spansText(block.text), this.page?.title || "Preview"),
             { className: "code-run", size: 14 },
@@ -277,7 +305,7 @@ export class Editor {
       return { leading };
     }
     if (block.type === "equation") {
-      const wrapper = el("div", { class: "equation-block" }, line);
+      const wrapper = el("div", { class: "equation-block" }, line, this.buildSmartAnswer(block));
       append(content, wrapper);
       return { leading };
     }
@@ -298,15 +326,89 @@ export class Editor {
       return { leading };
     }
 
-    append(content, line);
+    /* Plain paragraphs keep the deterministic math result on the same visual
+       row as the caret. Other text-bearing blocks retain the quieter
+       block-level annotation used by equations and study panels. */
+    append(content, line, block.type === "text" ? this.buildSmartInlineAnswer(block) : this.buildSmartAnswer(block));
     return { leading };
+  }
+
+  /* A calculation is presented as a local result rather than silently
+     changing the student's notes. It updates as they type and can be copied
+     with one press. There is no AI/network path behind this UI. */
+  buildSmartAnswer(block) {
+    if (block.type === "code" || !prefOn("smartMath")) return null;
+    const result = solveMath(spansText(block.text));
+    const answer = el("div", { class: "smart-answer", hidden: !result, "aria-live": "polite" });
+    answer.__blockId = block.id;
+    if (result) this.paintSmartAnswer(answer, result);
+    return answer;
+  }
+
+  buildSmartInlineAnswer(block) {
+    if (!prefOn("smartMath")) return null;
+    const result = solveMath(spansText(block.text));
+    const answer = el("span", {
+      class: "smart-inline-answer", hidden: !result, "aria-live": "polite",
+      title: "Press Tab to insert this local result",
+    });
+    answer.__blockId = block.id;
+    if (result) this.paintSmartInlineAnswer(answer, result);
+    return answer;
+  }
+
+  paintSmartInlineAnswer(node, result) {
+    clear(node);
+    if (!result) { node.hidden = true; return; }
+    node.hidden = false;
+    append(node,
+      icon("equation", 12),
+      el("strong", { text: result.answer }),
+      el("span", { class: "smart-inline-hint", text: "Tab to insert" }),
+    );
+  }
+
+  paintSmartAnswer(node, result) {
+    clear(node);
+    if (!result) { node.hidden = true; return; }
+    node.hidden = false;
+    append(node,
+      icon("equation", 13),
+      el("span", { class: "smart-answer-label", text: result.kind === "equation" ? "Solved locally" : "Answer" }),
+      el("strong", { text: result.answer }),
+      iconButton("copy", "Copy answer", () => navigator.clipboard.writeText(result.answer).then(() => toast("Answer copied")), { size: 13, className: "smart-answer-copy" }),
+    );
+  }
+
+  updateSmartAnswer(block) {
+    const host = this.nodes.get(block.id);
+    const result = solveMath(spansText(block.text));
+    const inline = host?.querySelector(".smart-inline-answer");
+    if (inline) this.paintSmartInlineAnswer(inline, result);
+    const node = host?.querySelector(".smart-answer");
+    if (node) this.paintSmartAnswer(node, result);
+  }
+
+  acceptSmartSuggestion(block, line) {
+    const result = solveMath(spansText(block.text));
+    if (!result) return false;
+    this.push();
+    const current = spansText(block.text).trimEnd();
+    const separator = current.includes("=") ? "  → " : "  = ";
+    const nextText = `${current}${separator}${result.answer}`;
+    block.text = plain(nextText);
+    this.paint(line, block);
+    this.focus(block.id, nextText.length);
+    this.updateSmartAnswer(block);
+    this.commit("smart-answer");
+    return true;
   }
 
   buildLine(block) {
     const line = el("div", {
       class: "text-line",
       contenteditable: this.readOnly ? "false" : "true",
-      spellcheck: block.type === "code" ? "false" : "true",
+      spellcheck: block.type === "code" || !prefOn("spellcheck") ? "false" : "true",
       "data-placeholder": PLACEHOLDERS[block.type] ?? "",
       role: "textbox",
       "aria-multiline": block.type === "code" ? "true" : "false",
@@ -338,13 +440,26 @@ export class Editor {
       pageById: (id) => getPageMeta(id),
       onOpenPage: (id, event) => this.onNavigate(id, { newTab: modKey(event) }),
     });
-    line.dataset.placeholder = PLACEHOLDERS[block.type] ?? "";
-    if (block.id === this.firstEmptyId()) line.dataset.placeholder = `Press '${"space"}' for AI, '/' for commands`;
+    this.updatePlaceholder(line, block);
   }
 
   firstEmptyId() {
     const first = this.blocks[0];
     return this.blocks.length === 1 && first && isTextBlock(first) && !spansLength(first.text) ? first.id : null;
+  }
+
+  updatePlaceholder(line, block) {
+    if (!line || block.type === "code") return;
+    const isFreshPageLine = block.id === this.firstEmptyId();
+    line.dataset.placeholder = isFreshPageLine
+      ? "Press 'space' for AI, '/' for commands"
+      : PLACEHOLDERS[block.type] ?? "";
+    if (isFreshPageLine && !spansLength(block.text)) line.dataset.empty = "true";
+    else delete line.dataset.empty;
+  }
+
+  refreshPlaceholders() {
+    for (const { block } of this.flat()) this.updatePlaceholder(this.lineOf(block.id), block);
   }
 
   lineOf(id) { return this.nodes.get(id)?.querySelector(".text-line") || null; }
@@ -361,8 +476,22 @@ export class Editor {
 
   onInput(block, line) {
     block.text = readSpans(line);
-    if (this.applyMarkdown(block, line)) return;
+    this.updatePlaceholder(line, block);
+    if (prefOn("markdownShortcuts") && this.applyMarkdown(block, line)) return;
+    if (block.type === "text" && prefOn("codeDetection")) {
+      const language = detectCodeLanguage(spansText(block.text));
+      if (language) {
+        this.push();
+        block.type = "code";
+        block.props = propsFor("code", { ...block.props, language });
+        block.__dirty = true;
+        this.render({ id: block.id, offset: "end" });
+        this.commit("detected-code", true);
+        return;
+      }
+    }
     this.checkSlash(block, line);
+    this.updateSmartAnswer(block);
     this.commit("type");
   }
 
@@ -401,7 +530,39 @@ export class Editor {
     const offset = caretOffset(line);
     const text = spansText(block.text).slice(0, offset);
     if (!text.endsWith("/")) return;
+    const beforeSlash = text.slice(0, -1).trim();
+    const mathBeforeSlash = beforeSlash.replace(/^(?:what\s+is|calculate|compute|evaluate|solve|find\s+(?:the\s+)?(?:value|root|roots|solution|solutions)\s+of)\s+/i, "");
+    /* In a formula `/` is an operator, not a command trigger. Give the
+       writer an explicit choice so a command can still be reached without
+       making ordinary fractions or `2/3` feel broken. */
+    const equationContext = block.type === "equation"
+      || (mathBeforeSlash && /[\dxyπ)]/i.test(mathBeforeSlash) && /^[\dxyπ\s()+\-*^%./]+$/i.test(mathBeforeSlash));
+    if (equationContext) {
+      this.openEquationSlashChoice(block, line, offset);
+      return;
+    }
     this.openSlash(block, line, offset);
+  }
+
+  openEquationSlashChoice(block, line, triggerOffset) {
+    this.slashOpen = true;
+    let entry;
+    entry = menu(line, [
+      {
+        label: "Continue as division", icon: "equation", hint: "keep / and type a denominator",
+        onSelect: () => { line.focus(); setCaret(line, triggerOffset); },
+      },
+      {
+        label: "Open command palette", icon: "list", hint: "use / for blocks instead",
+        onSelect: () => this.openSlash(block, line, triggerOffset),
+      },
+    ], {
+      class: "equation-slash-menu",
+      onClose: () => { this.slashOpen = false; },
+    });
+    /* The menu owns focus while open; returning focus after a division choice
+       makes the next denominator character land exactly after `/`. */
+    return entry;
   }
 
   openSlash(block, line, triggerOffset) {
@@ -424,6 +585,7 @@ export class Editor {
     if (!text.includes("\n") || block.type === "code") {
       document.execCommand("insertText", false, text);
       block.text = readSpans(line);
+      this.updatePlaceholder(line, block);
       this.commit("paste");
       return;
     }
@@ -511,6 +673,10 @@ export class Editor {
       return;
     }
     if (event.key === "Tab") {
+      if (block.type === "text" && this.acceptSmartSuggestion(block, line)) {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
       event.shiftKey ? this.outdent(block) : this.indent(block);
       return;
@@ -526,13 +692,11 @@ export class Editor {
       return;
     }
     if (event.key === "ArrowUp" && selection?.collapsed && !line.textContent.slice(0, offset).includes("\n")) {
-      const previous = this.previousTextBlock(block);
-      if (previous) { event.preventDefault(); this.focus(previous.id, "end"); }
+      if (this.moveCaretOut(block, -1)) event.preventDefault();
       return;
     }
     if (event.key === "ArrowDown" && selection?.collapsed && !line.textContent.slice(offset).includes("\n")) {
-      const next = this.nextTextBlock(block);
-      if (next) { event.preventDefault(); this.focus(next.id, 0); }
+      if (this.moveCaretOut(block, 1)) event.preventDefault();
     }
   }
 
@@ -561,6 +725,17 @@ export class Editor {
   }
 
   backspaceAtStart(block) {
+    if (block.type === "code" && !spansLength(block.text)) {
+      this.push();
+      const previous = this.previousTextBlock(block);
+      const next = this.nextTextBlock(block);
+      this.removeBlock(block.id);
+      if (!this.blocks.length) this.blocks.push(makeBlock());
+      const target = previous || next || this.blocks[0];
+      this.render({ id: target.id, offset: previous ? "end" : 0 });
+      this.commit("delete-empty-code", true);
+      return;
+    }
     if (block.type !== "text") {
       this.push();
       block.type = "text";
@@ -572,6 +747,22 @@ export class Editor {
     }
     const entry = this.find(block.id);
     if (entry?.parent && this.siblingsOf(block.id)[0] === block) { this.outdent(block); return; }
+    /* The block immediately above may carry no text — an image, a table, a
+       divider. Merging with the paragraph beyond it would jump straight over
+       it and destroy the wrong thing, so the first Backspace selects it and
+       the second removes it. */
+    const before = this.previousBlock(block);
+    if (before && !isTextBlock(before)) {
+      if (!spansLength(block.text)) {
+        this.push();
+        this.removeBlock(block.id);
+        if (!this.blocks.length) this.blocks.push(makeBlock());
+        this.render();
+        this.commit("delete", true);
+      }
+      this.selectOnly(before.id);
+      return;
+    }
     const previous = this.previousTextBlock(block);
     if (!previous) return;
     this.push();
@@ -647,6 +838,51 @@ export class Editor {
     return order[order.indexOf(block) + 1] || null;
   }
 
+  /* Visual order including the blocks that carry no text. The children of a
+     collapsed toggle are not in it: the caret must never land somewhere the
+     reader cannot see. */
+  visibleOrder(list = this.blocks, out = []) {
+    for (const block of list) {
+      out.push(block);
+      if (block.type.startsWith("toggle") && block.props?.collapsed) continue;
+      this.visibleOrder(block.children || [], out);
+    }
+    return out;
+  }
+
+  previousBlock(block) {
+    const order = this.visibleOrder();
+    return order[order.indexOf(block) - 1] || null;
+  }
+
+  nextBlock(block) {
+    const order = this.visibleOrder();
+    return order[order.indexOf(block) + 1] || null;
+  }
+
+  /* Arrowing out of a text line lands on whatever is actually adjacent,
+     block or not. Stepping straight to the next *text* line is what made a
+     table, an image or a divider impossible to reach with the keyboard —
+     and therefore impossible to select, move or delete without the mouse.
+     Returns true when it moved, so the caller only swallows the key then. */
+  moveCaretOut(block, direction) {
+    const target = direction < 0 ? this.previousBlock(block) : this.nextBlock(block);
+    if (!target) {
+      /* Arrowing down past the last block gives you a line to write on
+         instead of doing nothing, which is what keeps a note that ends in a
+         table from being a dead end. */
+      if (direction > 0 && !this.readOnly && !isTextBlock(block)) {
+        const trailing = this.appendBlock(makeBlock());
+        this.focus(trailing.id, 0);
+        return true;
+      }
+      return false;
+    }
+    if (isTextBlock(target)) { this.focus(target.id, direction < 0 ? "end" : 0); return true; }
+    this.selectOnly(target.id);
+    return true;
+  }
+
   insertAfter(block, next, { focus = true } = {}) {
     this.push();
     const list = this.siblingsOf(block.id);
@@ -663,6 +899,11 @@ export class Editor {
     this.commit("append", true);
     return next;
   }
+
+  /* Shared by slash commands that insert a non-text block. Keeping this
+     factory on the editor guarantees the follow-up paragraph has the same
+     model shape and focus behaviour as a normal Enter-created block. */
+  blank() { return makeBlock(); }
 
   turnInto(block, type) {
     this.push();
@@ -782,6 +1023,14 @@ export class Editor {
     this.updateSelectionStyles();
   }
 
+  /* Used by every block that has no text line of its own: it takes the
+     keyboard away from whatever had it, so Delete lands on the block. */
+  selectOnly(id) {
+    document.activeElement?.blur?.();
+    this.selection = new Set([id]);
+    this.updateSelectionStyles();
+  }
+
   updateSelectionStyles() {
     for (const [id, node] of this.nodes) node.classList.toggle("selected", this.selection.has(id));
   }
@@ -854,6 +1103,7 @@ export class Editor {
   destroy() {
     this.closeCompletions();
     clearTimeout(this.historyTimer);
+    if (this.onDocumentKey) document.removeEventListener("keydown", this.onDocumentKey);
   }
 
   commit(reason, structural = false) {
@@ -862,7 +1112,7 @@ export class Editor {
     queueBlockSave(this.page.id, serializeTree(this.blocks));
     this.page.blocks = this.blocks;
     this.onChange?.(reason);
-    if (structural || reason === "type") this.refreshDependentBlocks();
+    if (structural || reason === "type" || reason === "table") this.refreshDependentBlocks();
   }
 
   /* Table of contents and breadcrumb blocks derive from other content, so
@@ -874,6 +1124,7 @@ export class Editor {
       const host = node?.querySelector(".toc-block");
       if (host) host.replaceWith(this.renderToc());
     }
+    this.refreshChartBlocks();
   }
 }
 
@@ -956,6 +1207,15 @@ export function parseMarkdownBlocks(text) {
       out.push({ type: "code", text: plain(code.join("\n")), props: { language: fence[1] || "plain" } });
       continue;
     }
+    const chart = body.match(/^:::chart(?:\s+(\{.*\}))?$/i);
+    if (chart) {
+      while (index < lines.length && lines[index].trim() !== ":::") index += 1;
+      if (index < lines.length) index += 1;
+      let props = {};
+      try { props = chart[1] ? JSON.parse(chart[1]) : {}; } catch { /* defaults are applied by the editor */ }
+      out.push({ type: "chart", text: [], props });
+      continue;
+    }
     if (/^(---|\*\*\*|___)$/.test(body)) { out.push({ type: "divider", text: [], props: {} }); continue; }
     const heading = body.match(/^(#{1,3})\s+(.*)$/);
     if (heading) { out.push({ type: `h${heading[1].length}`, text: inlineMarkdown(heading[2]), props: {} }); continue; }
@@ -1000,7 +1260,13 @@ export function inlineMarkdown(source) {
 Object.assign(Editor.prototype, {
   bindGlobal() {
     this.container.addEventListener("mousedown", (event) => {
-      if (event.target.closest(".text-line, .block-gutter, button, a, input")) return;
+      if (event.target.closest(".text-line, .block-gutter, button, a, input, select, textarea, [contenteditable='true']")) return;
+      /* A table, a chart or an image has no text line, so clicking its body
+         is the only way to give it the keyboard. Selecting it here is what
+         makes Backspace and Delete able to remove it at all. */
+      const node = event.target.closest?.(".block");
+      const block = node?.__block;
+      if (block && !isTextBlock(block)) { this.selectOnly(block.id); return; }
       this.clearSelection();
     });
     /* Clicking the empty space under the last block appends a paragraph,
@@ -1011,6 +1277,47 @@ Object.assign(Editor.prototype, {
       if (last && isTextBlock(last) && !spansLength(last.text)) { this.focus(last.id, 0); return; }
       this.appendBlock(makeBlock());
     });
+    /* Keys that have to work when nothing holds the caret: a table, a chart
+       or an image has no text line, so Delete on a selected block and undo
+       after a table edit would otherwise never reach the editor. Bound on the
+       document, and gated on this editor being the visible one. */
+    this.onDocumentKey = (event) => {
+      if (this.readOnly || !this.host.isConnected || this.host.offsetParent === null) return;
+      const target = event.target;
+      if (target instanceof HTMLElement
+        && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      const key = event.key.toLowerCase();
+      if (modKey(event) && key === "z") {
+        event.preventDefault();
+        event.shiftKey ? this.redo() : this.undo();
+        return;
+      }
+      if (modKey(event) && key === "y") { event.preventDefault(); this.redo(); return; }
+      if (!this.selection.size) return;
+      if (event.key === "Escape") { this.clearSelection(); return; }
+
+      /* A selected block is a cursor position of its own: the arrows walk
+         out of it, Enter opens a line under it, and Backspace removes it.
+         Without these three a table could be reached but never left. */
+      const single = this.selection.size === 1 ? this.find([...this.selection][0])?.block : null;
+      if (single && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        this.clearSelection();
+        if (!this.moveCaretOut(single, event.key === "ArrowDown" ? 1 : -1)) this.selectOnly(single.id);
+        return;
+      }
+      if (single && event.key === "Enter") {
+        event.preventDefault();
+        this.clearSelection();
+        const created = this.insertAfter(single, makeBlock());
+        this.focus(created.id, 0);
+        return;
+      }
+      if (event.key !== "Backspace" && event.key !== "Delete") return;
+      event.preventDefault();
+      this.deleteBlocks([...this.selection]);
+    };
+    document.addEventListener("keydown", this.onDocumentKey);
   },
 
   insertMenu(block, anchor) {
@@ -1040,6 +1347,7 @@ Object.assign(Editor.prototype, {
       { label: "Move up", icon: "chevron_right", shortcut: "↑", onSelect: () => this.shift(block, -1) },
       { label: "Move down", icon: "chevron_right", shortcut: "↓", onSelect: () => this.shift(block, 1) },
       isTextBlock(block) ? { label: "Colour", icon: "palette", onSelect: () => this.colorMenu(block, anchor) } : null,
+      block.type === "bulleted" ? { label: "Bullet style", icon: "bullet", onSelect: () => this.bulletStyleMenu(block, anchor) } : null,
       state.aiConfigured ? { type: "separator" } : null,
       state.aiConfigured ? { label: "Ask AI about this", icon: "sparkle", onSelect: () => this.openAiComposer(block, { seedText: spansText(block.text) }) } : null,
       state.aiConfigured ? { label: "Generate flashcards", icon: "cards", onSelect: () => this.generateFrom(block, "flashcards") } : null,
@@ -1110,27 +1418,104 @@ Object.assign(Editor.prototype, {
       ].filter(Boolean)));
   },
 
+  /* The contents block is derived, never edited: it repaints from the page's
+     headings on every structural change. Levels are normalised against the
+     shallowest heading on the page, so a note written entirely in H2s still
+     reads as a flush-left list rather than one indented by an invisible H1. */
   renderToc() {
     const headings = this.flat()
       .map((entry) => entry.block)
       .filter((block) => HEADINGS.has(block.type) && spansLength(block.text));
     const node = el("div", { class: "toc-block" });
     if (!headings.length) {
-      append(node, el("div", { class: "toc-empty", text: "Add headings to build a table of contents." }));
+      append(node,
+        el("div", { class: "toc-empty" },
+          icon("list", 15),
+          el("span", { text: "Add headings to this page and they will appear here." })));
       return node;
     }
+    const level = (block) => Number(block.type.replace(/\D/g, "")) || 1;
+    const base = Math.min(...headings.map(level));
+    const list = el("div", { class: "toc-list" });
+    const links = new Map();
     for (const heading of headings) {
-      append(node, el("a", {
-        href: `#${heading.id}`, "data-level": String(heading.type.replace(/\D/g, "")),
-        text: spansText(heading.text),
+      const link = el("a", {
+        class: "toc-item",
+        href: `#${heading.id}`,
+        "data-level": String(Math.min(3, level(heading) - base + 1)),
         onclick: (event) => {
           event.preventDefault();
-          this.nodes.get(heading.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-          this.focus(heading.id, 0);
+          this.jumpToBlock(heading.id);
         },
-      }));
+      }, el("span", { class: "toc-dot" }), el("span", { class: "toc-text", text: spansText(heading.text) }));
+      links.set(heading.id, link);
+      append(list, link);
     }
+    append(node, el("div", { class: "toc-head" }, icon("list", 13), el("span", { text: "Contents" })), list);
+    this.trackTocPosition(node, links);
     return node;
+  },
+
+  /* Highlights the section the reader is actually in. The block is built
+     before it is inserted, so the scroller is resolved on the first frame
+     and the listener only retires once a node that WAS in the document
+     leaves it — which is what happens every time the contents repaint. */
+  trackTocPosition(node, links) {
+    let attached = false;
+    const update = () => {
+      if (node.isConnected) attached = true;
+      else if (attached || !this.host.isConnected) { document.removeEventListener("scroll", update, true); return; }
+      const scroller = this.host.closest(".scroll");
+      const edge = (scroller ? scroller.getBoundingClientRect().top : 0) + 90;
+      let active = null;
+      for (const [id, link] of links) {
+        const target = this.nodes.get(id);
+        if (!target) continue;
+        if (target.getBoundingClientRect().top <= edge) active = link;
+      }
+      for (const link of links.values()) link.classList.toggle("active", link === active);
+    };
+    /* Captured on the document rather than bound to the scroller: the block
+       is built before it is inserted, so at this point there is no scroll
+       container to attach to yet. */
+    document.addEventListener("scroll", update, { passive: true, capture: true });
+    requestAnimationFrame(update);
+  },
+
+  /* One jump used by the contents block and by block links: scroll the
+     heading clear of the sticky page header, then put the caret in it. */
+  jumpToBlock(id) {
+    const target = this.nodes.get(id);
+    if (!target) return;
+    const scroller = this.host.closest(".scroll");
+    if (scroller) {
+      const offset = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTo({ top: scroller.scrollTop + offset - 24, behavior: "smooth" });
+    } else {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    target.classList.add("jump-target");
+    setTimeout(() => target.classList.remove("jump-target"), 900);
+    const line = this.lineOf(id);
+    if (line) line.focus({ preventScroll: true });
+  },
+
+  bulletStyleMenu(block, anchor) {
+    const styles = [
+      ["bullet", "Round bullet", "•"], ["dash", "Dash", "–"],
+      ["arrow", "Arrow", "→"], ["check", "Check", "✓"],
+    ];
+    menu(anchor, styles.map(([listStyle, label, marker]) => ({
+      label, checked: (block.props?.listStyle || "bullet") === listStyle,
+      icon: el("span", { class: "bullet-style-marker", text: marker }),
+      onSelect: () => {
+        this.push();
+        block.props = { ...block.props, listStyle };
+        block.__dirty = true;
+        this.render({ id: block.id, offset: this.caretIn(block) });
+        this.commit("bullet-style", true);
+      },
+    })), { align: "start" });
   },
 
   renderPageLink(block) {
@@ -1227,72 +1612,530 @@ Object.assign(Editor.prototype, {
     });
   },
 
+  /* ---------------------------------------------------------------- charts */
+
+  chartSources() {
+    return this.linear().filter((candidate) => candidate.type === "table"
+      || (candidate.type === "text" && /-?(?:\d+\.?\d*|\.\d+)\s*[,;]\s*-?(?:\d+\.?\d*|\.\d+)/.test(spansText(candidate.text))));
+  },
+
+  chartPoints(block) {
+    const props = block.props || {};
+    if (props.function && !props.dataSourceId) {
+      const min = Number.isFinite(Number(props.xMin)) ? Number(props.xMin) : -10;
+      const max = Number.isFinite(Number(props.xMax)) ? Number(props.xMax) : 10;
+      return Array.from({ length: 121 }, (_, index) => {
+        const x = min + ((max - min) * index) / 120;
+        const y = evaluateMathFunction(props.function, x);
+        return { x, y };
+      }).filter((point) => Number.isFinite(point.y));
+    }
+    const source = props.dataSourceId ? this.find(props.dataSourceId)?.block : null;
+    if (source?.type === "table") {
+      const rows = Array.isArray(source.props?.rows) ? source.props.rows : [];
+      const xColumn = Math.max(0, Number(props.xColumn) || 0);
+      const yColumn = Math.max(0, Number(props.yColumn) || 1);
+      return rows.slice(1).map((row) => ({ x: Number(row?.[xColumn]), y: Number(row?.[yColumn]) }))
+        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    }
+    if (source?.type === "text") {
+      const matches = spansText(source.text).matchAll(/(-?(?:\d+\.?\d*|\.\d+))\s*[,;]\s*(-?(?:\d+\.?\d*|\.\d+))/g);
+      return [...matches].map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
+        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    }
+    return (Array.isArray(props.data) ? props.data : []).map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  },
+
+  renderChart(block) {
+    const props = { ...propsFor("chart", block.props || {}) };
+    const points = this.chartPoints({ ...block, props });
+    const source = props.dataSourceId ? this.find(props.dataSourceId)?.block : null;
+    const panel = el("section", { class: "chart-block", "aria-label": props.title || "Graph" });
+    const title = el("div", { class: "chart-title", text: props.title || "Untitled graph" });
+    const sourceText = source
+      ? `Linked to ${source.type === "table" ? "table" : "paragraph"} · edits update this graph`
+      : props.function
+        ? `Plotted from y = ${props.function} · customize to edit`
+      : "Add points below, or link a table to keep this graph in sync.";
+    const header = el("div", { class: "chart-header" },
+      el("div", { class: "chart-heading" }, icon("chart", 16), title,
+        el("span", { class: "chart-kind", text: String(props.kind || "cartesian").replace(/^./, (char) => char.toUpperCase()) })),
+      el("div", { class: "chart-actions" },
+        !this.readOnly ? el("button", { class: "text-button chart-link-button", type: "button", onclick: () => this.editChart(block) },
+          icon("link", 13), source ? "Change link" : "Link table") : null,
+        !this.readOnly ? iconButton("pencil", "Customize graph", () => this.editChart(block), { size: 14, className: "chart-edit" }) : null));
+    append(panel, header);
+    append(panel, this.buildChartSvg(props, points));
+    append(panel, el("div", { class: `chart-source ${source || props.function ? "linked" : "unlinked"}` },
+      icon(source ? "link" : "kind_variable", 13), el("span", { text: sourceText })));
+    return panel;
+  },
+
+  buildChartSvg(props, points) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "chart-svg");
+    svg.setAttribute("viewBox", "0 0 720 360");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${props.xLabel || "x"} by ${props.yLabel || "y"} graph`);
+    const svgEl = (tag, attrs = {}, textValue = null) => {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+      if (textValue !== null) node.textContent = textValue;
+      svg.append(node);
+      return node;
+    };
+    const left = 56, top = 22, width = 630, height = 278;
+    let xMin = Number(props.xMin), xMax = Number(props.xMax), yMin = Number(props.yMin), yMax = Number(props.yMax);
+    if (!Number.isFinite(xMin)) xMin = -10;
+    if (!Number.isFinite(xMax) || xMax <= xMin) xMax = xMin + 20;
+    if (!Number.isFinite(yMin)) yMin = -10;
+    if (!Number.isFinite(yMax) || yMax <= yMin) yMax = yMin + 20;
+    const x = (value) => left + ((value - xMin) / (xMax - xMin)) * width;
+    const y = (value) => top + height - ((value - yMin) / (yMax - yMin)) * height;
+    svgEl("rect", { x: 0, y: 0, width: 720, height: 360, rx: 12, fill: "transparent" });
+    if (props.showGrid !== false) {
+      for (let step = 0; step <= 10; step += 1) {
+        const px = left + (width * step) / 10;
+        const py = top + (height * step) / 10;
+        svgEl("line", { x1: px, y1: top, x2: px, y2: top + height, stroke: props.gridColor, "stroke-width": 1, opacity: 0.62 });
+        svgEl("line", { x1: left, y1: py, x2: left + width, y2: py, stroke: props.gridColor, "stroke-width": 1, opacity: 0.62 });
+      }
+    }
+    const axisX = Math.max(top, Math.min(top + height, y(0)));
+    const axisY = Math.max(left, Math.min(left + width, x(0)));
+    if (props.showAxes !== false) {
+      svgEl("line", { x1: left, y1: axisX, x2: left + width, y2: axisX, stroke: props.axisColor, "stroke-width": 1.4 });
+      svgEl("line", { x1: axisY, y1: top, x2: axisY, y2: top + height, stroke: props.axisColor, "stroke-width": 1.4 });
+    }
+    for (let step = 0; step <= 5; step += 1) {
+      const xv = xMin + ((xMax - xMin) * step) / 5;
+      const yv = yMax - ((yMax - yMin) * step) / 5;
+      svgEl("text", { x: x(xv), y: top + height + 20, "text-anchor": "middle", fill: props.axisColor, "font-size": 11 }, formatChartNumber(xv));
+      svgEl("text", { x: left - 10, y: y(yv) + 4, "text-anchor": "end", fill: props.axisColor, "font-size": 11 }, formatChartNumber(yv));
+    }
+    svgEl("text", { x: left + width / 2, y: 348, "text-anchor": "middle", fill: props.axisColor, "font-size": 12, "font-weight": 600 }, props.xLabel || "x");
+    const yLabel = svgEl("text", { x: 16, y: top + height / 2, "text-anchor": "middle", fill: props.axisColor, "font-size": 12, "font-weight": 600 }, props.yLabel || "y");
+    yLabel.setAttribute("transform", `rotate(-90 16 ${top + height / 2})`);
+    const safePoints = points.slice(0, 500);
+    if (props.kind === "bar") {
+      const barWidth = Math.max(3, Math.min(34, width / Math.max(safePoints.length, 1) * 0.62));
+      safePoints.forEach((point) => {
+        const base = y(Math.max(yMin, Math.min(yMax, 0)));
+        const topValue = y(Math.max(yMin, Math.min(yMax, point.y)));
+        svgEl("rect", { x: x(point.x) - barWidth / 2, y: Math.min(base, topValue), width: barWidth, height: Math.max(1, Math.abs(base - topValue)), rx: 3, fill: props.color, opacity: 0.84 });
+      });
+    } else {
+      if ((props.kind === "line" || props.kind === "cartesian") && safePoints.length > 1) {
+        svgEl("path", { d: safePoints.map((point, index) => `${index ? "L" : "M"}${x(point.x).toFixed(2)} ${y(point.y).toFixed(2)}`).join(" "), fill: "none", stroke: props.color, "stroke-width": 2.5, "stroke-linecap": "round", "stroke-linejoin": "round" });
+      }
+      safePoints.forEach((point) => svgEl("circle", { cx: x(point.x), cy: y(point.y), r: 4.5, fill: props.color, stroke: "var(--background-main)", "stroke-width": 2 }));
+    }
+    return svg;
+  },
+
+  editChart(block) {
+    const props = { ...propsFor("chart", block.props || {}) };
+    const sources = this.chartSources();
+    const titleField = el("input", { class: "input", value: props.title || "Untitled graph", placeholder: "Graph title" });
+    const kindField = el("select", { class: "select" }, ["cartesian", "line", "scatter", "bar"].map((value) =>
+      el("option", { value, text: value === "cartesian" ? "Cartesian plane" : `${value[0].toUpperCase()}${value.slice(1)} chart`, selected: props.kind === value })));
+    const sourceField = el("select", { class: "select" }, [
+      el("option", { value: "manual", text: "Manual x,y points", selected: !props.dataSourceId }),
+      ...sources.map((source) => el("option", { value: source.id, text: `${source.type === "table" ? "Table" : "Paragraph"} · ${source.type === "table" ? "first two columns" : "x,y pairs"}`, selected: props.dataSourceId === source.id })),
+    ]);
+    const functionField = el("input", { class: "input", value: props.function || "", placeholder: "e.g. x^2 - 3x + 1" });
+    const manualField = el("textarea", { class: "textarea chart-data-input", rows: 5, placeholder: "x, y\n-2, 4\n0, 1\n2, 4", value: (props.data || []).map((point) => `${point.x}, ${point.y}`).join("\n") });
+    const xColumn = el("input", { class: "input", type: "number", min: 0, value: Number(props.xColumn) || 0 });
+    const yColumn = el("input", { class: "input", type: "number", min: 0, value: Number(props.yColumn) || 1 });
+    const colorField = el("input", { class: "color-input", type: "color", value: /^#[0-9a-f]{6}$/i.test(props.color) ? props.color : "#6e7bf2" });
+    const gridField = el("input", { class: "color-input", type: "color", value: /^#[0-9a-f]{6}$/i.test(props.gridColor) ? props.gridColor : "#d8dbe5" });
+    const axisField = el("input", { class: "color-input", type: "color", value: /^#[0-9a-f]{6}$/i.test(props.axisColor) ? props.axisColor : "#606776" });
+    const field = (label, control) => el("label", { class: "field" }, el("span", { class: "field-label", text: label }), control);
+    const rangeFields = el("div", { class: "chart-range-fields" },
+      field("X min", el("input", { class: "input", type: "number", step: "any", value: props.xMin })),
+      field("X max", el("input", { class: "input", type: "number", step: "any", value: props.xMax })),
+      field("Y min", el("input", { class: "input", type: "number", step: "any", value: props.yMin })),
+      field("Y max", el("input", { class: "input", type: "number", step: "any", value: props.yMax })),
+    );
+    const xLabel = el("input", { class: "input", value: props.xLabel || "x" });
+    const yLabel = el("input", { class: "input", value: props.yLabel || "y" });
+    const manualWrap = field("Manual points", manualField);
+    const functionWrap = field("Function y = f(x)", functionField);
+    const columnWrap = el("div", { class: "chart-range-fields" }, field("X column", xColumn), field("Y column", yColumn));
+    const syncSource = () => {
+      const linked = sourceField.value !== "manual";
+      manualWrap.hidden = linked;
+      functionWrap.hidden = linked;
+      const source = sources.find((candidate) => candidate.id === sourceField.value);
+      columnWrap.hidden = !linked || source?.type !== "table";
+    };
+    sourceField.addEventListener("change", syncSource);
+    syncSource();
+    let entry;
+    entry = modal({
+      title: "Customize graph",
+      width: 560,
+      body: el("div", { class: "chart-editor" },
+        el("div", { class: "chart-link-help" }, icon("link", 14), el("span", { text: "Linking keeps a graph live: add a Table block, choose it here, and edits to its first two numeric columns update the plot." })),
+        field("Title", titleField), field("Chart type", kindField), field("Data source", sourceField),
+        functionWrap, manualWrap, columnWrap,
+        el("div", { class: "chart-editor-section" }, el("div", { class: "field-label", text: "Axes and range" }), field("X label", xLabel), field("Y label", yLabel), rangeFields),
+        el("div", { class: "chart-editor-section" }, el("div", { class: "field-label", text: "Colours" }),
+          el("div", { class: "chart-color-fields" }, field("Series", colorField), field("Grid", gridField), field("Axes", axisField))),
+        !sources.some((source) => source.type === "table") ? el("div", { class: "chart-empty-help", text: "No table blocks yet. Close this dialog, add /table, then return to Link table." }) : null),
+      footer: [
+        el("button", { class: "button", type: "button", onclick: () => entry.close("cancel") }, "Cancel"),
+        el("button", { class: "button primary", type: "button", onclick: () => {
+          const parsePoints = (value) => String(value).split(/\n|;/).map((line) => line.match(/^\s*(-?(?:\d+\.?\d*|\.\d+))\s*,\s*(-?(?:\d+\.?\d*|\.\d+))/)).filter(Boolean).map((match) => ({ x: Number(match[1]), y: Number(match[2]) }));
+          const linkedId = sourceField.value === "manual" ? null : sourceField.value;
+          const range = [...rangeFields.querySelectorAll("input")].map((input) => Number(input.value));
+          block.props = { ...props, title: titleField.value.trim() || "Untitled graph", kind: kindField.value, dataSourceId: linkedId,
+            function: linkedId ? "" : functionField.value.trim(),
+            data: linkedId ? props.data : parsePoints(manualField.value), xLabel: xLabel.value.trim() || "x", yLabel: yLabel.value.trim() || "y",
+            xMin: Number.isFinite(range[0]) ? range[0] : -10, xMax: Number.isFinite(range[1]) ? range[1] : 10,
+            yMin: Number.isFinite(range[2]) ? range[2] : -10, yMax: Number.isFinite(range[3]) ? range[3] : 10,
+            xColumn: Number(xColumn.value) || 0, yColumn: Number(yColumn.value) || 1,
+            color: colorField.value, gridColor: gridField.value, axisColor: axisField.value };
+          block.__dirty = true;
+          this.render();
+          this.commit("chart", true);
+          entry.close("saved");
+        } }, "Save graph"),
+      ],
+    });
+  },
+
+  refreshChartBlocks() {
+    for (const { block } of this.flat()) {
+      if (block.type !== "chart") continue;
+      const host = this.nodes.get(block.id);
+      const panel = host?.querySelector(".chart-block");
+      if (panel) panel.replaceWith(this.renderChart(block));
+    }
+  },
+
   /* Cells are plain contenteditable text: a table here is for laying out
-     facts inside a note, not a database, which is a separate block. */
-  renderTable(block) {
+     facts inside a note, not a database, which is a separate block.
+
+     Every structural edit goes through mutateTable, so an inserted row, a
+     moved column and a deleted table all land on the undo stack the same
+     way and repaint the block exactly once. */
+  tableShape(block) {
     const rows = (block.props?.rows || [["", ""], ["", ""]]).map((row) => [...row]);
+    if (!rows.length) rows.push([""]);
     const width = Math.max(1, ...rows.map((row) => row.length));
     for (const row of rows) while (row.length < width) row.push("");
+    const align = Array.from({ length: width }, (_, index) => block.props?.align?.[index] || "left");
+    return { rows, width, align };
+  },
+
+  mutateTable(block, mutate, reason = "table") {
+    const draft = { ...this.tableShape(block), props: {} };
+    if (mutate(draft) === false) return;
+    this.push();
+    block.props = { ...block.props, ...draft.props, rows: draft.rows, align: draft.align };
+    block.__dirty = true;
+    this.render();
+    this.commit(reason, true);
+  },
+
+  renderTable(block) {
+    const { rows, width, align } = this.tableShape(block);
+    const hasHeader = block.props?.hasHeader !== false;
+
+    /* Typing is the one path that must not re-render: the caret lives in the
+       cell being edited. It writes straight through to the model. */
     const save = () => {
       block.props = { ...block.props, rows };
+      this.refreshChartBlocks();
       this.commit("table");
     };
-    const wrapper = el("div", { class: "table-block" });
+
+    /* A tint is a named colour that resolves through the theme tokens, so a
+       table styled once still reads correctly in dark mode. The explicit hex
+       colours from the Style dialog override it when the student has picked
+       their own. */
+    const tint = block.props?.tint && block.props.tint !== "default" ? `var(--c-${block.props.tint}-bg)` : null;
+    const wrapper = el("div", {
+      class: `table-block${block.props?.striped ? " striped" : ""}${hasHeader ? " has-header" : ""}`,
+      style: {
+        "--table-header-color": block.props?.headerColor || tint || "var(--background-subtle)",
+        "--table-border-color": block.props?.borderColor || "var(--border-soft)",
+        "--table-cell-color": block.props?.cellColor || "transparent",
+        "--table-text-color": block.props?.textColor || "var(--text-primary)",
+      },
+    });
+
     const scroller = el("div", { class: "table-scroll scroll" });
     const table = el("table", { class: "note-table" });
+
+    /* The grips live in a real rail row and rail column rather than floating
+       over the table, so they stay put through horizontal scrolling and can
+       never cover a cell the student is typing in. */
+    if (!this.readOnly) {
+      const rail = el("tr", { class: "table-rail-row" });
+      rail.append(el("td", { class: "rail-corner" },
+        tooltip(el("button", {
+          class: "table-grip corner-grip", type: "button", "aria-label": "Table options",
+          onclick: (event) => this.tableMenu(block, event.currentTarget),
+        }), "Table options")));
+      for (let column = 0; column < width; column += 1) {
+        rail.append(el("td", { class: "rail-column" },
+          tooltip(el("button", {
+            class: "table-grip column-grip", type: "button", "aria-label": `Column ${column + 1} options`,
+            onclick: (event) => this.tableColumnMenu(block, column, event.currentTarget),
+          }), "Click for column actions")));
+      }
+      table.append(rail);
+    }
+
     rows.forEach((row, rowIndex) => {
-      const tr = el("tr");
+      const isHeader = hasHeader && rowIndex === 0;
+      /* Edge classes rather than :first-of-type: the rail cells share the
+         td type, so a positional selector would land on the wrong cell. */
+      const edges = `${rowIndex === 0 ? " first-row" : ""}${rowIndex === rows.length - 1 ? " last-row" : ""}`;
+      const tr = el("tr", { class: `table-row${isHeader ? " header" : ""}${edges}${rowIndex % 2 ? " odd" : " even"}` });
+      if (!this.readOnly) {
+        tr.append(el("td", { class: "rail-row" },
+          tooltip(el("button", {
+            class: "table-grip row-grip", type: "button", "aria-label": `Row ${rowIndex + 1} options`,
+            onclick: (event) => this.tableRowMenu(block, rowIndex, event.currentTarget),
+          }), "Click for row actions")));
+      }
       row.forEach((cell, columnIndex) => {
-        const isHeader = block.props?.hasHeader !== false && rowIndex === 0;
         const node = el(isHeader ? "th" : "td", {
+          class: `table-cell${columnIndex === 0 ? " first-col" : ""}${columnIndex === width - 1 ? " last-col" : ""}`,
           contenteditable: this.readOnly ? "false" : "true",
+          "data-placeholder": isHeader ? "Column" : "",
+          style: { textAlign: align[columnIndex] },
           oninput: (event) => { rows[rowIndex][columnIndex] = event.currentTarget.textContent; save(); },
-          onkeydown: (event) => {
-            if (event.key !== "Tab") return;
-            event.preventDefault();
-            const cellsInOrder = [...table.querySelectorAll("th, td")];
-            const position = cellsInOrder.indexOf(event.currentTarget);
-            const target = cellsInOrder[position + (event.shiftKey ? -1 : 1)];
-            target?.focus();
-          },
+          onkeydown: (event) => this.onTableCellKey(event, block, rows, rowIndex, columnIndex, table),
         });
         node.textContent = cell;
         tr.append(node);
       });
       table.append(tr);
     });
+
     scroller.append(table);
     append(wrapper, scroller, this.readOnly ? null : el("div", { class: "table-actions" },
-      el("button", { class: "text-button", type: "button", onclick: () => {
-        rows.push(Array.from({ length: width }, () => ""));
-        block.props = { ...block.props, rows };
-        block.__dirty = true;
-        this.render();
-        this.commit("table-row", true);
-      } }, icon("plus", 14), "Row"),
-      el("button", { class: "text-button", type: "button", onclick: () => {
-        for (const row of rows) row.push("");
-        block.props = { ...block.props, rows };
-        block.__dirty = true;
-        this.render();
-        this.commit("table-column", true);
-      } }, icon("plus", 14), "Column"),
-      rows.length > 1 ? el("button", { class: "text-button", type: "button", onclick: () => {
-        rows.pop();
-        block.props = { ...block.props, rows };
-        block.__dirty = true;
-        this.render();
-        this.commit("table-row", true);
-      } }, "Remove row") : null,
-      width > 1 ? el("button", { class: "text-button", type: "button", onclick: () => {
-        for (const row of rows) row.pop();
-        block.props = { ...block.props, rows };
-        block.__dirty = true;
-        this.render();
-        this.commit("table-column", true);
-      } }, "Remove column") : null,
+      el("button", {
+        class: "text-button", type: "button", title: "Add a row at the bottom",
+        onclick: () => this.mutateTable(block, (draft) => { draft.rows.push(Array.from({ length: draft.width }, () => "")); }, "table-row"),
+      }, icon("plus", 14), "Row"),
+      el("button", {
+        class: "text-button", type: "button", title: "Add a column on the right",
+        onclick: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.push("");
+          draft.align.push("left");
+        }, "table-column"),
+      }, icon("plus", 14), "Column"),
+      el("button", {
+        class: `text-button${hasHeader ? " on" : ""}`, type: "button",
+        title: hasHeader ? "Turn the header row back into a normal row" : "Use the first row as a header",
+        onclick: () => this.mutateTable(block, (draft) => { draft.props.hasHeader = !hasHeader; }, "table-header"),
+      }, icon("h1", 13), "Header"),
+      el("button", { class: "text-button", type: "button", title: "Colours and row tint", onclick: () => this.editTableStyle(block) },
+        icon("palette", 13), "Style"),
+      /* The whole point of the hover bar: a table has no text line, so
+         without an explicit control there is nothing to press Delete on. */
+      el("button", {
+        class: "text-button danger", type: "button", title: "Delete this table",
+        onclick: () => this.deleteBlocks([block.id]),
+      }, icon("trash", 13), "Delete table"),
     ));
     return wrapper;
+  },
+
+  /* Tab walks the cells and grows the table at the end, Enter drops a row
+     instead of inserting a line break, and Escape hands the block back to
+     the keyboard so Delete removes the table rather than a character. */
+  onTableCellKey(event, block, rows, rowIndex, columnIndex, table) {
+    const cells = () => [...table.querySelectorAll(".table-cell")];
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.currentTarget.blur();
+      this.selectOnly(block.id);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const order = cells();
+      const at = order.indexOf(event.currentTarget);
+      const next = order[at + (event.shiftKey ? -1 : 1)];
+      if (next) { next.focus(); return; }
+      if (event.shiftKey) return;
+      this.mutateTable(block, (draft) => { draft.rows.push(Array.from({ length: draft.width }, () => "")); }, "table-row");
+      this.focusTableCell(block, rows.length, 0);
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (rowIndex === rows.length - 1) {
+        this.mutateTable(block, (draft) => { draft.rows.push(Array.from({ length: draft.width }, () => "")); }, "table-row");
+      }
+      this.focusTableCell(block, rowIndex + 1, columnIndex);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const target = rowIndex + (event.key === "ArrowDown" ? 1 : -1);
+      if (target < 0 || target >= rows.length) return;
+      event.preventDefault();
+      this.focusTableCell(block, target, columnIndex);
+    }
+  },
+
+  focusTableCell(block, rowIndex, columnIndex) {
+    const host = this.nodes.get(block.id);
+    const row = host?.querySelectorAll(".note-table .table-row")[rowIndex];
+    const cell = row?.querySelectorAll(".table-cell")[columnIndex];
+    if (!cell) return;
+    cell.focus();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  },
+
+  tableMenu(block, anchor) {
+    const hasHeader = block.props?.hasHeader !== false;
+    menu(anchor, [
+      { label: hasHeader ? "Remove header row" : "Use first row as header", icon: "h1",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.props.hasHeader = !hasHeader; }, "table-header") },
+      { label: block.props?.striped ? "Remove row tint" : "Tint alternating rows", icon: "table",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.props.striped = !block.props?.striped; }, "table-style") },
+      { label: "Tint", icon: "palette", onSelect: () => this.tableTintMenu(block, anchor) },
+      { label: "Style…", icon: "palette", onSelect: () => this.editTableStyle(block) },
+      { type: "separator" },
+      { label: "Clear all cells", icon: "close",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows = draft.rows.map((row) => row.map(() => "")); }, "table-clear") },
+      { label: "Duplicate table", icon: "duplicate", onSelect: () => this.duplicateBlock(block) },
+      { label: "Delete table", icon: "trash", danger: true, onSelect: () => this.deleteBlocks([block.id]) },
+    ]);
+  },
+
+  /* Named tints resolve per theme; picking one clears any hand-picked hex
+     colours so the two systems cannot half-apply. */
+  tableTintMenu(block, anchor) {
+    menu(anchor, COLORS.map((color) => ({
+      label: color === "default" ? "No tint" : color[0].toUpperCase() + color.slice(1),
+      checked: (block.props?.tint || "default") === color,
+      icon: el("span", { class: "tint-swatch", style: { background: color === "default" ? "var(--background-subtle)" : `var(--c-${color}-bg)` } }),
+      onSelect: () => this.mutateTable(block, (draft) => {
+        Object.assign(draft.props, { tint: color, headerColor: null, cellColor: null, textColor: null });
+      }, "table-style"),
+    })), { align: "start" });
+  },
+
+  tableRowMenu(block, rowIndex, anchor) {
+    const { rows } = this.tableShape(block);
+    menu(anchor, [
+      { type: "label", label: `Row ${rowIndex + 1}` },
+      { label: "Insert above", icon: "arrow_up",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex, 0, Array.from({ length: draft.width }, () => "")); }, "table-row") },
+      { label: "Insert below", icon: "arrow_down",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex + 1, 0, Array.from({ length: draft.width }, () => "")); }, "table-row") },
+      { label: "Duplicate", icon: "duplicate",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex + 1, 0, [...draft.rows[rowIndex]]); }, "table-row") },
+      { type: "separator" },
+      { label: "Move up", icon: "arrow_up", disabled: rowIndex === 0,
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex - 1, 0, draft.rows.splice(rowIndex, 1)[0]); }, "table-row") },
+      { label: "Move down", icon: "arrow_down", disabled: rowIndex === rows.length - 1,
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex + 1, 0, draft.rows.splice(rowIndex, 1)[0]); }, "table-row") },
+      { type: "separator" },
+      { label: "Clear row", icon: "close",
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows[rowIndex] = draft.rows[rowIndex].map(() => ""); }, "table-clear") },
+      { label: "Delete row", icon: "trash", danger: true, disabled: rows.length <= 1,
+        onSelect: () => this.mutateTable(block, (draft) => { draft.rows.splice(rowIndex, 1); }, "table-row") },
+    ]);
+  },
+
+  tableColumnMenu(block, columnIndex, anchor) {
+    const { width, align } = this.tableShape(block);
+    const setAlign = (value) => this.mutateTable(block, (draft) => { draft.align[columnIndex] = value; }, "table-align");
+    menu(anchor, [
+      { type: "label", label: `Column ${columnIndex + 1}` },
+      { label: "Insert left", icon: "arrow_left",
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex, 0, "");
+          draft.align.splice(columnIndex, 0, "left");
+        }, "table-column") },
+      { label: "Insert right", icon: "arrow_right",
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex + 1, 0, "");
+          draft.align.splice(columnIndex + 1, 0, "left");
+        }, "table-column") },
+      { label: "Duplicate", icon: "duplicate",
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex + 1, 0, row[columnIndex]);
+          draft.align.splice(columnIndex + 1, 0, draft.align[columnIndex]);
+        }, "table-column") },
+      { type: "separator" },
+      { label: "Move left", icon: "arrow_left", disabled: columnIndex === 0,
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex - 1, 0, row.splice(columnIndex, 1)[0]);
+          draft.align.splice(columnIndex - 1, 0, draft.align.splice(columnIndex, 1)[0]);
+        }, "table-column") },
+      { label: "Move right", icon: "arrow_right", disabled: columnIndex === width - 1,
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex + 1, 0, row.splice(columnIndex, 1)[0]);
+          draft.align.splice(columnIndex + 1, 0, draft.align.splice(columnIndex, 1)[0]);
+        }, "table-column") },
+      { type: "separator" },
+      { label: "Align left", icon: "align_left", checked: align[columnIndex] === "left", onSelect: () => setAlign("left") },
+      { label: "Align centre", icon: "align_center", checked: align[columnIndex] === "center", onSelect: () => setAlign("center") },
+      { label: "Align right", icon: "align_right", checked: align[columnIndex] === "right", onSelect: () => setAlign("right") },
+      { type: "separator" },
+      { label: "Clear column", icon: "close",
+        onSelect: () => this.mutateTable(block, (draft) => { for (const row of draft.rows) row[columnIndex] = ""; }, "table-clear") },
+      { label: "Delete column", icon: "trash", danger: true, disabled: width <= 1,
+        onSelect: () => this.mutateTable(block, (draft) => {
+          for (const row of draft.rows) row.splice(columnIndex, 1);
+          draft.align.splice(columnIndex, 1);
+        }, "table-column") },
+    ]);
+  },
+
+  editTableStyle(block) {
+    const props = block.props || {};
+    const color = (value, fallback) => el("input", { class: "color-input", type: "color", value: /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback });
+    const headerField = color(props.headerColor, "#f3f4f7");
+    const borderField = color(props.borderColor, "#d8dbe5");
+    const cellField = color(props.cellColor, "#ffffff");
+    const textField = color(props.textColor, "#252936");
+    const stripedField = el("input", { type: "checkbox", checked: props.striped === true });
+    const field = (label, control) => el("label", { class: "field" }, el("span", { class: "field-label", text: label }), control);
+    let entry;
+    entry = modal({
+      title: "Customize table",
+      width: 430,
+      body: el("div", { class: "table-style-editor" },
+        el("div", { class: "chart-link-help" }, icon("palette", 14), el("span", { text: "Choose a visual treatment for this table. Your data and linked graphs stay unchanged." })),
+        el("div", { class: "chart-color-fields table-color-fields" }, field("Header", headerField), field("Cells", cellField), field("Text", textField)),
+        field("Grid", borderField),
+        el("label", { class: "table-stripe-toggle" }, stripedField, el("span", { text: "Use alternating row tint" }))),
+      footer: [
+        el("button", { class: "button", type: "button", onclick: () => {
+          this.mutateTable(block, (draft) => {
+            Object.assign(draft.props, { headerColor: null, borderColor: null, cellColor: null, textColor: null, striped: false });
+          }, "table-style");
+          entry.close("reset");
+        } }, "Reset"),
+        el("button", { class: "button", type: "button", onclick: () => entry.close("cancel") }, "Cancel"),
+        el("button", { class: "button primary", type: "button", onclick: () => {
+          this.mutateTable(block, (draft) => {
+            Object.assign(draft.props, {
+              headerColor: headerField.value, borderColor: borderField.value,
+              cellColor: cellField.value, textColor: textField.value, striped: stripedField.checked,
+            });
+          }, "table-style");
+          entry.close("saved");
+        } }, "Save style"),
+      ],
+    });
   },
 
   renderSource(block) {
@@ -1441,6 +2284,10 @@ export const formatTime = (seconds) => {
   return hours ? `${hours}:${pad(minutes % 60)}:${pad(total % 60)}` : `${minutes}:${pad(total % 60)}`;
 };
 
+const formatChartNumber = (value) => Number.isInteger(value)
+  ? String(value)
+  : Number(value.toPrecision(6)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+
 /* Uploads stay inside the workspace: the file is written next to the
    database so notes and their attachments back up together. */
 export async function uploadFile(file) {
@@ -1474,6 +2321,7 @@ Object.assign(Editor.prototype, {
 
   setCodeText(block, line, text, caret) {
     block.text = plain(text);
+    this.detectCodeLanguageForBlock(block, line);
     line.innerHTML = highlight(text, block.props?.language || "plain");
     setCaret(line, caret);
     this.commit("code");
@@ -1482,9 +2330,34 @@ Object.assign(Editor.prototype, {
   onCodeInput(block, line) {
     const caret = caretOffset(line);
     block.text = plain(this.codeText(line));
+    this.detectCodeLanguageForBlock(block, line);
     this.repaintCode(block, line, caret);
     this.commit("code");
     this.showCompletions(block, line);
+  },
+
+  /* A pasted or transformed code block is not frozen to the language it had
+     when it was first recognised. Strong signatures are safe to reclassify,
+     so replacing an HTML snippet with Python immediately refreshes syntax,
+     completions and the Run/Preview button without an extra dropdown step. */
+  detectCodeLanguageForBlock(block, line) {
+    const language = detectCodeLanguage(spansText(block.text));
+    if (!language || language === block.props?.language) return false;
+    block.props = { ...block.props, language };
+    const wrapper = line?.closest?.(".code-block");
+    const label = wrapper?.querySelector?.(".code-lang");
+    if (label) label.textContent = language;
+    const actions = wrapper?.querySelector?.(".code-actions");
+    const existingRun = actions?.querySelector?.(".code-run");
+    if (isExecutable(language)) {
+      if (existingRun) existingRun.setAttribute("aria-label", runnerLabel(language));
+      else if (actions) actions.append(iconButton(
+        "play", runnerLabel(language),
+        () => executeBlock(block.props?.language || "plain", spansText(block.text), this.page?.title || "Preview"),
+        { className: "code-run", size: 14 },
+      ));
+    } else existingRun?.remove();
+    return true;
   },
 
   onCodeKeyDown(event, block, line) {
@@ -1499,6 +2372,33 @@ Object.assign(Editor.prototype, {
     const text = this.codeText(line);
     const caret = range ? range.start : caretOffset(line);
     const end = range ? range.end : caret;
+
+    /* A code block is a multi-line editor, but its first and last logical
+       rows still have normal block-editor boundaries. At the last row, Down
+       Arrow reaches the text directly underneath; when there is none, create
+       it rather than trapping the caret in the code surface. */
+    if (event.key === "ArrowDown" && (!range || range.collapsed) && !text.slice(caret).includes("\n")) {
+      event.preventDefault();
+      const siblings = this.siblingsOf(block.id);
+      const next = siblings[siblings.indexOf(block) + 1];
+      if (next && isTextBlock(next)) this.focus(next.id, 0);
+      else this.insertAfter(block, makeBlock());
+      return;
+    }
+    if (event.key === "ArrowUp" && (!range || range.collapsed) && !text.slice(0, caret).includes("\n")) {
+      const previous = this.previousTextBlock(block);
+      if (previous) { event.preventDefault(); this.focus(previous.id, "end"); }
+      return;
+    }
+
+    // A code block is an intentional container while it has content. Once it
+    // is empty, Backspace should remove the container itself, matching the
+    // rest of the block editor instead of leaving an inert code shell behind.
+    if (event.key === "Backspace" && !text && caret === 0 && (!range || range.collapsed)) {
+      event.preventDefault();
+      this.backspaceAtStart(block);
+      return;
+    }
 
     if (event.key === "Tab") {
       event.preventDefault();

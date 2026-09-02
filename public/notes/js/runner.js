@@ -163,6 +163,7 @@ const term = {
   socket: null,
   connecting: null,
   observer: null,
+  height: 320,
 };
 
 function terminalStatus(text, tone = "idle") {
@@ -172,21 +173,28 @@ function terminalStatus(text, tone = "idle") {
 }
 
 function buildDrawer() {
-  if (term.root) return term.root;
+  if (term.root) {
+    term.root.removeAttribute("aria-hidden");
+    requestAnimationFrame(() => term.root?.classList.add("open"));
+    fitTerminal();
+    return term.root;
+  }
   term.mount = el("div", { class: "code-terminal-mount" });
   term.status = el("span", { class: "code-terminal-status" });
-  /* The Vibe Coder's terminal chrome: a tab strip carrying one rounded session
-     pill, with the panel controls on the right. Notes runs a single shared
-     shell, so the strip holds one tab rather than a tab set. */
+  /* Notes owns one shared run shell. Its header borrows Vibe Coder's panel
+     spacing and palette, without implying that this page has terminal tabs
+     or separate terminal sessions to manage. */
   term.root = el("section", {
     class: "code-terminal",
     role: "dialog",
     "aria-label": "Terminal",
+    style: { height: `${term.height}px` },
   },
+    el("div", { class: "code-terminal-resize", onpointerdown: startTerminalResize, "aria-hidden": "true" }),
     el("header", { class: "code-terminal-head" },
-      el("span", { class: "code-terminal-tab", role: "tab", "aria-selected": "true" },
+      el("span", { class: "code-terminal-title" },
         icon("terminal", 14),
-        el("span", { class: "code-terminal-tab-label", text: shellLabel() }),
+        el("span", { text: "Terminal" }),
       ),
       term.status,
       iconButton("close", "Close terminal", closeTerminal, { size: 16, className: "code-terminal-close" }),
@@ -200,9 +208,25 @@ function buildDrawer() {
   return term.root;
 }
 
-/** Names the tab after the shell the server will actually start. */
-function shellLabel() {
-  return navigator.platform.toLowerCase().includes("win") ? "powershell" : "zsh";
+function startTerminalResize(event) {
+  if (!term.root || event.button !== 0) return;
+  event.preventDefault();
+  const startY = event.clientY;
+  const startHeight = term.root.getBoundingClientRect().height;
+  term.root.classList.add("resizing");
+  const move = (moveEvent) => {
+    const height = Math.min(520, Math.max(140, startHeight + startY - moveEvent.clientY));
+    term.height = height;
+    term.root.style.height = `${height}px`;
+    fitTerminal();
+  };
+  const stop = () => {
+    term.root?.classList.remove("resizing");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", stop, { once: true });
 }
 
 function fitTerminal() {
@@ -222,18 +246,26 @@ async function connectTerminal() {
     const { Terminal, FitAddon } = await ensureXterm();
     if (!term.xterm) {
       term.xterm = new Terminal({
-        fontSize: 12,
+        convertEol: false,
+        cursorBlink: true,
+        // Match the Vibe Coder's insertion cursor instead of xterm's block.
+        cursorStyle: "bar",
+        cursorWidth: 1,
+        fontSize: 12.5,
         fontFamily: '"SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace',
         theme: TERM_THEME,
-        cursorBlink: true,
-        convertEol: true,
-        scrollback: 4000,
+        lineHeight: 1.4,
+        scrollback: 10_000,
+        allowProposedApi: true,
       });
       if (FitAddon) {
         term.fit = new FitAddon();
         term.xterm.loadAddon(term.fit);
       }
       term.xterm.open(term.mount);
+      // xterm keeps its input element visually hidden, so focus the actual
+      // terminal whenever its visible surface is clicked, like Vibe Coder.
+      term.mount.addEventListener("pointerdown", () => term.xterm?.focus());
       term.xterm.onData((data) => {
         if (term.socket?.readyState === WebSocket.OPEN) {
           term.socket.send(JSON.stringify({ type: "input", data }));
@@ -274,21 +306,10 @@ async function connectTerminal() {
 export function closeTerminal() {
   if (!term.root) return;
   term.root.classList.remove("open");
-  // Wait out the slide before unmounting, so the drawer leaves as smoothly as
-  // it arrived. The shell itself is left running: reopening resumes it.
-  const root = term.root;
-  window.setTimeout(() => { if (!root.classList.contains("open")) root.remove(); }, 320);
-  term.root = null;
-  term.mount = null;
-  term.status = null;
-  term.observer?.disconnect();
-  term.observer = null;
-  window.removeEventListener("resize", fitTerminal);
-  term.xterm?.dispose();
-  term.xterm = null;
-  term.fit = null;
-  try { term.socket?.close(); } catch { /* already closing */ }
-  term.socket = null;
+  term.root.setAttribute("aria-hidden", "true");
+  // Keep the one Notes shell alive while it is collapsed. Reopening resumes
+  // its scrollback and working directory, exactly like Vibe Coder does, but
+  // without exposing terminal-session tabs in Notes.
 }
 
 /** Opens the drawer (if needed) and runs one snippet in the shared shell. */
@@ -318,7 +339,41 @@ export async function runInTerminal(language, code) {
 
 /* ----------------------------------------------------------- GUI preview */
 
-const preview = { root: null, frame: null, escape: null, url: null, html: null };
+const preview = {
+  root: null, frame: null, escape: null, message: null, address: null,
+  url: null, html: null, history: [], index: -1, updateNavigation: null,
+};
+
+const localPreviewPath = /^\/notes\/preview\//;
+
+function previewAddressLabel(url) {
+  const parsed = new URL(url, window.location.origin);
+  // Local previews are part of Notes, so a compact Notes-relative label is
+  // clearer than the development host and survives a production deployment.
+  if (parsed.origin === window.location.origin && localPreviewPath.test(parsed.pathname)) {
+    return `${parsed.pathname.slice(1)}${parsed.search}${parsed.hash}`;
+  }
+  return parsed.href.replace(/^https?:\/\//, "");
+}
+
+function previewDestination(value) {
+  const query = String(value || "").trim();
+  if (!query) return null;
+  if (/^https?:\/\//i.test(query)) return new URL(query).href;
+  if (/^localhost(?::\d+)?(?:[/?#].*)?$/i.test(query)) return new URL(`http://${query}`).href;
+  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(query)) return new URL(`https://${query}`).href;
+  if (/^(?:\/|\.\/|\.\.\/)/.test(query)) return new URL(query, window.location.origin).href;
+  // An address bar should also be useful when the user starts with a search,
+  // rather than requiring a separate search UI in a preview.
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
+function addPreviewLinkBridge(html, sourceUrl) {
+  // srcdoc has an opaque origin, so links need this tiny bridge to update the
+  // parent address bar/history. It only changes ordinary primary-click links.
+  const bridge = `<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[href]");if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target==="_blank")return;var h=a.getAttribute("href");if(!h||/^(?:#|mailto:|tel:|javascript:)/i.test(h))return;e.preventDefault();parent.postMessage({type:"clyra-notes-preview-link",url:new URL(h,${JSON.stringify(sourceUrl)}).href},"*");},true);</script>`;
+  return /<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, `${bridge}</body>`) : `${html}${bridge}`;
+}
 
 export function closePreview() {
   if (!preview.root) return;
@@ -327,11 +382,19 @@ export function closePreview() {
   window.setTimeout(() => { if (!root.classList.contains("open")) root.remove(); }, 280);
   preview.root = null;
   preview.frame = null;
+  preview.address = null;
   preview.url = null;
   preview.html = null;
+  preview.history = [];
+  preview.index = -1;
+  preview.updateNavigation = null;
   if (preview.escape) {
     document.removeEventListener("keydown", preview.escape);
     preview.escape = null;
+  }
+  if (preview.message) {
+    window.removeEventListener("message", preview.message);
+    preview.message = null;
   }
 }
 
@@ -351,7 +414,10 @@ export function closePreview() {
 export async function openPreview(language, code, title = "Preview") {
   closePreview();
 
-  const address = el("span", { class: "code-preview-address", text: "Starting preview…" });
+  const address = el("input", {
+    class: "code-preview-address", type: "text", value: "Starting preview…",
+    "aria-label": "Preview address or web search", autocomplete: "off", spellcheck: "false",
+  });
   const frame = el("iframe", {
     class: "code-preview-frame",
     title,
@@ -359,19 +425,61 @@ export async function openPreview(language, code, title = "Preview") {
     sandbox: "allow-scripts allow-forms allow-modals allow-popups",
   });
   preview.frame = frame;
+  preview.address = address;
 
-  const navButton = (name, label, onClick) =>
-    iconButton(name, label, onClick, { size: 14, className: "code-preview-nav" });
+  const navButton = (name, label, onClick, disabled = false) =>
+    iconButton(name, label, onClick, { size: 14, className: "code-preview-nav", disabled });
 
-  /* No Back/Forward: the frame renders one document through `srcdoc` and has
-     no history to move through, and a control that cannot act is worse than
-     no control at all. */
+  const loadEntry = (entry) => {
+    if (!entry || !preview.frame || !preview.address) return;
+    preview.url = entry.url;
+    preview.html = entry.html;
+    preview.address.value = previewAddressLabel(entry.url);
+    delete preview.address.dataset.error;
+    if (entry.html !== null) {
+      frame.removeAttribute("src");
+      frame.srcdoc = entry.html;
+    } else {
+      frame.removeAttribute("srcdoc");
+      frame.src = entry.url;
+    }
+    preview.updateNavigation?.();
+  };
+  const visit = (url, html = null) => {
+    preview.history = preview.history.slice(0, preview.index + 1);
+    preview.history.push({ url, html });
+    preview.index = preview.history.length - 1;
+    loadEntry(preview.history[preview.index]);
+  };
+  const back = navButton("arrow_left", "Go back", () => {
+    if (preview.index > 0) { preview.index -= 1; loadEntry(preview.history[preview.index]); }
+  }, true);
+  const forward = navButton("arrow_right", "Go forward", () => {
+    if (preview.index < preview.history.length - 1) { preview.index += 1; loadEntry(preview.history[preview.index]); }
+  }, true);
+  preview.updateNavigation = () => {
+    back.disabled = preview.index <= 0;
+    forward.disabled = preview.index >= preview.history.length - 1;
+  };
   const reload = navButton("refresh", "Reload", () => {
-    // Re-assigning srcdoc is what re-runs the snippet from scratch.
-    if (preview.html !== null) frame.srcdoc = preview.html;
+    loadEntry(preview.history[preview.index]);
   });
   const external = navButton("share", "Open externally", () => {
     if (preview.url) window.open(preview.url, "_blank", "noopener");
+  });
+  const copyUrl = navButton("copy", "Copy preview URL", async () => {
+    if (!preview.url) return;
+    try { await navigator.clipboard.writeText(preview.url); toast("Preview URL copied"); }
+    catch { toast("Could not copy the preview URL", "error"); }
+  });
+
+  address.addEventListener("focus", () => window.setTimeout(() => address.select(), 0));
+  address.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const destination = previewDestination(address.value);
+    if (destination) visit(destination);
+    else if (preview.url) address.value = previewAddressLabel(preview.url);
   });
 
   const setFullscreen = (full) => {
@@ -388,9 +496,12 @@ export async function openPreview(language, code, title = "Preview") {
   } },
     el("section", { class: "code-preview", role: "dialog", "aria-label": title, "aria-modal": "true" },
       el("header", { class: "code-preview-head" },
+        back,
+        forward,
         reload,
         el("span", { class: "code-preview-url" }, address),
         external,
+        copyUrl,
         fullscreen,
         iconButton("close", "Close preview", closePreview, { size: 14, className: "code-preview-nav" }),
       ),
@@ -407,6 +518,12 @@ export async function openPreview(language, code, title = "Preview") {
     closePreview();
   };
   document.addEventListener("keydown", preview.escape);
+  preview.message = (event) => {
+    if (event.source !== frame.contentWindow || event.data?.type !== "clyra-notes-preview-link") return;
+    const destination = previewDestination(event.data.url);
+    if (destination) visit(destination);
+  };
+  window.addEventListener("message", preview.message);
 
   try {
     const response = await fetch("/api/notes/preview", {
@@ -418,13 +535,11 @@ export async function openPreview(language, code, title = "Preview") {
     if (!response.ok || payload.error) throw new Error(payload.error || "Preview failed");
     // The dialog can be closed while the request is in flight.
     if (!preview.root) return;
-    preview.url = new URL(payload.url, window.location.origin).href;
-    preview.html = payload.html;
-    address.textContent = preview.url.replace(/^https?:\/\//, "");
-    frame.srcdoc = payload.html;
+    const url = new URL(payload.url, window.location.origin).href;
+    visit(url, addPreviewLinkBridge(payload.html, url));
   } catch (error) {
     if (!preview.root) return;
-    address.textContent = String(error?.message || "Preview failed");
+    address.value = String(error?.message || "Preview failed");
     address.dataset.error = "true";
   }
 }

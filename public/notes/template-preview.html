@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Template preview</title>
+    <link rel="stylesheet" href="/notes/css/tokens.css">
+    <link rel="stylesheet" href="/notes/css/shell.css">
+    <link rel="stylesheet" href="/notes/css/editor.css">
+    <link rel="stylesheet" href="/notes/css/database.css">
+    <link rel="stylesheet" href="/notes/css/study.css">
+    <style>
+      /* A bare page frame with no shell chrome: the shot has to be of the
+         document a template builds, not of the app around it. */
+      html, body { margin: 0; background: var(--background-main); }
+      #shot {
+        width: 720px; padding: 30px 56px 40px;
+        background: var(--background-main); color: var(--text-primary);
+        font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+      }
+      #shot .shot-title {
+        font-size: 34px; font-weight: 700; letter-spacing: -0.02em;
+        margin: 0 0 14px; color: var(--text-primary);
+      }
+      #shot .editor-host { font-size: 16px; line-height: 1.55; }
+      /* Hover-only chrome must not be captured mid-state. */
+      #shot .block-gutter, #shot .table-actions, #shot .table-grip { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div id="shot"><div class="shot-title"></div><div class="editor-host"></div></div>
+    <div id="layers"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module">
+      import { Editor } from "/notes/js/editor.js";
+      import { TEMPLATES, templateBlocks } from "/notes/js/templates-data.js";
+
+      const params = new URLSearchParams(location.search);
+      if (params.get("theme") === "dark") document.documentElement.dataset.notesTheme = "dark";
+
+      const template = TEMPLATES.find((entry) => entry.id === params.get("id")) || TEMPLATES[0];
+      document.querySelector(".shot-title").textContent = template.name;
+      const page = { id: `preview-${template.id}`, title: template.name, blocks: templateBlocks(template), breadcrumb: [] };
+      new Editor(document.querySelector(".editor-host"), { page, readOnly: true });
+      /* The tool waits on this flag rather than a fixed delay. */
+      requestAnimationFrame(() => requestAnimationFrame(() => { document.body.dataset.ready = "true"; }));
+    </script>
+  </body>
+</html>

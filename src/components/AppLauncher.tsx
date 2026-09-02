@@ -7,7 +7,7 @@ import {
   Globe2,
   Grid2X2,
   MessageCircle,
-  Mic,
+  Users,
 } from "lucide-react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
@@ -21,7 +21,7 @@ export type LauncherToolId =
   | "fake-text"
   | "shorts"
   | "notes"
-  | "dictation";
+  | "cowork";
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
@@ -43,7 +43,10 @@ const tools: LauncherTool[] = [
   { id: "shorts", label: "Shorts Studio", shortLabel: "Shorts", detail: "Fake texts, Would You Rather, and AI clips", icon: Clapperboard, accent: "#334155" },
   { id: "browser", label: "AI Browser", shortLabel: "Browser", detail: "Research and act across live websites", icon: Globe2, accent: "#1e293b" },
   { id: "notes", label: "Clyra Notes", shortLabel: "Notes", detail: "Capture, organise, and review your notes", icon: BookOpen, accent: "#1e293b" },
-  { id: "dictation", label: "Clyra Dictation", shortLabel: "Dictation", detail: "Speak naturally anywhere on your desktop", icon: Mic, accent: "#1e293b" },
+  { id: "cowork", label: "Clyra Cowork", shortLabel: "Cowork", detail: "A team of persistent AI workers with their own workspaces", icon: Users, accent: "#1e293b" },
+  // Dictation is no longer a launcher tile — it is a system-wide background
+  // feature (Clyra Anywhere) that runs whether or not this window is open,
+  // not a workspace you "open" from here. See electron/dictation-manager.mjs.
 ];
 
 const CENTER = 320;

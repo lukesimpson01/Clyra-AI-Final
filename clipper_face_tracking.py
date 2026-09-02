@@ -3556,6 +3556,110 @@ def track_faces_and_build_crops(
     return payload
 
 
+def track_faces_and_build_split_screen_crops(
+    ffmpeg: str,
+    source: str,
+    clip_start: float,
+    clip_duration: float,
+    out_w: int,
+    out_h: int,
+    mode: str = "smooth",
+    scene_mode: str = "strict",
+    person_mode: Optional[str] = None,
+    allow_zoom: bool = True,
+    crop_focus: str = "center",
+    cache_root: Optional[str] = None,
+    frame_w: Optional[int] = None,
+    frame_h: Optional[int] = None,
+    job_id: Optional[str] = None,
+    shot_boundaries: Optional[Sequence[Dict[str, Any]]] = None,
+    scene_rules: Optional[Dict[str, float]] = None,
+    thumb_dir: Optional[str] = None,
+    audio_evidence: Optional[Dict[str, Any]] = None,
+    audio_offset_ms: int = 0,
+    reframe_mode: str = "auto",
+    speaker_mode: str = "auto",
+    tracking_quality: str = "balanced",
+    source_fps: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Two independently locked crop trajectories, one per speaker.
+
+    Real split-screen needs two subjects visible at once, not one crop that
+    jumps between them. Rather than re-deriving trajectory math, this locks
+    onto the primary (auto-selected) speaker exactly as the single-crop path
+    does, then locks a second call onto the next most prominent distinct
+    person using the same manual-selection path a user's own pick already
+    exercises. Both trajectories are therefore produced by the identical,
+    already-proven per-frame optimiser — this function only decides who the
+    two locked subjects are and shapes the combined payload.
+
+    Falls back to a single track (`splitScreenApplied: False`) when fewer
+    than two verified people are present — an honest report of why split
+    mode could not apply, not a silent downgrade that claims otherwise.
+    """
+    common_kwargs = dict(
+        mode=mode,
+        scene_mode=scene_mode,
+        person_mode=person_mode,
+        allow_zoom=allow_zoom,
+        crop_focus=crop_focus,
+        cache_root=cache_root,
+        frame_w=frame_w,
+        frame_h=frame_h,
+        shot_boundaries=shot_boundaries,
+        scene_rules=scene_rules,
+        thumb_dir=thumb_dir,
+        audio_evidence=audio_evidence,
+        audio_offset_ms=audio_offset_ms,
+        reframe_mode=reframe_mode,
+        speaker_mode=speaker_mode,
+        tracking_quality=tracking_quality,
+        source_fps=source_fps,
+    )
+    # Each pane gets its own trajectory computed AT its own on-screen size, not
+    # a full-height crop sliced in half after the fact — the optimiser's
+    # eye-line/comfort-zone composition math is tuned for the box it is given,
+    # so a half-height box must be the box it optimises for.
+    pane_h_top = out_h // 2
+    pane_h_bottom = out_h - pane_h_top
+
+    primary = track_faces_and_build_crops(
+        ffmpeg, source, clip_start, clip_duration, out_w, pane_h_top,
+        job_id=f"{job_id}-split-a" if job_id else None,
+        **common_kwargs,
+    )
+    primary_meta = primary.get("faceTracking") or {}
+    primary_id = primary_meta.get("selectedPersonId") or primary_meta.get("activeSpeakerPersonId")
+    candidates = [
+        person for person in (primary.get("availableFaces") or [])
+        if person.get("id") and person.get("id") != primary_id
+    ]
+    candidates.sort(key=lambda person: float(person.get("confidence") or 0.0), reverse=True)
+    secondary_id = candidates[0]["id"] if candidates else None
+
+    result = dict(primary)
+    meta = dict(primary_meta)
+    meta["splitScreenRequested"] = True
+    meta["splitScreenApplied"] = bool(secondary_id)
+    meta["secondaryPersonId"] = secondary_id
+    meta["paneHeightTop"] = pane_h_top
+    meta["paneHeightBottom"] = pane_h_bottom
+    result["cropKeyframesTop"] = primary.get("cropKeyframes")
+    result["cropKeyframesBottom"] = None
+
+    if secondary_id:
+        secondary = track_faces_and_build_crops(
+            ffmpeg, source, clip_start, clip_duration, out_w, pane_h_bottom,
+            selected_person_id=secondary_id,
+            job_id=f"{job_id}-split-b" if job_id else None,
+            **common_kwargs,
+        )
+        result["cropKeyframesBottom"] = secondary.get("cropKeyframes")
+
+    result["faceTracking"] = meta
+    return result
+
+
 def write_sendcmd(path: str, keyframes: Sequence[Dict[str, Any]]) -> str:
     """Write a timestamped crop-path artifact for diagnostics/legacy consumers."""
     lines = []

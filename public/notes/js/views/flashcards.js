@@ -8,6 +8,7 @@ import { state, withError, loadWorkspace } from "../state.js";
 import { notePicker, withProgress } from "./generation.js";
 import { section, row, empty } from "./home.js";
 import { formatRelative } from "../app.js";
+import { prefNumber } from "../preferences.js";
 
 /* The scheduler still wants a grade per review, but the study screen no
    longer asks for one: every card answered counts as a plain "Good", which
@@ -254,9 +255,15 @@ export function renderFlashcards(host, app) {
 
   /* ---- study screen ---- */
 
-  const study = async (deck) => {
-    const queue = await withError(
-      () => api.get("/api/notes/study/queue", deck ? { deckId: deck.id } : undefined),
+  /* Flagging a card is not decoration: an unflagged card is scheduled as a
+     plain "Good", a flagged one as "Again", so the thing you said you were
+     unsure about genuinely comes back sooner. */
+  const FLAGGED_RATING = 1;
+
+  const study = async (deck, options = {}) => {
+    const limit = prefNumber("studyLimit");
+    const queue = options.queue || await withError(
+      () => api.get("/api/notes/study/queue", deck ? { deckId: deck.id, limit } : { limit }),
       "Could not load the study queue",
     );
     if (!queue) return;
@@ -266,7 +273,10 @@ export function renderFlashcards(host, app) {
     let revealed = false;
     let shownAt = Date.now();
     const total = queue.length;
-    let done = 0;
+    /* Reviews are posted once per card. Walking back and forward through the
+       session must not re-post one, or a card gets scheduled twice. */
+    const rated = new Set();
+    const flagged = new Set();
 
     clear(host);
     const stage = el("div", { class: "study-stage" });
@@ -277,46 +287,87 @@ export function renderFlashcards(host, app) {
       await loadWorkspace();
       clear(host);
       const scroll = el("div", { class: "page-scroll scroll" });
-      const column = el("div", { class: "page-column view-column" });
-      scroll.append(column, el("div"));
+      const column = el("div", { class: "page-column view-column study-done" });
+      scroll.append(column);
       host.append(scroll);
-      append(column, 
+
+      const flaggedCards = queue.filter((card) => flagged.has(card.id));
+      append(column,
+        el("div", { class: "done-mark" }, icon("check", 26)),
         el("h1", { class: "view-title", text: "Session complete" }),
-        el("p", { class: "view-lead", text: `You reviewed ${done} card${done === 1 ? "" : "s"}.` }),
-        el("div", { class: "view-header-actions" },
-          el("button", { class: "button primary", type: "button", onclick: () => study(deck) }, "Study more"),
+        el("p", { class: "view-lead", text: `You reviewed ${rated.size} card${rated.size === 1 ? "" : "s"}${
+          flaggedCards.length ? ` and flagged ${flaggedCards.length}` : ""}.` }),
+        el("div", { class: "done-stats" },
+          el("div", { class: "done-stat" },
+            el("span", { class: "done-stat-value", text: String(rated.size) }),
+            el("span", { class: "done-stat-label", text: "Reviewed" })),
+          el("div", { class: "done-stat" },
+            el("span", { class: "done-stat-value", text: String(flaggedCards.length) }),
+            el("span", { class: "done-stat-label", text: "Flagged" }))),
+        flaggedCards.length
+          ? el("ul", { class: "done-flagged" }, flaggedCards.slice(0, 6).map((card) =>
+              el("li", { class: "done-flagged-item" },
+                el("span", { class: "done-flagged-icon" }, icon("flag", 12)),
+                el("span", { class: "done-flagged-text", text: card.front }))))
+          : null,
+        el("div", { class: "view-header-actions done-actions" },
+          flaggedCards.length
+            ? el("button", { class: "button primary", type: "button",
+                onclick: () => study(deck, { queue: flaggedCards }) },
+                `Redo ${flaggedCards.length} flagged`)
+            : null,
+          el("button", { class: `button${flaggedCards.length ? "" : " primary"}`, type: "button",
+            onclick: () => study(deck, { queue }) }, "Study these again"),
           el("button", { class: "button", type: "button", onclick: draw }, "Back to decks")),
       );
     };
 
-    /* `rate` is async and the same key/click now drives it, so a second
-       press while the review is in flight must not skip a card. */
     let saving = false;
-    const rate = async (rating) => {
-      const card = queue[index];
-      if (!card || saving) return;
+    /* Recording is separate from moving: stepping forward records the card
+       you are leaving, stepping back never does. */
+    const record = async (card) => {
+      if (!card || rated.has(card.id) || saving) return;
       saving = true;
-      done += 1;
-      await withError(() => api.post(`/api/notes/cards/${card.id}/review`, { rating, responseMs: Date.now() - shownAt }), "Could not save the review");
+      rated.add(card.id);
+      const rating = flagged.has(card.id) ? FLAGGED_RATING : DEFAULT_RATING;
+      await withError(
+        () => api.post(`/api/notes/cards/${card.id}/review`, { rating, responseMs: Date.now() - shownAt }),
+        "Could not save the review",
+      );
+      saving = false;
+    };
+
+    const goNext = async () => {
+      const card = queue[index];
+      await record(card);
+      if (index + 1 >= total) { finish(); return; }
       index += 1;
       revealed = false;
       shownAt = Date.now();
-      saving = false;
-      if (index >= queue.length) { finish(); return; }
       paint();
     };
 
-    /* One key, one click: the card flips, then the same gesture moves on. */
+    const goBack = () => {
+      if (index === 0) return;
+      index -= 1;
+      revealed = false;
+      shownAt = Date.now();
+      paint();
+    };
+
     let advance = () => {};
     onKey = (event) => {
       if (event.target?.closest?.("input, textarea")) return;
       if (event.key === " " || event.key === "Enter") { event.preventDefault(); advance(); return; }
+      if (event.key === "ArrowRight") { event.preventDefault(); goNext(); return; }
+      if (event.key === "ArrowLeft") { event.preventDefault(); goBack(); return; }
+      if (event.key.toLowerCase() === "f") { event.preventDefault(); toggleFlag(); return; }
       if (event.key === "Escape") { event.preventDefault(); document.removeEventListener("keydown", onKey); draw(); return; }
     };
     document.addEventListener("keydown", onKey);
 
-    /* A real card that turns over: the two faces share one 3D box, so the
-       answer arrives by rotation rather than by swapping text in place. */
+    let toggleFlag = () => {};
+
     const paint = () => {
       const card = queue[index];
       clear(stage);
@@ -340,29 +391,49 @@ export function renderFlashcards(host, app) {
               }, icon("link", 13), "Show source")
             : null),
       );
-      const cue = el("div", { class: "study-cue" });
+
       const last = index + 1 >= total;
-      const paintCue = () => {
-        clear(cue);
-        cue.classList.toggle("ready", revealed);
-        append(cue, el("span", { class: "study-reveal-hint" },
-          "Click the card or press ",
-          el("kbd", { text: "space" }),
-          revealed ? (last ? " to finish" : " for the next card") : " to flip"));
+      const flagButton = el("button", {
+        class: `study-flag${flagged.has(card.id) ? " on" : ""}`, type: "button",
+        "aria-pressed": flagged.has(card.id) ? "true" : "false",
+        onclick: (event) => { event.stopPropagation(); toggleFlag(); },
+      }, icon("flag", 14), el("span", { text: flagged.has(card.id) ? "Flagged" : "Flag this card" }));
+
+      toggleFlag = () => {
+        const on = !flagged.has(card.id);
+        on ? flagged.add(card.id) : flagged.delete(card.id);
+        flagButton.classList.toggle("on", on);
+        flagButton.setAttribute("aria-pressed", on ? "true" : "false");
+        flagButton.querySelector("span").textContent = on ? "Flagged" : "Flag this card";
+        board.classList.toggle("flagged", on);
       };
 
-      /* Revealing toggles a class on the existing box rather than rebuilding
-         it — a freshly built card is already flipped and has nothing to
-         rotate from. */
+      const hint = el("span", { class: "study-reveal-hint" });
+      const paintHint = () => {
+        clear(hint);
+        append(hint, "Press ", el("kbd", { text: "space" }),
+          revealed ? (last ? " to finish" : " for the next card") : " to flip");
+      };
+
+      const nextButton = el("button", {
+        class: "button primary study-next", type: "button",
+        onclick: () => (revealed ? goNext() : advance()),
+      }, revealed ? (last ? "Finish" : "Next") : "Show answer",
+        icon(revealed && !last ? "arrow_right" : revealed ? "check" : "eye", 14));
+
       advance = () => {
-        if (revealed) { rate(DEFAULT_RATING); return; }
+        if (revealed) { goNext(); return; }
         revealed = true;
         flipper.classList.add("flipped");
         board.setAttribute("aria-label", last ? "Finish the session" : "Next card");
-        paintCue();
+        nextButton.replaceChildren(document.createTextNode(last ? "Finish" : "Next"),
+          icon(last ? "check" : "arrow_right", 14));
+        paintHint();
       };
+
       const board = el("div", {
-        class: "study-card-board", role: "button", tabindex: "0",
+        class: `study-card-board${flagged.has(card.id) ? " flagged" : ""}`,
+        role: "button", tabindex: "0",
         "aria-label": revealed ? (last ? "Finish the session" : "Next card") : "Show the answer",
         onclick: () => advance(),
       }, flipper);
@@ -370,12 +441,22 @@ export function renderFlashcards(host, app) {
       append(stage,
         el("div", { class: "study-top" },
           el("button", { class: "text-button", type: "button", onclick: () => { document.removeEventListener("keydown", onKey); draw(); } }, icon("close", 14), "Exit"),
-          el("span", { class: "study-progress", text: `${index + 1} / ${total}` }),
-          el("span", { class: "study-deck", text: deck?.name || "All decks" })),
+          el("span", { class: "study-progress" },
+            el("span", { class: "study-progress-bar" },
+              el("span", { class: "study-progress-fill", style: { width: `${((index + 1) / total) * 100}%` } })),
+            el("span", { class: "study-progress-text", text: `${index + 1} / ${total}` })),
+          el("span", { class: "study-deck", text: options.queue ? "Flagged cards" : deck?.name || "All decks" })),
         board,
-        cue,
+        el("div", { class: "study-controls" },
+          el("button", {
+            class: "button study-back", type: "button", disabled: index === 0,
+            onclick: () => goBack(),
+          }, icon("arrow_left", 14), "Back"),
+          flagButton,
+          nextButton),
+        el("div", { class: "study-cue" }, hint),
       );
-      paintCue();
+      paintHint();
       if (!revealed) queueMicrotask(() => board.focus());
     };
 

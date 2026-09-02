@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Menu, MessageCircle, Mic, MicOff, MoreHorizontal, PhoneOff, ScreenShare, X } from "lucide-react";
+import { Menu, MessageCircle, Mic, MicOff, MoreHorizontal, PhoneOff, X } from "lucide-react";
 import type { UseVoiceCallOptions, VoiceCallStatus, VoiceTurn } from "../../hooks/useVoiceCall";
 import { Bloub, type BloubState } from "../bloub/Bloub";
 import { LiquidGlassButton, LiquidGlassIconGroup } from "./LiquidGlassButton";
 import { VoiceFluidField, type VoiceFluidHandle } from "./VoiceFluidField";
 import { VoiceStage } from "./VoiceStage";
+import { VoiceStateOrb } from "./VoiceStateOrb";
 
 /**
  * Bloub only has a real "thinking" (three-dot pulse) and "wide" (attentive,
@@ -54,8 +55,6 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
   const fluidRef = useRef<VoiceFluidHandle>(null);
   const [minimized, setMinimized] = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [cameraArmed, setCameraArmed] = useState(false);
-  const [shareArmed, setShareArmed] = useState(false);
 
   useEffect(() => {
     const energy = call.status === "speaking" ? call.botLevel : call.micLevel;
@@ -81,8 +80,6 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
       setMinimized(false);
     } else {
       setTranscriptOpen(false);
-      setCameraArmed(false);
-      setShareArmed(false);
     }
   }, [call.active]);
 
@@ -154,24 +151,19 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               className="relative flex items-center justify-center"
             >
-              <motion.div
-                aria-hidden
-                className="pointer-events-none absolute rounded-full"
-                style={{
-                  width: 220,
-                  height: 220,
-                  background: "radial-gradient(circle, rgba(91,157,255,0.22) 0%, rgba(91,157,255,0.06) 55%, transparent 75%)",
-                }}
-                animate={{
-                  scale: call.status === "speaking" ? 1 + call.botLevel * 0.35 : [1, 1.06, 1],
-                  opacity: call.status === "speaking" ? 0.6 + call.botLevel * 0.4 : [0.55, 0.75, 0.55],
-                }}
-                transition={
-                  call.status === "speaking"
-                    ? { duration: 0.12, ease: "easeOut" }
-                    : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }
-                }
-              />
+              {/* One halo whose scale changed could not tell listening from
+                  speaking from thinking. This draws a different *motion* per
+                  state — ripples outward, arcs inward, bars pulsing — which
+                  is what makes the call's state readable at a glance. */}
+              <div className="pointer-events-none absolute">
+                <VoiceStateOrb
+                  status={call.status}
+                  micLevel={call.micLevel}
+                  botLevel={call.botLevel}
+                  muted={call.muted}
+                  size={240}
+                />
+              </div>
               <Bloub
                 state={bloubState}
                 size={100}
@@ -183,10 +175,7 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
             </motion.div>
             <VoiceStage
               status={call.status}
-              active={call.active}
               muted={call.muted}
-              micLevel={call.micLevel}
-              botLevel={call.botLevel}
               partialTranscript={call.partialTranscript}
               captionLines={call.captionLines}
             />
@@ -200,20 +189,12 @@ export function VoiceCallScreen({ call, testMode, avatarColor = "#0a0a0c", onOpe
             transition={{ type: "spring", stiffness: 340, damping: 22, delay: 0.08 }}
             className="relative z-10 flex items-center justify-center gap-5 pb-12"
           >
-            <LiquidGlassButton
-              icon={<Camera size={19} />}
-              label="Camera"
-              onClick={() => setCameraArmed((v) => !v)}
-              active={cameraArmed}
-              disabled
-            />
-            <LiquidGlassButton
-              icon={<ScreenShare size={19} />}
-              label="Share screen"
-              onClick={() => setShareArmed((v) => !v)}
-              active={shareArmed}
-              disabled
-            />
+            {/* Camera and screen share were rendered permanently disabled —
+                controls that look available, do nothing when pressed, and
+                never become enabled. Until the capture path behind them
+                exists they are not shown at all; a smaller row of controls
+                that all work reads as finished, a wider one that does not
+                reads as broken. */}
             <LiquidGlassButton
               icon={call.muted ? <MicOff size={20} /> : <Mic size={20} />}
               label={call.muted ? "Unmute" : "Mute"}

@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import type { ReactNode } from "react";
 import type { VoiceCallStatus } from "../../hooks/useVoiceCall";
-import { VoiceWaveform } from "./VoiceWaveform";
 
 const STATUS_COPY: Record<VoiceCallStatus, string> = {
   idle: "Idle",
@@ -47,30 +46,29 @@ function ThinkingPulse() {
 
 type VoiceStageProps = {
   status: VoiceCallStatus;
-  active: boolean;
   muted: boolean;
-  micLevel: number;
-  botLevel: number;
   partialTranscript: string;
   captionLines: string[];
 };
 
 /**
- * The always-mounted centre content: name, live status word, a 1-line
- * transcript/caption slot, and a waveform that stays a single instance
- * across every status so state changes morph rather than remount.
+ * The always-mounted centre content: name, live status word, and a 1-line
+ * transcript/caption slot.
+ *
+ * This used to end with a 39-bar waveform, reacting to the same mic/bot
+ * energy VoiceStateOrb already draws around the avatar above it — two
+ * independent visualisations of one signal, stacked on the same screen. That
+ * reads as two different widgets bolted together rather than one considered
+ * surface, and it cost a second rAF loop for no second piece of information.
+ * VoiceStateOrb is the one place energy is now shown.
  */
 export function VoiceStage({
   status,
-  active,
   muted,
-  micLevel,
-  botLevel,
   partialTranscript,
   captionLines,
 }: VoiceStageProps) {
   const latestCaption = captionLines.filter((l) => l.trim()).slice(-1)[0] ?? "";
-  const waveLevel = status === "speaking" ? botLevel : micLevel;
 
   let contentKey: string = status;
   let content: ReactNode = null;
@@ -122,14 +120,6 @@ export function VoiceStage({
           </motion.div>
         </AnimatePresence>
       </div>
-
-      <VoiceWaveform
-        level={waveLevel}
-        active={active}
-        muted={muted}
-        state={status === "idle" ? "listening" : status}
-        className="clyra-voice-call-waveform"
-      />
     </div>
   );
 }

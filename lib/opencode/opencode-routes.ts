@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
-import { codingModelStatus, openCodeRuntimeManager } from "./OpenCodeRuntimeManager";
+import { codingBackend, codingBackendModelStatus, codingBackendVersion, codingRuntimeManager } from "../coding-backend";
 import { getVibeUsageAnalytics, type UsageRange } from "../vibe-agent-v3/usage-analytics";
 
 const execFileAsync = promisify(execFile);
@@ -71,11 +71,15 @@ export function registerOpenCodeRoutes(app: Application) {
   });
 
   app.get("/api/opencode/status", async (_req, res) => {
-    const health = await openCodeRuntimeManager.health();
-    const configuredModel = codingModelStatus();
+    const runtime = codingRuntimeManager();
+    const health = await runtime.health();
+    const configuredModel = codingBackendModelStatus();
+    const version = codingBackendVersion();
     res.json({
-      sdkVersion: "1.18.12",
-      executableVersion: process.env.CLYRA_OPENCODE_VERSION || "detected at runtime",
+      backend: codingBackend(),
+      sdk: version.sdk,
+      sdkVersion: version.version,
+      executableVersion: version.version,
       // Model identity is safe to show. Credentials remain exclusively in the
       // service process and are never emitted in this response.
       model: configuredModel.available ? `${configuredModel.providerID}/${configuredModel.modelID}` : undefined,
@@ -120,60 +124,60 @@ Project architecture rules — for every coding request:
           "utf8",
         ).catch(() => undefined);
       }
-      res.json(await openCodeRuntimeManager.start(projectId, root));
+      res.json(await codingRuntimeManager().start(projectId, root));
     } catch (error) {
-      res.status(503).json({ error: error instanceof Error ? error.message : "OpenCode could not start." });
+      res.status(503).json({ error: error instanceof Error ? error.message : "The Clyra Code runtime could not start." });
     }
   });
 
   app.post("/api/opencode/runtime/stop", async (_req, res) => {
-    await openCodeRuntimeManager.stop();
+    await codingRuntimeManager().stop();
     res.json({ ok: true });
   });
 
   app.get("/api/opencode/diagnostic/:projectId", (req, res) => {
-    try { res.json(openCodeRuntimeManager.inspect(safeProjectId(req.params.projectId))); }
+    try { res.json(codingRuntimeManager().inspect(safeProjectId(req.params.projectId))); }
     catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Project not found." }); }
   });
 
   app.post("/api/opencode/sessions", async (req, res) => {
     const projectId = safeProjectId(String(req.body?.projectId || ""));
-    try { res.json(await openCodeRuntimeManager.createSession(projectId, String(req.body?.title || "").slice(0, 160))); }
+    try { res.json(await codingRuntimeManager().createSession(projectId, String(req.body?.title || "").slice(0, 160))); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not create session." }); }
   });
 
   app.get("/api/opencode/sessions/:projectId", async (req, res) => {
     const projectId = safeProjectId(req.params.projectId);
-    try { res.json(await openCodeRuntimeManager.listSessions(projectId, projectPath(projectId))); }
+    try { res.json(await codingRuntimeManager().listSessions(projectId, projectPath(projectId))); }
     catch { res.json([]); }
   });
 
   app.patch("/api/opencode/sessions/:projectId/:sessionId", async (req, res) => {
     const title = String(req.body?.title || "").trim().slice(0, 160);
     if (!title) return res.status(400).json({ error: "A chat title is required." });
-    try { res.json(await openCodeRuntimeManager.renameSession(safeProjectId(req.params.projectId), req.params.sessionId, title)); }
+    try { res.json(await codingRuntimeManager().renameSession(safeProjectId(req.params.projectId), req.params.sessionId, title)); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not rename chat." }); }
   });
 
   app.delete("/api/opencode/sessions/:projectId/:sessionId", async (req, res) => {
     try {
-      await openCodeRuntimeManager.deleteSession(safeProjectId(req.params.projectId), req.params.sessionId);
+      await codingRuntimeManager().deleteSession(safeProjectId(req.params.projectId), req.params.sessionId);
       res.json({ ok: true });
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not delete chat." }); }
   });
 
   app.get("/api/opencode/sessions/:projectId/:sessionId/messages", async (req, res) => {
-    try { res.json(await openCodeRuntimeManager.messages(safeProjectId(req.params.projectId), req.params.sessionId)); }
+    try { res.json(await codingRuntimeManager().messages(safeProjectId(req.params.projectId), req.params.sessionId)); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not fetch history." }); }
   });
 
   app.get("/api/opencode/sessions/:projectId/:sessionId/diff", async (req, res) => {
-    try { res.json(await openCodeRuntimeManager.diff(safeProjectId(req.params.projectId), req.params.sessionId)); }
+    try { res.json(await codingRuntimeManager().diff(safeProjectId(req.params.projectId), req.params.sessionId)); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not fetch changes." }); }
   });
 
   app.post("/api/opencode/projects/:projectId/checkpoints/undo", async (req, res) => {
-    try { res.json(await openCodeRuntimeManager.undoLastCheckpoint(safeProjectId(req.params.projectId))); }
+    try { res.json(await codingRuntimeManager().undoLastCheckpoint(safeProjectId(req.params.projectId))); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not restore the last checkpoint." }); }
   });
 
@@ -181,7 +185,7 @@ Project architecture rules — for every coding request:
     const text = String(req.body?.text || "").trim();
     if (!text || text.length > MAX_PROMPT_LENGTH) return res.status(400).json({ error: "Enter a coding request up to 20,000 characters." });
     try {
-      await openCodeRuntimeManager.prompt(
+      await codingRuntimeManager().prompt(
         safeProjectId(req.params.projectId),
         req.params.sessionId,
         text,
@@ -224,14 +228,14 @@ Project architecture rules — for every coding request:
   });
 
   app.post("/api/opencode/sessions/:projectId/:sessionId/abort", async (req, res) => {
-    try { await openCodeRuntimeManager.abort(safeProjectId(req.params.projectId), req.params.sessionId); res.json({ ok: true }); }
+    try { await codingRuntimeManager().abort(safeProjectId(req.params.projectId), req.params.sessionId); res.json({ ok: true }); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not abort session." }); }
   });
 
   app.post("/api/opencode/sessions/:projectId/:sessionId/permissions/:permissionId", async (req, res) => {
     const response = String(req.body?.response || "deny");
     if (!["allow", "always", "deny"].includes(response)) return res.status(400).json({ error: "Invalid permission response." });
-    try { await openCodeRuntimeManager.respondPermission(safeProjectId(req.params.projectId), req.params.sessionId, req.params.permissionId, response); res.json({ ok: true }); }
+    try { await codingRuntimeManager().respondPermission(safeProjectId(req.params.projectId), req.params.sessionId, req.params.permissionId, response); res.json({ ok: true }); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not answer permission." }); }
   });
 
@@ -242,7 +246,7 @@ Project architecture rules — for every coding request:
     res.setHeader("Connection", "keep-alive");
     const id = randomUUID();
     try {
-      subscriptions.set(id, openCodeRuntimeManager.subscribe(projectId, (event) => sendSse(res, event)));
+      subscriptions.set(id, codingRuntimeManager().subscribe(projectId, (event) => sendSse(res, event)));
       req.on("close", () => { subscriptions.get(id)?.(); subscriptions.delete(id); });
     } catch (error) { sendSse(res, { type: "runtime.error", error: error instanceof Error ? error.message : String(error) }); res.end(); }
   });
@@ -256,16 +260,16 @@ Project architecture rules — for every coding request:
       const root = projectPath(projectId);
       await fs.mkdir(root, { recursive: true });
       await ensureProjectGitRepo(root).catch(() => undefined);
-      await openCodeRuntimeManager.start(projectId, root);
-      const session = await openCodeRuntimeManager.createSession(projectId, titleFor(prompt));
-      await openCodeRuntimeManager.prompt(projectId, session.id, prompt, Boolean(req.body?.planMode) ? "plan" : undefined);
-      res.json({ taskId: session.id, sessionId: session.id, projectId, provider: "opencode-sdk", sdkVersion: "1.18.12" });
-    } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "OpenCode could not start." }); }
+      await codingRuntimeManager().start(projectId, root);
+      const session = await codingRuntimeManager().createSession(projectId, titleFor(prompt));
+      await codingRuntimeManager().prompt(projectId, session.id, prompt, Boolean(req.body?.planMode) ? "plan" : undefined);
+      res.json({ taskId: session.id, sessionId: session.id, projectId, provider: codingBackend(), sdkVersion: codingBackendVersion().version });
+    } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : "The Clyra Code runtime could not start." }); }
   });
 
   app.post("/api/opencode/cancel/:sessionId", async (req, res) => {
     const projectId = safeProjectId(String(req.body?.projectId || ""));
-    try { await openCodeRuntimeManager.abort(projectId, req.params.sessionId); res.json({ ok: true }); }
+    try { await codingRuntimeManager().abort(projectId, req.params.sessionId); res.json({ ok: true }); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not cancel task." }); }
   });
 }

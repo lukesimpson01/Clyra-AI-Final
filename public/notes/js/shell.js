@@ -80,7 +80,7 @@ export class Sidebar {
       item("flashcards", "Flashcards", "cards"),
       item("tests", "Tests", "check_square"),
       item("inbox", "Inbox", "inbox"),
-      item("search", "Search", "search", `${mod}+K`, () => this.context.openSearch()),
+      item("search", "Search", "search", `${mod}+P`, () => this.context.openSearch()),
     );
     return nav;
   }
@@ -116,7 +116,7 @@ export class Sidebar {
         : [el("div", { class: "sidebar-empty", text: "Drop a page here" })], { classId: course.id }));
     }
 
-    /* The invitation sits with the subjects it creates, above the private
+    /* The invitation sits with the subjects it creates, above the unfiled
        list — below it, a long page list pushes it out of view entirely. */
     sections.push(el("div", { class: "sidebar-section subjects-cta" },
       el("button", {
@@ -127,10 +127,10 @@ export class Sidebar {
         el("span", { class: "add-subject-icon" }, icon("plus", 14)),
         el("span", { class: "add-subject-label", text: "New subject" }))));
 
-    const privatePages = childrenOf(null).filter((page) => !page.class_id);
-    sections.push(this.section("Private", privatePages.length
-      ? privatePages.map((page) => this.pageRow(page, 0))
-      : [el("div", { class: "sidebar-empty", text: "No pages yet" })], { onAdd: () => this.context.createPage(null) }));
+    const notesPages = childrenOf(null).filter((page) => !page.class_id);
+    sections.push(this.section("Notes", notesPages.length
+      ? notesPages.map((page) => this.pageRow(page, 0))
+      : [el("div", { class: "sidebar-empty", text: "No notes yet" })], { onAdd: () => this.context.createPage(null) }));
 
     sections.push(this.section("Study", [
       this.staticRow("Flashcards", "cards", () => this.context.openView({ kind: "flashcards" }), state.study.due ? `${state.study.due} due` : null),
@@ -187,8 +187,8 @@ export class Sidebar {
     );
     const node = el("div", { class: "sidebar-section" }, header, content);
     /* Dropping onto a subject header files the page into that subject; the
-       Private header clears it again. */
-    if (options.classId !== undefined || key === "private") {
+       Notes header clears the subject again. */
+    if (options.classId !== undefined || key === "notes" || key === "private") {
       const classId = options.classId ?? null;
       node.addEventListener("dragover", (event) => {
         if (!this.dragging) return;
@@ -211,7 +211,7 @@ export class Sidebar {
         await withError(() => api.patch(`/api/notes/pages/${pageId}`, { classId, parentId: null }), "Could not move that page");
         await refreshPages();
         this.renderBody();
-        toast(classId ? `Moved to ${title}` : "Moved to Private");
+        toast(classId ? `Moved to ${title}` : "Moved to Notes");
       });
     }
     return node;
@@ -447,8 +447,34 @@ export class TabStrip {
       el("div", { class: "tab-list" },
         this.scroller,
         iconButton("plus", "New page", () => this.context.createPage(null, { newTab: true }), { shortcut: `${mod}+T`, className: "tab-new" })),
+      /* The mirror of the sidebar's own toggle: same glyph flipped, same row,
+         the opposite end. One shape means "show me the panel on that side". */
+      el("div", { class: "tabstrip-end" }, this.railToggle()),
     );
     this.scroller.addEventListener("mouseleave", () => this.moveIndicator());
+  }
+
+  railToggle() {
+    const paint = (button) => {
+      const open = this.context.railOpen();
+      button.classList.toggle("active", open);
+      button.setAttribute("aria-pressed", open ? "true" : "false");
+      button.title = open ? `Hide tools  ${mod}+Shift+\\` : `Show tools  ${mod}+Shift+\\`;
+    };
+    const button = el("button", {
+      class: "icon-button rail-toggle", type: "button", "aria-label": "Show or hide tools",
+      onclick: () => { this.context.toggleRail(); paint(button); },
+    }, icon("panel", 16));
+    paint(button);
+    this.railButtonNode = button;
+    return button;
+  }
+
+  syncRailToggle() {
+    if (!this.railButtonNode) return;
+    const open = this.context.railOpen();
+    this.railButtonNode.classList.toggle("active", open);
+    this.railButtonNode.setAttribute("aria-pressed", open ? "true" : "false");
   }
 
   /* Tabs are reconciled rather than rebuilt so an opening tab can grow into
@@ -489,8 +515,13 @@ export class TabStrip {
     node.classList.add("closing");
     node.classList.remove("settled");
     const drop = () => node.remove();
-    node.addEventListener("transitionend", drop, { once: true });
-    setTimeout(drop, 260);
+    /* Several properties transition together, so the first transitionend
+       fires while the tab is still collapsing. Only the width finishing
+       means the tab has actually gone. */
+    node.addEventListener("transitionend", (event) => {
+      if (event.propertyName === "max-width") drop();
+    });
+    setTimeout(drop, 240);
   }
 
   /* The active tab paints its own fill, so a tab that is still growing is

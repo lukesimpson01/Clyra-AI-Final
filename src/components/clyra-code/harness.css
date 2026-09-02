@@ -354,6 +354,29 @@ button.dsh-leading { cursor: pointer; }
   white-space: nowrap;
 }
 
+/* DeepSeek Harness AssistantMarkdown rhythm: narration is a full-width
+   14/24 flow and streamed chunks update in place instead of replaying Clyra's
+   old blur/type animations. The markdown renderer remains Clyra's sanitized
+   renderer; only the harness typography and spacing contract is applied. */
+.dsh-assistant-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.dsh-assistant-message :where(p, ul, ol, pre, blockquote) { margin: 16px 0; }
+.dsh-assistant-message > :first-child,
+.dsh-assistant-message :where(p, ul, ol, pre, blockquote):first-child { margin-top: 0; }
+.dsh-assistant-message > :last-child,
+.dsh-assistant-message :where(p, ul, ol, pre, blockquote):last-child { margin-bottom: 0; }
+.dsh-assistant-message :where(ul, ol) { padding-left: 18px; }
+.dsh-assistant-message li:not(:first-child) { margin-top: 6px; }
+.dsh-assistant-message strong { font-weight: 600; }
+.dsh-assistant-message :not(pre) > code { border-radius: 6px; font-size: 0.875em; padding: 0 5px; }
+
 /* ============================================================
    Todo checklist — the composer's docked plan card.
    ============================================================ */

@@ -1,0 +1,9 @@
+{
+  "name": "@clyra/video",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "node --test packages/*/test/*.test.mjs"
+  }
+}

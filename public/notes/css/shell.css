@@ -5,12 +5,14 @@
    instead of reflowing to nothing on the way. */
 .workspace {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
   height: 100vh;
   background: var(--background-main);
-  transition: grid-template-columns var(--duration-panel) var(--ease-emphasis);
+  transition: grid-template-columns var(--duration-panel) var(--ease-glide);
 }
-.workspace.sidebar-hidden { grid-template-columns: 0px minmax(0, 1fr); }
+.workspace.sidebar-hidden { grid-template-columns: 0px minmax(0, 1fr) var(--rail-width); }
+.workspace.rail-hidden { grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0px; }
+.workspace.sidebar-hidden.rail-hidden { grid-template-columns: 0px minmax(0, 1fr) 0px; }
 /* Dragging the resizer sets the width every frame; a transition there would
    make the handle lag behind the cursor. */
 .workspace.resizing { transition: none; }
@@ -30,12 +32,14 @@
   flex-direction: column;
   width: var(--sidebar-width);
   height: 100%;
-  transition: transform var(--duration-panel) var(--ease-emphasis),
-              opacity calc(var(--duration-panel) * 0.6) var(--ease);
+  /* The panel keeps moving for the whole sweep while its contents fade out
+     early, so the sidebar reads as leaving rather than dissolving. */
+  transition: transform var(--duration-panel) var(--ease-glide),
+              opacity calc(var(--duration-panel) * 0.45) var(--ease);
 }
 .workspace.resizing .sidebar-inner { transition: none; }
 .workspace.sidebar-hidden .sidebar { border-right-color: transparent; }
-.workspace.sidebar-hidden .sidebar-inner { transform: translateX(-24px); opacity: 0; }
+.workspace.sidebar-hidden .sidebar-inner { transform: translateX(-40px); opacity: 0; }
 
 .sidebar-resize {
   position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
@@ -87,14 +91,29 @@
 /* One row: the selected item wears its name, the others reveal theirs on
    hover. The label animates its own width so the row reflows smoothly. */
 .sidebar-nav { display: flex; align-items: center; gap: 2px; padding: 0 8px 8px; }
+/* The fill is a pseudo-element that scales up under the row rather than a
+   background that switches on. A colour swap has no in-between frames, which
+   is what made pointing at Home feel like a light being flicked. */
 .nav-item {
+  position: relative; isolation: isolate;
   display: flex; align-items: center; min-width: 0;
   height: 32px; padding: 0 6px; border-radius: var(--radius-md);
   color: var(--text-secondary);
-  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+  transition: color var(--duration-hover) var(--ease);
 }
-.nav-item:hover { background: var(--background-hover); color: var(--text-primary); }
-.nav-item.selected { background: var(--background-selected); color: var(--text-primary); }
+.nav-item::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.94);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide),
+              background var(--duration-hover) var(--ease);
+}
+.nav-item:hover::before, .nav-item:focus-visible::before { opacity: 1; transform: scale(1); }
+.nav-item:hover, .nav-item:focus-visible { color: var(--text-primary); }
+.nav-item.selected { color: var(--text-primary); }
+.nav-item.selected::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
+.nav-item:active::before { transform: scale(0.97); }
 .nav-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
 .nav-name {
   display: grid; grid-template-columns: 0fr; overflow: hidden;
@@ -174,8 +193,19 @@
   margin: 0 8px; color: var(--text-secondary); cursor: pointer;
   transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
 }
-.page-row:hover { background: var(--background-hover); color: var(--text-primary); }
-.page-row.selected { background: var(--background-selected); color: var(--text-primary); font-weight: 500; }
+.page-row { position: relative; isolation: isolate; }
+.page-row::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.96);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide),
+              background var(--duration-hover) var(--ease);
+}
+.page-row:hover::before { opacity: 1; transform: scale(1); }
+.page-row:hover { color: var(--text-primary); }
+.page-row.selected { color: var(--text-primary); font-weight: 500; }
+.page-row.selected::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
 .page-row.drop-into { background: var(--accent-soft); }
 
 .page-caret {
@@ -202,6 +232,14 @@
 .page-row-actions .icon-button { width: 21px; height: 21px; }
 .page-row-actions .icon-button svg { width: 13px; height: 13px; }
 .page-row-actions .icon-button:hover { background: var(--border-medium); }
+
+/* The density preference changes only navigation rhythm; note content and
+   editor spacing stay untouched so the workspace remains predictable. */
+:root[data-notes-density="compact"] .page-row { height: 26px; }
+:root[data-notes-density="compact"] .section-header { height: 23px; }
+:root[data-notes-density="compact"] .sidebar-section { margin-top: 6px; }
+:root[data-notes-density="compact"] .sidebar-nav { padding-bottom: 5px; }
+:root[data-notes-density="compact"] .page-title { font-size: 13.5px; }
 
 .page-children { position: relative; }
 .sidebar-empty { padding: 3px 10px 3px 32px; font-size: 13.5px; color: var(--text-tertiary); }
@@ -283,8 +321,8 @@
   position: absolute; top: 0; left: 0; height: 28px; width: 0;
   border-radius: var(--radius); background: var(--background-hover);
   opacity: 0; pointer-events: none; z-index: 0;
-  transition: transform var(--duration-slide) var(--ease-settle),
-              width var(--duration-slide) var(--ease-settle),
+  transition: transform var(--duration-tab) var(--ease-tab),
+              width var(--duration-tab) var(--ease-tab),
               opacity var(--duration-hover) var(--ease);
 }
 
@@ -299,9 +337,15 @@
      hint, so animating it directly does nothing once the row shrinks. */
   flex: 0 0 auto; width: 168px; max-width: 0;
   padding: 0; opacity: 0; overflow: hidden; white-space: nowrap;
-  transition: max-width var(--duration-slide) var(--ease-settle),
-              padding var(--duration-slide) var(--ease-settle),
-              opacity var(--duration-menu) var(--ease),
+  /* Width is the whole animation, as it is in Chrome: a tab grows into the
+     strip and collapses out of it, and the tabs after it slide along because
+     they are laid out after it — no translate, no scale, no bounce. The
+     label fades in over the first half so a 20px-wide tab is not showing
+     three clipped letters. */
+  transition: max-width var(--duration-tab) var(--ease-tab),
+              padding var(--duration-tab) var(--ease-tab),
+              opacity calc(var(--duration-tab) * 0.6) var(--ease-tab),
+              background var(--duration-hover) var(--ease),
               color var(--duration-hover) var(--ease);
 }
 .tab.settled { max-width: 200px; opacity: 1; padding: 0 6px 0 8px; }

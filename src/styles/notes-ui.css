@@ -1,0 +1,216 @@
+/* The Clyra Notes design language, as classes React surfaces can use.
+
+   Notes is a vanilla-JS workspace with its own stylesheet; the AI Browser is
+   React and Tailwind. Rather than reimplement the notes tab strip, address
+   bar and composer in Tailwind — where they would immediately start to drift
+   — the same rules live here once and both surfaces wear them.
+
+   Everything is scoped under `.nui`, and the tokens are mapped onto the
+   app's existing palette so a surface wearing these classes still follows
+   Clyra's own light and dark themes. */
+
+.nui {
+  --nui-bg: var(--clyra-surface, #ffffff);
+  --nui-bg-subtle: var(--clyra-surface-muted, #f7f6f5);
+  --nui-bg-hover: color-mix(in srgb, var(--clyra-text, #37352f) 6%, transparent);
+  --nui-bg-selected: color-mix(in srgb, var(--clyra-text, #37352f) 9%, transparent);
+  --nui-text: var(--clyra-text, #37352f);
+  --nui-text-secondary: var(--clyra-text-secondary, #787774);
+  --nui-text-tertiary: var(--clyra-text-tertiary, #a7a5a2);
+  --nui-border: var(--clyra-border, rgba(55, 53, 47, 0.09));
+  --nui-border-medium: color-mix(in srgb, var(--clyra-text, #37352f) 14%, transparent);
+  --nui-accent: var(--clyra-accent, #2383e2);
+  --nui-accent-soft: color-mix(in srgb, var(--clyra-accent, #2383e2) 14%, transparent);
+  --nui-on-accent: #ffffff;
+
+  --nui-radius-sm: 4px;
+  --nui-radius: 6px;
+  --nui-radius-md: 8px;
+
+  --nui-hover: 150ms;
+  --nui-menu: 170ms;
+  --nui-slide: 320ms;
+  --nui-panel: 380ms;
+  --nui-ease: cubic-bezier(0.2, 0, 0, 1);
+  --nui-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --nui-glide: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ------------------------------------------------------------ tab strip */
+
+/* The notes tab strip: fixed-width tabs whose max-width animates so a tab
+   grows into the row and collapses out of it, with one travelling fill. */
+.nui-tabs {
+  display: flex; align-items: center; gap: 2px; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.nui-tabs::-webkit-scrollbar { display: none; }
+
+.nui-tab {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 6px;
+  flex: 0 0 auto; width: 168px; max-width: 200px; height: 28px;
+  padding: 0 6px 0 8px; border: 0; border-radius: var(--nui-radius);
+  background: transparent; color: var(--nui-text-secondary);
+  font-size: 13.5px; text-align: left; cursor: pointer;
+  overflow: hidden; white-space: nowrap;
+  /* Width and opacity are animated by the component that owns the strip
+     (Framer Motion in the AI Browser), so only the hover colours transition
+     here — two systems animating one property is what made tabs jump. */
+  transition: background var(--nui-hover) var(--nui-ease),
+              color var(--nui-hover) var(--nui-ease);
+}
+.nui-tab:hover { background: var(--nui-bg-hover); }
+.nui-tab.is-active { background: var(--nui-bg-selected); color: var(--nui-text); }
+
+.nui-tab-icon {
+  flex: none; display: grid; place-items: center; width: 16px; height: 16px;
+  color: var(--nui-text-tertiary);
+}
+.nui-tab-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-tab-close {
+  display: grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border: 0; background: transparent; border-radius: var(--nui-radius-sm);
+  color: var(--nui-text-tertiary); opacity: 0; cursor: pointer;
+  transition: opacity var(--nui-hover) var(--nui-ease), background var(--nui-hover) var(--nui-ease);
+}
+.nui-tab:hover .nui-tab-close, .nui-tab.is-active .nui-tab-close { opacity: 1; }
+.nui-tab-close:hover { background: var(--nui-border-medium); color: var(--nui-text); }
+
+/* --------------------------------------------------------- address bar */
+
+/* At rest the address bar is just text on the toolbar; the field only shows
+   itself under the pointer, and commits to a real input once focused. */
+.nui-address {
+  flex: 1; min-width: 0; height: 30px; padding: 0 12px;
+  border: 1px solid transparent; border-radius: 999px;
+  background: transparent; color: var(--nui-text);
+  font-size: 13px; outline: none;
+  transition: border-color var(--nui-hover) var(--nui-ease),
+              background var(--nui-hover) var(--nui-ease),
+              box-shadow var(--nui-hover) var(--nui-ease);
+}
+.nui-address::placeholder { color: var(--nui-text-tertiary); }
+.nui-address:hover { background: var(--nui-bg-hover); }
+.nui-address:focus {
+  border-color: var(--nui-border); background: var(--nui-bg);
+  box-shadow: 0 0 0 2px var(--nui-accent-soft);
+}
+
+.nui-addressbar { display: flex; align-items: center; gap: 4px; min-width: 0; }
+
+/* --------------------------------------------------------- icon button */
+
+.nui-icon-button {
+  position: relative; isolation: isolate;
+  display: grid; place-items: center; flex: none;
+  width: 28px; height: 28px; border: 0; padding: 0;
+  border-radius: var(--nui-radius-md); background: transparent;
+  color: var(--nui-text-tertiary); cursor: pointer;
+  transition: color var(--nui-hover) var(--nui-ease);
+}
+.nui-icon-button::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--nui-bg-hover);
+  opacity: 0; transform: scale(0.9);
+  transition: opacity var(--nui-hover) var(--nui-ease-out),
+              transform var(--nui-slide) var(--nui-glide);
+}
+.nui-icon-button:hover::before, .nui-icon-button:focus-visible::before { opacity: 1; transform: scale(1); }
+.nui-icon-button:hover, .nui-icon-button:focus-visible { color: var(--nui-text); }
+.nui-icon-button:focus-visible { outline: none; }
+.nui-icon-button.is-active { color: var(--nui-text); }
+.nui-icon-button.is-active::before { opacity: 1; transform: scale(1); background: var(--nui-bg-selected); }
+.nui-icon-button:disabled { opacity: 0.35; pointer-events: none; }
+
+/* The quiet ghost button from the Vibe Coder launcher, shared by the notes
+   welcome row and the browser's start links. */
+.nui-button {
+  position: relative; isolation: isolate;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; min-width: 0; padding: 0 12px; border: 0;
+  border-radius: 9px; background: transparent;
+  font-size: 12.5px; font-weight: 450; color: var(--nui-text-secondary);
+  cursor: pointer; transition: color var(--nui-hover) var(--nui-ease);
+}
+.nui-button::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--nui-bg-hover);
+  opacity: 0; transform: scale(0.94);
+  transition: opacity var(--nui-hover) var(--nui-ease-out),
+              transform var(--nui-slide) var(--nui-glide);
+}
+.nui-button:hover::before, .nui-button:focus-visible::before { opacity: 1; transform: scale(1); }
+.nui-button:hover, .nui-button:focus-visible { color: var(--nui-text); }
+.nui-button:focus-visible { outline: none; }
+
+/* ------------------------------------------------------------ composer */
+
+/* The notes chat composer: one rounded bar holding a mark, a growing
+   textarea and a circular send. */
+.nui-composer { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nui-composer-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.nui-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px 3px 8px; border-radius: 12px;
+  background: var(--nui-bg-subtle); color: var(--nui-text-secondary);
+  font-size: 12.5px;
+}
+.nui-chip-remove {
+  display: grid; place-items: center; width: 16px; height: 16px;
+  border: 0; background: transparent; border-radius: 50%;
+  color: var(--nui-text-tertiary); cursor: pointer;
+}
+.nui-chip-remove:hover { background: var(--nui-border-medium); color: var(--nui-text); }
+
+.nui-bar {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 7px 8px 7px 12px; min-width: 0;
+  border: 1px solid var(--nui-border); border-radius: 22px;
+  background: var(--nui-bg);
+  transition: border-color var(--nui-hover) var(--nui-ease), box-shadow var(--nui-hover) var(--nui-ease);
+}
+.nui-bar:focus-within { border-color: var(--nui-border-medium); box-shadow: 0 1px 2px rgba(15, 15, 15, 0.06); }
+.nui-bar-mark { flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin-bottom: 3px; }
+.nui-input {
+  flex: 1; min-width: 0; max-height: 140px;
+  border: 0; background: transparent; outline: none; resize: none;
+  color: var(--nui-text); font: inherit; font-size: 14px; line-height: 1.5;
+  padding: 4px 0;
+}
+.nui-input::placeholder { color: var(--nui-text-tertiary); }
+.nui-send {
+  flex: none; display: grid; place-items: center;
+  width: 30px; height: 30px; border: 0; border-radius: 50%;
+  background: var(--nui-accent); color: var(--nui-on-accent); cursor: pointer;
+  transition: background var(--nui-hover) var(--nui-ease), transform 90ms var(--nui-ease), opacity var(--nui-hover) var(--nui-ease);
+}
+.nui-send:hover:not(:disabled) { filter: brightness(1.06); }
+.nui-send:active:not(:disabled) { transform: scale(0.94); }
+.nui-send:disabled { opacity: 0.35; cursor: default; }
+
+/* ---------------------------------------------------------- panel rows */
+
+.nui-panel { display: flex; flex-direction: column; min-height: 0; }
+.nui-group {
+  padding: 10px 8px 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--nui-text-tertiary);
+}
+.nui-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: 0; background: transparent;
+  border-radius: var(--nui-radius); text-align: left; cursor: pointer;
+  color: var(--nui-text-secondary); font-size: 13.5px;
+  transition: background var(--nui-hover) var(--nui-ease), color var(--nui-hover) var(--nui-ease);
+}
+.nui-row:hover { background: var(--nui-bg-hover); color: var(--nui-text); }
+.nui-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 24px; text-align: center;
+  color: var(--nui-text-tertiary); font-size: 13.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nui *, .nui *::before { transition-duration: 0.01ms !important; }
+}

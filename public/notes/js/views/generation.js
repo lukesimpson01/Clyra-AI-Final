@@ -63,79 +63,62 @@ export function notePicker({ selected = new Set(), onChange } = {}) {
   return { node: host, selected, focus: () => search.focus() };
 }
 
-/* A determinate-looking ring for work whose real progress is unknowable: it
-   advances through the named stages and only completes when the work does,
-   so it never claims to be finished early. */
+/* A checklist, not a percentage. The real progress of a generation is
+   unknowable, so rather than a bar that lies, each named step reports its own
+   state: pending, running, or done. The step being worked on carries the
+   spinner and the shimmer, which is the only part of the panel that moves. */
 export function progressLoader({ title, stages }) {
-  const RADIUS = 26;
-  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 64 64");
-  svg.setAttribute("class", "progress-ring");
-  const track = document.createElementNS(ns, "circle");
-  const arc = document.createElementNS(ns, "circle");
-  for (const [node, cls] of [[track, "ring-track"], [arc, "ring-arc"]]) {
-    node.setAttribute("cx", "32");
-    node.setAttribute("cy", "32");
-    node.setAttribute("r", String(RADIUS));
-    node.setAttribute("fill", "none");
-    node.setAttribute("class", cls);
-    svg.append(node);
-  }
-  arc.style.strokeDasharray = String(CIRCUMFERENCE);
-  arc.style.strokeDashoffset = String(CIRCUMFERENCE);
+  const rows = stages.map((stage) => {
+    const text = el("span", { class: "check-text", text: stage });
+    const row = el("li", { class: "check-step", "data-state": "pending" },
+      el("span", { class: "check-dot", "aria-hidden": "true" },
+        el("span", { class: "check-spin" }),
+        el("span", { class: "check-mark" }, icon("check", 12))),
+      text);
+    return { row, text };
+  });
 
-  const mark = el("span", { class: "progress-mark" }, bloub(22));
-  const label = el("div", { class: "progress-label shimmer-text", text: stages[0] });
-  const steps = el("ol", { class: "progress-steps" },
-    stages.map((stage) => el("li", { class: "progress-step" },
-      el("span", { class: "progress-tick" }, icon("check_square", 12)),
-      el("span", { text: stage }))));
-
-  const node = el("div", { class: "progress-loader" },
-    el("div", { class: "progress-ring-wrap" }, svg, mark),
-    el("div", { class: "progress-title", text: title }),
-    label, steps);
+  const list = el("ol", { class: "check-steps" }, rows.map((entry) => entry.row));
+  const note = el("p", { class: "check-note", text: "" });
+  const node = el("div", { class: "check-loader" },
+    el("div", { class: "check-head" },
+      el("span", { class: "check-mascot" }, bloub(20)),
+      el("span", { class: "check-title", text: title })),
+    list, note);
 
   let index = 0;
-  let value = 0;
-  const setValue = (next) => {
-    value = Math.max(0, Math.min(1, next));
-    arc.style.strokeDashoffset = String(CIRCUMFERENCE * (1 - value));
+  /* A step is only ever set once, and always through here: setting the state
+     as a data attribute lets the stylesheet own every transition between the
+     three looks instead of the script toggling three class names. */
+  const paint = () => {
+    rows.forEach((entry, position) => {
+      const stateName = position < index ? "done" : position === index ? "running" : "pending";
+      entry.row.dataset.state = stateName;
+      entry.text.classList.toggle("shimmer-text", stateName === "running");
+    });
   };
-  const markDone = (upto) => {
-    [...steps.children].forEach((step, position) => step.classList.toggle("done", position < upto));
-    [...steps.children].forEach((step, position) => step.classList.toggle("current", position === upto));
-  };
-  markDone(0);
-  setValue(0.06);
+  paint();
 
   return {
     node,
-    /* Each stage claims its share of the ring and creeps within it, so the
-       ring keeps moving during a long step without ever reaching the end. */
     advance(stageIndex) {
-      index = Math.min(stageIndex, stages.length - 1);
-      label.textContent = stages[index];
-      markDone(index);
-      setValue((index + 0.35) / stages.length);
+      index = Math.max(index, Math.min(stageIndex, stages.length - 1));
+      paint();
+      rows[index]?.row.scrollIntoView({ block: "nearest" });
     },
-    creep() {
-      const ceiling = (index + 0.9) / stages.length;
-      if (value < ceiling) setValue(value + (ceiling - value) * 0.12);
-    },
-    finish(message = "Done") {
+    /* Kept for callers that used the ring's idle animation; the checklist
+       animates on its own, so there is nothing to nudge. */
+    creep() {},
+    finish(message) {
       index = stages.length;
-      label.textContent = message;
-      label.classList.remove("shimmer-text");
-      markDone(stages.length);
-      setValue(1);
+      paint();
       node.classList.add("complete");
+      if (message) note.textContent = message;
     },
     fail(message) {
-      label.textContent = message;
-      label.classList.remove("shimmer-text");
+      rows[Math.min(index, rows.length - 1)]?.row.setAttribute("data-state", "failed");
+      rows.forEach((entry) => entry.text.classList.remove("shimmer-text"));
+      note.textContent = message;
       node.classList.add("failed");
     },
   };

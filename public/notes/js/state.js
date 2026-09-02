@@ -31,6 +31,8 @@ export const state = {
   collapsedSections: new Set(),
   sidebarWidth: 300,
   sidebarHidden: false,
+  /* The tools rail starts closed: it is a second surface, not a default. */
+  railHidden: true,
   saveStatus: "idle",     // idle | saving | saved | offline | error
 };
 
@@ -50,6 +52,7 @@ const persisted = {
 export function restoreSession() {
   state.sidebarWidth = persisted.read("sidebarWidth", 300);
   state.sidebarHidden = persisted.read("sidebarHidden", false);
+  state.railHidden = persisted.read("railHidden", true);
   state.expanded = new Set(persisted.read("expanded", []));
   state.collapsedSections = new Set(persisted.read("collapsedSections", []));
   /* Notes always opens on Home. Previously open pages are kept as tabs to
@@ -70,6 +73,7 @@ export function saveSession() {
   persisted.write("collapsedSections", [...state.collapsedSections]);
   persisted.write("sidebarWidth", state.sidebarWidth);
   persisted.write("sidebarHidden", state.sidebarHidden);
+  persisted.write("railHidden", state.railHidden);
 }
 
 export function indexPages(pages) {
@@ -87,6 +91,23 @@ export const hasChildren = (id) => state.pages.some((page) => String(page.parent
 export async function loadWorkspace() {
   const data = await api.get("/api/notes/bootstrap");
   indexPages(data.pages || []);
+  /* A reset or delete can happen while an old page is still open in the
+     persisted tab strip. Drop those orphaned tabs as soon as the workspace
+     is hydrated so a fresh workspace never displays stale page names or
+     reopens a page that no longer exists. */
+  const validPageIds = new Set(state.pages.map((page) => String(page.id)));
+  const isLiveTab = (tab) => tab?.kind !== "page" || validPageIds.has(String(tab.pageId));
+  state.tabs = state.tabs.filter(isLiveTab);
+  state.closedTabs = state.closedTabs.filter(isLiveTab);
+  state.open = new Map([...state.open].filter(([id]) => validPageIds.has(String(id))));
+  if (!state.tabs.length) {
+    const home = { id: newTabId(), kind: "home" };
+    state.tabs = [home];
+    state.activeTab = home.id;
+  } else if (!state.tabs.some((tab) => tab.id === state.activeTab)) {
+    state.activeTab = state.tabs[0].id;
+  }
+  saveSession();
   state.classes = data.classes || [];
   state.decks = data.decks || [];
   state.tests = data.tests || [];
@@ -239,7 +260,14 @@ export async function flushPage(pageId) {
     inflight -= 1;
     /* The edit stays in memory and is retried, so the user's text is never
        discarded because a save failed. */
-    pending.set(key, { ...entry, timer: setTimeout(() => flushPage(key), 5000) });
+    /* A new keystroke may have queued a newer payload while this request was
+       in flight. Merge it back instead of allowing an older failed request to
+       overwrite the latest text. */
+    const latest = pending.get(key);
+    if (latest?.timer) clearTimeout(latest.timer);
+    const retry = { ...entry, ...latest };
+    retry.timer = setTimeout(() => flushPage(key), 5000);
+    pending.set(key, retry);
     setStatus(error.status === 0 ? "offline" : "error");
   }
 }

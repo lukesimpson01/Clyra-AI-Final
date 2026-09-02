@@ -8,6 +8,8 @@ import {
   flushAll, flushPage, dropPage, withError, childrenOf,
 } from "./state.js";
 import { Sidebar, TabStrip, Toolbar } from "./shell.js";
+import { Rail } from "./rail.js";
+import { readPreference, prefOn } from "./preferences.js";
 import { PageView } from "./page-view.js";
 import { openSearch } from "./search.js";
 import { renderHome } from "./views/home.js";
@@ -49,10 +51,19 @@ class App {
     this.sidebar.build();
     this.renderChrome();
     this.renderSurface();
+    /* The rail is constructed before the workspace has loaded, so anything
+       it built from empty state — the chat panel's "AI is not configured"
+       screen above all — is refreshed once the real answer is in. */
+    this.rail?.refresh();
     this.bindKeys();
     subscribe((reason) => {
-      if (reason === "tabs") { this.renderChrome(); this.renderSurface(); }
-      else if (reason === "pages" || reason === "workspace") { this.sidebar.renderBody(); this.toolbar.render(); this.tabstrip.render(); }
+      if (reason === "tabs") { this.renderChrome(); this.renderSurface(); this.maybeOpenRail(); this.rail?.refresh(); }
+      else if (reason === "pages" || reason === "workspace") {
+        this.sidebar.renderBody();
+        this.toolbar.render();
+        this.tabstrip.render();
+        this.rail?.refresh();
+      }
       else if (reason === "save-status") this.toolbar.render();
     });
     window.addEventListener("clyra:open-page", (event) => this.openPage(event.detail.id, { newTab: event.detail.newTab }));
@@ -61,19 +72,22 @@ class App {
 
   build() {
     clear(this.root);
-    this.root.className = `workspace${state.sidebarHidden ? " sidebar-hidden" : ""}`;
+    this.root.className = `workspace${state.sidebarHidden ? " sidebar-hidden" : ""}${state.railHidden === false ? "" : " rail-hidden"}`;
     const sidebarHost = el("aside", { class: "sidebar", "aria-label": "Workspace navigation" });
     this.tabstripHost = el("div", { class: "tabstrip" });
     this.toolbarHost = el("div", { class: "doc-toolbar" });
     this.surface = el("main", { class: "surface" });
+    const railHost = el("aside", { class: "rail", "aria-label": "Tools" });
     this.root.append(
       sidebarHost,
       el("div", { class: "sidebar-scrim", onclick: () => this.closeMobileSidebar() }),
       el("div", { class: "main" }, this.tabstripHost, this.toolbarHost, this.surface),
+      railHost,
     );
     this.sidebar = new Sidebar(sidebarHost, this);
     this.tabstrip = new TabStrip(this.tabstripHost, this);
     this.toolbar = new Toolbar(this.toolbarHost, this);
+    this.rail = new Rail(railHost, this);
   }
 
   renderChrome() {
@@ -218,14 +232,84 @@ class App {
     this.root.classList.toggle("sidebar-hidden", state.sidebarHidden);
   }
 
+  /* The right sidebar is the left one's mirror: same collapse, same glide,
+     same persisted preference. */
+  toggleRail() {
+    state.railHidden = state.railHidden === false;
+    saveSession();
+    this.root.classList.toggle("rail-hidden", state.railHidden);
+    this.tabstrip?.syncRailToggle();
+    if (state.railHidden) {
+      /* The browser panel can be hosting a native Chromium layer, which is
+         not a DOM node and so does not disappear when the rail slides away.
+         Hide it immediately rather than after the animation, or it hangs in
+         the air over the workspace for the length of the transition. */
+      this.rail?.hideAll();
+      return;
+    }
+    this.rail?.refresh();
+    this.rail?.showCurrent();
+  }
+
+  railOpen() { return state.railHidden === false; }
+
+  showRailPanel(id) { this.rail?.show(id); }
+
+  /* The "open the tools panel with every note" preference. Applied when a
+     page tab becomes active rather than on every render, so closing the
+     panel on a note does not have it spring straight back. */
+  maybeOpenRail() {
+    if (!prefOn("railAuto") || !state.railHidden) return;
+    if (this.currentPageId() === null) return;
+    this.toggleRail();
+    this.tabstrip?.syncRailToggle();
+  }
+
+  currentPageId() {
+    const tab = activeTab();
+    return tab?.kind === "page" ? tab.pageId : null;
+  }
+
+  /* Used by the calculator and by anything else in the rail that wants to
+     put a line into the note the reader is actually looking at. */
+  async insertTextIntoCurrentPage(text) {
+    const editor = this.currentView?.editor;
+    if (!editor || !text) return false;
+    const { makeBlock } = await import("./editor.js");
+    const { plain } = await import("./richtext.js");
+    const block = editor.appendBlock(makeBlock("text", plain(String(text))));
+    editor.focus(block.id, "end");
+    return true;
+  }
+
+  async createBookmarkNote(url, title) {
+    const created = await withError(
+      () => api.post("/api/notes/pages", { title: title || url, markdown: `[${title || url}](${url})` }),
+      "Could not save that page",
+    );
+    if (!created) return null;
+    await refreshPages();
+    return created;
+  }
+
   openSearch() { openSearch(); }
 
   /* ---------------------------------------------------------- actions */
 
   async createPage(parentId, options = {}) {
     const { newTab, ...extra } = options;
+    /* New notes are born with the defaults from Settings rather than the
+       editor's hard-coded ones, so "every note I make is serif" is a
+       preference instead of four clicks after every page. */
     const created = await withError(
-      () => api.post("/api/notes/pages", { parentId: parentId || null, title: "", ...extra }),
+      () => api.post("/api/notes/pages", {
+        parentId: parentId || null,
+        title: "",
+        fullWidth: prefOn("fullWidth"),
+        fontStyle: readPreference("noteFont"),
+        textSize: readPreference("noteTextSize"),
+        ...extra,
+      }),
       "Could not create a page",
     );
     if (!created) return null;
@@ -294,7 +378,7 @@ class App {
     const count = state.pages.filter((page) => page.class_id === classId).length;
     const ok = await confirmDialog({
       title: "Delete subject",
-      message: `"${name}" is removed. Its ${count} page${count === 1 ? "" : "s"} ${count === 1 ? "moves" : "move"} to Private — nothing is deleted.`,
+      message: `"${name}" is removed. Its ${count} page${count === 1 ? "" : "s"} ${count === 1 ? "moves" : "move"} to Notes — nothing is deleted.`,
       confirmLabel: "Delete subject",
     });
     if (!ok) return;
@@ -337,7 +421,7 @@ class App {
   shareMenu(page, anchor) {
     menu(anchor, [
       { type: "label", label: "Access" },
-      { label: "Private to you", icon: "lock", checked: true, disabled: true },
+      { label: "Only you", icon: "lock", checked: true, disabled: true },
       { type: "separator" },
       { label: "Copy link", icon: "link", onSelect: () => {
         navigator.clipboard.writeText(`${location.origin}/notes#${page.id}`);
@@ -460,8 +544,8 @@ class App {
   }
 
   fontMenu(page, anchor, refresh) {
-    menu(anchor, ["default", "serif", "mono"].map((font) => ({
-      label: { default: "Default", serif: "Serif", mono: "Mono" }[font],
+    menu(anchor, ["default", "serif", "mono", "rounded"].map((font) => ({
+      label: { default: "Default", serif: "Serif", mono: "Mono", rounded: "Rounded" }[font],
       checked: (page.font_style || "default") === font,
       onSelect: async () => {
         await withError(() => api.patch(`/api/notes/pages/${page.id}`, { fontStyle: font }), "Could not update the font");
@@ -524,9 +608,32 @@ class App {
     document.addEventListener("keydown", (event) => {
       const typing = event.target.closest?.("input, textarea, [contenteditable='true']");
       if (event.key === "Escape" && layerCount()) { event.preventDefault(); closeTopLayer(); return; }
-      if (modKey(event) && event.key.toLowerCase() === "k") { event.preventDefault(); openSearch(); return; }
+      /* Notes is a whole page, not a panel inside the React shell, so the
+         shell's own launcher shortcut is not listening while you are here.
+         The chord is answered locally and hands the workspace back with the
+         launcher already open. */
+      if (modKey(event) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        flushAll();
+        window.location.assign("/?launcher=1");
+        return;
+      }
+      if (modKey(event) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        flushAll();
+        window.location.assign("/?taskview=1");
+        return;
+      }
+      /* Cmd/Ctrl+K belongs to the host app launcher. Notes deliberately does
+         not intercept it; its own search remains available from the sidebar
+         and Cmd/Ctrl+P. */
       if (modKey(event) && event.key.toLowerCase() === "p" && !event.shiftKey) { event.preventDefault(); openSearch(); return; }
-      if (modKey(event) && event.key === "\\") { event.preventDefault(); this.toggleSidebar(); return; }
+      if (modKey(event) && event.key === "\\") {
+        event.preventDefault();
+        event.shiftKey ? this.toggleRail() : this.toggleSidebar();
+        this.tabstrip.syncRailToggle();
+        return;
+      }
       if (modKey(event) && event.key.toLowerCase() === "n" && !typing) { event.preventDefault(); this.createPage(null); return; }
       if (modKey(event) && event.key.toLowerCase() === "t" && !event.shiftKey) { event.preventDefault(); this.openView({ kind: "home" }, { newTab: true }); return; }
       if (modKey(event) && event.shiftKey && event.key.toLowerCase() === "t") { event.preventDefault(); reopenTab(); return; }

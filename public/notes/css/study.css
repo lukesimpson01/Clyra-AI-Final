@@ -59,6 +59,13 @@
 .search-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .search-title { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-excerpt, .search-crumb { font-size: 12.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The path reads as a path: separators are quieter than the names, and the
+   subject that owns the page leads in the accent so it is distinguishable
+   from an ancestor page at a glance. */
+.search-crumb { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.search-crumb-part { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.search-crumb-part.subject { color: var(--accent-text); font-weight: 500; }
+.search-crumb-sep { flex: none; opacity: 0.5; }
 .search-excerpt mark { background: var(--c-yellow-bg); color: inherit; border-radius: 2px; }
 .search-badge { font-size: 11.5px; color: var(--text-tertiary); flex: none; }
 .search-empty { padding: 22px 10px; font-size: 14px; color: var(--text-tertiary); text-align: center; }
@@ -90,7 +97,18 @@
   display: flex; align-items: center; gap: 14px; width: min(680px, 100%);
   padding: 14px 0; color: var(--text-secondary); font-size: 13.5px;
 }
-.study-progress { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Position in the session is a bar as well as a count: a number alone makes
+   you do the arithmetic to know how much is left. */
+.study-progress { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.study-progress-bar {
+  display: block; width: 120px; height: 4px; border-radius: 999px;
+  background: var(--border-soft); overflow: hidden;
+}
+.study-progress-fill {
+  display: block; height: 100%; border-radius: inherit; background: var(--accent);
+  transition: width var(--duration-panel) var(--ease-glide);
+}
+.study-progress-text { font-variant-numeric: tabular-nums; }
 .study-deck { color: var(--text-tertiary); }
 
 /* The board holds the perspective; the flipper carries both faces. */
@@ -140,6 +158,61 @@
 }
 .study-cue.ready { animation: cue-in 220ms var(--ease-out) both; }
 @keyframes cue-in { from { opacity: 0; transform: translateY(4px); } }
+
+/* Back, flag and next sit under the card so the whole session is reachable
+   without the keyboard; the card itself still flips on click. */
+.study-controls {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: min(680px, 100%); margin-top: 22px;
+}
+.study-controls .button { height: 34px; }
+.study-back { gap: 5px; }
+.study-next { gap: 5px; min-width: 124px; justify-content: center; }
+.study-flag {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px;
+  padding: 0 12px; margin: 0 4px; border-radius: var(--radius-md);
+  border: 1px solid transparent; background: transparent;
+  color: var(--text-tertiary); font-size: 13px; cursor: pointer;
+  transition: color var(--duration-hover) var(--ease),
+              background var(--duration-hover) var(--ease),
+              border-color var(--duration-hover) var(--ease);
+}
+.study-flag:hover { background: var(--background-hover); color: var(--text-secondary); }
+.study-flag.on { color: var(--warning); border-color: var(--warning); background: transparent; }
+.study-flag.on svg { fill: currentColor; }
+/* A flagged card is marked on the card itself, not only on the button. */
+.study-card-board.flagged .study-face { box-shadow: 0 0 0 1.5px var(--warning), var(--card-shadow); }
+
+/* The end of a session is a page, not a toast. */
+.study-done { display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 40px; }
+.done-mark {
+  display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 18px;
+  border-radius: 50%; background: var(--success); color: #fff;
+  animation: done-pop 480ms var(--ease-glide) both;
+}
+.done-mark svg { stroke-width: 2.6; }
+@keyframes done-pop { from { opacity: 0; transform: scale(0.6); } }
+.study-done .view-lead { color: var(--text-secondary); margin: 0 0 22px; }
+.done-stats { display: flex; gap: 10px; margin-bottom: 22px; }
+.done-stat {
+  display: flex; flex-direction: column; gap: 2px; min-width: 104px;
+  padding: 12px 18px; border-radius: var(--radius-md);
+  background: var(--background-subtle);
+}
+.done-stat-value { font-size: 22px; font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.done-stat-label { font-size: 12px; color: var(--text-tertiary); }
+.done-flagged {
+  list-style: none; margin: 0 0 22px; padding: 0; width: min(440px, 100%);
+  display: flex; flex-direction: column; gap: 1px; text-align: left;
+}
+.done-flagged-item {
+  display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+  border-radius: var(--radius); background: var(--background-subtle);
+  font-size: 13.5px; color: var(--text-secondary);
+}
+.done-flagged-icon { flex: none; display: grid; place-items: center; color: var(--warning); }
+.done-flagged-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 
 .gen-setup { display: flex; flex-direction: column; gap: 14px; }
 .gen-field { display: flex; flex-direction: column; gap: 5px; }
@@ -234,7 +307,27 @@
 .chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 
 .chat-row { margin-bottom: 20px; }
-.chat-row.user { display: flex; justify-content: flex-end; }
+/* The question and the notes it was grounded in form one right-aligned
+   stack, so the attachments read as part of the question rather than as a
+   separate message. */
+.chat-row.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.chat-bubble-sources {
+  list-style: none; margin: 0; padding: 0; max-width: min(72%, 620px);
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-end;
+}
+.chat-bubble-source {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--text-tertiary);
+  animation: chat-bubble-in 200ms var(--ease-out) both;
+}
+.chat-bubble-bullet { flex: none; display: grid; place-items: center; width: 14px; height: 14px; }
+.chat-bubble-source-name {
+  min-width: 0; padding: 1px 4px; border-radius: var(--radius-sm);
+  color: inherit; font: inherit; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease);
+}
+.chat-bubble-source-name:hover { color: var(--text-primary); background: var(--background-hover); }
 
 /* The launcher's user bubble, to the pixel. */
 .chat-bubble {
@@ -366,6 +459,12 @@
 }
 .chat-chip-remove { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; color: var(--text-tertiary); }
 .chat-chip-remove:hover { background: var(--border-medium); color: var(--text-primary); }
+.chat-lead-key {
+  display: inline-grid; place-items: center; min-width: 19px; height: 19px;
+  padding: 0 5px; border: 1px solid var(--border-soft); border-radius: 5px;
+  background: var(--background-subtle); color: var(--text-secondary);
+  font: inherit; font-size: 12.5px; vertical-align: baseline;
+}
 
 @media (max-width: 860px) {
   .chat-column { padding: 0 18px; }
@@ -409,7 +508,7 @@
 .template-count { font-size: 11.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 
 .template-main { padding: 16px; }
-.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 14px; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(208px, 1fr)); gap: 14px; }
 .template-empty { padding: 30px 8px; color: var(--text-tertiary); font-size: 14px; text-align: center; }
 
 .template-card {
@@ -433,16 +532,32 @@
 .template-name { font-size: 13.5px; font-weight: 500; }
 .template-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.35; }
 
-/* The preview is a miniature of the page the template builds. */
+/* The preview is a screenshot of the page the template builds, taken from
+   the real editor. The sketch below it is the stand-in when a shot is
+   missing, so the two share the same frame. */
 .tpl-preview {
-  position: relative; height: 116px; overflow: hidden;
-  background: var(--background-subtle);
+  position: relative; height: 146px; overflow: hidden;
+  background: var(--background-main);
   border-bottom: 1px solid var(--border-soft);
 }
-.tpl-preview::after {
-  content: ""; position: absolute; inset: auto 0 0 0; height: 34px;
-  background: linear-gradient(to bottom, transparent, var(--background-subtle));
+.tpl-preview::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; z-index: 2;
+  background: var(--tpl-accent, var(--accent)); opacity: 0.85;
 }
+.tpl-preview::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 46px; z-index: 1;
+  background: linear-gradient(to bottom, transparent, var(--background-main));
+}
+.tpl-shot {
+  position: absolute; inset: 3px 0 auto 0; width: 100%; display: block;
+  transition: transform var(--duration-panel) var(--ease-out);
+}
+.tpl-shot.dark { display: none; }
+:root[data-notes-theme="dark"] .tpl-shot.light { display: none; }
+:root[data-notes-theme="dark"] .tpl-shot.dark { display: block; }
+.template-card:hover .tpl-shot { transform: translateY(-10px); }
+.tpl-preview.sketching { background: var(--background-subtle); }
+.tpl-preview.sketching::after { background: linear-gradient(to bottom, transparent, var(--background-subtle)); }
 .tpl-sheet {
   position: absolute; inset: 10px 12px auto 12px;
   display: flex; flex-direction: column; gap: 5px;
@@ -469,6 +584,9 @@
 .tpl-table { display: grid; gap: 2px; }
 .tpl-cell { height: 7px; border-radius: 1.5px; background: var(--border-soft); }
 .tpl-cell.head { background: var(--border-medium); }
+.tpl-callout { display: flex; align-items: center; gap: 5px; padding: 4px 5px; border-radius: 3px; background: var(--accent-soft); }
+.tpl-callout-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--tpl-accent, var(--accent)); flex: none; }
+.tpl-line.w80 { width: 80%; }
 .tpl-empty-hint { height: 4px; width: 30%; border-radius: 2px; background: var(--border-soft); }
 
 @media (max-width: 860px) {
@@ -504,16 +622,141 @@
 .course-add { display: flex; gap: 8px; }
 .course-add .input { flex: 1; }
 
-.setting-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  padding: 12px 0; border-bottom: 1px solid var(--border-soft);
+/* Settings is a two-column dialog: a grouped nav that stays put, and one
+   page of settings that scrolls. Rows are label-and-description on the left
+   with the control hard right, and sections are separated by a rule under
+   their heading rather than by boxing every group in a card. */
+.settings-modal .modal-body { padding: 0; overflow: hidden; }
+.settings-layout {
+  display: grid; grid-template-columns: 232px minmax(0, 1fr);
+  height: min(74vh, 660px);
 }
-.setting-row:last-child { border-bottom: 0; }
-.setting-label { font-size: 14.5px; }
-.setting-hint { font-size: 12.5px; color: var(--text-tertiary); margin-top: 2px; max-width: 380px; line-height: 1.45; }
-.setting-status { font-size: 12.5px; padding: 2px 9px; border-radius: 10px; flex: none; }
+
+.settings-side {
+  display: flex; flex-direction: column; min-height: 0;
+  padding: 14px 8px 12px; gap: 10px;
+  border-right: 1px solid var(--border-soft); background: var(--background-subtle);
+}
+.settings-brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 6px; }
+.settings-brand-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.settings-nav { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1px; }
+.settings-nav-group {
+  padding: 12px 8px 5px; font-size: 11.5px; font-weight: 500;
+  color: var(--text-tertiary); letter-spacing: 0.01em;
+}
+.settings-nav-group:first-child { padding-top: 2px; }
+.settings-nav-item {
+  position: relative; isolation: isolate;
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 8px; border-radius: var(--radius-md);
+  color: var(--text-secondary); font-size: 14px; text-align: left;
+  transition: color var(--duration-hover) var(--ease);
+}
+.settings-nav-item::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.95);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide),
+              background var(--duration-hover) var(--ease);
+}
+.settings-nav-item:hover::before, .settings-nav-item:focus-visible::before { opacity: 1; transform: scale(1); }
+.settings-nav-item:hover, .settings-nav-item:focus-visible { color: var(--text-primary); }
+.settings-nav-item.active { color: var(--text-primary); font-weight: 500; }
+.settings-nav-item.active::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
+.settings-nav-icon { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--text-tertiary); }
+.settings-nav-item.active .settings-nav-icon { color: var(--text-primary); }
+
+.settings-main { position: relative; min-width: 0; min-height: 0; display: flex; }
+.settings-close { position: absolute; top: 14px; right: 16px; z-index: 2; }
+.settings-pane { flex: 1; min-height: 0; padding: 34px 40px 40px; }
+
+.settings-page-head { margin-bottom: 30px; }
+.settings-page-title { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -0.02em; color: var(--text-primary); }
+.settings-page-lead { margin: 8px 0 0; font-size: 14.5px; color: var(--text-secondary); }
+
+.settings-section { margin-bottom: 34px; }
+.settings-section-title {
+  margin: 0 0 4px; padding-bottom: 12px;
+  font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--text-primary); border-bottom: 1px solid var(--border-soft);
+}
+.settings-section-body { display: flex; flex-direction: column; }
+
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  min-height: 58px; padding: 13px 0;
+}
+.setting-copy { min-width: 0; }
+.setting-label { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; color: var(--text-primary); }
+.setting-hint { font-size: 13px; color: var(--text-secondary); margin-top: 3px; max-width: 460px; line-height: 1.45; }
+.setting-badge {
+  padding: 1px 7px; border-radius: 5px; background: var(--background-selected);
+  color: var(--text-tertiary); font-size: 11.5px; font-weight: 500;
+}
+.setting-control { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.settings-note { margin: 0; padding: 12px 0 0; font-size: 13px; color: var(--text-tertiary); line-height: 1.5; }
+
+.settings-select {
+  min-width: 150px; height: 34px; padding: 0 30px 0 11px;
+  border: 1px solid var(--border-medium); border-radius: var(--radius-md);
+  background: var(--background-main); color: var(--text-primary);
+  font-size: 13.5px; outline: none; cursor: pointer;
+  transition: border-color var(--duration-hover) var(--ease), box-shadow var(--duration-hover) var(--ease);
+}
+.settings-select:hover { border-color: var(--border-strong); }
+.settings-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.settings-number-wrap { display: flex; align-items: center; gap: 7px; }
+.settings-number {
+  width: 84px; height: 34px; padding: 0 10px; text-align: right;
+  border: 1px solid var(--border-medium); border-radius: var(--radius-md);
+  background: var(--background-main); color: var(--text-primary);
+  font-size: 13.5px; font-variant-numeric: tabular-nums; outline: none;
+}
+.settings-number:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.settings-suffix { font-size: 13px; color: var(--text-tertiary); }
+
+/* The switch: a track that fills and a thumb that travels, so the change of
+   state is a movement rather than a colour swap. */
+.switch { position: relative; display: inline-flex; flex: none; cursor: pointer; }
+.switch-input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch-track {
+  display: block; width: 40px; height: 23px; border-radius: 999px;
+  background: var(--border-strong); padding: 2px;
+  transition: background var(--duration-menu) var(--ease);
+}
+.switch-thumb {
+  display: block; width: 19px; height: 19px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(15, 15, 15, 0.24);
+  transition: transform var(--duration-menu) var(--ease-glide);
+}
+.switch-input:checked + .switch-track { background: var(--accent); }
+.switch-input:checked + .switch-track .switch-thumb { transform: translateX(17px); }
+.switch-input:focus-visible + .switch-track { box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.settings-kbd {
+  font: inherit; font-size: 12.5px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border-soft); background: var(--background-subtle);
+  color: var(--text-secondary); white-space: nowrap;
+}
+.shortcut-row { min-height: 44px; padding: 8px 0; }
+.shortcut-row .setting-label { font-weight: 400; font-size: 14px; color: var(--text-secondary); }
+
+.danger-row .setting-label { color: var(--danger); }
+.setting-status { font-size: 12.5px; padding: 3px 10px; border-radius: 10px; flex: none; background: var(--background-subtle); color: var(--text-tertiary); }
 .setting-status.on { background: var(--c-green-bg); color: var(--c-green); }
-.setting-status.off { background: var(--background-subtle); color: var(--text-tertiary); }
+.setting-status.off { background: var(--danger-soft); color: var(--danger); }
+
+@media (max-width: 820px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); height: min(80vh, 620px); }
+  .settings-side { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border-soft); overflow-x: auto; }
+  .settings-brand { display: none; }
+  .settings-nav { flex-direction: row; }
+  .settings-nav-group { display: none; }
+  .settings-pane { padding: 24px 20px 30px; }
+  .settings-page-title { font-size: 24px; }
+}
 
 .review-deck { display: flex; gap: 10px; margin-bottom: 12px; }
 .review-deck .field { flex: 1; margin: 0; }
@@ -636,42 +879,45 @@
   margin: 0 0 12px;
 }
 
-/* Borderless rows in a grid rather than boxed cards: the same visual weight
-   as the Recent list, so the two sections read as one page. */
-.tool-grid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px;
+/* The Vibe Coder launcher button, verbatim: a 36px ghost row with an icon,
+   a label and nothing else. The fill travels in rather than switching on,
+   which is the whole character of the control — so it is defined once here
+   and reused by every quiet action in the workspace. */
+.vc-button {
+  position: relative; isolation: isolate;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; min-width: 0; padding: 0 12px; border: 0;
+  border-radius: 9px; background: transparent;
+  font-size: 12.5px; font-weight: 450; letter-spacing: -0.002em;
+  color: var(--text-secondary); text-align: left; cursor: pointer;
+  transition: color var(--duration-hover) var(--ease);
 }
-.tool-row {
-  display: flex; align-items: center; gap: 11px;
-  padding: 10px 10px; border-radius: var(--radius-md); text-align: left;
-  transition: background var(--duration-hover) var(--ease);
+.vc-button::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.94);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide);
 }
-.tool-row:hover { background: var(--background-hover); }
-.tool-row:active { background: var(--background-selected); }
-.tool-icon {
-  flex: none; display: grid; place-items: center; width: 30px; height: 30px;
-  border-radius: 8px;
-  background: var(--tool-tint, var(--background-subtle));
-  color: var(--tool-ink, var(--text-primary));
+.vc-button:hover::before, .vc-button:focus-visible::before { opacity: 1; transform: scale(1); }
+.vc-button:hover, .vc-button:focus-visible { color: var(--text-primary); }
+.vc-button:focus-visible { outline: none; }
+.vc-button:active::before { transform: scale(0.975); background: var(--background-selected); }
+.vc-button .vc-icon {
+  flex: none; display: grid; place-items: center; width: 14px; height: 14px;
+  color: var(--text-tertiary);
+  transition: color var(--duration-hover) var(--ease);
 }
-.tool-row.tone-ink    { --tool-tint: var(--background-selected); --tool-ink: var(--text-primary); }
-.tool-row.tone-accent { --tool-tint: var(--accent-soft);         --tool-ink: var(--accent-text); }
-.tool-row.tone-green  { --tool-tint: var(--c-green-bg);          --tool-ink: var(--c-green); }
-.tool-row.tone-orange { --tool-tint: var(--c-orange-bg);         --tool-ink: var(--c-orange); }
-.tool-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.tool-name { font-size: 14.5px; font-weight: 500; letter-spacing: -0.005em; }
-.tool-status {
-  font-size: 12.5px; color: var(--text-tertiary); margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.tool-live {
-  flex: none; font-size: 11.5px; padding: 2px 8px; border-radius: 10px;
-  background: var(--accent-soft); color: var(--accent-text);
-  font-variant-numeric: tabular-nums;
-}
+.vc-button .vc-icon svg { width: 14px; height: 14px; }
+.vc-button:hover .vc-icon, .vc-button:focus-visible .vc-icon { color: var(--text-secondary); }
+.vc-button .vc-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-@media (max-width: 720px) {
-  .tool-grid { grid-template-columns: minmax(0, 1fr); }
+/* The workspace row is that button repeated. There is no status line: the
+   counts moved into the accessible name, so the resting page is as calm as
+   the Website / Desktop app row it is modelled on. */
+.tool-grid {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 2px; padding: 1px;
 }
 
 .home-section-head {
@@ -707,9 +953,23 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .recent-empty {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
-  padding: 24px 8px; color: var(--text-tertiary); font-size: 14.5px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 158px; padding: 26px 20px;
+  color: var(--text-tertiary); font-size: 14.5px; text-align: center;
 }
+.recent-empty-icon { display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 2px; color: var(--text-tertiary); }
+.recent-empty-title { color: var(--text-primary); font-size: 15px; font-weight: 600; }
+/* The instruction is the control. A separate "Create your first note" button
+   underneath said the same thing twice. */
+.recent-empty-action { gap: 4px; font-size: 13px; }
+.recent-empty-key {
+  min-width: 20px; padding: 1px 5px; border: 1px solid var(--border-soft);
+  border-radius: 5px; background: var(--background-subtle); color: var(--text-secondary);
+  font: inherit; font-size: 12px; line-height: 17px;
+  transition: border-color var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.recent-empty-action:hover .recent-empty-key,
+.recent-empty-action:focus-visible .recent-empty-key { border-color: var(--border-medium); color: var(--text-primary); }
 
 .home-hint {
   display: flex; align-items: center; justify-content: center; gap: 3px;
@@ -762,53 +1022,68 @@
 .note-picker-summary { font-size: 12.5px; color: var(--text-secondary); }
 .note-picker-summary.empty { color: var(--text-tertiary); }
 
-.progress-loader {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 26px 12px 20px; text-align: center;
+/* The generation checklist. Three states, one row: pending is a hollow dot,
+   running spins and shimmers, done lands a tick. Only the running row moves,
+   so a long step reads as work rather than as a stall. */
+.check-loader {
+  display: flex; flex-direction: column;
+  padding: 22px 18px 18px;
   animation: page-in 220ms var(--ease-out);
 }
-.progress-ring-wrap { position: relative; width: 64px; height: 64px; margin-bottom: 16px; }
-.progress-ring { width: 64px; height: 64px; transform: rotate(-90deg); }
-.ring-track { stroke: var(--border-soft); stroke-width: 4; }
-.ring-arc {
-  stroke: var(--accent); stroke-width: 4; stroke-linecap: round;
-  transition: stroke-dashoffset 420ms var(--ease-out), stroke 200ms var(--ease);
-}
-.progress-loader.complete .ring-arc { stroke: var(--success); }
-.progress-loader.failed .ring-arc { stroke: var(--danger); }
-.progress-mark {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  color: var(--text-primary);
-}
-.progress-title { font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; }
-.progress-label { font-size: 13.5px; color: var(--text-secondary); margin-top: 4px; min-height: 20px; }
+.check-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.check-mascot { flex: none; display: grid; place-items: center; }
+.check-title { font-size: 15.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
 
-/* A set of actions stacked with a tick that lands as each one finishes. */
-.progress-steps {
-  list-style: none; margin: 18px 0 0; padding: 0;
-  display: flex; flex-direction: column; gap: 6px;
-  text-align: left; width: min(300px, 100%);
-}
-.progress-step {
-  display: flex; align-items: center; gap: 9px;
+.check-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.check-step {
+  display: flex; align-items: center; gap: 11px;
+  padding: 7px 8px; border-radius: var(--radius-md);
   font-size: 13.5px; color: var(--text-tertiary);
-  transition: color var(--duration-menu) var(--ease);
+  transition: color var(--duration-panel) var(--ease),
+              background var(--duration-panel) var(--ease),
+              transform var(--duration-panel) var(--ease-glide);
 }
-.progress-step.current { color: var(--text-primary); }
-.progress-step.done { color: var(--text-secondary); }
-.progress-tick {
-  flex: none; display: grid; place-items: center; width: 18px; height: 18px;
-  border-radius: 50%; color: transparent;
+.check-step[data-state="running"] { background: var(--background-subtle); color: var(--text-primary); }
+.check-step[data-state="done"] { color: var(--text-secondary); }
+.check-step[data-state="pending"] { opacity: 0.55; transform: translateX(-2px); }
+.check-text { min-width: 0; }
+
+/* The dot holds both the spinner and the tick and cross-fades between them,
+   so a step completing is one object changing rather than two swapping. */
+.check-dot {
+  position: relative; flex: none; width: 18px; height: 18px; border-radius: 50%;
   box-shadow: inset 0 0 0 1.5px var(--border-medium);
-  transition: background var(--duration-menu) var(--ease),
-              color var(--duration-menu) var(--ease),
-              box-shadow var(--duration-menu) var(--ease),
-              transform var(--duration-menu) var(--ease-out);
+  transition: box-shadow var(--duration-panel) var(--ease),
+              background var(--duration-panel) var(--ease),
+              transform var(--duration-panel) var(--ease-glide);
 }
-.progress-step.done .progress-tick {
-  background: var(--success); color: #fff; box-shadow: none; transform: scale(1.04);
+.check-spin {
+  position: absolute; inset: -1.5px; border-radius: 50%;
+  border: 1.5px solid transparent; border-top-color: var(--accent); border-right-color: var(--accent);
+  opacity: 0; transition: opacity var(--duration-menu) var(--ease);
+  animation: check-spin 720ms linear infinite;
 }
-.progress-step.current .progress-tick { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.check-mark {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--text-on-accent); opacity: 0; transform: scale(0.5);
+  transition: opacity var(--duration-menu) var(--ease),
+              transform var(--duration-panel) var(--ease-glide);
+}
+.check-mark svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.check-step[data-state="running"] .check-dot { box-shadow: inset 0 0 0 1.5px var(--border-soft); }
+.check-step[data-state="running"] .check-spin { opacity: 1; }
+.check-step[data-state="done"] .check-dot { background: var(--success); box-shadow: none; transform: scale(1.06); }
+.check-step[data-state="done"] .check-mark { opacity: 1; transform: scale(1); }
+.check-step[data-state="failed"] .check-dot { background: var(--danger); box-shadow: none; }
+.check-step[data-state="failed"] .check-mark { opacity: 1; transform: scale(1); }
+.check-step[data-state="failed"] { color: var(--danger); }
+@keyframes check-spin { to { transform: rotate(360deg); } }
+.reduce-motion .check-spin { animation: none; }
+@media (prefers-reduced-motion: reduce) { .check-spin { animation: none; } }
+
+.check-note { margin: 14px 0 0; font-size: 13px; color: var(--text-tertiary); }
+.generate-modal .modal-body { padding: 0; }
+.check-loader.failed .check-note { color: var(--danger); }
 
 /* ------------------------------------------------------- chat history */
 

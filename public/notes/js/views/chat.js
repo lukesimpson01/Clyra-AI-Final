@@ -18,19 +18,27 @@ const SUGGESTIONS = [
   "Explain the hardest idea in my notes",
 ];
 
-export function renderChat(host, app) {
+/* `compact` is the rail's chat: same thread, same composer, no history
+   column and no room for one. Everything else behaves identically, so there
+   is one chat implementation rather than two that drift. */
+export function renderChat(host, app, options = {}) {
+  const compact = Boolean(options.compact);
   let messages = [];
   let sources = [];
   let busy = false;
   let chatId = null;
   let chats = [];
-  let historyOpen = localStorage.getItem("clyra-notes:chat-history") !== "0";
+  let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
 
   const thread = el("div", { class: "chat-thread scroll" });
   const historyList = el("div", { class: "chat-history-list scroll" });
   const chips = el("div", { class: "chat-sources" });
+  /* The placeholder teaches the one thing the composer can do that a plain
+     chat box cannot: attach notes. Naming the key is what makes it
+     discoverable — there is nothing else on the bar that says so. */
+  const PLACEHOLDER = "Ask about your notes\u2026  Type @ to reference a note, or several";
   const input = el("textarea", {
-    class: "chat-input", rows: "1", placeholder: "Ask about your notes…", "aria-label": "Ask Clyra",
+    class: "chat-input", rows: "1", placeholder: PLACEHOLDER, "aria-label": "Ask Clyra",
   });
   const send = el("button", { class: "chat-send", type: "button", "aria-label": "Send message", disabled: true }, icon("arrow_up", 18));
 
@@ -49,18 +57,20 @@ export function renderChat(host, app) {
       iconButton("plus", "New chat", () => startChat(), { size: 15 })),
     historyList);
 
-  const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}` },
+  const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}${compact ? " compact" : ""}` },
     el("div", { class: "chat-view" }, thread, composer),
-    history);
+    compact ? null : history);
   host.append(layout);
 
   const toggleHistory = () => {
+    if (compact) return;
     historyOpen = !historyOpen;
     layout.classList.toggle("history-hidden", !historyOpen);
     localStorage.setItem("clyra-notes:chat-history", historyOpen ? "1" : "0");
   };
 
   const loadChats = async () => {
+    if (compact) return;
     chats = (await withError(() => api.get("/api/notes/chats"), "Could not load your chats")) || [];
     paintHistory();
   };
@@ -198,7 +208,7 @@ export function renderChat(host, app) {
     onSelect: (page) => {
       const id = String(page.page_id || page.id);
       if (sources.some((source) => source.pageId === id)) return;
-      sources.push({ pageId: id, title: page.title || "New page" });
+      sources.push({ pageId: id, title: page.title || "New page", manual: true });
       paintSources();
       input.focus();
     },
@@ -252,15 +262,30 @@ export function renderChat(host, app) {
       thread.append(el("div", { class: "chat-column chat-intro" },
         el("span", { class: "chat-intro-mark" }, bloub(34)),
         el("h1", { class: "chat-title", text: "Ask about your notes" }),
-        el("p", { class: "chat-lead", text: "Attach pages with @ so answers stay grounded in your own material." }),
+        el("p", { class: "chat-lead" },
+          el("span", { text: "Type " }),
+          el("kbd", { class: "chat-lead-key", text: "@" }),
+          el("span", { text: " to reference one note or several, so answers stay grounded in your own material." })),
         el("div", { class: "chat-suggestions" }, SUGGESTIONS.map((suggestion) =>
           el("button", { class: "chip", type: "button", onclick: () => { input.value = suggestion; grow(); syncSend(); ask(); } }, suggestion)))));
       return;
     }
     for (const message of messages) {
       if (message.role === "user") {
+        /* What a question was grounded in belongs with the question. Listing
+           the pages under the bubble means scrolling back through a thread
+           still tells you which notes each answer was read from. */
         thread.append(el("div", { class: "chat-column chat-row user" },
-          el("div", { class: "chat-bubble", text: message.text })));
+          el("div", { class: "chat-bubble", text: message.text }),
+          message.sources?.length
+            ? el("ul", { class: "chat-bubble-sources" }, message.sources.map((source) =>
+                el("li", { class: "chat-bubble-source" },
+                  el("span", { class: "chat-bubble-bullet" }, icon("page", 11)),
+                  el("button", {
+                    class: "chat-bubble-source-name", type: "button",
+                    onclick: () => source.pageId && app.openPage(source.pageId),
+                  }, source.title || "Note"))))
+            : null));
         continue;
       }
       const body = el("div", { class: "chat-answer" });
@@ -306,9 +331,10 @@ export function renderChat(host, app) {
     if (busy) return;
     const question = retryOf?.question ?? input.value.trim();
     if (!question) return;
-    if (!retryOf) { messages.push({ role: "user", text: question }); input.value = ""; grow(); }
+    const attachedNow = sources.map((source) => ({ pageId: source.pageId, title: source.title }));
+    if (!retryOf) { messages.push({ role: "user", text: question, sources: attachedNow }); input.value = ""; grow(); }
     await ensureChat();
-    if (!retryOf) await remember({ role: "user", text: question });
+    if (!retryOf) await remember({ role: "user", text: question, sources: attachedNow });
     const answer = retryOf || { role: "assistant", question, sources: [...sources] };
     if (!retryOf) messages.push(answer);
     Object.assign(answer, { pending: true, error: null, steps: null, searching: null, stepIndex: 0 });
@@ -362,22 +388,43 @@ export function renderChat(host, app) {
     },
   });
 
+  /* "Create page" runs the answer back through the document harness rather
+     than dumping the reply's markdown into a page: the same words, but laid
+     out as a document — callouts, tables, toggles, a summary — instead of a
+     transcript of a chat message. */
   const createPageFrom = async (message) => {
-    const created = await withError(
-      () => api.post("/api/notes/pages", { title: message.question.slice(0, 80), markdown: message.text }),
+    toast("Building the page\u2026");
+    const built = await withError(
+      () => api.post("/api/notes/ai/document", {
+        instruction: `Turn this answer into a well-structured page. The reader asked: "${message.question}".\n\nThe answer to lay out:\n${message.text}`,
+        sources: (message.sources || []).filter((source) => source.pageId).map((source) => ({ pageId: source.pageId })),
+        title: message.question.slice(0, 80),
+      }),
       "Could not create the page",
     );
-    if (!created) return;
+    if (!built?.page) return;
     await refreshPages();
-    app.openPage(created.id);
+    app.openPage(built.page.id);
+    toast("Page created");
   };
 
   paint();
   loadChats();
-  api.post("/api/notes/chats/prune", {}).catch(() => {});
-  queueMicrotask(() => input.focus());
+  if (!compact) api.post("/api/notes/chats/prune", {}).catch(() => {});
+  queueMicrotask(() => { if (!compact) input.focus(); });
   return {
     toggleHistory,
+    focus: () => input.focus(),
+    /* The rail replaces the attached set whenever the page changes; the
+       reader's own additions are kept, so pointing at another note does not
+       silently drop the one they attached by hand. */
+    setSources(next) {
+      const manual = sources.filter((source) => source.manual);
+      const seen = new Set();
+      sources = [...next, ...manual].filter((source) =>
+        source.pageId && !seen.has(source.pageId) && seen.add(source.pageId));
+      paintSources();
+    },
     destroy() { window.removeEventListener("clyra:new-chat", onNewChat); },
   };
 }

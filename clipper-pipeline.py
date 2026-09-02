@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -32,6 +33,7 @@ from clipper_face_tracking import (
     probe_video_size,
     scan_people,
     track_faces_and_build_crops,
+    track_faces_and_build_split_screen_crops,
 )
 from clipper_intelligence import (
     INTELLIGENCE_SCHEMA_VERSION,
@@ -91,6 +93,123 @@ RENDER_QUALITY_PROFILES = {
     "balanced": {"crf": "20", "preset": "veryfast", "audio_bitrate": "160k"},
     "master": {"crf": "12", "preset": "slow", "audio_bitrate": "320k"},
 }
+# Processing profiles govern *analysis* cost — how much RAM and CPU the
+# transcription/scene/face passes are allowed to consume — as distinct from
+# RENDER_QUALITY_PROFILES above, which governs only the final encode.
+#
+# The 4 GB path is the load-bearing one: it must stay genuinely usable, so it
+# picks the smallest quantised Whisper model, a 360p analysis proxy, a reduced
+# landmark cadence, and a hard thread cap so a background render cannot starve
+# the Electron UI. Nothing here loads a whole video into memory; every stage
+# already streams from disk.
+PROCESSING_PROFILES = {
+    "low_memory": {
+        "label": "Low Memory",
+        "whisper_model": "tiny.en",
+        "whisper_compute": "int8",
+        "whisper_beam": 1,
+        "proxy_height": 360,
+        "tracking_quality": "low_memory",
+        "ffmpeg_threads": 2,
+        "render_quality": "balanced",
+        "scene_downscale": 3,
+    },
+    "balanced": {
+        "label": "Balanced",
+        "whisper_model": "base.en",
+        "whisper_compute": "int8",
+        "whisper_beam": 3,
+        "proxy_height": 480,
+        "tracking_quality": "balanced",
+        "ffmpeg_threads": 0,  # 0 = let FFmpeg choose
+        "render_quality": "premium",
+        "scene_downscale": 2,
+    },
+    "quality": {
+        "label": "Quality",
+        "whisper_model": "small.en",
+        "whisper_compute": "int8",
+        "whisper_beam": 5,
+        "proxy_height": 720,
+        "tracking_quality": "high_quality",
+        "ffmpeg_threads": 0,
+        "render_quality": "master",
+        "scene_downscale": 1,
+    },
+}
+
+
+def total_system_memory_gb():
+    """Best-effort physical RAM in GB, or None when it cannot be determined."""
+    try:
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names:
+            return (os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")) / (1024 ** 3)
+    except (OSError, ValueError, AttributeError):
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class _MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullTotalPhys / (1024 ** 3)
+        except Exception:
+            pass
+    return None
+
+
+def resolve_processing_profile(requested=None):
+    """Pick a processing profile, honouring an explicit request over detection.
+
+    "auto" (the default) selects Low Memory at or below ~6 GB of physical RAM.
+    A machine whose RAM cannot be read is treated as small: degrading to a
+    slower-but-safe profile is recoverable, running a 4 GB machine out of
+    memory is not.
+    """
+    requested = str(requested or "auto").strip().lower().replace("-", "_")
+    aliases = {"low": "low_memory", "lowmemory": "low_memory", "fast": "quality", "high": "quality", "max": "quality"}
+    requested = aliases.get(requested, requested)
+    if requested in PROCESSING_PROFILES:
+        return requested, PROCESSING_PROFILES[requested], "requested"
+    memory_gb = total_system_memory_gb()
+    if memory_gb is None:
+        return "low_memory", PROCESSING_PROFILES["low_memory"], "memory_unknown"
+    if memory_gb <= 6.5:
+        return "low_memory", PROCESSING_PROFILES["low_memory"], f"detected_{memory_gb:.1f}gb"
+    if memory_gb <= 12.0:
+        return "balanced", PROCESSING_PROFILES["balanced"], f"detected_{memory_gb:.1f}gb"
+    return "balanced", PROCESSING_PROFILES["balanced"], f"detected_{memory_gb:.1f}gb"
+
+
+# Resolved once per process so every stage agrees on the same budget.
+ACTIVE_PROFILE_NAME, ACTIVE_PROFILE, ACTIVE_PROFILE_REASON = resolve_processing_profile(
+    os.environ.get("CLYRA_PROCESSING_PROFILE")
+)
+
+# Speech cleanup (high-pass + spectral denoise ahead of loudness
+# normalisation). On by default because source audio for social clips is
+# almost always untreated; set from config per job.
+AUDIO_CLEANUP_ENABLED = True
+
+# Speech-to-text backend: "auto" prefers Clyra's own Fish Audio provider when
+# a key is configured and falls back to a local Whisper model; "fish" and
+# "local" pin one explicitly.
+STT_BACKEND = str(os.environ.get("CLYRA_CLIPPER_STT", "auto")).strip().lower() or "auto"
+
 _FASTER_WHISPER_MODEL = None
 _OPENAI_WHISPER_MODEL = None
 _CANCEL_REQUESTED = False
@@ -1513,9 +1632,18 @@ def download_public_source_master(url, job_dir, max_height=1080):
     cookies_file = str(os.environ.get("CLYRA_YTDLP_COOKIES_FILE", "")).strip()
     if cookies_file and os.path.isfile(cookies_file):
         options["cookiefile"] = cookies_file
+    # YouTube increasingly refuses the default web client with "The page needs
+    # to be reloaded", which surfaces to the user as an unexplained download
+    # failure on a perfectly public video. Naming the clients explicitly, with
+    # the mobile clients ahead of the web one, gets a normal public video
+    # again. This is ordinary yt-dlp client selection, not an auth bypass:
+    # private or member-only videos still require the consented cookie file
+    # above.
+    youtube_args = {"player_client": ["android", "web", "tv"]}
     po_token = str(os.environ.get("CLYRA_YTDLP_PO_TOKEN", "")).strip()
     if po_token:
-        options["extractor_args"] = {"youtube": {"po_token": [po_token]}}
+        youtube_args["po_token"] = [po_token]
+    options["extractor_args"] = {"youtube": youtube_args}
     with YoutubeDL(options) as downloader:
         downloader.extract_info(url, download=True)
     candidates = [
@@ -1578,9 +1706,40 @@ def render_encoding_args(render_quality="premium"):
         # Regular keyframes improve seeking/social processing without imposing
         # a lossy bitrate ceiling on the source-master encode.
         "-g", "120", "-keyint_min", "24", "-sc_threshold", "0",
+        # Bounded encoder threads on the Low Memory profile: an unbounded x264
+        # pass will take every core and make the Electron UI stutter on a small
+        # machine. 0 means "let FFmpeg decide" on the larger profiles.
+        *(["-threads", str(ACTIVE_PROFILE["ffmpeg_threads"])] if ACTIVE_PROFILE["ffmpeg_threads"] else []),
+        "-af", build_audio_filter_chain(),
         "-c:a", "aac", "-b:a", profile["audio_bitrate"], "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart",
     ]
+
+
+def build_audio_filter_chain():
+    """The one audio chain every delivery path shares.
+
+    Order matters and is deliberate: rumble and hiss are removed *before*
+    measuring loudness, so normalisation targets the speech rather than
+    lifting the noise floor with it.
+
+      highpass  — drops handling rumble/HVAC below speech (80 Hz)
+      afftdn    — spectral broadband denoise; chosen over `arnndn` because
+                  RNNoise needs a separate model file shipped alongside the
+                  binary, while this is built into every FFmpeg build we
+                  target and needs no weights
+      loudnorm  — EBU R128 to the -16 LUFS social delivery target, with
+                  -1.5 dBTP headroom so inter-sample peaks survive AAC
+
+    Speech cleanup is skipped when disabled so music-led or already-mastered
+    sources are not scrubbed against the user's wishes.
+    """
+    stages = []
+    if AUDIO_CLEANUP_ENABLED:
+        stages.append("highpass=f=80")
+        stages.append("afftdn=nf=-25")
+    stages.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+    return ",".join(stages)
 
 
 def render_quality_label(render_quality="premium"):
@@ -1776,6 +1935,64 @@ def write_subtitles(path, words, clip_start, clip_end, font, font_size, color, p
         for start_cs, end_cs, word in beats:
             handle.write(f"Dialogue: 0,{ass_time_cs(start_cs)},{ass_time_cs(end_cs)},Word,,0,0,0,,{override}{word}\n")
     return len(beats)
+
+
+def srt_timestamp(seconds):
+    """SRT wants HH:MM:SS,mmm — comma, not the period WebVTT uses."""
+    seconds = max(0.0, float(seconds))
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, whole_seconds = divmod(remainder, 60)
+    milliseconds = int(round((seconds - int(seconds)) * 1000))
+    if milliseconds >= 1000:  # rounding can carry into the next second
+        whole_seconds += 1
+        milliseconds = 0
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d},{milliseconds:03d}"
+
+
+def write_srt(path, words, clip_start, clip_end, max_words=7, max_seconds=3.5):
+    """Write a phrase-grouped SRT sidecar for the clip.
+
+    Deliberately not one-word-per-cue like the burned-in karaoke captions:
+    an SRT is read as text by platforms, screen readers and editors, so it
+    groups words into short readable lines instead. Cues break on the same
+    signals a human would use — a sentence ending, a long pause, or simply
+    running past a comfortable line length.
+    """
+    clip_words = normalise_caption_words(words, clip_start, clip_end)
+    if not clip_words:
+        return 0
+
+    cues = []
+    current = []
+    for index, word in enumerate(clip_words):
+        current.append(word)
+        text = " ".join(item["word"] for item in current)
+        spans = current[-1]["end"] - current[0]["start"]
+        next_word = clip_words[index + 1] if index + 1 < len(clip_words) else None
+        # Caption words reach here already upper-cased and stripped of
+        # punctuation by the transcriber, so a sentence break cannot be read
+        # from the text. The speech pause is the honest signal for where one
+        # thought ends and the next begins.
+        pause_ahead = (next_word["start"] - word["end"]) if next_word else 0.0
+        if (
+            next_word is None
+            or len(current) >= max_words
+            or spans >= max_seconds
+            or len(text) >= 42
+            or pause_ahead >= 0.6
+        ):
+            cues.append(current)
+            current = []
+    if current:
+        cues.append(current)
+
+    with open(path, "w", encoding="utf-8") as handle:
+        for number, cue in enumerate(cues, start=1):
+            start = max(0.0, cue[0]["start"] - clip_start)
+            end = max(start + 0.2, cue[-1]["end"] - clip_start)
+            text = " ".join(item["word"] for item in cue).strip()
+            handle.write(f"{number}\n{srt_timestamp(start)} --> {srt_timestamp(end)}\n{text}\n\n")
+    return len(cues)
 
 
 def run_ffmpeg(args, timeout=90, progress_callback=None, expected_duration=None):
@@ -2397,6 +2614,161 @@ def render_per_frame_crop_from_master(
         capture.release()
 
 
+def _resolve_pane_crop(frame, source_width, source_height, pane_w, pane_h, keyframe):
+    """Crop one speaker's pane out of a decoded source frame at a given instant.
+
+    Mirrors the single-crop math in render_per_frame_crop_from_master: scale
+    the source to at least cover the pane, then read x/y proportionally
+    against the reference frame size the keyframe was computed at, so a pane
+    size that differs slightly from that reference (e.g. odd-pixel height
+    split) still lands correctly instead of drifting toward one edge.
+    """
+    import cv2
+
+    zoom = max(1.0, min(1.6, float(keyframe.get("zoom", 1.0) or 1.0)))
+    scale = max(pane_w / source_width, pane_h / source_height) * zoom
+    scaled_width = max(pane_w, int(round(source_width * scale)))
+    scaled_height = max(pane_h, int(round(source_height * scale)))
+    resized = cv2.resize(frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LANCZOS4)
+
+    reference_width = max(1.0, float(keyframe.get("scaledWidth", scaled_width) or scaled_width))
+    reference_height = max(1.0, float(keyframe.get("scaledHeight", scaled_height) or scaled_height))
+    crop_x = int(round(float(keyframe.get("x", 0) or 0) * (scaled_width / reference_width)))
+    crop_y = int(round(float(keyframe.get("y", 0) or 0) * (scaled_height / reference_height)))
+    crop_x = max(0, min(scaled_width - pane_w, crop_x))
+    crop_y = max(0, min(scaled_height - pane_h, crop_y))
+    cropped = resized[crop_y:crop_y + pane_h, crop_x:crop_x + pane_w]
+    if cropped.shape[0] != pane_h or cropped.shape[1] != pane_w:
+        raise RuntimeError("Split-screen pane crop escaped the source bounds")
+    return cropped
+
+
+def render_split_screen_from_master(
+    input_path,
+    output_path,
+    clip_start,
+    clip_duration,
+    crop_keyframes_top,
+    crop_keyframes_bottom,
+    pane_height_top,
+    pane_height_bottom,
+    subtitle_path=None,
+    output_fps=OUTPUT_FPS,
+    render_quality="premium",
+):
+    """Two speakers, each framed by their own locked trajectory, stacked into
+    one delivery frame.
+
+    Built as the two-pane sibling of render_per_frame_crop_from_master: the
+    same bounded single-frame OpenCV decode, the same cadence mapper so a
+    24/25fps master never desyncs audio at 30fps delivery, the same final
+    single FFmpeg encode. The only new work per frame is evaluating a second
+    independent crop path and stacking both panes before the frame is piped
+    out, so this never re-decodes the source and never holds more than one
+    frame in memory at a time.
+    """
+    if (
+        not input_path or not os.path.isfile(input_path)
+        or len(crop_keyframes_top or []) < 2 or len(crop_keyframes_bottom or []) < 2
+    ):
+        return False
+    try:
+        import cv2
+    except Exception:
+        return False
+
+    def ordered_keyframes(rows):
+        return sorted(
+            (dict(row) for row in rows if isinstance(row, dict)),
+            key=lambda row: float(row.get("timeMs", 0) or 0),
+        )
+
+    top_frames = ordered_keyframes(crop_keyframes_top)
+    bottom_frames = ordered_keyframes(crop_keyframes_bottom)
+    if len(top_frames) < 2 or len(bottom_frames) < 2:
+        return False
+
+    capture = cv2.VideoCapture(input_path)
+    if not capture.isOpened():
+        return False
+    source_width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0))
+    source_height = int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0))
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    fps = max(30, min(60, int(round(float(output_fps or source_fps or OUTPUT_FPS)))))
+    if source_width < 2 or source_height < 2:
+        capture.release()
+        return False
+
+    capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(clip_start)) * 1000.0)
+    frame_limit = max(1, int(math.ceil(max(0.01, float(clip_duration)) * fps)))
+    command = [
+        FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "rawvideo", "-pix_fmt", "bgr24",
+        "-s:v", f"{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}", "-r", str(fps), "-i", "pipe:0",
+        "-ss", str(clip_start), "-i", input_path,
+        "-map", "0:v:0", "-map", "1:a?",
+        "-t", str(clip_duration), "-r", str(fps),
+    ]
+    if subtitle_path and os.path.isfile(subtitle_path):
+        command += ["-vf", f"ass='{_escape_ass_path(subtitle_path)}'"]
+    command += [*render_encoding_args(render_quality), output_path]
+    process = None
+    rendered = 0
+    top_cursor = 0
+    bottom_cursor = 0
+    last_frame = None
+    source_frame_index = -1
+    try:
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        for frame_index in range(frame_limit):
+            check_cancelled()
+            target_source_index = int(math.floor((frame_index * max(1.0, source_fps)) / fps + 1e-7))
+            while source_frame_index < target_source_index:
+                ok, decoded = capture.read()
+                if not ok:
+                    break
+                last_frame = decoded
+                source_frame_index += 1
+            if last_frame is None:
+                break
+            frame = last_frame
+            timestamp_ms = (frame_index * 1000.0) / fps
+            top_keyframe, top_cursor = _evaluate_crop_keyframe(top_frames, timestamp_ms, top_cursor)
+            bottom_keyframe, bottom_cursor = _evaluate_crop_keyframe(bottom_frames, timestamp_ms, bottom_cursor)
+            top_pane = _resolve_pane_crop(frame, source_width, source_height, OUTPUT_WIDTH, pane_height_top, top_keyframe)
+            bottom_pane = _resolve_pane_crop(frame, source_width, source_height, OUTPUT_WIDTH, pane_height_bottom, bottom_keyframe)
+            stacked = cv2.vconcat([top_pane, bottom_pane])
+            if stacked.shape[0] != OUTPUT_HEIGHT or stacked.shape[1] != OUTPUT_WIDTH:
+                raise RuntimeError("Split-screen stack did not match the delivery canvas")
+            process.stdin.write(stacked.tobytes())
+            rendered += 1
+        process.stdin.close()
+        stderr = process.stderr.read().decode("utf-8", "replace")
+        result = process.wait()
+        if result != 0 or rendered <= 0:
+            raise RuntimeError(stderr[-1600:] or "split-screen encoder failed")
+        if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 1024:
+            raise RuntimeError("split-screen encoder did not create an output")
+        return True
+    except Exception:
+        try:
+            if process and process.stdin and not process.stdin.closed:
+                process.stdin.close()
+            if process:
+                process.kill()
+                process.wait(timeout=5)
+        except Exception:
+            pass
+        if os.path.isfile(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        return False
+    finally:
+        capture.release()
+
+
 def render_tracking_debug_overlay(
     input_path,
     output_path,
@@ -2805,23 +3177,168 @@ def persist_clip_artifacts(artifact_dir, *, words, meta, plate_path=None, subtit
     return crop_plan
 
 
+FISH_ASR_URL = "https://api.fish.audio/v1/asr"
+# Fish ASR is a single-shot REST upload, so long sources are chunked. Five
+# minutes keeps each request well inside the endpoint's limits and bounds the
+# amount of audio that has to be re-sent if one chunk fails.
+FISH_ASR_CHUNK_SECONDS = 300
+
+
+def _multipart_body(fields, files):
+    """Encode a multipart/form-data body using only the standard library.
+
+    The clipper runs under whatever `python3` the desktop app ships with;
+    depending on `requests` here would add an install-time failure mode to a
+    core transcription path for no benefit over ~20 lines of encoding.
+    """
+    boundary = f"----ClyraFormBoundary{uuid.uuid4().hex}"
+    buffer = bytearray()
+    for name, value in fields.items():
+        buffer += f"--{boundary}\r\n".encode()
+        buffer += f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+        buffer += f"{value}\r\n".encode()
+    for name, (filename, content, content_type) in files.items():
+        buffer += f"--{boundary}\r\n".encode()
+        buffer += f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
+        buffer += f"Content-Type: {content_type}\r\n\r\n".encode()
+        buffer += content
+        buffer += b"\r\n"
+    buffer += f"--{boundary}--\r\n".encode()
+    return bytes(buffer), f"multipart/form-data; boundary={boundary}"
+
+
+def fish_asr_words(wav_path, api_key, offset_seconds=0.0, language="en", timeout=180):
+    """Word-level transcript for one WAV via Fish Audio ASR.
+
+    The live voice pipeline sends `ignore_timestamps=true` because a call only
+    needs the text. The clipper is the opposite case: word timings *are* the
+    product, since every caption beat and transcript-driven cut is derived
+    from them, so timestamps are explicitly requested here.
+    """
+    with open(wav_path, "rb") as handle:
+        audio = handle.read()
+    body, content_type = _multipart_body(
+        {"language": language, "ignore_timestamps": "false"},
+        {"audio": ("audio.wav", audio, "audio/wav")},
+    )
+    request = urllib.request.Request(
+        FISH_ASR_URL,
+        data=body,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": content_type},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    words = []
+    for segment in payload.get("segments") or []:
+        # Match the local-Whisper path's normalisation exactly so captions,
+        # filler detection and transcript search behave identically no matter
+        # which backend produced the words.
+        token = re.sub(r"[^A-Za-z0-9']+", "", str(segment.get("text") or "").strip()).upper()
+        if not token:
+            continue
+        start = max(0.0, float(segment.get("start") or 0.0)) + offset_seconds
+        end = max(start + 0.05, float(segment.get("end") or 0.0) + offset_seconds)
+        words.append({"word": token[:28], "start": start, "end": end})
+    return words
+
+
+def transcribe_with_fish(clip_path):
+    """Transcribe through Fish Audio, chunking long sources. [] when unusable."""
+    api_key = os.environ.get("FISH_AUDIO_API_KEY", "").strip()
+    if not api_key:
+        return []
+    try:
+        duration = probe_duration(clip_path)
+    except Exception:
+        duration = 0.0
+
+    work_dir = tempfile.mkdtemp(prefix="clyra-fish-asr-")
+    words = []
+    try:
+        offset = 0.0
+        index = 0
+        while offset < max(duration, 0.1):
+            check_cancelled()
+            chunk = os.path.join(work_dir, f"chunk-{index:04d}.wav")
+            # 16 kHz mono is what ASR wants; it also keeps each upload small.
+            run_ffmpeg([
+                "-ss", f"{offset:.3f}", "-t", str(FISH_ASR_CHUNK_SECONDS), "-i", clip_path,
+                "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", chunk,
+            ], timeout=180)
+            if not os.path.isfile(chunk) or os.path.getsize(chunk) <= 1024:
+                break
+            words.extend(fish_asr_words(chunk, api_key, offset_seconds=offset))
+            # Report billable audio for this chunk so the credit ledger sees
+            # real ASR usage. Emitted only after the call succeeds — a failed
+            # or cancelled chunk is not charged by Fish and must not be
+            # charged here either. 16-bit mono @ 16 kHz = 32000 bytes/second.
+            billed_seconds = max(0.0, (os.path.getsize(chunk) - 44) / 32000.0)
+            emit(
+                "usage",
+                "running",
+                provider="fish-audio",
+                model="transcribe-1",
+                feature="clipper-transcription",
+                units={"audioSeconds": round(billed_seconds, 3), "requests": 1},
+            )
+            os.remove(chunk)
+            offset += FISH_ASR_CHUNK_SECONDS
+            index += 1
+            if duration <= 0:
+                break  # unknown duration: one pass only, never an endless loop
+        return words
+    except PipelineCancelled:
+        raise
+    except Exception as error:
+        # Fish being unreachable must degrade to local Whisper, never fail the
+        # whole job — transcription is on the critical path for every clip.
+        emit("captions", "running", message=f"Fish Audio transcription unavailable ({error}); using local model.")
+        return []
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def transcribe_clip_words(clip_path):
     global _FASTER_WHISPER_MODEL, _OPENAI_WHISPER_MODEL
     expose_ffmpeg_to_subprocesses()
+
+    # Fish Audio is Clyra's own speech provider — the same account and key the
+    # live voice call already uses — so the clipper defaults to it rather than
+    # running a second, unrelated local model. It is also the right choice on
+    # the Low Memory profile: the work happens off-device, so a 4 GB machine
+    # never loads model weights at all. Local Whisper remains the fallback for
+    # offline use and when no key is configured.
+    if STT_BACKEND in {"fish", "auto"} and os.environ.get("FISH_AUDIO_API_KEY", "").strip():
+        fish_words = transcribe_with_fish(clip_path)
+        if fish_words:
+            return fish_words
+        if STT_BACKEND == "fish":
+            # Explicitly pinned to Fish: say so rather than silently switching
+            # to a local model the user did not ask for.
+            emit("captions", "running", message="Fish Audio returned no transcript; falling back to the local model.")
 
     words = []
     try:
         from faster_whisper import WhisperModel
 
-        model_name = os.environ.get("CLIPPER_WHISPER_MODEL", "base.en")
-        compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+        # The active processing profile chooses the model size and beam width;
+        # an explicit env override still wins so a power user can pin a model.
+        model_name = os.environ.get("CLIPPER_WHISPER_MODEL") or ACTIVE_PROFILE["whisper_model"]
+        compute_type = os.environ.get("WHISPER_COMPUTE_TYPE") or ACTIVE_PROFILE["whisper_compute"]
         if _FASTER_WHISPER_MODEL is None:
-            _FASTER_WHISPER_MODEL = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+            _FASTER_WHISPER_MODEL = WhisperModel(
+                model_name,
+                device="cpu",
+                compute_type=compute_type,
+                cpu_threads=ACTIVE_PROFILE["ffmpeg_threads"] or 0,
+            )
         segments, _info = _FASTER_WHISPER_MODEL.transcribe(
             clip_path,
             word_timestamps=True,
             vad_filter=True,
-            beam_size=3,
+            beam_size=ACTIVE_PROFILE["whisper_beam"],
             language="en",
             condition_on_previous_text=False,
         )
@@ -2840,7 +3357,7 @@ def transcribe_clip_words(clip_path):
 
     import whisper
 
-    model_name = os.environ.get("CLIPPER_WHISPER_MODEL", "base.en")
+    model_name = os.environ.get("CLIPPER_WHISPER_MODEL") or ACTIVE_PROFILE["whisper_model"]
     if _OPENAI_WHISPER_MODEL is None:
         _OPENAI_WHISPER_MODEL = whisper.load_model(model_name)
     result = _OPENAI_WHISPER_MODEL.transcribe(
@@ -3287,32 +3804,57 @@ def refine_clip(cfg):
     frame_w, frame_h = probe_video_size(FFPROBE, FFMPEG, plate_path)
     plate_quality = source_quality_report(plate_path)
     faces_dir = os.path.join(artifact_dir, "faces")
-    crop_plan = track_faces_and_build_crops(
-        FFMPEG,
-        plate_path,
-        0.0,
-        clip_duration,
-        OUTPUT_WIDTH,
-        OUTPUT_HEIGHT,
-        mode=face_cfg["mode"] if face_cfg["enabled"] else "off",
-        selected_track_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
-        selected_person_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
-        person_mode=face_cfg.get("personMode") or face_cfg.get("sceneMode", "strict"),
-        scene_mode=face_cfg.get("sceneMode") or face_cfg.get("personMode", "strict"),
-        allow_zoom=face_cfg.get("allowZoom", True),
-        crop_focus=crop_focus,
-        cache_root=os.path.join(TMP_ROOT, "clipper-face-cache"),
-        frame_w=frame_w,
-        frame_h=frame_h,
-        shot_boundaries=shot_boundaries,
-        scene_rules=face_cfg.get("sceneRules"),
-        thumb_dir=faces_dir,
-        reframe_mode=face_cfg.get("reframeMode", "auto"),
-        speaker_mode=face_cfg.get("speakerMode", "auto"),
-        tracking_quality=face_cfg.get("trackingQuality", "balanced"),
-        split_screen_requested=face_cfg.get("splitScreenRequested", False),
-        source_fps=tracking_source_frame_rate(plate_quality),
-    )
+    if face_cfg["enabled"] and face_cfg.get("splitScreenRequested"):
+        crop_plan = track_faces_and_build_split_screen_crops(
+            FFMPEG,
+            plate_path,
+            0.0,
+            clip_duration,
+            OUTPUT_WIDTH,
+            OUTPUT_HEIGHT,
+            mode=face_cfg["mode"],
+            person_mode=face_cfg.get("personMode") or face_cfg.get("sceneMode", "strict"),
+            scene_mode=face_cfg.get("sceneMode") or face_cfg.get("personMode", "strict"),
+            allow_zoom=face_cfg.get("allowZoom", True),
+            crop_focus=crop_focus,
+            cache_root=os.path.join(TMP_ROOT, "clipper-face-cache"),
+            frame_w=frame_w,
+            frame_h=frame_h,
+            shot_boundaries=shot_boundaries,
+            scene_rules=face_cfg.get("sceneRules"),
+            thumb_dir=faces_dir,
+            reframe_mode=face_cfg.get("reframeMode", "auto"),
+            speaker_mode=face_cfg.get("speakerMode", "auto"),
+            tracking_quality=face_cfg.get("trackingQuality", "balanced"),
+            source_fps=tracking_source_frame_rate(plate_quality),
+        )
+    else:
+        crop_plan = track_faces_and_build_crops(
+            FFMPEG,
+            plate_path,
+            0.0,
+            clip_duration,
+            OUTPUT_WIDTH,
+            OUTPUT_HEIGHT,
+            mode=face_cfg["mode"] if face_cfg["enabled"] else "off",
+            selected_track_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
+            selected_person_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
+            person_mode=face_cfg.get("personMode") or face_cfg.get("sceneMode", "strict"),
+            scene_mode=face_cfg.get("sceneMode") or face_cfg.get("personMode", "strict"),
+            allow_zoom=face_cfg.get("allowZoom", True),
+            crop_focus=crop_focus,
+            cache_root=os.path.join(TMP_ROOT, "clipper-face-cache"),
+            frame_w=frame_w,
+            frame_h=frame_h,
+            shot_boundaries=shot_boundaries,
+            scene_rules=face_cfg.get("sceneRules"),
+            thumb_dir=faces_dir,
+            reframe_mode=face_cfg.get("reframeMode", "auto"),
+            speaker_mode=face_cfg.get("speakerMode", "auto"),
+            tracking_quality=face_cfg.get("trackingQuality", "balanced"),
+            split_screen_requested=face_cfg.get("splitScreenRequested", False),
+            source_fps=tracking_source_frame_rate(plate_quality),
+        )
     if not face_cfg["enabled"] and face_cfg.get("smartReframe", True):
         crop_plan = build_smart_reframe_keyframes(crop_plan)
     selected_id = face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId")
@@ -3397,31 +3939,47 @@ def refine_clip(cfg):
             overall=40 + 55 * fraction,
         )
 
-    render_from_plate(
+    split_applied = bool((crop_plan.get("faceTracking") or {}).get("splitScreenApplied"))
+    if split_applied and render_split_screen_from_master(
         plate_path,
         clean_clip_path,
-        crop_focus=crop_focus,
-        crop_keyframes=(
-            crop_plan.get("cropKeyframes")
-            if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
-            else None
-        ),
-        sendcmd_path=(
-            sendcmd_path
-            if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
-            else None
-        ),
-        preserve_source=bool((crop_plan.get("faceTracking") or {}).get("preserveSource")),
-        fit_source=(
-            not bool((crop_plan.get("faceTracking") or {}).get("enabled"))
-            and not bool((crop_plan.get("faceTracking") or {}).get("smartReframe"))
-            and (frame_w / max(1, frame_h)) > (OUTPUT_WIDTH / max(1, OUTPUT_HEIGHT)) + 0.02
-        ),
-        render_quality=render_quality,
+        0.0,
+        clip_duration,
+        crop_plan.get("cropKeyframesTop"),
+        crop_plan.get("cropKeyframesBottom"),
+        (crop_plan.get("faceTracking") or {}).get("paneHeightTop") or OUTPUT_HEIGHT // 2,
+        (crop_plan.get("faceTracking") or {}).get("paneHeightBottom") or (OUTPUT_HEIGHT - OUTPUT_HEIGHT // 2),
         subtitle_path=subtitle_path if effective_captions_enabled and subtitle_count > 0 and burn_captions else None,
         output_fps=output_frame_rate(plate_quality),
-        progress_callback=report_refine_progress,
-    )
+        render_quality=render_quality,
+    ):
+        pass
+    else:
+        render_from_plate(
+            plate_path,
+            clean_clip_path,
+            crop_focus=crop_focus,
+            crop_keyframes=(
+                crop_plan.get("cropKeyframes")
+                if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
+                else None
+            ),
+            sendcmd_path=(
+                sendcmd_path
+                if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
+                else None
+            ),
+            preserve_source=bool((crop_plan.get("faceTracking") or {}).get("preserveSource")),
+            fit_source=(
+                not bool((crop_plan.get("faceTracking") or {}).get("enabled"))
+                and not bool((crop_plan.get("faceTracking") or {}).get("smartReframe"))
+                and (frame_w / max(1, frame_h)) > (OUTPUT_WIDTH / max(1, OUTPUT_HEIGHT)) + 0.02
+            ),
+            render_quality=render_quality,
+            subtitle_path=subtitle_path if effective_captions_enabled and subtitle_count > 0 and burn_captions else None,
+            output_fps=output_frame_rate(plate_quality),
+            progress_callback=report_refine_progress,
+        )
     # `render_from_plate` composes captions after the crop in its only final
     # encode. Copy the finished artifact rather than adding a second lossy
     # subtitle pass that could make captions appear soft or move with a crop.
@@ -3762,6 +4320,25 @@ def main():
         video_understanding_profile = str(
             cfg.get("video_understanding_profile") or cfg.get("videoUnderstandingProfile") or "8gb_cpu"
         ).strip().lower() or "8gb_cpu"
+        # The analysis budget (Whisper size, proxy height, thread caps). Left
+        # on "auto" this detects small machines and drops to Low Memory.
+        global ACTIVE_PROFILE_NAME, ACTIVE_PROFILE, ACTIVE_PROFILE_REASON, AUDIO_CLEANUP_ENABLED
+        ACTIVE_PROFILE_NAME, ACTIVE_PROFILE, ACTIVE_PROFILE_REASON = resolve_processing_profile(
+            cfg.get("processing_profile") or cfg.get("processingProfile")
+            or os.environ.get("CLYRA_PROCESSING_PROFILE")
+        )
+        AUDIO_CLEANUP_ENABLED = config_flag(
+            cfg.get("speech_cleanup", cfg.get("speechCleanup")), True
+        )
+        emit(
+            "captions",
+            "running",
+            message=f"{ACTIVE_PROFILE['label']} processing profile "
+                    f"({ACTIVE_PROFILE['whisper_model']} transcription, {ACTIVE_PROFILE['proxy_height']}p analysis).",
+            processingProfile=ACTIVE_PROFILE_NAME,
+            processingProfileReason=ACTIVE_PROFILE_REASON,
+            speechCleanup=AUDIO_CLEANUP_ENABLED,
+        )
         # A custom request is the retrieval query.  The broad objective remains
         # useful for scoring, but must not replace what the user actually asked
         # Clyra to find.
@@ -4381,19 +4958,8 @@ def main():
                 tracking_frame_w, tracking_frame_h = frame_w, frame_h
             emit("clip", "running", message=f"Planning subject framing for candidate {candidate_index + 1}...")
             faces_dir = os.path.join(artifact_dir, "faces")
-            crop_plan = track_faces_and_build_crops(
-                FFMPEG,
-                track_source,
-                0.0 if os.path.isfile(plate_path) else clip_start,
-                clip_duration,
-                OUTPUT_WIDTH,
-                OUTPUT_HEIGHT,
-                # Even with visible face/body tracking switched off we retain
-                # the lightweight analysis pass. Its active-speaker and
-                # exit-risk evidence powers the discrete smart reframe mode.
+            split_screen_kwargs = dict(
                 mode=face_cfg["mode"] if face_cfg["enabled"] else "off",
-                selected_track_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
-                selected_person_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
                 person_mode=face_cfg.get("personMode") or face_cfg.get("sceneMode", "strict"),
                 scene_mode=face_cfg.get("sceneMode") or face_cfg.get("personMode", "strict"),
                 allow_zoom=face_cfg.get("allowZoom", True),
@@ -4416,9 +4982,31 @@ def main():
                 reframe_mode=face_cfg.get("reframeMode", "auto"),
                 speaker_mode=face_cfg.get("speakerMode", "auto"),
                 tracking_quality=face_cfg.get("trackingQuality", "balanced"),
-                split_screen_requested=face_cfg.get("splitScreenRequested", False),
                 source_fps=tracking_source_frame_rate(source_quality),
             )
+            if face_cfg["enabled"] and face_cfg.get("splitScreenRequested"):
+                crop_plan = track_faces_and_build_split_screen_crops(
+                    FFMPEG,
+                    track_source,
+                    0.0 if os.path.isfile(plate_path) else clip_start,
+                    clip_duration,
+                    OUTPUT_WIDTH,
+                    OUTPUT_HEIGHT,
+                    **split_screen_kwargs,
+                )
+            else:
+                crop_plan = track_faces_and_build_crops(
+                    FFMPEG,
+                    track_source,
+                    0.0 if os.path.isfile(plate_path) else clip_start,
+                    clip_duration,
+                    OUTPUT_WIDTH,
+                    OUTPUT_HEIGHT,
+                    selected_track_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
+                    selected_person_id=face_cfg.get("selectedPersonId") or face_cfg.get("selectedTrackId"),
+                    split_screen_requested=face_cfg.get("splitScreenRequested", False),
+                    **split_screen_kwargs,
+                )
             if not face_cfg["enabled"] and face_cfg.get("smartReframe", True):
                 crop_plan = build_smart_reframe_keyframes(crop_plan)
                 emit(
@@ -4568,6 +5156,19 @@ def main():
                     render_caption_x,
                     render_caption_y,
                 )
+                # An SRT sidecar next to the artifact: platforms and editors
+                # consume this as text, so it is phrase-grouped rather than
+                # mirroring the one-word karaoke beats burned into the video.
+                try:
+                    write_srt(
+                        os.path.join(artifact_dir, "captions.srt"),
+                        transcribed_words,
+                        0.0,
+                        clip_duration,
+                    )
+                except Exception as exc:
+                    # A sidecar is an extra, never a reason to fail a render.
+                    emit("subtitles", "running", message=f"SRT sidecar skipped: {exc}")
             emit("subtitles", "complete", message=(f"{subtitle_count} frame-safe caption beats prepared" if candidate_captions_enabled else "Using existing source captions; no duplicate Clyra caption layer added"), word_count=subtitle_count, caption_collision=caption_collision, overall=candidate_progress(0.35))
 
             emit("render", "running", message=f"Encoding candidate {candidate_index + 1} of {len(candidates)}...", overall=candidate_progress(0.37))
@@ -4585,44 +5186,61 @@ def main():
             render_source = master_source or (source if local_source and os.path.isfile(source) else stream_url)
             render_start = absolute_clip_start if master_source else clip_start
             render_fallback = master_source or fallback_path
-            final_render_source = render_final_from_master(
+            split_applied = bool((crop_plan.get("faceTracking") or {}).get("splitScreenApplied"))
+            final_render_source = None
+            if split_applied and os.path.isfile(str(render_source or "")) and render_split_screen_from_master(
                 render_source,
-                render_fallback,
                 output_path,
                 render_start,
                 clip_duration,
-                crop_focus=crop_focus,
-                crop_keyframes=(
-                    crop_plan.get("cropKeyframes")
-                    if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
-                    else None
-                ),
-                sendcmd_path=(
-                    sendcmd_path
-                    if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
-                    else None
-                ),
+                crop_plan.get("cropKeyframesTop"),
+                crop_plan.get("cropKeyframesBottom"),
+                (crop_plan.get("faceTracking") or {}).get("paneHeightTop") or OUTPUT_HEIGHT // 2,
+                (crop_plan.get("faceTracking") or {}).get("paneHeightBottom") or (OUTPUT_HEIGHT - OUTPUT_HEIGHT // 2),
                 subtitle_path=subtitle_path if candidate_captions_enabled and burn_captions else None,
                 output_fps=output_frame_rate(source_quality),
                 render_quality=render_quality,
-                progress_callback=report_encode_progress,
-                preserve_source=bool((crop_plan.get("faceTracking") or {}).get("preserveSource")),
-                fit_source=(
-                    (crop_plan.get("faceTracking") or {}).get("backend") == "stable-fallback"
-                    # A low-detail landscape crop is still allowed to follow a
-                    # verified subject.  The prior condition disabled the
-                    # dynamic crop for *every* normal 16:9 source because its
-                    # native 9:16 section is narrower than 1080px, silently
-                    # rendering a static centre crop despite stored tracking
-                    # keyframes. Use the static fill only when tracking is
-                    # disabled or has explicitly fallen back.
-                    or (
-                        not bool((crop_plan.get("faceTracking") or {}).get("enabled"))
-                        and not bool((crop_plan.get("faceTracking") or {}).get("smartReframe"))
-                        and source_needs_full_frame_fill(source_quality)
-                    )
-                ),
-            )
+            ):
+                final_render_source = "source-master-split-screen"
+            if final_render_source is None:
+                final_render_source = render_final_from_master(
+                    render_source,
+                    render_fallback,
+                    output_path,
+                    render_start,
+                    clip_duration,
+                    crop_focus=crop_focus,
+                    crop_keyframes=(
+                        crop_plan.get("cropKeyframes")
+                        if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
+                        else None
+                    ),
+                    sendcmd_path=(
+                        sendcmd_path
+                        if face_cfg["enabled"] or (crop_plan.get("faceTracking") or {}).get("smartReframe")
+                        else None
+                    ),
+                    subtitle_path=subtitle_path if candidate_captions_enabled and burn_captions else None,
+                    output_fps=output_frame_rate(source_quality),
+                    render_quality=render_quality,
+                    progress_callback=report_encode_progress,
+                    preserve_source=bool((crop_plan.get("faceTracking") or {}).get("preserveSource")),
+                    fit_source=(
+                        (crop_plan.get("faceTracking") or {}).get("backend") == "stable-fallback"
+                        # A low-detail landscape crop is still allowed to follow a
+                        # verified subject.  The prior condition disabled the
+                        # dynamic crop for *every* normal 16:9 source because its
+                        # native 9:16 section is narrower than 1080px, silently
+                        # rendering a static centre crop despite stored tracking
+                        # keyframes. Use the static fill only when tracking is
+                        # disabled or has explicitly fallen back.
+                        or (
+                            not bool((crop_plan.get("faceTracking") or {}).get("enabled"))
+                            and not bool((crop_plan.get("faceTracking") or {}).get("smartReframe"))
+                            and source_needs_full_frame_fill(source_quality)
+                        )
+                    ),
+                )
             if not os.path.exists(output_path) or os.path.getsize(output_path) <= 1024:
                 fail(f"Encoder did not produce candidate {candidate_index + 1}")
 

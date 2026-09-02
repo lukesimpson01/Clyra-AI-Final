@@ -31,6 +31,7 @@ export const BLOCK_TYPES = {
   breadcrumb:  { label: "Breadcrumb", icon: "move", group: "Advanced", desc: "Show where this page sits.", keywords: "path parents nav" },
   toc:         { label: "Table of contents", icon: "list", group: "Advanced", desc: "Build a list of headings.", keywords: "outline contents toc" },
   table:       { label: "Table", icon: "table", group: "Advanced", desc: "A simple table of rows and columns.", keywords: "grid rows columns spreadsheet" },
+  chart:       { label: "Cartesian graph", icon: "chart", group: "Advanced", desc: "Plot a Cartesian plane, line, scatter or bar chart.", keywords: "graph plot cartesian plane x y chart visualize data table" },
   columns:     { label: "Columns", icon: "panel", group: "Advanced", desc: "Place blocks side by side.", keywords: "layout side columns" },
   key_term:    { label: "Key term", icon: "book", group: "Study", desc: "A term with its definition.", keywords: "definition glossary vocabulary" },
   study_summary:{ label: "Study summary", icon: "target", group: "Study", desc: "A summary panel for revision.", keywords: "recap revision overview" },
@@ -53,6 +54,7 @@ export const HEADINGS = new Set(["h1", "h2", "h3", "toggle_h1", "toggle_h2", "to
 export const TURN_INTO = [
   "text", "h1", "h2", "h3", "bulleted", "numbered", "todo", "toggle",
   "toggle_h1", "toggle_h2", "toggle_h3", "quote", "callout", "code", "equation", "key_term",
+  "chart",
 ];
 
 export const PLACEHOLDERS = {

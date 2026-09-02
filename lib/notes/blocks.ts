@@ -32,7 +32,7 @@ export type BlockType =
   | "toggle" | "toggle_h1" | "toggle_h2" | "toggle_h3"
   | "quote" | "callout" | "divider" | "code" | "equation"
   | "image" | "video" | "audio" | "file" | "pdf" | "bookmark" | "embed"
-  | "table" | "columns" | "column"
+  | "table" | "chart" | "columns" | "column"
   | "page" | "link_to_page" | "breadcrumb" | "toc" | "database" | "synced" | "button"
   | "flashcard_set" | "flashcard" | "quiz" | "question" | "key_term"
   | "study_summary" | "exam_checklist" | "source" | "transcript" | "objective";
@@ -45,7 +45,7 @@ export const CONTAINER_TYPES = new Set<BlockType>([
 /* Types that hold no editable inline text of their own. */
 export const VOID_TYPES = new Set<BlockType>([
   "divider", "image", "video", "audio", "file", "pdf", "bookmark", "embed",
-  "table", "columns", "breadcrumb", "toc", "database", "synced", "button",
+  "table", "chart", "columns", "breadcrumb", "toc", "database", "synced", "button",
   "flashcard_set", "quiz", "source", "transcript", "link_to_page", "page",
 ]);
 
@@ -188,6 +188,15 @@ export function markdownToBlocks(markdown: string): DraftBlock[] {
       append(draft("code", plain(code.join("\n")), { language: fence[1] || "plain" }), indent);
       continue;
     }
+    const chart = body.match(/^:::chart(?:\s+(\{.*\}))?$/i);
+    if (chart) {
+      while (index < lines.length && lines[index]!.trim() !== ":::") index += 1;
+      if (index < lines.length) index += 1;
+      let props: Record<string, unknown> = {};
+      try { props = chart[1] ? JSON.parse(chart[1]) : {}; } catch { /* keep defaults */ }
+      append(draft("chart", [], props), indent);
+      continue;
+    }
     if (/^(---|\*\*\*|___)$/.test(body)) {
       append(draft("divider"), indent);
       continue;
@@ -256,6 +265,12 @@ export function blocksToMarkdown(blocks: Block[], depth = 0): string {
           const line = (row: string[]) => `${pad}| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
           out.push([line(rows[0]!), `${pad}|${" --- |".repeat(width)}`, ...rows.slice(1).map(line)].join("\n"));
         }
+        break;
+      }
+      case "chart": {
+        /* A fenced directive is both human-readable and lossless on import;
+           JSON is data-only and never executed by the markdown parser. */
+        out.push(`${pad}:::chart ${JSON.stringify(block.props || {})}\n${pad}:::`);
         break;
       }
 

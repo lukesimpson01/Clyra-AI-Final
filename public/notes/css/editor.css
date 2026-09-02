@@ -26,6 +26,10 @@
 .page-canvas.text-xl { font-size: 18px; }
 .page-canvas.font-serif { font-family: var(--font-serif); }
 .page-canvas.font-mono { font-family: var(--font-mono); }
+/* Comfortaa reads a touch small and loose next to the UI stack, so the
+   rounded setting nudges size and tracking back to the same rhythm. */
+.page-canvas.font-rounded { font-family: var(--font-rounded); letter-spacing: -0.006em; }
+.page-canvas.font-rounded .text-line { font-size: 15.6px; }
 
 .page-head { padding-top: 96px; }
 .page-canvas.has-cover .page-head { padding-top: 24px; }
@@ -110,7 +114,7 @@
   outline: none; padding: 3px 2px; min-height: 1.5em;
   word-break: break-word; white-space: pre-wrap;
 }
-.text-line[data-placeholder]:empty::before {
+.text-line[data-placeholder][data-empty="true"]::before {
   content: attr(data-placeholder); color: var(--text-placeholder); pointer-events: none;
 }
 
@@ -127,6 +131,10 @@
 }
 .block[data-type="numbered"] .block-marker { font-variant-numeric: tabular-nums; font-size: 0.95em; }
 .block[data-type="bulleted"] .block-marker::before { content: "•"; font-size: 1.15em; line-height: 1.3; }
+.block[data-type="bulleted"][data-list-style="dash"] .block-marker::before { content: "–"; font-size: 1.05em; }
+.block[data-type="bulleted"][data-list-style="arrow"] .block-marker::before { content: "→"; font-size: 1em; }
+.block[data-type="bulleted"][data-list-style="check"] .block-marker::before { content: "✓"; color: var(--accent); font-size: .95em; font-weight: 650; }
+.bullet-style-marker { display: inline-grid; width: 16px; place-items: center; color: var(--text-secondary); font-size: 14px; }
 
 .todo-check {
   flex: none; width: 16px; height: 16px; margin: 5px 8px 0 4px;
@@ -198,6 +206,39 @@
   background: var(--background-subtle); border-radius: 3px;
 }
 
+/* Instant local-math result. This deliberately reads as a quiet annotation,
+   not as assistant output, because no model or network request produced it. */
+.smart-answer {
+  display: flex; align-items: center; gap: 6px; min-height: 24px;
+  margin: 3px 2px 0; color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px;
+}
+.smart-answer[hidden] { display: none; }
+.smart-answer svg { flex: none; color: var(--accent-text); }
+.smart-answer-label { color: var(--text-tertiary); }
+.smart-answer strong { color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 550; }
+.smart-answer-copy { width: 23px; height: 23px; margin-left: -1px; border-radius: var(--radius-sm); color: var(--text-tertiary); opacity: 0; transition: opacity var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease); }
+.smart-answer:hover .smart-answer-copy, .smart-answer:focus-within .smart-answer-copy { opacity: 1; }
+.smart-answer-copy:hover { background: var(--background-hover); color: var(--text-primary); }
+.equation-block .smart-answer { justify-content: center; margin-top: 7px; }
+
+/* Inline deterministic math: the answer lives on the typing row and teaches
+   the one-keystroke acceptance affordance without looking like assistant
+   prose. It collapses completely when the expression is incomplete. */
+.smart-inline-answer {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  margin: 0 0 0 8px; padding: 3px 7px; border: 1px solid var(--border-soft);
+  border-radius: 999px; background: var(--background-subtle);
+  color: var(--text-secondary); font-size: 11.5px; line-height: 1.2;
+  vertical-align: middle; white-space: nowrap; transition: background var(--duration-hover) var(--ease), border-color var(--duration-hover) var(--ease);
+}
+.block-content:has(> .smart-inline-answer) { display: flex; align-items: center; min-width: 0; }
+.block-content:has(> .smart-inline-answer) > .text-line { flex: 1; min-width: 0; }
+.smart-inline-answer[hidden] { display: none; }
+.smart-inline-answer:hover, .smart-inline-answer:focus-within { background: var(--background-hover); border-color: var(--border-medium); }
+.smart-inline-answer svg { color: var(--accent-text); flex: none; }
+.smart-inline-answer strong { color: var(--text-primary); font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; }
+.smart-inline-hint { color: var(--text-tertiary); border-left: 1px solid var(--border-soft); padding-left: 6px; }
+
 .media-block { margin: 6px 0; }
 .media-block img, .media-block video { max-width: 100%; border-radius: var(--radius); display: block; }
 .media-block audio { width: 100%; }
@@ -233,12 +274,44 @@
 .page-link-block .page-icon { width: 22px; height: 22px; font-size: 17px; color: var(--text-secondary); }
 .page-link-block .name { border-bottom: 1px solid var(--border-medium); font-weight: 500; }
 
-.toc-block { margin: 6px 0; font-size: 14px; }
-.toc-block a { display: block; padding: 3px 4px; border-radius: var(--radius-sm); color: var(--text-secondary); text-decoration: none; }
-.toc-block a:hover { background: var(--background-hover); color: var(--text-primary); }
-.toc-block a[data-level="2"] { padding-left: 20px; }
-.toc-block a[data-level="3"] { padding-left: 36px; }
-.toc-empty { color: var(--text-tertiary); font-size: 13.5px; padding: 4px; }
+.toc-block {
+  margin: 10px 0; font-size: 14px; padding: 10px 12px 12px;
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+  background: var(--background-subtle);
+}
+.toc-head {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  color: var(--text-tertiary); font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.toc-list { display: flex; flex-direction: column; gap: 1px; }
+.toc-item {
+  display: flex; align-items: baseline; gap: 8px; padding: 4px 6px;
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  text-decoration: none; line-height: 1.4;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.toc-item:hover { background: var(--background-hover); color: var(--text-primary); }
+.toc-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.toc-item .toc-text { text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 2px; }
+.toc-item:hover .toc-text { text-decoration-color: var(--border-strong); }
+.toc-dot {
+  flex: none; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--border-strong); transform: translateY(-2px);
+  transition: background var(--duration-hover) var(--ease), transform var(--duration-hover) var(--ease);
+}
+.toc-item[data-level="1"] { font-weight: 550; color: var(--text-primary); }
+.toc-item[data-level="2"] { padding-left: 22px; font-size: 13.5px; }
+.toc-item[data-level="3"] { padding-left: 38px; font-size: 13px; color: var(--text-tertiary); }
+.toc-item[data-level="3"] .toc-dot { width: 3px; height: 3px; }
+.toc-item.active { color: var(--accent); background: var(--accent-soft); }
+.toc-item.active .toc-dot { background: var(--accent); transform: translateY(-2px) scale(1.4); }
+.toc-empty { display: flex; align-items: center; gap: 7px; color: var(--text-tertiary); font-size: 13.5px; padding: 2px; }
+
+/* A heading jumped to from the contents flashes once, so the reader can see
+   where the page landed without hunting for the caret. */
+.block.jump-target > .block-row > .block-content { animation: jump-flash 900ms var(--ease-out); border-radius: var(--radius-sm); }
+@keyframes jump-flash { from { background: var(--accent-soft); } to { background: transparent; } }
 
 .columns { display: flex; gap: 22px; margin: 4px 0; align-items: flex-start; }
 .column { flex: 1; min-width: 0; }
@@ -277,10 +350,12 @@
 /* Dense single-line rows: an icon, the block name, and the markdown
    shortcut that produces the same block, so the menu teaches the shortcut. */
 .slash-menu {
-  min-width: 380px; max-width: 380px; padding: 6px 6px 0;
+  min-width: 360px; max-width: 360px; padding: 5px 5px 0;
   display: flex; flex-direction: column;
   max-height: min(56vh, 460px); overflow: hidden;
 }
+.equation-slash-menu { min-width: 310px; max-width: 360px; }
+.equation-slash-menu .menu-item { min-height: 34px; }
 .slash-menu .menu-label { padding: 8px 10px 4px; }
 .slash-scroll { overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; margin: 0 -6px; padding: 0 6px; }
 .slash-item { height: 34px; gap: 11px; padding: 0 10px; }
@@ -358,18 +433,100 @@
 .callout-children { margin-left: 0; }
 .callout-children:empty { display: none; }
 
-.table-block { margin: 6px 0; }
-.table-scroll { max-width: 100%; }
-.note-table { border-collapse: collapse; width: max-content; min-width: 100%; }
-.note-table th, .note-table td {
-  border: 1px solid var(--border-soft); padding: 6px 9px; min-width: 110px;
-  text-align: left; vertical-align: top; outline: none; font-size: 0.94em;
+.table-block { margin: 8px 0; --table-rail: 14px; }
+.table-scroll { max-width: 100%; padding-left: 1px; }
+.note-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
+
+/* The grips sit in a real rail row and rail column so they scroll with the
+   table and can never sit on top of a cell being typed into. */
+.table-rail-row td, .rail-row { border: 0; background: transparent; padding: 0; min-width: 0; }
+.table-rail-row td { height: var(--table-rail); }
+.rail-row, .rail-corner { width: var(--table-rail); }
+.table-grip {
+  width: 100%; height: 100%; min-width: 10px; min-height: 10px; border: 0; padding: 0; cursor: pointer;
+  border-radius: 3px; background: var(--border-medium); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease);
 }
-.note-table th { background: var(--background-subtle); font-weight: 500; }
-.note-table td:focus, .note-table th:focus { box-shadow: inset 0 0 0 2px var(--accent-soft); }
-.table-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity var(--duration-hover) var(--ease); }
+.column-grip { height: 7px; width: calc(100% - 5px); margin: 0 auto 4px; display: block; }
+.row-grip { width: 7px; height: calc(100% - 5px); margin: auto 4px auto 0; display: block; }
+.corner-grip { width: 7px; height: 7px; border-radius: 2px; margin: 0 4px 4px 0; }
+.block[data-type="table"]:hover .table-grip { opacity: 1; }
+.table-grip:hover, .table-grip:focus-visible { background: var(--accent); opacity: 1; outline: none; }
+
+.note-table .table-cell {
+  border: 1px solid var(--table-border-color, var(--border-soft));
+  border-width: 0 1px 1px 0; padding: 7px 10px; min-width: 118px;
+  vertical-align: top; outline: none; font-size: 0.94em; line-height: 1.5;
+  color: var(--table-text-color, var(--text-primary));
+  background: var(--table-cell-color, transparent);
+}
+/* Only the data grid draws its outer edge, so the rails stay invisible. */
+.note-table .table-cell.first-col { border-left-width: 1px; }
+.note-table .table-row.first-row .table-cell { border-top-width: 1px; }
+.note-table .table-row.first-row .table-cell.first-col { border-top-left-radius: var(--radius-sm); }
+.note-table .table-row.first-row .table-cell.last-col { border-top-right-radius: var(--radius-sm); }
+.note-table .table-row.last-row .table-cell.first-col { border-bottom-left-radius: var(--radius-sm); }
+.note-table .table-row.last-row .table-cell.last-col { border-bottom-right-radius: var(--radius-sm); }
+
+.table-block.has-header .table-row.header .table-cell {
+  background: var(--table-header-color, var(--background-subtle));
+  font-weight: 600; color: var(--table-text-color, var(--text-primary));
+}
+.table-block.striped .table-row.odd:not(.header) .table-cell {
+  background: color-mix(in srgb, var(--table-header-color, var(--background-subtle)) 55%, transparent);
+}
+.table-cell[data-placeholder]:empty::before {
+  content: attr(data-placeholder); color: var(--text-placeholder); pointer-events: none;
+}
+.table-cell:focus { box-shadow: inset 0 0 0 2px var(--accent-soft); }
+
+.table-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; opacity: 0; transition: opacity var(--duration-hover) var(--ease); }
 .block[data-type="table"]:hover .table-actions, .table-actions:focus-within { opacity: 1; }
 .table-actions .text-button { height: 24px; font-size: 12.5px; color: var(--text-tertiary); }
+.table-actions .text-button.on { color: var(--accent); }
+.table-actions .text-button.danger { color: var(--danger, #d4453c); }
+.table-actions .text-button.danger:hover { background: var(--danger-soft, rgba(212, 69, 60, 0.1)); }
+.tint-swatch { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--border-medium); display: block; }
+.table-style-editor { display: flex; flex-direction: column; gap: 12px; }
+.table-color-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.table-stripe-toggle { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+
+/* Live chart block. SVG owns the scales and marks while this shell keeps the
+   editing affordances discoverable, keyboard reachable and consistent with
+   table blocks. */
+.chart-block { margin: 8px 0 12px; border: 1px solid transparent; border-radius: var(--radius); background: transparent; overflow: hidden; transition: border-color var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease); }
+.chart-block:hover, .chart-block:focus-within { border-color: var(--border-soft); background: var(--background-main); }
+.chart-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; max-height: 0; padding: 0 11px; border-bottom: 1px solid transparent; opacity: 0; overflow: hidden; pointer-events: none; transition: max-height var(--duration-hover) var(--ease), opacity var(--duration-hover) var(--ease), padding var(--duration-hover) var(--ease), border-color var(--duration-hover) var(--ease); }
+.chart-block:hover .chart-header, .chart-block:focus-within .chart-header { max-height: 52px; padding-top: 9px; padding-bottom: 9px; border-bottom-color: var(--border-soft); opacity: 1; pointer-events: auto; }
+.chart-heading { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-secondary); }
+.chart-heading svg { flex: none; color: var(--accent-text); }
+.chart-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 550; font-size: 13.5px; }
+.chart-kind { flex: none; padding: 2px 7px; border-radius: 999px; background: var(--background-subtle); color: var(--text-tertiary); font-size: 11px; }
+.chart-actions { display: flex; align-items: center; gap: 3px; flex: none; }
+.chart-link-button { height: 27px; padding: 0 8px; gap: 5px; color: var(--accent-text); font-size: 12px; }
+.chart-edit { opacity: 0; transition: opacity var(--duration-hover) var(--ease); }
+.chart-block:hover .chart-edit, .chart-edit:focus-visible { opacity: 1; }
+.chart-svg { display: block; width: 100%; min-height: 240px; max-height: 420px; padding: 0 8px; box-sizing: border-box; }
+.chart-source { display: flex; align-items: center; gap: 6px; max-height: 0; padding: 0 11px; border-top: 1px solid transparent; opacity: 0; overflow: hidden; pointer-events: none; font-size: 11.5px; color: var(--text-tertiary); transition: max-height var(--duration-hover) var(--ease), opacity var(--duration-hover) var(--ease), padding var(--duration-hover) var(--ease), border-color var(--duration-hover) var(--ease); }
+.chart-block:hover .chart-source, .chart-block:focus-within .chart-source { max-height: 34px; padding-top: 7px; padding-bottom: 9px; border-top-color: var(--border-soft); opacity: 1; pointer-events: auto; }
+.chart-source.linked { color: var(--accent-text); }
+.chart-source svg { flex: none; }
+.chart-editor { display: flex; flex-direction: column; gap: 10px; }
+.chart-editor .field { margin: 0; }
+.chart-editor-section { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.chart-range-fields, .chart-color-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.chart-color-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.chart-range-fields .field, .chart-color-fields .field { min-width: 0; }
+.color-input { width: 100%; height: 34px; padding: 3px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--background-main); cursor: pointer; }
+.chart-link-help { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+.chart-link-help svg { flex: none; color: var(--accent-text); margin-top: 1px; }
+.chart-empty-help { color: var(--text-tertiary); font-size: 12px; line-height: 1.4; }
+@media (max-width: 640px) {
+  .chart-range-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-color-fields { grid-template-columns: 1fr; }
+  .chart-link-button { font-size: 0; width: 28px; padding: 0; justify-content: center; }
+  .chart-link-button svg { margin: 0; }
+}
 
 
 /* A page settles in rather than appearing, which makes tab and link
@@ -588,7 +745,7 @@
    note behind it never reflows while it moves. */
 .code-terminal {
   position: fixed;
-  left: 0;
+  left: var(--sidebar-width);
   right: 0;
   bottom: 0;
   z-index: 60;
@@ -602,13 +759,29 @@
   transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* When the sidebar is collapsed the page owns the full viewport again. */
+:root:has(.workspace.sidebar-hidden) .code-terminal { left: 0; }
+
 .code-terminal.open { transform: translateY(0); }
+.code-terminal.resizing { transition: none; }
+
+/* Same lightweight top-edge resize affordance as Vibe Coder's terminal. */
+.code-terminal-resize {
+  position: absolute;
+  z-index: 2;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .code-terminal { transition: none; }
 }
 
-/* The 32px tab strip from the Vibe Coder terminal. */
+/* The compact panel header from the Vibe Coder terminal. Notes has one shared
+   terminal, so this is a title rather than a tab strip. */
 .code-terminal-head {
   display: flex;
   align-items: center;
@@ -619,12 +792,11 @@
   border-bottom: 1px solid rgba(0, 0, 0, 0.055);
 }
 
-.code-terminal-tab {
+.code-terminal-title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
-  min-width: 120px;
   padding: 0 10px;
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.055);
@@ -633,8 +805,7 @@
   font-size: 11.5px;
 }
 
-.code-terminal-tab svg { flex: none; }
-.code-terminal-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-terminal-title svg { flex: none; }
 
 .code-terminal-status {
   flex: 1 1 auto;
@@ -660,6 +831,10 @@
 }
 
 .code-terminal-mount .xterm { height: 100%; }
+
+@media (max-width: 860px) {
+  .code-terminal { left: 0; }
+}
 
 /* The preview rises into the middle of the window rather than appearing at
    full size: it scales and lifts from just below its resting place. */
@@ -713,25 +888,31 @@
   .code-preview-backdrop, .code-preview { transition: none; }
 }
 
-/* The 40px toolbar from the Vibe Coder preview: nav, centred address pill,
-   open-externally, full screen. */
+/* The Vibe Coder preview toolbar: browser controls, centred URL, external
+   launch, copy URL and full screen. */
 .code-preview-head {
   display: flex;
   align-items: center;
   gap: 2px;
   flex: none;
-  height: 40px;
+  height: 50px;
   padding: 0 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .code-preview-nav {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
   flex: none;
   border-radius: 7px;
   color: #93959A;
 }
 
 .code-preview-nav:hover { background: var(--background-hover); color: var(--text-primary); }
+.code-preview-nav:disabled { cursor: default; opacity: .35; }
+.code-preview-nav:disabled:hover { background: transparent; color: #93959A; }
 
 .code-preview-url {
   display: flex;
@@ -743,14 +924,22 @@
   margin: 0 8px;
   padding: 0 12px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.025);
+  background: transparent;
+  transition: background var(--duration-hover) var(--ease);
 }
+.code-preview-url:hover, .code-preview-url:focus-within { background: rgba(0, 0, 0, 0.025); }
 
 .code-preview-address {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: inherit;
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-secondary);

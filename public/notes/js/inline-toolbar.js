@@ -158,7 +158,7 @@ function styleMenu(editor, anchor) {
   const apply = (patch) => editor.onPageStyle?.(patch);
   menu(anchor, [
     { type: "label", label: "Page font" },
-    ...[["default", "Default"], ["serif", "Serif"], ["mono", "Mono"]].map(([value, label]) => ({
+    ...[["default", "Default"], ["serif", "Serif"], ["mono", "Mono"], ["rounded", "Rounded"]].map(([value, label]) => ({
       label, checked: (page.font_style || "default") === value,
       icon: el("span", { class: `font-preview ${value}`, text: "Ag" }),
       onSelect: () => apply({ fontStyle: value }),

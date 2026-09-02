@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
+import { initAnywhereSettings, isAnywhereEnabled, setAnywhereEnabled } from "./anywhere-settings.mjs";
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
@@ -67,9 +68,72 @@ let serviceFallbackStarted = false;
 let bridgeServer = null;
 let quitting = false;
 let createWindowPromise = null;
+let anywhereTray = null;
 let bootPromise = null;
 let ipcRegistered = false;
 let nativeManagersDestroyed = false;
+
+/**
+ * Clyra Anywhere's background lifecycle. Reused three times: once at boot (a
+ * fresh launch with the setting already on), once whenever the setting is
+ * toggled from a running app, and once from the close handler below (which
+ * needs to know, at the moment the window closes, whether to survive).
+ *
+ * A tray icon exists only while the feature is on. It is the whole reason a
+ * hidden background process is legible to the user at all — without it,
+ * closing every window would leave a Clyra process running with no visible
+ * way to reach it or quit it, which is not "runs in the background," it is
+ * a leak.
+ */
+function syncAnywhereTray() {
+  const enabled = isAnywhereEnabled();
+  if (!enabled) {
+    anywhereTray?.destroy();
+    anywhereTray = null;
+    return;
+  }
+  if (anywhereTray) return;
+  try {
+    const iconPath = path.join(here, "..", "build", "icon.png");
+    const icon = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
+    anywhereTray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+    anywhereTray.setToolTip("Clyra — running in the background");
+    const rebuildMenu = () => {
+      anywhereTray?.setContextMenu(Menu.buildFromTemplate([
+        { label: "Open Clyra", click: () => void showOrCreateWindow() },
+        { type: "separator" },
+        {
+          label: "Clyra Anywhere",
+          type: "checkbox",
+          checked: isAnywhereEnabled(),
+          click: (item) => {
+            setAnywhereEnabled(item.checked);
+            syncAnywhereTray();
+            if (uiView && !uiView.webContents.isDestroyed()) {
+              uiView.webContents.send("anywhere:state", { enabled: item.checked });
+            }
+          },
+        },
+        { type: "separator" },
+        { label: "Quit Clyra", click: () => { quitting = true; app.quit(); } },
+      ]));
+    };
+    rebuildMenu();
+    anywhereTray.on("click", () => void showOrCreateWindow());
+  } catch (error) {
+    console.warn("[anywhere] could not create tray icon:", error);
+  }
+}
+
+async function showOrCreateWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  await createWindow();
+  mainWindow?.show();
+}
 
 function destroyNativeManagers() {
   if (nativeManagersDestroyed) return;
@@ -801,6 +865,13 @@ async function askCompanionModel({ question, visionSummary, ocrText, controlling
 function registerIpc() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  ipcMain.handle("anywhere:get-enabled", (event) => { authorize(event); return { ok: true, enabled: isAnywhereEnabled() }; });
+  ipcMain.handle("anywhere:set-enabled", (event, enabled) => {
+    authorize(event);
+    const value = setAnywhereEnabled(Boolean(enabled));
+    syncAnywhereTray();
+    return { ok: true, enabled: value };
+  });
   ipcMain.handle("browser:get-state", (event) => { authorize(event); return { ok: true, state: browserManager.getState() }; });
   ipcMain.handle("browser:set-surface", async (event, payload) => { authorize(event); await browserManager.setSurface(payload || {}); return { ok: true }; });
   ipcMain.handle("browser:navigate", async (event, { target }) => { authorize(event); return { ok: true, state: await browserManager.navigate(target) }; });
@@ -1253,6 +1324,23 @@ async function createWindow() {
     console.warn("[taskview] global shortcut unavailable:", error);
   }
 
+  /* Global app launcher. Registered here rather than left to the React
+     window's own keydown listener, because that listener only fires when the
+     UI view has focus — so ⌘K did nothing whenever a native WebContentsView
+     owned the keyboard, which is most of the time in the AI Browser and in
+     the Notes browser panel. ⌘J already worked for exactly this reason. */
+  try {
+    const registered = globalShortcut.register("CommandOrControl+K", () => {
+      if (uiView && !uiView.webContents.isDestroyed()) {
+        uiView.webContents.focus();
+        uiView.webContents.send("launcher:toggle");
+      }
+    });
+    if (!registered) console.warn("[launcher] Cmd+K is already owned by another app.");
+  } catch (error) {
+    console.warn("[launcher] global shortcut unavailable:", error);
+  }
+
   // ⌘/ — Clyra Dictation replaces the retired OpenCluely overlay.
   try {
     const registered = globalShortcut.register("CommandOrControl+/", () => {
@@ -1278,11 +1366,18 @@ async function createWindow() {
   }
 
   mainWindow.on("resize", resizeUi);
-  // The window close control is an application exit, not a hide-to-tray
-  // action. Route it through Electron's quit lifecycle so the browser bridge,
-  // local server, and dictation resources all release cleanly.
+  // The window close control is an application exit UNLESS Clyra Anywhere is
+  // on, in which case closing the window is expected to leave dictation, the
+  // selection overlay and the agent running — that is the entire point of
+  // the feature. Off (the default), this is byte-for-byte the original
+  // behaviour: destroy the native managers, quit.
   mainWindow.on("close", (event) => {
     if (quitting) return;
+    if (isAnywhereEnabled()) {
+      event.preventDefault();
+      mainWindow?.hide();
+      return;
+    }
     event.preventDefault();
     // Release native children while the parent BrowserWindow is still valid.
     // Electron otherwise may destroy a child WebContentsView before its
@@ -1364,6 +1459,8 @@ async function primeMacOsMediaAccess() {
 }
 
 async function boot() {
+  initAnywhereSettings(app.getPath("userData"));
+  syncAnywhereTray();
   Menu.setApplicationMenu(null);
   configureUiSession();
   reportDesktopLifecycle("booting browser bridge");
@@ -1400,8 +1497,12 @@ app.on("activate", () => {
 });
 
 app.on("window-all-closed", () => {
-  // Match the close control on every platform. Clyra does not use a hidden
-  // tray window as its primary lifecycle any more.
+  // Mirrors the per-window close handler above: quitting on every window
+  // closing is still the default, and still exactly what happened before
+  // this feature existed. Clyra Anywhere is the one case that keeps the
+  // process — and with it dictation, the selection overlay and the tray —
+  // alive with no windows open at all.
+  if (isAnywhereEnabled()) return;
   app.quit();
 });
 

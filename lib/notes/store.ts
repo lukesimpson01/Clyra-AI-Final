@@ -91,6 +91,29 @@ export function saveBlocks(pageId: string, tree: Block[]) {
   return blockTree(pageId);
 }
 
+/* Which pages this one points at, and which point back. Both directions are
+   useful in the same panel: what a note builds on, and what builds on it. */
+export function pageLinks(pageId: string) {
+  const rows = (sql: string) =>
+    db.prepare(sql).all(pageId) as Array<{ id: string; title: string; icon: string | null }>;
+  const unique = (list: Array<{ id: string; title: string; icon: string | null }>) => {
+    const seen = new Set<string>();
+    return list.filter((row) => row.id !== pageId && !seen.has(row.id) && seen.add(row.id));
+  };
+  return {
+    outgoing: unique(rows(
+      `SELECT DISTINCT p.id, p.title, p.icon FROM page_links l
+         JOIN pages2 p ON p.id = l.target_page
+        WHERE l.source_page = ? AND p.trashed_at IS NULL`,
+    )),
+    incoming: unique(rows(
+      `SELECT DISTINCT p.id, p.title, p.icon FROM page_links l
+         JOIN pages2 p ON p.id = l.source_page
+        WHERE l.target_page = ? AND p.trashed_at IS NULL`,
+    )),
+  };
+}
+
 /* ---------------------------------------------------------- search index */
 
 function pageBody(pageId: string) {
@@ -543,6 +566,25 @@ export function pageMarkdown(pageId: string) {
   const page = db.prepare("SELECT title FROM pages2 WHERE id=?").get(pageId) as { title: string } | undefined;
   if (!page) return null;
   return `# ${page.title || "Untitled"}\n\n${blocksToMarkdown(blockTree(pageId))}\n`;
+}
+
+/** Permanently reset Notes' user-owned workspace while preserving schema and
+ * migrations. One transaction prevents orphaned study/database/search data. */
+export async function clearWorkspace() {
+  db.transaction(() => {
+    for (const table of [
+      "test_answers", "test_attempts", "test_questions", "tests",
+      "card_reviews", "cards", "decks",
+      "db_relations", "db_values", "db_views", "db_properties", "databases",
+      "page_versions", "page_links", "blocks", "source_refs", "sources",
+      "chat_messages", "chats", "transcript_segments", "lecture_sessions",
+      "inbox_events", "pages2", "pages", "classes",
+    ]) db.prepare(`DELETE FROM ${table}`).run();
+  })();
+  const files = path.join(path.dirname(dbPath), "files");
+  await fs.rm(files, { recursive: true, force: true });
+  await fs.mkdir(files, { recursive: true });
+  return { ok: true };
 }
 
 export function importMarkdown(markdown: string, options: Record<string, unknown> = {}) {

@@ -216,15 +216,15 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
     return { kind: classifyCommand(cleaned), target: cleaned };
   }
   if (/^(write|write_file|create|create_file|file_write)$/.test(lower)) return { kind: "create", target: stripProjectPrefix(file) };
-  if (/^(edit|edit_file|apply_patch|applypatch|str_replace|replace|replace_in_file|patch|file_edit)$/.test(lower)) return { kind: "edit", target: stripProjectPrefix(file) };
+  if (/^(edit|edit_file|apply_patch|applypatch|str_replace|str_replace_editor|replace|replace_in_file|patch|file_edit)$/.test(lower)) return { kind: "edit", target: stripProjectPrefix(file) };
   if (/^(delete|delete_file|rm|remove|remove_file)$/.test(lower)) return { kind: "delete", target: stripProjectPrefix(file) };
-  if (/^(read|read_file|open_file|view_file|cat|file_read)$/.test(lower)) return { kind: "read", target: stripProjectPrefix(file) };
+  if (/^(read|read_file|read_image|open_file|view_file|cat|file_read)$/.test(lower)) return { kind: "read", target: stripProjectPrefix(file) };
   if (/^(web_search|websearch|search_web|internet_search)$/.test(lower)) return { kind: "research", target: query || tool };
   if (/^(grep|glob|search|codebase_search|find_in_files|ripgrep)$/.test(lower)) return { kind: "search", target: query || stripProjectPrefix(file) || tool };
   if (/^(list|ls|tree|list_files|readdir|directory_list)$/.test(lower)) return { kind: "list", target: stripProjectPrefix(file || firstString(input, "dir", "directory", "cwd")) || "project structure" };
   if (/^(browser|preview|screenshot|open_browser)$/.test(lower)) return { kind: "preview", target: String(input.url || query || "live preview") };
-  if (/^(webfetch|fetch|curl)$/.test(lower)) return { kind: "fetch", target: String(input.url || query || tool) };
-  if (/^(todowrite|todoread|todo)$/.test(lower)) return { kind: "todo", target: "task list" };
+  if (/^(webfetch|web_fetch|fetch|curl)$/.test(lower)) return { kind: "fetch", target: String(input.url || query || tool) };
+  if (/^(todowrite|todoread|todo|todo_write|todo_read)$/.test(lower)) return { kind: "todo", target: "task list" };
   return { kind: "generic", target: stripProjectPrefix(file) || command || query || tool };
 }
 
@@ -447,7 +447,7 @@ export function useClyraCode() {
           // The harness question tool is the agent asking the user for input.
           // Render it as natural assistant prose instead of a fake
           // "Completed question" status row.
-          if (/^question$/.test(tool.trim().toLowerCase())) {
+          if (/^(question|ask_user_question)$/.test(tool.trim().toLowerCase())) {
             if (status === "success") {
               const question = String(input.question || partState.output || "").trim();
               if (question) {

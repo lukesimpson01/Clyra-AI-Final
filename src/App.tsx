@@ -63,6 +63,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   User,
+  Users,
   Volume2,
   X,
   XIcon,
@@ -287,6 +288,9 @@ const loadStudyPalWorkspace = () =>
     default: () => <WorkspaceImportFailure name="Study Pal" />,
   }));
 const StudyPalWorkspace = lazy(loadStudyPalWorkspace);
+// Cowork is lazy for the same reason as the other workspaces: an idle team
+// should cost nothing until the user actually opens it.
+const CoworkWorkspace = lazy(() => import("./components/cowork/CoworkWorkspace").then((m) => ({ default: m.CoworkWorkspace })));
 
 function prepareVibeForBoot(
   onProgress?: (update: VibeBootProgressUpdate) => void,
@@ -351,7 +355,7 @@ function prepareVibeForBoot(
   return vibeBootPreparation;
 }
 
-type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | CreatorMode;
+type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | "cowork" | CreatorMode;
 type AppAgentId = "vibe" | "browse" | "clip" | "notes" | "fake-text" | "would-rather";
 type GoogleToolId = "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
 type AppAgentStatus = "queued" | "running" | "ready" | "needs_input" | "failed";
@@ -2583,6 +2587,18 @@ export default function App() {
   );
   const [isShortsWelcomeOpen, setIsShortsWelcomeOpen] = useState(false);
   const [isTaskViewOpen, setIsTaskViewOpen] = useState(false);
+  /* Clyra Notes is its own page rather than a panel in this shell, so its
+     launcher and Task View chords come back as a query parameter instead of
+     a keystroke this window could have heard. */
+  const [pendingOverviewFromNotes] = useState(() =>
+    new URLSearchParams(window.location.search).get("taskview") === "1",
+  );
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("launcher")) return;
+    url.searchParams.delete("launcher");
+    window.history.replaceState({}, "", url.toString());
+  }, []);
   const [visitedWorkspaceTabs, setVisitedWorkspaceTabs] = useState<WorkspaceTabId[]>(["chat"]);
   const [taskViewPreviews, setTaskViewPreviews] = useState<Record<string, TaskViewPreview>>({});
   const taskViewSelectionRef = useRef(false);
@@ -2833,6 +2849,27 @@ export default function App() {
     const desktop = getElectronDesktop();
     return desktop?.taskView.onToggle(() => void openTaskView());
   }, [openTaskView]);
+  /* The launcher chord arrives from the main process as well as from this
+     window's own keydown, because a native browser view often owns the
+     keyboard and this listener would never see the key at all. */
+  useEffect(() => {
+    const desktop = getElectronDesktop();
+    return desktop?.launcher?.onToggle(() => {
+      setIsTaskViewOpen(false);
+      setShowCommandPalette(false);
+      setIsAppLauncherOpen((open) => !open);
+    });
+  }, []);
+  /* Arriving back from Notes with ?taskview=1: open the overview once, then
+     clean the parameter out of the URL so a reload does not reopen it. */
+  useEffect(() => {
+    if (!pendingOverviewFromNotes) return;
+    void openTaskView();
+    const url = new URL(window.location.href);
+    url.searchParams.delete("taskview");
+    window.history.replaceState({}, "", url.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOverviewFromNotes]);
   // While Task View is open on AI Browser, keep the card's page pixels live so
   // zoomed-out overview still shows the tool running (agent/demo/navigation).
   useEffect(() => {
@@ -6756,6 +6793,7 @@ Please analyze the code you just wrote and fix this error.`;
   const isBrowserWorkspace = activeWorkspaceTab === "browser";
   const isCompanionWorkspace = activeWorkspaceTab === "companion";
   const isStudyWorkspace = activeWorkspaceTab === "study";
+  const isCoworkWorkspace = activeWorkspaceTab === "cowork";
   const creatorMode: CreatorMode | null =
     activeWorkspaceTab === "would-rather" ||
     activeWorkspaceTab === "reddit-story" ||
@@ -6836,7 +6874,7 @@ Please analyze the code you just wrote and fix this error.`;
       ? Math.max(420, viewportWidth - sidebarClearancePx)
       : viewportWidth;
   const centeredContentWidth =
-    isBrowserWorkspace || isCompanionWorkspace || isStudyWorkspace
+    isBrowserWorkspace || isCompanionWorkspace || isStudyWorkspace || isCoworkWorkspace
       ? Math.min(1280, Math.max(0, effectiveWorkspaceViewport - 32))
       : isClipWorkspace
         ? Math.min(820, Math.max(0, effectiveWorkspaceViewport - 32))
@@ -7147,10 +7185,6 @@ Please analyze the code you just wrote and fix this error.`;
                 setIsShortsWelcomeOpen(true);
                 return;
               }
-              if (tool === "dictation") {
-                void composerDictation.start();
-                return;
-              }
               handleWorkspaceTabChange(tool);
             }}
           />
@@ -7265,6 +7299,7 @@ Please analyze the code you just wrote and fix this error.`;
             companion: { label: "Companion", icon: <AppWindow className="h-3.5 w-3.5" /> },
             study: { label: "Study Pal", icon: <GraduationCap className="h-3.5 w-3.5" /> },
             notes: { label: "Clyra Notes", icon: <Pencil className="h-3.5 w-3.5" /> },
+            cowork: { label: "Clyra Cowork", icon: <Users className="h-3.5 w-3.5" /> },
             "fake-text": { label: "Text Story", icon: <MessagesSquare className="h-3.5 w-3.5" /> },
             "would-rather": { label: "Would You Rather", icon: <Heart className="h-3.5 w-3.5" /> },
             "reddit-story": { label: "Reddit Story", icon: <MessagesSquare className="h-3.5 w-3.5" /> },
@@ -8054,6 +8089,7 @@ Please analyze the code you just wrote and fix this error.`;
                         !isBrowserWorkspace &&
                         !isCompanionWorkspace &&
                         !isStudyWorkspace &&
+                        !isCoworkWorkspace &&
                         !isCreatorWorkspace &&
                         "justify-center",
                     )}
@@ -8094,6 +8130,10 @@ Please analyze the code you just wrote and fix this error.`;
                       ) : isCompanionWorkspace ? (
                         <Suspense fallback={null}>
                           <ScreenCompanionWorkspace />
+                        </Suspense>
+                      ) : isCoworkWorkspace ? (
+                        <Suspense fallback={null}>
+                          <CoworkWorkspace />
                         </Suspense>
                       ) : isStudyWorkspace ? (
                         <Suspense fallback={null}>
@@ -8472,6 +8512,7 @@ Please analyze the code you just wrote and fix this error.`;
                           !isBrowserWorkspace &&
                           !isCompanionWorkspace &&
                           !isStudyWorkspace &&
+                          !isCoworkWorkspace &&
                           !isCreatorWorkspace &&
                           !isVibeWorkspace && (
                           <motion.div

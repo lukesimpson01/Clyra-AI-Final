@@ -61,6 +61,14 @@ export function BloubBootAvatar({
   const sequenceStartedRef = useRef(false);
   const awake = progress >= 1;
 
+  /* The gaze was only pinned once loading finished, so for the whole of the
+     load the engine ran its default idle wander and the orb drifted around
+     the splash. It should sit perfectly still while the app boots — the
+     motion belongs to the progress bar, not the mark. */
+  useEffect(() => {
+    bloubRef.current?.setGaze(0, 0, 0, 0);
+  }, []);
+
   const startTravel = () => {
     const node = wrapRef.current;
     const target = document.querySelector(targetSelector) as HTMLElement | null;

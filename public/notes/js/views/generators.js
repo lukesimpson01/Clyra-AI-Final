@@ -246,13 +246,31 @@ async function generateTest(app, sources) {
   queueMicrotask(() => picker.focus());
 }
 
+/* The document harness rather than the plain markdown generator: it drafts
+   in blocks, checks the result against the house rules and revises, so the
+   page arrives using callouts, tables, toggles and a checklist instead of a
+   wall of headings. The checklist loader mirrors the passes it makes. */
 async function generateStudyGuide(app, sources) {
-  const busy = modal({
-    title: null, width: 320,
-    body: el("div", { class: "loading-row", style: { padding: "10px 4px" } }, el("span", { class: "spinner" }), "Writing your study guide…"),
-  });
-  const result = await withError(() => api.post("/api/notes/ai/study-guide", { sources, parentId: sources[0].pageId }), "Could not build the study guide");
-  busy.close("done");
+  const entry = modal({ title: null, width: 380, className: "generate-modal" });
+  const result = await withProgress(entry.node.querySelector(".modal-body"), {
+    title: "Writing your study guide",
+    stages: ["Reading your notes", "Planning the sections", "Writing the document", "Checking it over"],
+    run: async (loader) => {
+      loader.advance(1);
+      const timer = setTimeout(() => loader.advance(2), 1200);
+      try {
+        return await api.post("/api/notes/ai/document", {
+          instruction: "Write a complete study guide from this material for the student who wrote it.",
+          sources,
+          parentId: sources[0].pageId,
+        });
+      } finally {
+        clearTimeout(timer);
+        loader.advance(3);
+      }
+    },
+  }).catch((error) => { toast(error?.message || "Could not build the study guide", "error"); return null; });
+  entry.close("done");
   if (!result?.page) return;
   await refreshPages();
   app.openPage(result.page.id);

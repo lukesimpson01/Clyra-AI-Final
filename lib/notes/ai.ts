@@ -289,6 +289,26 @@ export async function workspaceAnswer(question: string, context: ContextChunk[])
   );
 }
 
+/* The document harness runs its own loop over the model, so it needs the
+   raw JSON call rather than one of the fixed generators above. */
+export async function composeStructuredDocument(options: {
+  instruction: string;
+  context: ContextChunk[];
+  title?: string;
+  maxRevisions?: number;
+}) {
+  const { composeDocument } = await import("./document-agent");
+  return composeDocument(
+    (messages, feature) => json<unknown>(messages as Message[], feature),
+    {
+      instruction: options.instruction,
+      contextText: renderContext(options.context),
+      title: options.title,
+      maxRevisions: options.maxRevisions,
+    },
+  );
+}
+
 export async function generateFormula(request: string, propertyNames: string[]) {
   const result = await json<{ expression: string; explanation: string }>(
     [

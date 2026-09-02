@@ -149,6 +149,23 @@ function DotShape({
   return <circle cx={dot.x} cy={dot.y} r={dot.r} fill={fill} opacity={dot.opacity} />;
 }
 
+/** A compact identity for a rendered frame, used to skip React renders that
+ *  would paint pixels identical to the ones already on screen. Rounded to the
+ *  precision the SVG is actually drawn at — sub-0.01px differences are
+ *  invisible, and treating them as changes would defeat the gate. */
+function frameSignature(frame: BotFrame): string {
+  const n = (value: unknown) => (typeof value === "number" ? value.toFixed(2) : "");
+  let key = `${frame.bodyPath}|${frame.bodyAlpha.toFixed(3)}|${frame.dotsBehind ? 1 : 0}`;
+  for (const eye of frame.eyes as unknown as Array<Record<string, unknown>>) {
+    key += `|${n(eye.cx)},${n(eye.cy)},${n(eye.rx)},${n(eye.ry)},${n(eye.opacity)},${eye.d ?? ""}`;
+  }
+  for (const arc of frame.arcs as unknown as Array<Record<string, unknown>>) key += `|a${arc.d ?? ""}`;
+  for (const dot of frame.dots as unknown as Array<Record<string, unknown>>) key += `|d${n(dot.x)}:${n(dot.y)}:${n(dot.r)}`;
+  if (frame.notif) key += `|n${n(frame.notif.x)},${n(frame.notif.y)},${n(frame.notif.r)}`;
+  if (frame.notch) key += `|h${n(frame.notch.x)},${n(frame.notch.y)},${n(frame.notch.r)}`;
+  return key;
+}
+
 export const Bloub = forwardRef<BloubHandle, BloubProps>(function Bloub(
   {
     state = "idle",

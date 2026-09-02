@@ -1,6 +1,6 @@
 /* Home. A welcome header, four ways to start, and a recent table.
    The keyboard hint at the foot is live: Space opens AI on a fresh page and
-   "/" opens the command palette, so the line is an affordance, not decor. */
+   "/" creates the first note on an empty workspace, then opens search. */
 import { el, clear, icon, modKey, append, tooltip } from "../dom.js";
 import { state } from "../state.js";
 import { openSearch } from "../search.js";
@@ -28,11 +28,23 @@ export function renderHome(host, app) {
     if (event.target?.closest?.("input, textarea, [contenteditable='true']")) return;
     if (document.querySelector(".layer, .modal, .menu")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === "/") { event.preventDefault(); openSearch(); return; }
+    if (event.key === "/") {
+      event.preventDefault();
+      /* On a genuinely empty workspace slash is the fastest way to get to a
+         first note. Once there is content, it keeps its normal command/search
+         meaning. */
+      if (!hasNotes()) startWithNote(app);
+      else openSearch();
+      return;
+    }
     if (event.key === " ") { event.preventDefault(); startWithAi(app); }
   };
   document.addEventListener("keydown", onKey);
   return { destroy() { document.removeEventListener("keydown", onKey); } };
+}
+
+function hasNotes() {
+  return state.pages.some((page) => page.kind !== "record");
 }
 
 /* Space on Home means the same thing it means on a page: start writing with
@@ -58,28 +70,34 @@ function buildTools(app) {
   const tests = state.tests?.length || 0;
   const bestTest = (state.tests || []).find((test) => test.best_ratio != null);
 
-  const tool = (tone, iconName, name, status, live, onClick) =>
-    el("button", { class: `tool-row tone-${tone}`, type: "button", onclick: onClick },
-      el("span", { class: "tool-icon" }, icon(iconName, 17)),
-      el("span", { class: "tool-text" },
-        el("span", { class: "tool-name", text: name }),
-        el("span", { class: "tool-status", text: status })),
-      live ? el("span", { class: "tool-live", text: live }) : null);
+  /* Icon and label only, in the Vibe Coder launcher shape. The live counts
+     are still carried, but as the accessible name rather than a second line
+     that appears under the pointer — a launcher row should not change size
+     when you point at it. */
+  const tool = (iconName, name, status, live, onClick) => {
+    const description = [status, live].filter(Boolean).join(" \u00b7 ");
+    return el("button", {
+      class: "vc-button tool-row", type: "button", onclick: onClick,
+      "aria-label": description ? `${name}. ${description}` : name,
+    },
+      el("span", { class: "vc-icon" }, icon(iconName, 14)),
+      el("span", { class: "vc-label", text: name }));
+  };
 
   return el("section", { class: "home-section" },
     el("h2", { class: "home-section-title", text: "Your workspace" }),
     el("div", { class: "tool-grid" },
-      tool("accent", "sparkle", "Ask AI", "Grounded in your notes", null,
+      tool("sparkle", "Ask AI", "Grounded in your notes", null,
         () => app.openView({ kind: "chat" })),
-      tool("green", "cards", "Flashcards",
+      tool("cards", "Flashcards",
         decks ? `${decks} deck${decks === 1 ? "" : "s"}${reviewed ? ` · ${reviewed} today` : ""}` : "No decks yet",
         due ? `${due} due` : null,
         () => app.openView({ kind: "flashcards" })),
-      tool("orange", "check_square", "Practice tests",
+      tool("check_square", "Practice tests",
         tests ? `${tests} test${tests === 1 ? "" : "s"}` : "None yet",
         bestTest ? `${Math.round(bestTest.best_ratio * 100)}%` : null,
         () => app.openView({ kind: "tests" })),
-      tool("ink", "mic", "Lecture notes", "Record and transcribe", null,
+      tool("mic", "Lecture notes", "Record and transcribe", null,
         () => app.generate("lecture", {}))));
 }
 
@@ -89,7 +107,7 @@ function pageKindLabel(page) {
   if (page.kind === "database") return "Database";
   const course = state.classes.find((entry) => entry.id === page.class_id);
   if (course) return course.name;
-  return page.parent_id ? "Subpage" : "Private";
+  return page.parent_id ? "Subpage" : "Notes";
 }
 
 function buildRecent(app) {
@@ -100,9 +118,20 @@ function buildRecent(app) {
 
   const body = el("div", { class: "recent-table" });
   if (!recents.length) {
+    /* The instruction line is the button. Pressing "/" and clicking the row
+       do the same thing, so they are the same control rather than a hint
+       sitting above a button that repeats it. */
     body.append(el("div", { class: "recent-empty" },
-      "Nothing here yet.",
-      el("button", { class: "button primary", type: "button", onclick: () => app.createPage(null) }, "Create your first page")));
+      el("span", { class: "recent-empty-icon", "aria-hidden": "true" }, icon("page", 20)),
+      el("strong", { class: "recent-empty-title", text: "Nothing here yet" }),
+      el("button", {
+        class: "vc-button recent-empty-action", type: "button",
+        "aria-label": "Start your first note",
+        onclick: () => startWithNote(app),
+      },
+        el("span", { text: "Press" }),
+        el("kbd", { class: "recent-empty-key", text: "/" }),
+        el("span", { text: "to start your first note" }))));
   } else {
     for (const page of recents) {
       const emoji = page.icon && !/^https?:|^\//.test(page.icon) ? page.icon : null;
@@ -126,14 +155,19 @@ function buildRecent(app) {
     body);
 }
 
+async function startWithNote(app) {
+  await app.createPage(null);
+}
+
 function buildHint(app) {
+  const slashHint = hasNotes() ? "for commands…" : "to start your first note";
   return el("div", { class: "home-hint" },
     el("span", { class: "home-hint-key" }, icon("keyboard", 15)),
     el("span", {}, "Press "),
     el("kbd", { text: "space" }),
     el("span", {}, " for AI, "),
     el("kbd", { text: "/" }),
-    el("span", {}, " for commands…"));
+    el("span", {}, ` ${slashHint}`));
 }
 
 /* Shared row and section helpers used by the other views. */

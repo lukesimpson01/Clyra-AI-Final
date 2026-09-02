@@ -1,0 +1,328 @@
+/* The right sidebar and its panels.
+
+   The shell is the left sidebar's mirror image: the same collapsing grid
+   track, the same inner panel that slides rather than squeezes, and the same
+   glide curve, so opening either side feels like the same gesture. */
+
+.workspace { --rail-width: 380px; }
+
+.rail {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--background-sidebar);
+  border-left: 1px solid var(--border-soft);
+}
+.rail-inner {
+  display: flex;
+  flex-direction: column;
+  width: var(--rail-width);
+  height: 100%;
+  transition: transform var(--duration-panel) var(--ease-glide),
+              opacity calc(var(--duration-panel) * 0.45) var(--ease);
+}
+.workspace.rail-hidden .rail { border-left-color: transparent; }
+.workspace.rail-hidden .rail-inner { transform: translateX(40px); opacity: 0; }
+.workspace.resizing .rail-inner { transition: none; }
+
+.rail-resize {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 20;
+}
+.rail-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
+  background: var(--accent); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease);
+}
+.rail-resize:hover::after { opacity: 1; }
+
+.rail-head {
+  display: flex; align-items: center; gap: 4px;
+  height: var(--tab-height); padding: 0 8px 0 8px; flex: none;
+}
+.rail-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.rail-back[hidden] { display: none; }
+.workspace:not(.rail-hidden) .rail.is-launcher .rail-title { padding-left: 6px; }
+
+/* The launcher: every tool one under another, name on the left and its
+   shortcut on the right, so the panel is chosen rather than remembered. */
+.rail-launcher { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; }
+.rail-launch {
+  position: relative; isolation: isolate;
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 8px 10px; border: 0; background: transparent;
+  border-radius: var(--radius-md); text-align: left; cursor: pointer;
+  color: var(--text-secondary); font-size: 14px; font-weight: 450;
+  transition: color var(--duration-hover) var(--ease);
+}
+.rail-launch::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.97);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide);
+}
+.rail-launch:hover::before, .rail-launch:focus-visible::before { opacity: 1; transform: scale(1); }
+.rail-launch:focus-visible { outline: none; }
+.rail-launch:hover, .rail-launch:focus-visible { color: var(--text-primary); }
+.rail-launch-icon {
+  flex: none; display: grid; place-items: center; width: 18px; height: 18px;
+  color: var(--text-tertiary); transition: color var(--duration-hover) var(--ease);
+}
+.rail-launch:hover .rail-launch-icon, .rail-launch:focus-visible .rail-launch-icon { color: var(--text-secondary); }
+.rail-launch-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The panel switcher is an icon rail, like the sidebar's nav row. */
+.rail-tabs {
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 10px 8px; flex: none;
+  border-bottom: 1px solid var(--border-soft);
+}
+.rail-tabs:empty { display: none; }
+/* The same language as the sidebar's Home / AI chat row: an icon rail where
+   whichever item is pointed at grows its label, and the selected one carries
+   its label while nothing else is. */
+.rail-tab {
+  position: relative; isolation: isolate;
+  display: flex; align-items: center; min-width: 0;
+  height: 28px; padding: 0 5px; border: 0; background: transparent;
+  border-radius: var(--radius-md); color: var(--text-tertiary); cursor: pointer;
+  transition: color var(--duration-hover) var(--ease);
+}
+.rail-tab-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; }
+.rail-tab-name {
+  display: grid; grid-template-columns: 0fr; overflow: hidden;
+  transition: grid-template-columns var(--duration-slide) var(--ease-settle);
+}
+.rail-tab-name-text {
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  font-size: 13px; font-weight: 500; padding-right: 0;
+  transition: padding var(--duration-slide) var(--ease-settle);
+}
+.rail-tab.selected .rail-tab-name,
+.rail-tab:hover .rail-tab-name,
+.rail-tab:focus-visible .rail-tab-name { grid-template-columns: 1fr; }
+.rail-tab.selected .rail-tab-name-text,
+.rail-tab:hover .rail-tab-name-text,
+.rail-tab:focus-visible .rail-tab-name-text { padding: 0 5px 0 4px; }
+/* Exactly one is ever expanded: the one being pointed at wins, and the
+   selected item steps aside while that is true. */
+.rail-tabs:has(.rail-tab:hover) .rail-tab.selected:not(:hover) .rail-tab-name,
+.rail-tabs:has(.rail-tab:focus-visible) .rail-tab.selected:not(:focus-visible) .rail-tab-name {
+  grid-template-columns: 0fr;
+}
+.rail-tabs:has(.rail-tab:hover) .rail-tab.selected:not(:hover) .rail-tab-name-text,
+.rail-tabs:has(.rail-tab:focus-visible) .rail-tab.selected:not(:focus-visible) .rail-tab-name-text {
+  padding: 0;
+}
+.rail-tab.selected { color: var(--text-primary); }
+.rail-tab.selected .rail-tab-name-text { font-weight: 600; }
+.rail-tab::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-hover);
+  opacity: 0; transform: scale(0.9);
+  transition: opacity var(--duration-hover) var(--ease-out),
+              transform var(--duration-slide) var(--ease-glide),
+              background var(--duration-hover) var(--ease);
+}
+.rail-tab:hover::before, .rail-tab:focus-visible::before { opacity: 1; transform: scale(1); }
+.rail-tab:hover, .rail-tab:focus-visible { color: var(--text-primary); }
+.rail-tab.selected::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
+
+.rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rail-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rail-list { flex: 1; min-height: 0; padding: 8px; display: flex; flex-direction: column; gap: 1px; }
+.rail-group {
+  padding: 10px 8px 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary);
+}
+.rail-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius); text-align: left;
+  color: var(--text-secondary); font-size: 13.5px;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.rail-row:hover { background: var(--background-hover); color: var(--text-primary); }
+.rail-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline-row[data-level="1"] { font-weight: 550; color: var(--text-primary); }
+.outline-row[data-level="2"] { padding-left: 22px; }
+.outline-row[data-level="3"] { padding-left: 38px; font-size: 13px; color: var(--text-tertiary); }
+.rail-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 24px; text-align: center;
+  color: var(--text-tertiary); font-size: 13.5px;
+}
+
+/* ------------------------------------------------------------ calculator */
+
+.calc-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px; gap: 10px; }
+.calc-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.calc-mode, .calc-insert {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px;
+  border-radius: var(--radius); color: var(--text-tertiary); font-size: 12.5px;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+}
+.calc-mode:hover, .calc-insert:hover { background: var(--background-hover); color: var(--text-primary); }
+.calc-mode.on { color: var(--accent-text); }
+
+.calc-display {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  padding: 12px 14px; border-radius: var(--radius-md);
+  background: var(--background-subtle); min-height: 74px; justify-content: center;
+}
+.calc-entry {
+  width: 100%; border: 0; background: transparent; outline: none;
+  text-align: right; font-size: 24px; font-weight: 500; color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.calc-preview {
+  font-size: 14px; color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+  opacity: 0; transform: translateY(-2px);
+  transition: opacity var(--duration-menu) var(--ease), transform var(--duration-menu) var(--ease-out);
+}
+.calc-preview.visible { opacity: 1; transform: translateY(0); }
+
+.calc-pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.calc-pad.scientific { grid-template-columns: repeat(6, 1fr); }
+.calc-key {
+  height: 42px; border-radius: var(--radius-md);
+  background: var(--background-subtle); color: var(--text-primary);
+  font-size: 15px; font-variant-numeric: tabular-nums; cursor: pointer;
+  transition: background var(--duration-hover) var(--ease), transform 90ms var(--ease);
+}
+.calc-key:hover { background: var(--background-hover); }
+.calc-key:active { transform: scale(0.95); }
+.calc-key.op { color: var(--accent-text); font-weight: 550; }
+.calc-key.clear { color: var(--danger); }
+.calc-key.equals { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
+.calc-key.equals:hover { background: var(--accent-hover); }
+.calc-key.sci { height: 32px; font-size: 12.5px; color: var(--text-secondary); }
+
+.calc-history-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary);
+}
+.calc-history { flex: 1; min-height: 60px; display: flex; flex-direction: column; gap: 1px; }
+.calc-history-empty { padding: 14px 4px; font-size: 13px; color: var(--text-tertiary); }
+.calc-history-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 6px 8px; border-radius: var(--radius); text-align: left;
+  transition: background var(--duration-hover) var(--ease);
+}
+.calc-history-row:hover { background: var(--background-hover); }
+.calc-history-expression { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--text-tertiary); }
+.calc-history-answer { flex: none; font-size: 13.5px; font-weight: 550; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------- browser */
+
+.wb-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* The workspace tab strip at panel scale: same silhouette, same travel. */
+.wb-tabs {
+  display: flex; align-items: center; gap: 2px; flex: none;
+  padding: 6px 8px; overflow-x: auto; scrollbar-width: none;
+}
+.wb-tabs::-webkit-scrollbar { display: none; }
+.wb-tab {
+  position: relative; display: flex; align-items: center; gap: 5px;
+  flex: 0 0 auto; width: 122px; max-width: 0; height: 24px; padding: 0;
+  border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12px;
+  cursor: pointer; overflow: hidden; white-space: nowrap; opacity: 0;
+  transform: translateX(-8px) scale(0.96); transform-origin: left center;
+  transition: max-width var(--duration-slide) var(--ease-glide),
+              padding var(--duration-slide) var(--ease-glide),
+              transform var(--duration-slide) var(--ease-glide),
+              opacity var(--duration-menu) var(--ease),
+              background var(--duration-hover) var(--ease);
+}
+.wb-tab.settled { max-width: 132px; opacity: 1; padding: 0 4px 0 7px; transform: none; }
+.wb-tab.closing { max-width: 0; opacity: 0; padding: 0; transform: translateX(-6px) scale(0.94); }
+.wb-tab:hover { background: var(--background-hover); }
+.wb-tab.active { background: var(--background-selected); color: var(--text-primary); }
+.wb-tab-icon { flex: none; display: grid; place-items: center; width: 13px; height: 13px; }
+.wb-tab-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-tab-close {
+  display: grid; place-items: center; width: 15px; height: 15px; flex: none;
+  border-radius: 3px; color: var(--text-tertiary); opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease);
+}
+.wb-tab:hover .wb-tab-close, .wb-tab.active .wb-tab-close { opacity: 1; }
+.wb-tab-close:hover { background: var(--border-medium); color: var(--text-primary); }
+.wb-tab-new { flex: none; width: 22px; height: 22px; }
+
+.wb-bar { display: flex; align-items: center; gap: 2px; padding: 0 8px 8px; flex: none; }
+.wb-nav { width: 26px; height: 26px; flex: none; }
+.wb-nav[disabled] { opacity: 0.35; pointer-events: none; }
+/* At rest the address bar is just text on the toolbar; the field only shows
+   itself under the pointer, and commits to a real input once focused. */
+.wb-address {
+  flex: 1; min-width: 0; height: 28px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 999px;
+  background: transparent; color: var(--text-primary); font-size: 12.5px;
+  outline: none;
+  transition: border-color var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease);
+}
+.wb-address:hover { background: var(--background-hover); }
+.wb-address:focus {
+  border-color: var(--border-soft); background: var(--background-main);
+}
+
+.wb-body { flex: 1; min-height: 0; position: relative; background: var(--background-main); }
+.wb-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.wb-frame[hidden] { display: none; }
+.wb-start {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; padding: 28px 22px; text-align: center;
+}
+.wb-start[hidden] { display: none; }
+.wb-start-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--background-subtle); color: var(--text-tertiary); }
+.wb-start-title { margin: 6px 0 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.wb-start-copy { margin: 0 0 8px; font-size: 13px; line-height: 1.5; color: var(--text-tertiary); max-width: 260px; }
+.wb-start-links { display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; }
+
+.wb-status {
+  display: flex; align-items: center; gap: 8px; min-height: 0; flex: none;
+  padding: 0 12px; font-size: 12.5px; color: var(--text-tertiary);
+  overflow: hidden; transition: min-height var(--duration-menu) var(--ease), padding var(--duration-menu) var(--ease);
+}
+.wb-status.loading, .wb-status.error { min-height: 32px; padding: 6px 12px; }
+.wb-status.error { color: var(--danger); }
+
+/* ------------------------------------------------------------ rail chat */
+
+.rail-chat { flex: 1; min-height: 0; display: flex; }
+.rail-chat .chat-layout.compact { grid-template-columns: minmax(0, 1fr); }
+.rail-chat .chat-column { padding: 0 12px; }
+.rail-chat .chat-composer { padding: 8px 12px 12px; }
+.rail-chat .chat-title { font-size: 18px; }
+.rail-chat .chat-lead { font-size: 13px; }
+.rail-chat .chat-bubble { max-width: 100%; font-size: 14px; }
+.rail-chat .chat-suggestions { display: none; }
+.rail-chat .chat-input { font-size: 13.5px; }
+
+@media (max-width: 1180px) {
+  .workspace { --rail-width: 320px; }
+}
+@media (max-width: 860px) {
+  .workspace:not(.rail-hidden) { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+  .rail { position: fixed; inset: 0 0 0 auto; width: min(92vw, 380px); z-index: 40; }
+  .workspace.rail-hidden .rail { pointer-events: none; }
+}
+
+/* The toggle lives at the far end of the tab strip, level with the sidebar's
+   own toggle at the other end. The glyph is the same panel mark mirrored, so
+   the pair reads as one control with two sides. */
+.tabstrip-end { display: flex; align-items: center; gap: 2px; flex: none; padding-left: 4px; }
+.rail-toggle svg { transform: scaleX(-1); }
+.rail-toggle.active { color: var(--text-primary); background: var(--background-selected); }
+
+/* The native browser layer is painted by Chromium over the window, not by
+   this document. This element only reserves its rectangle and reports it; it
+   is deliberately empty, and the reading iframe is hidden while it is up. */
+/* .wb-body is position:relative, not a flex column, so the reserved
+   rectangle is pinned to it rather than asked to flex. */
+.wb-native { display: none; }
+.wb-panel.native .wb-native { display: block; position: absolute; inset: 0; }
+.wb-panel.native .wb-frame,
+.wb-panel.native .wb-start { display: none; }

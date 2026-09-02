@@ -40,6 +40,16 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     capture: (payload) => ipcRenderer.invoke("taskview:capture", payload),
     onToggle: (callback) => subscribe("taskview:toggle", callback),
   },
+  launcher: {
+    onToggle: (callback) => subscribe("launcher:toggle", callback),
+  },
+  /** Clyra Anywhere: the system-wide background layer's on/off switch, and
+   *  whether the window closing should quit the app or hide it. */
+  anywhere: {
+    getEnabled: () => ipcRenderer.invoke("anywhere:get-enabled"),
+    setEnabled: (enabled) => ipcRenderer.invoke("anywhere:set-enabled", enabled),
+    onState: (callback) => subscribe("anywhere:state", callback),
+  },
   dictation: {
     toggle: () => ipcRenderer.invoke("dictation:toggle"),
     shortcutStatus: () => ipcRenderer.invoke("dictation:shortcut-status"),
