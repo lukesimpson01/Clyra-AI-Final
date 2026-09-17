@@ -11,14 +11,16 @@ export type VoiceConfig = {
 };
 
 export function loadVoiceConfig(): VoiceConfig {
-  const llmApiKey = process.env.DEEPSEEK_API_KEY || process.env.MY_LLM_API_KEY || "";
+  const localModel = String(process.env.CLYRA_OLLAMA_MODEL || process.env.CLYRA_LOCAL_MODEL || "").trim();
+  const localHost = String(process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/$/, "");
+  const llmApiKey = process.env.MY_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || (localModel ? "ollama" : "");
   const llmBaseUrl =
     process.env.MY_LLM_BASE_URL ||
-    (process.env.DEEPSEEK_API_KEY ? "https://api.deepseek.com" : "https://api.openai.com/v1");
+    (process.env.DEEPSEEK_API_KEY ? "https://api.deepseek.com" : localModel ? `${localHost}/v1` : "https://api.openai.com/v1");
   const llmModel =
     process.env.MY_LLM_MODEL ||
     process.env.DEEPSEEK_MODEL ||
-    (process.env.DEEPSEEK_API_KEY ? "deepseek-v4-flash" : "gpt-4o-mini");
+    (process.env.DEEPSEEK_API_KEY ? "deepseek-v4-flash" : localModel || "gpt-4o-mini");
 
   return {
     enabled: process.env.VOICE_ENABLED !== "false",

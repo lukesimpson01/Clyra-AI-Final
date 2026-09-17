@@ -13,6 +13,7 @@ import { ChromiumSurfaceManager } from "./surface-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
 import { SmartToolbarManager } from "./smart-toolbar-manager.mjs";
 import { GoogleWorkspaceManager } from "./google-workspace-manager.mjs";
+import { SpotifyManager } from "./spotify-manager.mjs";
 import { DeepResearchManager } from "./deep-research-manager.mjs";
 import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
@@ -23,9 +24,12 @@ const execFileAsync = promisify(execFile);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
-// OAuth credentials stay in the local ignored .env file and are only read by
-// this Electron main process. They are deliberately never sent over IPC.
+// OAuth credentials stay in the local ignored .env / .env.local files and are
+// only read by this Electron main process. They are deliberately never sent
+// over IPC. `.env.local` is loaded second (and overrides `.env`), matching
+// the same convention Vite uses for the renderer's own env files.
 dotenv.config({ path: path.join(projectRoot, ".env"), quiet: true });
+dotenv.config({ path: path.join(projectRoot, ".env.local"), quiet: true, override: true });
 const isDevelopment = process.env.CLYRA_ELECTRON_DEV === "1";
 const appPort = Number(process.env.CLYRA_DESKTOP_PORT || 31_415);
 const cdpPort = Number(process.env.CLYRA_CDP_PORT || 9_223);
@@ -57,6 +61,7 @@ let surfaceManager = null;
 let dictationManager = null;
 let smartToolbarManager = null;
 let googleWorkspaceManager = null;
+let spotifyManager = null;
 let deepResearchManager = null;
 let localMemoryManager = null;
 let companionManager = null;
@@ -135,6 +140,22 @@ async function showOrCreateWindow() {
   mainWindow?.show();
 }
 
+/**
+ * Send a Clyra-wide shortcut after restoring the desktop window. Electron's
+ * global shortcuts also fire while another app owns the keyboard, so merely
+ * sending an IPC event to a hidden renderer made Cmd/Ctrl+J and Cmd/Ctrl+K
+ * feel broken outside Clyra.
+ */
+async function activateClyraShortcut(channel) {
+  await showOrCreateWindow();
+  const contents = uiView?.webContents;
+  if (!contents || contents.isDestroyed()) return;
+  mainWindow?.show();
+  mainWindow?.focus();
+  contents.focus();
+  contents.send(channel);
+}
+
 function destroyNativeManagers() {
   if (nativeManagersDestroyed) return;
   nativeManagersDestroyed = true;
@@ -148,6 +169,8 @@ function destroyNativeManagers() {
   companionManager = null;
   googleWorkspaceManager?.finishAuth?.();
   googleWorkspaceManager = null;
+  spotifyManager?.finishAuth?.();
+  spotifyManager = null;
   deepResearchManager = null;
 }
 
@@ -296,12 +319,28 @@ function configureUiSession() {
     }
     return candidates.some((candidate) => isClyraOrigin(String(candidate || "")));
   };
+  // Earth is framed from its own loopback port, so its location request is
+  // deliberately proxied through Clyra's top-level document. Only that known
+  // application origin may use geolocation; a remote page or an arbitrary
+  // loopback service never inherits the permission from the containing view.
+  const allowGeolocationFromClyra = (requestingOrigin, details = {}) => [
+    requestingOrigin,
+    details.securityOrigin,
+    details.requestingUrl,
+  ].some((candidate) => isClyraOrigin(String(candidate || "")));
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (permission === "geolocation") {
+      return allowGeolocationFromClyra(requestingOrigin, details || {});
+    }
     if (permission !== "media") return false;
     // Allow mic and camera for Clyra origins (voice call + camera vision).
     return allowMediaFrom(webContents, requestingOrigin, details || {});
   });
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission === "geolocation") {
+      callback(allowGeolocationFromClyra(details?.securityOrigin || details?.requestingUrl, details || {}));
+      return;
+    }
     if (permission !== "media") {
       callback(false);
       return;
@@ -1042,6 +1081,10 @@ function registerIpc() {
     authorizeCompanion(event);
     return companionManager?.takeManualControl();
   });
+  ipcMain.handle("companion:pause", async (event) => {
+    authorizeCompanion(event);
+    return companionManager?.pauseAi();
+  });
   ipcMain.handle("companion:resume", async (event) => {
     authorizeCompanion(event);
     return companionManager?.resumeAi();
@@ -1098,6 +1141,67 @@ function registerIpc() {
   ipcMain.handle("memory:remove", (event, payload) => { authorize(event); return localMemoryManager?.remove({ userId:String(payload?.userId || "local"), id:String(payload?.id || "") }) || {ok:false}; });
   ipcMain.handle("memory:clear", (event, payload) => { authorize(event); return localMemoryManager?.clear(String(payload?.userId || "local")) || {ok:false}; });
   if (isDevelopment) ipcMain.handle("google:diagnostic", (event, payload) => { authorize(event); return googleWorkspaceManager?.diagnostic(payload || {}) || { ok:false, stage:"desktop", errorCode:"GOOGLE_UNAVAILABLE" }; });
+  ipcMain.handle("spotify:status", (event) => { authorize(event); return spotifyManager?.status() || { connected:false }; });
+  ipcMain.handle("spotify:sign-in", (event) => { authorize(event); return spotifyManager?.signIn() || { ok:false, error:"Spotify integration is unavailable." }; });
+  ipcMain.handle("spotify:disconnect", (event) => { authorize(event); return spotifyManager?.disconnect() || { ok:true }; });
+  ipcMain.handle("spotify:profile", async (event) => { authorize(event); try { return { ok:true, profile: await spotifyManager?.getProfile() }; } catch (error) { return { ok:false, error: error?.message || "Spotify profile is unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:playlists", async (event) => { authorize(event); try { return { ok:true, playlists: await spotifyManager?.getPlaylists() }; } catch (error) { return { ok:false, error: error?.message || "Spotify playlists are unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:playlist-tracks", async (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.playlistId !== "string") throw new Error("Invalid Spotify playlist-tracks IPC payload.");
+    try {
+      return { ok:true, items: await spotifyManager?.getPlaylistTracks(payload.playlistId) };
+    } catch (error) {
+      const forbidden = error?.httpStatus === 403;
+      return {
+        ok:false,
+        error: forbidden
+          ? "Spotify only allows Clyra to open playlists you own or collaborate on."
+          : error?.message || "Spotify playlist tracks are unavailable.",
+        code: error?.errorCode || error?.code,
+      };
+    }
+  });
+  ipcMain.handle("spotify:devices", async (event) => { authorize(event); try { return { ok:true, devices: await spotifyManager?.getDevices() }; } catch (error) { return { ok:false, error: error?.message || "Spotify devices are unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:playback-state", async (event) => { authorize(event); try { return { ok:true, state: await spotifyManager?.getPlaybackState() }; } catch (error) { return { ok:false, error: error?.message || "Spotify playback state is unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:queue", async (event) => { authorize(event); try { return { ok:true, queue: await spotifyManager?.getQueue() }; } catch (error) { return { ok:false, error: error?.message || "Spotify queue is unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:recently-played", async (event) => { authorize(event); try { return { ok:true, tracks: await spotifyManager?.getRecentlyPlayed() }; } catch (error) { return { ok:false, error: error?.message || "Spotify recently played items are unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:saved-tracks", async (event) => { authorize(event); try { return { ok:true, tracks: await spotifyManager?.getSavedTracks() }; } catch (error) { return { ok:false, error: error?.message || "Spotify saved tracks are unavailable.", code: error?.code }; } });
+  for (const [channel, method] of [["spotify:library-contains", "libraryContains"], ["spotify:library-save", "saveLibrary"], ["spotify:library-remove", "removeLibrary"]]) {
+    ipcMain.handle(channel, async (event, payload) => {
+      authorize(event);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Array.isArray(payload.uris) || payload.uris.some((uri) => typeof uri !== "string")) {
+        throw new Error("Invalid Spotify library IPC payload.");
+      }
+      try {
+        const result = await spotifyManager?.[method](payload.uris);
+        return { ok: true, ...(method === "libraryContains" ? { contains: result } : {}) };
+      } catch (error) {
+        return { ok: false, error: error?.message || "Spotify library request failed.", code: error?.code || error?.errorCode };
+      }
+    });
+  }
+  ipcMain.handle("spotify:search", async (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.query !== "string") throw new Error("Invalid Spotify search IPC payload.");
+    try {
+      return { ok:true, ...(await spotifyManager?.search(payload.query, payload.types, payload.limit)) };
+    } catch (error) {
+      return { ok:false, error: error?.message || "Spotify search failed.", code: error?.code };
+    }
+  });
+  ipcMain.handle("spotify:control", async (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.action !== "string") throw new Error("Invalid Spotify control IPC payload.");
+    const keys = Object.keys(payload);
+    if (keys.some((key) => !["action", "deviceId", "positionMs", "volumePercent", "contextUri", "uris", "play", "state", "uri"].includes(key))) throw new Error("Unsupported Spotify control IPC field.");
+    try {
+      await spotifyManager?.control(payload.action, payload);
+      return { ok:true };
+    } catch (error) {
+      return { ok:false, error: error?.message || "Spotify control action failed.", code: error?.code };
+    }
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1291,6 +1395,16 @@ async function createWindow() {
     clientSecret: process.env.CLYRA_GOOGLE_CLIENT_SECRET,
     serviceUrl: () => `http://127.0.0.1:${appPort}`,
   });
+  spotifyManager = new SpotifyManager({
+    tokenPath: path.join(app.getPath("userData"), "spotify.dat"),
+    uiContents: () => uiView?.webContents ?? null,
+    development: isDevelopment,
+    // The only Spotify credential Clyra ever configures — a Client ID, set
+    // by the developer in the local ignored .env / .env.local. PKCE means no
+    // Client Secret is needed anywhere in this desktop app.
+    clientId: process.env.CLYRA_SPOTIFY_CLIENT_ID,
+    redirectPort: process.env.CLYRA_SPOTIFY_REDIRECT_PORT,
+  });
   deepResearchManager = new DeepResearchManager({
     uiContents: () => uiView?.webContents ?? null,
     development: isDevelopment,
@@ -1313,13 +1427,13 @@ async function createWindow() {
   await smartToolbarManager.initialize();
   registerIpc();
 
-  // Global Task View — works even when a BrowserView page owns keyboard focus.
+  // Global Task View works in every Clyra surface and summons Clyra when the
+  // chord is pressed from a different app.
   try {
-    globalShortcut.register("CommandOrControl+J", () => {
-      if (uiView && !uiView.webContents.isDestroyed()) {
-        uiView.webContents.send("taskview:toggle");
-      }
+    const registered = globalShortcut.register("CommandOrControl+J", () => {
+      void activateClyraShortcut("taskview:toggle");
     });
+    if (!registered) console.warn("[taskview] Cmd+J is already owned by another app.");
   } catch (error) {
     console.warn("[taskview] global shortcut unavailable:", error);
   }
@@ -1331,10 +1445,7 @@ async function createWindow() {
      the Notes browser panel. ⌘J already worked for exactly this reason. */
   try {
     const registered = globalShortcut.register("CommandOrControl+K", () => {
-      if (uiView && !uiView.webContents.isDestroyed()) {
-        uiView.webContents.focus();
-        uiView.webContents.send("launcher:toggle");
-      }
+      void activateClyraShortcut("launcher:toggle");
     });
     if (!registered) console.warn("[launcher] Cmd+K is already owned by another app.");
   } catch (error) {

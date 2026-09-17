@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS pages2(
   full_width INTEGER NOT NULL DEFAULT 0,
   text_size TEXT NOT NULL DEFAULT 'medium',
   font_style TEXT NOT NULL DEFAULT 'default',
+  colour_categories TEXT NOT NULL DEFAULT '[]',
   sort REAL NOT NULL DEFAULT 0,
   trashed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -295,6 +296,9 @@ export async function openNotesDb(): Promise<DB> {
   db.pragma("foreign_keys = ON");
   legacySchema(db);
   db.exec(SCHEMA);
+  /* Additive migration for documents created before smart colour coding. */
+  const pageColumns = new Set((db.prepare("PRAGMA table_info(pages2)").all() as Array<{ name: string }>).map((c) => c.name));
+  if (!pageColumns.has("colour_categories")) db.exec("ALTER TABLE pages2 ADD COLUMN colour_categories TEXT NOT NULL DEFAULT '[]'");
   migrateLegacyPages(db);
   return db;
 }

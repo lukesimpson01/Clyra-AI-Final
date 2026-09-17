@@ -9,6 +9,14 @@ export type Span = {
   b?: 1; i?: 1; u?: 1; s?: 1; c?: 1;   // bold italic underline strike code
   col?: string;              // text colour token
   bg?: string;               // background colour token
+  colHex?: string;           // custom text colour, #rrggbb
+  bgHex?: string;            // custom highlight colour, #rrggbb
+  highlightId?: string;      // stable smart-colour highlight id
+  categoryId?: string;       // points at the page's colour category metadata
+  highlightNote?: string;    // optional short study note
+  highlightCreatedAt?: string;
+  font?: string;
+  size?: string;
   href?: string;             // external link
   page?: string;             // internal page mention
   date?: string;             // @date mention (ISO)
@@ -114,7 +122,8 @@ export function inlineToSpans(source: string): Span[] {
 
 const sameMarks = (a: Span, b: Span) =>
   a.b === b.b && a.i === b.i && a.u === b.u && a.s === b.s && a.c === b.c &&
-  a.col === b.col && a.bg === b.bg && a.href === b.href && a.page === b.page && a.eq === b.eq;
+  a.col === b.col && a.bg === b.bg && a.colHex === b.colHex && a.bgHex === b.bgHex && a.highlightId === b.highlightId && a.categoryId === b.categoryId && a.highlightNote === b.highlightNote && a.font === b.font && a.size === b.size &&
+  a.href === b.href && a.page === b.page && a.eq === b.eq;
 
 export function spansToMarkdown(spans: Span[] | undefined): string {
   return (spans || [])

@@ -214,11 +214,8 @@ export interface BrowserAgentEvent {
   completedCriteria?: number;
   totalCriteria?: number;
   facts?: number;
-  /** Distinguishes reasoning, per-action, strategy-change, and completion events for the UI. */
-  kind?: "reasoning" | "action" | "recovery" | "strategy" | "complete";
-  evaluation?: StepEvaluation;
-  memory?: string;
-  nextGoal?: string;
+  /** Operational event category; private model deliberation is never emitted. */
+  kind?: "action" | "recovery" | "strategy" | "complete";
   actionIndex?: number;
   actionCount?: number;
   success?: boolean;
@@ -481,7 +478,12 @@ async function loadAgentSession() {
     if (!saved?.id || !saved?.task) return null;
     agentSession = {
       ...saved,
-      recentEvents: Array.isArray(saved.recentEvents) ? saved.recentEvents.slice(-30) : [],
+      recentEvents: Array.isArray(saved.recentEvents)
+        ? saved.recentEvents.filter((event: BrowserAgentEvent) => event?.kind !== "reasoning").slice(-30).map((event: BrowserAgentEvent) => {
+          const { evaluation: _evaluation, memory: _memory, nextGoal: _nextGoal, ...safeEvent } = event as BrowserAgentEvent & Record<string, unknown>;
+          return safeEvent;
+        })
+        : [],
       updatedAt: saved.updatedAt || new Date().toISOString(),
     };
     if (ACTIVE_AGENT_STATUSES.has(agentSession.status)) {
@@ -978,7 +980,12 @@ async function inspectPageOnce(activePage: Page): Promise<Omit<StructuredObserva
     };
   }, { maxChars: MAX_OBSERVATION_CHARS });
 
-  const fingerprint = crypto.createHash("sha1").update(`${data.url}|${data.title}|${data.visibleText.slice(0, 80).join("|")}|${data.elements.map((item) => `${item.id}:${item.value}:${item.checked}`).join("|")}`).digest("hex").slice(0, 16);
+  // `visibleText` intentionally samples only semantic content nodes. That is
+  // ideal for a compact agent prompt, but it can omit a legitimate status
+  // change inside a custom control (for example a cart counter updated by an
+  // Add button). Include bounded main text in the verification fingerprint so
+  // a completed click is not incorrectly treated as a no-op.
+  const fingerprint = crypto.createHash("sha1").update(`${data.url}|${data.title}|${data.visibleText.slice(0, 80).join("|")}|${data.mainText.slice(0, 4_000)}|${data.elements.map((item) => `${item.id}:${item.value}:${item.checked}:${item.enabled}`).join("|")}`).digest("hex").slice(0, 16);
   const signals = injectionSignals([...data.visibleText, data.mainText]);
   return {
     page: { url: data.url, title: data.title, loading: data.loading, fingerprint },
@@ -1698,6 +1705,12 @@ export function normalizeDecisionAction(value: unknown): BrowserAction | null {
   // URL or query cannot fall into a recovery loop.
   if (type === "navigate" && !normalized.url) normalized.url = normalized.target || normalized.href;
   if (type === "search" && !normalized.query) normalized.query = normalized.target || normalized.text || normalized.value;
+  // Reasoning models often describe a native select choice as `text`. Keep
+  // that semantic alias inside the typed action contract rather than sending
+  // an empty option request to either browser backend.
+  if (type === "select_option" && !normalized.value && !normalized.label && typeof normalized.text === "string") {
+    normalized.value = normalized.text;
+  }
   if (type === "open_tab" && !normalized.url && typeof normalized.target === "string") normalized.url = normalized.target;
   if (["switch_tab", "close_tab", "duplicate_tab"].includes(type) && !normalized.tabId && typeof normalized.target === "string") {
     normalized.tabId = normalized.target;
@@ -1733,14 +1746,6 @@ function completionEvidence(observation: StructuredObservation | null, plan: Tas
     url: observation?.page.url || "",
     title: observation?.page.title || "",
     checks,
-  };
-}
-
-function reasoningEventFields(decision: AgentDecision) {
-  return {
-    evaluation: decision.evaluationPreviousGoal,
-    memory: decision.memory,
-    nextGoal: decision.nextGoal,
   };
 }
 
@@ -2376,17 +2381,6 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
       }
       const decision = await decideNextActions(task, apiKey, history, plan, facts, failures, observation, taskAbort.signal);
       finalMessage = decision.message?.trim() || decision.reasoningSummary?.trim() || finalMessage;
-      if (decision.nextGoal || decision.evaluationPreviousGoal || decision.memory) {
-        emit({
-          phase: "observing",
-          kind: "reasoning",
-          message: decision.nextGoal || decision.reasoningSummary || "Deciding the next actions",
-          step,
-          ...reasoningEventFields(decision),
-          completedCriteria: completedCriteria.size,
-          totalCriteria: plan.successCriteria.length,
-        });
-      }
       for (const rawFact of decision.facts || []) {
         const fact = factFromDecision(rawFact, observation);
         if (fact.claim && !facts.some((existing) => existing.claim === fact.claim && existing.sourceUrl === fact.sourceUrl)) facts.push(fact);
@@ -2665,17 +2659,6 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
 
       const decision = await decideNextActions(task, apiKey, history, plan, facts, failures, observation, taskAbort.signal);
       finalMessage = decision.message?.trim() || decision.reasoningSummary?.trim() || finalMessage;
-      if (decision.nextGoal || decision.evaluationPreviousGoal || decision.memory) {
-        emit({
-          phase: "observing",
-          kind: "reasoning",
-          message: decision.nextGoal || decision.reasoningSummary || "Deciding the next actions",
-          step,
-          ...reasoningEventFields(decision),
-          completedCriteria: completedCriteria.size,
-          totalCriteria: plan.successCriteria.length,
-        });
-      }
       for (const rawFact of decision.facts || []) {
         const fact = factFromDecision(rawFact, observation);
         if (fact.claim && !facts.some((current) => current.claim === fact.claim && current.sourceUrl === fact.sourceUrl)) facts.push(fact);

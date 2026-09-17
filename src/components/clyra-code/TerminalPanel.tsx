@@ -7,7 +7,15 @@ import "@xterm/xterm/css/xterm.css";
 import { AGENT_EASE } from "./motion";
 import { createTerminalBridge, type TerminalBridge } from "../../lib/terminalBridge";
 
-type SessionTab = { id: string; label: string; failed?: boolean; busy?: boolean };
+type SessionTab = {
+  id: string;
+  label: string;
+  /** A problem reported by the coding workspace, rendered in the shell itself. */
+  error?: string;
+  /** The terminal transport itself could not start or exited unexpectedly. */
+  connectionFailed?: boolean;
+  busy?: boolean;
+};
 
 function shellLabel() {
   if (navigator.userAgent.includes("Windows")) return "PowerShell";
@@ -23,7 +31,7 @@ class TerminalErrorBoundary extends Component<{ children: ReactNode }, { failed:
   render() { return this.state.failed ? <div className="h-8 border-t border-black/[0.06] bg-white px-3 py-2 text-[11px] text-[#B94B4B]">Terminal unavailable in this view</div> : this.props.children; }
 }
 
-function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle, agentActivityCount: _agentActivityCount = 0 }: { projectId: string | null; open: boolean; height: number; onHeightChange: (height: number) => void; onToggle: () => void; agentActivityCount?: number }) {
+function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle, reportedError = null, agentActivityCount: _agentActivityCount = 0 }: { projectId: string | null; open: boolean; height: number; onHeightChange: (height: number) => void; onToggle: () => void; reportedError?: { id: string; message: string } | null; agentActivityCount?: number }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -34,6 +42,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
   const startupTimersRef = useRef(new Map<string, number>());
   const followOutputRef = useRef(true);
   const followFrameRef = useRef<number | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
   const [hostReady, setHostReady] = useState(false);
   const [tabs, setTabs] = useState<SessionTab[]>([{ id: "terminal-1", label: shellLabel() }]);
   const [activeTab, setActiveTab] = useState("terminal-1");
@@ -66,11 +75,11 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     // A collapsed/reselected tab already has a real shell and scrollback.
     // Don't turn it back into a "starting" session or arm a stale timeout.
     if (hasLiveOutput) {
-      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, failed: false, busy: false } : item));
+      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: false, busy: false } : item));
       fit(tabId);
       return;
     }
-    setTabs((items) => items.map((item) => item.id === tabId ? { ...item, failed: false, busy: true } : item));
+    setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: false, busy: true } : item));
     // A fresh workspace has no project yet.  Still give the user a working
     // shell immediately, rooted in Clyra's projects directory, rather than
     // leaving a permanently blank terminal until their first prompt.
@@ -79,7 +88,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
       // output clears the tiny starting marker; it is not a prerequisite for
       // rendering or focusing xterm.
       fit(tabId);
-    }).catch(() => setTabs((items) => items.map((item) => item.id === tabId ? { ...item, failed: true, busy: false } : item)));
+    }).catch(() => setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: true, busy: false } : item)));
     const existingTimer = startupTimersRef.current.get(tabId);
     if (existingTimer) window.clearTimeout(existingTimer);
     startupTimersRef.current.set(tabId, window.setTimeout(() => {
@@ -87,7 +96,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
       // from a preceding project selection is still pending. Never paint a
       // failure over a terminal that has received real shell output.
       if (outputRef.current.get(tabId)) return;
-      setTabs((items) => items.map((item) => item.id === tabId && item.busy ? { ...item, failed: true, busy: false } : item));
+      setTabs((items) => items.map((item) => item.id === tabId && item.busy ? { ...item, connectionFailed: true, busy: false } : item));
     }, 2000));
   }, [fit, projectId]);
 
@@ -130,7 +139,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
         window.clearTimeout(timer);
         startupTimersRef.current.delete(tabId);
       }
-      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, failed: false } : item));
+      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, connectionFailed: false } : item));
       outputRef.current.set(tabId, (outputRef.current.get(tabId) || "") + data);
       if (tabId === activeRef.current) {
         const term = termRef.current;
@@ -145,7 +154,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
         window.clearTimeout(timer);
         startupTimersRef.current.delete(tabId);
       }
-      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, failed: true } : item));
+      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, connectionFailed: true } : item));
     });
     connect(activeRef.current);
     return () => {
@@ -182,6 +191,37 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     if (editingTab) requestAnimationFrame(() => { tabInputRef.current?.focus(); tabInputRef.current?.select(); });
   }, [editingTab]);
 
+  useEffect(() => {
+    if (!reportedError || reportedErrorRef.current === reportedError.id) return;
+    const message = reportedError.message.trim();
+    if (!message) return;
+    reportedErrorRef.current = reportedError.id;
+
+    // Keep coding errors in a terminal-shaped place. When the user is already
+    // looking at a shell, append there; otherwise leave a distinct failed tab
+    // waiting in the tab strip without unexpectedly expanding the drawer.
+    const tabId = open ? activeRef.current : `terminal-${++sequenceRef.current}`;
+    const output = `\r\n\x1b[1;31m✕ Clyra error\x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`;
+    outputRef.current.set(tabId, `${outputRef.current.get(tabId) || ""}${output}`);
+    setTabs((items) => {
+      const exists = items.some((item) => item.id === tabId);
+      if (!exists) return [...items, { id: tabId, label: "Error", error: message }];
+      return items.map((item) => item.id === tabId ? { ...item, error: message, busy: false } : item);
+    });
+    if (!open) {
+      setActiveTab(tabId);
+      // The error tab is still a real shell session, not a dead-end log. Its
+      // diagnostic is written first, then its prompt joins the scrollback.
+      const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
+      void bridge.open(projectId ?? "", tabId)
+        .then(() => fit(tabId))
+        .catch(() => setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: true } : item)));
+    }
+    if (tabId === activeRef.current) {
+      termRef.current?.write(output, () => followLatest(true));
+    }
+  }, [fit, followLatest, open, projectId, reportedError]);
+
   const addTab = () => {
     const id = `terminal-${++sequenceRef.current}`;
     outputRef.current.set(id, "");
@@ -203,7 +243,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     bridgeRef.current?.kill(tabId);
     outputRef.current.set(tabId, "");
     termRef.current?.reset();
-    setTabs((items) => items.map((item) => item.id === tabId ? { ...item, failed: false } : item));
+    setTabs((items) => items.map((item) => item.id === tabId ? { ...item, error: undefined, connectionFailed: false } : item));
     window.setTimeout(() => connect(tabId), 24);
   };
   const renameTab = (tabId: string) => {
@@ -220,13 +260,13 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
   };
 
   const active = tabs.find((item) => item.id === activeTab);
-  const activeFailed = active?.failed;
+  const activeFailed = Boolean(active?.error || active?.connectionFailed);
   return <div className="shrink-0 border-t border-black/[0.07] bg-white">
     <div className="flex h-8 items-center gap-1 border-b border-black/[0.055] px-2.5" role="tablist" aria-label="Terminal sessions">
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
         {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={tab.id === activeTab} onClick={() => { setActiveTab(tab.id); if (!open) onToggle(); }} className={`group relative flex h-7 min-w-[120px] max-w-[220px] items-center gap-1.5 rounded-[7px] px-2.5 text-left text-[11.5px] transition-colors duration-150 ${tab.id === activeTab ? "bg-black/[0.055] text-[#292B30]" : "text-[#85878C] hover:bg-black/[0.03] hover:text-[#4D4F54]"}`}>
           {tab.busy ? <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={1.7} /> : <TerminalIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />}
-          {editingTab === tab.id ? <input ref={tabInputRef} value={tabLabel} aria-label="Rename terminal" onClick={(event) => event.stopPropagation()} onChange={(event) => setTabLabel(event.target.value)} onBlur={() => renameTab(tab.id)} onKeyDown={(event) => { if (event.key === "Enter") renameTab(tab.id); if (event.key === "Escape") setEditingTab(null); }} className="min-w-0 flex-1 bg-transparent text-[11.5px] outline-none" /> : <span className="min-w-0 flex-1 truncate">{tab.label}</span>}{tab.failed ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#C24949]" /> : null}
+          {editingTab === tab.id ? <input ref={tabInputRef} value={tabLabel} aria-label="Rename terminal" onClick={(event) => event.stopPropagation()} onChange={(event) => setTabLabel(event.target.value)} onBlur={() => renameTab(tab.id)} onKeyDown={(event) => { if (event.key === "Enter") renameTab(tab.id); if (event.key === "Escape") setEditingTab(null); }} className="min-w-0 flex-1 bg-transparent text-[11.5px] outline-none" /> : <span className="min-w-0 flex-1 truncate">{tab.label}</span>}{tab.error || tab.connectionFailed ? <span aria-label="Terminal error" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#C24949]" /> : null}
           <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100">
             <span role="button" aria-label={`Rename ${tab.label}`} onClick={(event) => { event.stopPropagation(); setTabLabel(tab.label); setEditingTab(tab.id); }} className="flex h-4 w-4 items-center justify-center rounded text-[#92949A] hover:bg-black/[0.07]"><Pencil className="h-2.5 w-2.5" /></span>
             {tabs.length > 1 ? <span role="button" aria-label={`Close ${tab.label}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }} className="flex h-4 w-4 items-center justify-center rounded text-[#92949A] hover:bg-black/[0.07]"><X className="h-3 w-3" /></span> : null}
@@ -239,7 +279,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     <motion.div initial={false} animate={{ height: open ? height : 0, opacity: open ? 1 : 0 }} transition={{ height: { duration: 0.27, ease: AGENT_EASE }, opacity: { duration: 0.16 } }} className="relative overflow-hidden">
       <div className="absolute left-0 right-0 top-0 z-10 h-1.5 cursor-row-resize" onPointerDown={onDragStart} aria-hidden />
       {active?.busy ? <div className="pointer-events-none absolute right-2 top-1 z-10 text-[10.5px] text-[#96989D]">Starting shell…</div> : null}
-      {activeFailed ? <div className="absolute right-2 top-1 z-10 flex items-center gap-1.5 text-[10.5px] text-[#B94B4B]"><span>Shell failed to start</span><button type="button" onClick={() => restart()} className="rounded px-1 py-0.5 text-[#55575C] hover:bg-black/[0.04]">Restart</button></div> : null}
+      {activeFailed ? <div className="absolute right-2 top-1 z-10 flex items-center gap-1.5 text-[10.5px] text-[#B94B4B]"><span>{active?.error ? "Error reported" : "Shell failed to start"}</span>{active?.connectionFailed ? <button type="button" onClick={() => restart()} className="rounded px-1 py-0.5 text-[#55575C] hover:bg-black/[0.04]">Restart</button> : null}</div> : null}
       <div ref={(node) => { mountRef.current = node; if (node) setHostReady(true); }} className="h-full w-full bg-white px-2 pb-1.5 pt-1" />
     </motion.div>
   </div>;

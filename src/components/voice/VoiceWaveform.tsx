@@ -30,7 +30,7 @@ export function VoiceWaveform({
   active: boolean;
   muted?: boolean;
   compact?: boolean;
-  state?: "connecting" | "listening" | "thinking" | "speaking" | "ended" | "error";
+  state?: "idle" | "connecting" | "reconnecting" | "listening" | "thinking" | "speaking" | "paused" | "ended" | "error";
   className?: string;
 }) {
   const barsRef = useRef<Array<HTMLSpanElement | null>>([]);

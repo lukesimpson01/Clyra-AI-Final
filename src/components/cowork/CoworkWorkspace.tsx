@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, Monitor, Plus, Search, X } from "lucide-react";
+import { Check, ChevronDown, FileText, Folder, Globe2, ListTodo, Monitor, Pause, Play, Plus, Search, Settings, Square, Terminal, Wrench, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 /**
@@ -45,6 +45,11 @@ type Message = {
   text: string;
   at: string;
 };
+
+type TaskState = "planned" | "running" | "blocked" | "awaiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "retrying";
+type TaskEvent = { id: string; at: string; kind: string; label: string; detail?: string; state?: TaskState };
+type CoworkTask = { id: string; parentId: string | null; botId: string; title: string; objective: string; state: TaskState; currentStep: string; retries: number; artifacts: string[]; filesTouched: string[]; error: string | null; events: TaskEvent[] };
+type WorkspaceTab = "Workspace" | "Browser" | "Terminal" | "Files" | "Tasks" | "Changes";
 
 /** Stable per-bot colour, so an avatar looks the same everywhere it appears. */
 const AVATAR_COLOURS = [
@@ -120,6 +125,9 @@ export function CoworkWorkspace() {
   const [composing, setComposing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tasks, setTasks] = useState<CoworkTask[]>([]);
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("Workspace");
+  const [creatingBot, setCreatingBot] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const active = useMemo(
@@ -151,11 +159,16 @@ export function CoworkWorkspace() {
 
   const loadThread = useCallback(async (id: string) => {
     try {
-      const response = await fetch(`/api/cowork/conversations/${id}`, { cache: "no-store" });
+      const [response, taskResponse] = await Promise.all([
+        fetch(`/api/cowork/conversations/${id}`, { cache: "no-store" }),
+        fetch(`/api/cowork/tasks?conversationId=${encodeURIComponent(id)}`, { cache: "no-store" }),
+      ]);
       const payload = await response.json();
+      const taskPayload = await taskResponse.json();
       if (!payload?.ok) throw new Error(payload?.error || "Could not open that conversation.");
       setMessages(payload.messages);
       setParticipants(payload.participants);
+      if (taskPayload?.ok) setTasks(taskPayload.tasks);
       // Opening clears the unread badge server-side; mirror it immediately.
       setConversations((current) => current.map((item) => item.id === id ? { ...item, unread: 0 } : item));
     } catch (cause) {
@@ -167,6 +180,12 @@ export function CoworkWorkspace() {
     if (!activeId) { setMessages([]); setParticipants([]); return; }
     void loadThread(activeId);
   }, [activeId, loadThread]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    const interval = window.setInterval(() => { void loadThread(activeId); void loadSidebar(); }, 3500);
+    return () => window.clearInterval(interval);
+  }, [activeId, loadSidebar, loadThread]);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -212,20 +231,32 @@ export function CoworkWorkspace() {
 
   const thinking = participants.filter((bot) => bot.status === "thinking");
 
+  const controlTask = async (taskId: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => {
+    try {
+      const response = await fetch(`/api/cowork/tasks/${taskId}/${operation}`, { method: "POST" });
+      const payload = await response.json();
+      if (!payload?.ok) throw new Error(payload?.error || "Could not update the task.");
+      if (activeId) void loadThread(activeId);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update the task."); }
+  };
+
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-white">
+    <div className="flex h-full min-h-0 overflow-hidden bg-[#fbfaf7]">
       {/* ── Sidebar ─────────────────────────────────────────────── */}
-      <aside className="flex w-[288px] shrink-0 flex-col border-r border-slate-200/70 bg-white">
-        <div className="flex items-center justify-end px-4 pb-2 pt-3.5">
+      <aside className="flex w-[254px] shrink-0 flex-col border-r border-[#e8e6e1] bg-[#fdfcf9]">
+        <div className="flex items-center justify-between px-4 pb-3 pt-4">
+          <p className="text-[15px] font-semibold tracking-[-.03em] text-[#171717]">Co-Work</p>
           <button
             type="button"
-            onClick={() => setComposing(true)}
-            aria-label="New message"
-            className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+            onClick={() => setCreatingBot(true)}
+            aria-label="New coworker"
+            className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-stone-100 hover:text-slate-900"
           >
             <Plus className="h-[18px] w-[18px]" />
           </button>
         </div>
+
+        <div className="px-4 pb-3"><button type="button" onClick={() => setCreatingBot(true)} className="flex h-9 w-full items-center gap-2 rounded-lg bg-[#3269db] px-3 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(28,72,160,.2)] hover:bg-[#285dc9]"><Plus className="h-3.5 w-3.5" /> New Coworker</button></div>
 
         <div className="px-4 pb-3">
           <div className="relative">
@@ -240,6 +271,7 @@ export function CoworkWorkspace() {
           </div>
         </div>
 
+        <div className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-[.12em] text-stone-400">Coworkers</div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {loading ? (
             <div className="grid gap-1 px-2">
@@ -261,7 +293,7 @@ export function CoworkWorkspace() {
                   onClick={() => setActiveId(conversation.id)}
                   className={cn(
                     "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
-                    isActive ? "bg-slate-100" : "hover:bg-slate-50",
+                    isActive ? "bg-[#edf3ff]" : "hover:bg-stone-100/70",
                   )}
                 >
                   {conversation.isGroup
@@ -283,7 +315,7 @@ export function CoworkWorkspace() {
                       </span>
                     </span>
                     <span className="mt-0.5 block truncate text-[12.5px] text-slate-500">
-                      {busy ? "Typing…" : conversation.lastMessage || "No messages yet"}
+                      {busy ? "Working…" : conversation.lastMessage || "No tasks yet"}
                     </span>
                   </span>
                 </button>
@@ -292,7 +324,12 @@ export function CoworkWorkspace() {
           )}
         </div>
 
-        <div className="flex items-center gap-2.5 border-t border-slate-200/70 px-4 py-3">
+        <div className="grid gap-0.5 border-t border-[#e8e6e1] px-3 py-3 text-[12px] text-stone-500">
+          <button type="button" onClick={() => setWorkspaceTab("Tasks")} className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><ListTodo className="h-3.5 w-3.5" /> Skills</button>
+          <button type="button" onClick={() => setWorkspaceTab("Browser")} className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><Wrench className="h-3.5 w-3.5" /> Tools</button>
+          <button type="button" className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><Settings className="h-3.5 w-3.5" /> Settings</button>
+        </div>
+        <div className="flex items-center gap-2.5 border-t border-[#e8e6e1] px-4 py-3">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
             YOU
           </span>
@@ -301,16 +338,15 @@ export function CoworkWorkspace() {
       </aside>
 
       {/* ── Thread ──────────────────────────────────────────────── */}
-      <section className="flex min-w-0 flex-1 flex-col bg-white">
+      <section className="flex min-w-0 flex-1 flex-col bg-[#fbfaf7]">
         {active ? (
           <>
-            <header className="flex shrink-0 items-center gap-2.5 border-b border-slate-200/70 px-5 py-3">
+            <header className="flex shrink-0 items-center gap-2.5 border-b border-[#e8e6e1] px-5 py-3">
               {active.isGroup
                 ? <GroupAvatar participants={active.participants} size={26} />
                 : <Avatar name={active.participants[0]?.name || active.title} avatar={active.participants[0]?.avatar} size={26} />}
-              <p className="min-w-0 flex-1 truncate text-[14.5px] font-semibold tracking-[-.01em] text-slate-900">
-                {active.title}
-              </p>
+              <div className="min-w-0 flex-1"><p className="truncate text-[14.5px] font-semibold tracking-[-.01em] text-slate-900">{active.title}</p><p className="truncate text-[11px] text-stone-500">{tasks.find((task) => task.state === "running")?.currentStep || "Ready for work"}</p></div>
+              {tasks.some((task) => task.state === "running") ? <button type="button" onClick={() => { const task = tasks.find((item) => item.state === "running"); if (task) void controlTask(task.id, "pause"); }} className="flex h-8 items-center gap-1.5 rounded-md border border-stone-200 px-2.5 text-[11.5px] font-medium text-stone-600 hover:bg-white"><Pause className="h-3.5 w-3.5" /> Pause</button> : null}
               <button
                 type="button"
                 aria-label="View screen"
@@ -370,8 +406,7 @@ export function CoworkWorkspace() {
                 )}
 
                 {sending ? (
-                  <div className="flex items-center gap-2.5 pt-1">
-                    <ThinkingDots />
+                  <div className="flex items-center gap-2.5 pt-1"><span className="cc-shimmer cc-shimmer--blue font-medium text-[13px]">Working</span>
                     <span className="text-[13px] text-slate-500">
                       {thinking.length ? `${thinking.map((bot) => bot.name).join(", ")} thinking` : "Thinking"}
                     </span>
@@ -446,6 +481,8 @@ export function CoworkWorkspace() {
         ) : null}
       </section>
 
+      <CoworkPanel tasks={tasks} active={active} tab={workspaceTab} onTab={setWorkspaceTab} onControl={controlTask} />
+
       <AnimatePresence>
         {composing ? (
           <NewMessageDialog
@@ -460,6 +497,7 @@ export function CoworkWorkspace() {
             }}
           />
         ) : null}
+        {creatingBot ? <NewCoworkerDialog onClose={() => setCreatingBot(false)} onCreated={() => { setCreatingBot(false); void loadSidebar(); }} /> : null}
       </AnimatePresence>
     </div>
   );
@@ -487,6 +525,58 @@ function ThinkingDots() {
       ))}
     </span>
   );
+}
+
+function taskTone(state: TaskState) {
+  if (state === "completed") return "bg-emerald-500";
+  if (state === "failed" || state === "blocked") return "bg-rose-500";
+  if (state === "awaiting_approval") return "bg-amber-500";
+  if (state === "running" || state === "retrying") return "bg-[#3269db]";
+  return "bg-stone-300";
+}
+
+function CoworkPanel({ tasks, active, tab, onTab, onControl }: { tasks: CoworkTask[]; active: Conversation | null; tab: WorkspaceTab; onTab: (tab: WorkspaceTab) => void; onControl: (id: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => void }) {
+  const focused = tasks.find((task) => ["running", "awaiting_approval", "blocked", "paused"].includes(task.state)) || tasks[0];
+  const events = focused?.events.slice().reverse() || [];
+  const terminalEvents = tasks.flatMap((task) => task.events.filter((event) => event.kind === "terminal").map((event) => ({ ...event, task })));
+  const fileEvents = tasks.flatMap((task) => task.events.filter((event) => event.kind === "files").map((event) => ({ ...event, task })));
+  const tabs: Array<{ label: WorkspaceTab; icon: typeof Folder }> = [
+    { label: "Workspace", icon: Folder }, { label: "Browser", icon: Globe2 }, { label: "Terminal", icon: Terminal }, { label: "Files", icon: FileText }, { label: "Tasks", icon: ListTodo }, { label: "Changes", icon: ChevronDown },
+  ];
+  return (
+    <aside className="flex w-[336px] shrink-0 flex-col border-l border-[#e8e6e1] bg-[#fdfcf9]">
+      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[#e8e6e1] px-2 py-2">
+        {tabs.map(({ label, icon: Icon }) => <button key={label} type="button" onClick={() => onTab(label)} className={cn("grid h-7 w-8 shrink-0 place-items-center rounded-md", tab === label ? "bg-white text-[#3269db] shadow-[0_1px_2px_rgba(0,0,0,.06)]" : "text-stone-400 hover:bg-stone-100 hover:text-stone-700")} title={label}><Icon className="h-3.5 w-3.5" /></button>)}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {tab === "Workspace" ? <>
+          <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-stone-400">Current work</p>
+          {focused ? <div className="mt-3 rounded-lg border border-stone-200 bg-white p-3 shadow-[0_1px_2px_rgba(0,0,0,.025)]"><div className="flex items-start gap-2"><span className={cn("mt-1.5 h-1.5 w-1.5 rounded-full", taskTone(focused.state))} /><div className="min-w-0"><p className="text-[13px] font-medium text-stone-800">{focused.title}</p><p className="mt-1 text-[12px] leading-5 text-stone-500">{focused.currentStep}</p></div></div><TaskActions task={focused} onControl={onControl} /></div> : <EmptyPanel text="Choose a coworker and give them a task." />}
+          {events.length ? <div className="mt-5"><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-stone-400">Activity</p><div className="mt-2 grid gap-2">{events.slice(0, 8).map((event) => <div key={event.id} className="border-l border-stone-200 pl-2.5"><p className="text-[11.5px] font-medium text-stone-700">{event.label}</p>{event.detail ? <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-stone-500">{event.detail}</p> : null}</div>)}</div></div> : null}
+        </> : null}
+        {tab === "Browser" ? <div><p className="text-[12px] font-semibold text-stone-800">Agent browser</p><p className="mt-1 text-[11.5px] leading-4 text-stone-500">Semantic browser control uses the managed persistent session. You can watch or take over at any time.</p><div className="mt-3 overflow-hidden rounded-lg border border-stone-200 bg-white"><img src="/api/openbrowser/frame" alt="Live browser workspace" className="aspect-[16/10] w-full object-cover" /><div className="flex justify-between border-t border-stone-100 px-2.5 py-2"><span className="text-[11px] text-stone-500">Live session</span><button type="button" onClick={() => onTab("Workspace")} className="text-[11px] font-medium text-[#3269db]">Take control</button></div></div></div> : null}
+        {tab === "Terminal" ? <div><p className="text-[12px] font-semibold text-stone-800">Terminal activity</p><div className="mt-3 grid gap-2">{terminalEvents.length ? terminalEvents.map((event) => <div key={event.id} className="rounded-md border border-stone-200 bg-white p-2.5"><p className="font-mono text-[11px] text-stone-700">{event.label}</p><p className="mt-1 text-[11px] text-emerald-600">{event.detail || "Completed"}</p></div>) : <EmptyPanel text="Terminal commands appear here as compact, expandable activity." />}</div></div> : null}
+        {tab === "Files" ? <div><p className="text-[12px] font-semibold text-stone-800">Workspace files</p><div className="mt-3 grid gap-2">{fileEvents.length ? fileEvents.map((event) => <div key={event.id} className="rounded-md border border-stone-200 bg-white p-2.5 text-[11.5px] text-stone-700">{event.label}<p className="mt-1 text-[11px] text-stone-500">{event.detail}</p></div>) : <EmptyPanel text="Each coworker has an isolated files, artifacts, and logs workspace." />}</div></div> : null}
+        {tab === "Tasks" ? <div><p className="text-[12px] font-semibold text-stone-800">{active?.title || "Task graph"}</p><div className="mt-3 grid gap-1.5">{tasks.length ? tasks.map((task) => <div key={task.id} className={cn("rounded-md px-2.5 py-2", task.parentId ? "ml-4 border-l border-stone-200" : "bg-white border border-stone-200")}><div className="flex gap-2"><span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", taskTone(task.state))} /><span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-stone-700">{task.title}</span></div><p className="mt-1 truncate pl-3.5 text-[10.5px] text-stone-500">{task.state.replace(/_/g, " ")}</p></div>) : <EmptyPanel text="A task tree appears once work begins." />}</div></div> : null}
+        {tab === "Changes" ? <div><p className="text-[12px] font-semibold text-stone-800">Changes & artifacts</p><div className="mt-3 grid gap-2">{tasks.flatMap((task) => [...task.filesTouched, ...task.artifacts].map((item) => ({ task, item }))).map(({ task, item }) => <div key={`${task.id}-${item}`} className="rounded-md border border-stone-200 bg-white p-2.5 text-[11.5px] text-stone-700">{item}</div>)}{!tasks.some((task) => task.filesTouched.length || task.artifacts.length) ? <EmptyPanel text="Verified changes and artifacts will appear here." /> : null}</div></div> : null}
+      </div>
+    </aside>
+  );
+}
+
+function TaskActions({ task, onControl }: { task: CoworkTask; onControl: (id: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => void }) {
+  if (task.state === "awaiting_approval") return <div className="mt-3 flex gap-1.5"><button type="button" onClick={() => onControl(task.id, "approve")} className="h-7 rounded-md bg-[#3269db] px-2 text-[11px] font-medium text-white">Approve</button><button type="button" onClick={() => onControl(task.id, "reject")} className="h-7 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600">Reject</button></div>;
+  if (task.state === "running" || task.state === "retrying") return <div className="mt-3 flex gap-1.5"><button type="button" onClick={() => onControl(task.id, "pause")} className="flex h-7 items-center gap-1 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600"><Pause className="h-3 w-3" /> Pause</button><button type="button" onClick={() => onControl(task.id, "stop")} className="flex h-7 items-center gap-1 rounded-md px-2 text-[11px] text-rose-600 hover:bg-rose-50"><Square className="h-3 w-3" /> Stop</button></div>;
+  if (["paused", "failed", "blocked"].includes(task.state)) return <button type="button" onClick={() => onControl(task.id, task.state === "paused" ? "resume" : "retry")} className="mt-3 flex h-7 items-center gap-1 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600"><Play className="h-3 w-3" /> {task.state === "paused" ? "Resume" : "Retry step"}</button>;
+  return null;
+}
+
+function EmptyPanel({ text }: { text: string }) { return <p className="rounded-lg border border-dashed border-stone-200 px-3 py-5 text-center text-[11.5px] leading-5 text-stone-400">{text}</p>; }
+
+function NewCoworkerDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState(""); const [role, setRole] = useState("Developer"); const [instructions, setInstructions] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
+  const create = async () => { if (!name.trim() || saving) return; setSaving(true); try { const response = await fetch("/api/bots", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, role, instructions, avatar: name.trim().slice(0, 1).toUpperCase(), permissions: { granted: ["web_search", "research", "files", "browser", "terminal"], approvals: { terminal: "always_ask" }, canMessage: "all" } }) }); const payload = await response.json(); if (!payload?.ok) throw new Error(payload?.error || "Could not create coworker."); onCreated(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create coworker."); } finally { setSaving(false); } };
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 grid place-items-center bg-stone-950/20 p-6 backdrop-blur-sm" onClick={onClose}><motion.div initial={{ y: 8, opacity: 0.95 }} animate={{ y: 0, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="w-full max-w-[420px] rounded-xl bg-[#fdfcf9] shadow-[0_24px_70px_rgba(28,25,23,.2)]"><div className="flex items-center justify-between border-b border-stone-200 px-5 py-4"><p className="text-[15px] font-semibold text-stone-900">New Coworker</p><button type="button" onClick={onClose} className="text-stone-400 hover:text-stone-700"><X className="h-4 w-4" /></button></div><div className="grid gap-3 p-5"><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">Name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Alex" className="h-9 rounded-md border border-stone-200 bg-white px-3 text-[13px] font-normal text-stone-800 outline-none focus:border-[#3269db]" /></label><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">Role<select value={role} onChange={(event) => setRole(event.target.value)} className="h-9 rounded-md border border-stone-200 bg-white px-2.5 text-[13px] font-normal text-stone-800 outline-none"><option>Developer</option><option>Researcher</option><option>Designer</option><option>Marketing</option><option>Data Analyst</option><option>Operations</option></select></label><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">What should this coworker be great at?<textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={3} placeholder="Optional instructions" className="resize-none rounded-md border border-stone-200 bg-white px-3 py-2 text-[13px] font-normal text-stone-800 outline-none focus:border-[#3269db]" /></label>{error ? <p className="text-[11.5px] text-rose-600">{error}</p> : null}</div><div className="flex justify-end gap-2 border-t border-stone-200 px-5 py-3"><button type="button" onClick={onClose} className="h-8 px-2 text-[12px] text-stone-500">Cancel</button><button type="button" onClick={() => void create()} disabled={!name.trim() || saving} className="h-8 rounded-md bg-[#3269db] px-3 text-[12px] font-medium text-white disabled:opacity-40">{saving ? "Creating…" : "Create coworker"}</button></div></motion.div></motion.div>;
 }
 
 /**

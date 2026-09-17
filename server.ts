@@ -7,6 +7,7 @@ import {
   clyraDataPath,
   clyraDataRoot,
   clyraResourcePath,
+  clyraResourceRoot,
   resolveClipperMediaPath,
 } from "./lib/runtime-paths";
 import {
@@ -30,6 +31,13 @@ dotenv.config({ path: clyraResourcePath(".env") });
 // developer credentials as `npm run dev`; a user-owned data override still
 // wins below in packaged builds.
 dotenv.config({ path: clyraResourcePath(".env.local") });
+// A local developer can point Clyra at a separately managed credentials file
+// without copying API keys into this workspace. Its own .env.local and data
+// directory remain higher priority, so this is a fallback only.
+const sharedEnvFile = String(process.env.CLYRA_SHARED_ENV_FILE || "").trim();
+if (sharedEnvFile) {
+  dotenv.config({ path: path.resolve(clyraResourceRoot(), sharedEnvFile) });
+}
 dotenv.config({ path: clyraDataPath(".env.local"), override: true });
 import { Readable, Transform } from "node:stream";
 import { spawn } from "node:child_process";
@@ -46,6 +54,13 @@ import { safeFetchUserUrl } from "./lib/security/safe-fetch";
 import { chatComplete } from "./lib/ai/provider-router";
 import { clearApiUsage, getApiUsageSummary, getDailyUsageSeries, recordApiUsage, usageFromAnthropic, usageFromOpenAi } from "./lib/api-usage-ledger.mjs";
 import { getQuotaStatus } from "./lib/billing/quota-engine";
+import {
+  buildGoogleAuthUrl,
+  clearGoogleWebTokens,
+  getGoogleWebStatus,
+  handleGoogleOAuthCallback,
+  isGoogleWebOAuthConfigured,
+} from "./lib/google/web-oauth";
 import {
   getPreviewLogs,
   getPreviewSession,
@@ -134,6 +149,7 @@ function recordAnthropicUsage(payload: any, feature: string, fallbackModel?: str
 }
 import { initNotesStore } from "./lib/notes/store";
 import { registerNotesRoutes } from "./lib/notes/routes";
+import { ServerMissionService } from "./lib/clyra-agent/server-mission-service";
 
 type VibeProjectStatus = "Draft" | "Building" | "Ready" | "Failed";
 
@@ -1338,6 +1354,7 @@ function stopVoicePipelineWorker() {
 async function startServer() {
   await initNotesStore();
   const app = express();
+  const missionService = new ServerMissionService();
   const PORT = Number(process.env.PORT) || 3000;
   const VIBE_PORT = Number(process.env.VIBE_PORT) || 5174;
   // This is deliberately an adapter registry rather than a set of silently
@@ -1441,6 +1458,64 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Chat and the desktop shell can use this route to inspect the same
+  // capability-aware decision that drives mission planning. It reports only
+  // adapters actually bound in this process; desktop-only integrations remain
+  // absent instead of being advertised as fictional REST tools.
+  app.post("/api/agent/route", (req, res) => {
+    const prompt = String(req.body?.prompt || "").trim();
+    if (!prompt || prompt.length > 8_000) {
+      res.status(400).json({ ok: false, error: "A prompt between 1 and 8,000 characters is required." });
+      return;
+    }
+    res.json({ ok: true, ...missionService.route(prompt) });
+  });
+
+  // Explicit plans are checked by the deterministic runtime before execution.
+  // Mutating steps require their exact step IDs in `approvedStepIds`; approval
+  // is never reused for another step or retained for a later mission.
+  app.post("/api/agent/missions", async (req, res) => {
+    const plan = req.body?.plan;
+    if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+      res.status(400).json({ ok: false, error: "A structured mission plan is required." });
+      return;
+    }
+    try {
+      const record = await missionService.execute({
+        missionId: typeof req.body?.missionId === "string" ? req.body.missionId.slice(0, 120) : undefined,
+        projectId: typeof req.body?.projectId === "string" ? req.body.projectId.slice(0, 120) : undefined,
+        plan,
+        approvedStepIds: Array.isArray(req.body?.approvedStepIds) ? req.body.approvedStepIds.filter((id: unknown) => typeof id === "string").slice(0, 50) : [],
+      });
+      res.status(record.state === "COMPLETED" ? 200 : 409).json({ ok: record.state === "COMPLETED", mission: record });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "Mission validation failed." });
+    }
+  });
+
+  app.post("/api/agent/missions/start", async (req, res) => {
+    const prompt = String(req.body?.prompt || "").trim();
+    const plan = missionService.plan(prompt);
+    if (!plan) {
+      res.status(422).json({ ok: false, error: "No verified server-side mission plan is available for this request.", route: missionService.route(prompt) });
+      return;
+    }
+    try {
+      const mission = await missionService.execute({
+        missionId: typeof req.body?.missionId === "string" ? req.body.missionId.slice(0, 120) : undefined,
+        projectId: typeof req.body?.projectId === "string" ? req.body.projectId.slice(0, 120) : undefined,
+        plan,
+      });
+      res.status(mission.state === "COMPLETED" ? 200 : 409).json({ ok: mission.state === "COMPLETED", mission });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "Mission execution failed." });
+    }
+  });
+
+  app.get("/api/agent/missions/interrupted", (_req, res) => {
+    res.json({ ok: true, missions: missionService.interrupted() });
+  });
+
   // Usage is local-only application telemetry. It stores token/unit counts and
   // calculated cost metadata, never prompts, completions, API keys, or files.
   app.get("/api/usage", async (req, res) => {
@@ -1468,6 +1543,107 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Quota status is unavailable" });
     }
+  });
+
+  // Clyra Earth boots on first use rather than at Clyra startup — the globe
+  // pulls in Cesium and a large provider stack, and most sessions never open
+  // it. The renderer calls this once when the workspace mounts and frames the
+  // returned loopback URL.
+  app.post("/api/earth/start", async (_req, res) => {
+    try {
+      const { ensureEarthHost } = await import("./lib/earth/host");
+      res.json(await ensureEarthHost());
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        url: null,
+        mode: null,
+        reason: error instanceof Error ? error.message : "Clyra Earth could not start",
+      });
+    }
+  });
+
+  // Keep the upper-left Earth search responsive even while the framed Cesium
+  // document is busy with a camera transition. This is a bounded same-machine
+  // proxy to the exact Earth geocoder—not a second location provider—so the
+  // suggestions and the command bar still resolve the same real places.
+  app.get("/api/earth/geocode", async (req, res) => {
+    const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!query || query.length > 200) {
+      res.status(400).json({ error: "A place query of 1-200 characters is required" });
+      return;
+    }
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    try {
+      const { ensureEarthHost } = await import("./lib/earth/host");
+      const earth = await ensureEarthHost();
+      if (!earth.ok || !earth.url) {
+        res.status(503).json({ error: earth.reason ?? "Clyra Earth is unavailable" });
+        return;
+      }
+      const target = new URL("/api/geocode", earth.url);
+      target.searchParams.set("q", query);
+      timeout = setTimeout(() => controller.abort(), 5_000);
+      const response = await fetch(target, {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+      const body = await response.text();
+      res.status(response.status).type("application/json").send(body);
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error && error.name === "AbortError"
+          ? "Place search timed out"
+          : "Place search is temporarily unavailable",
+      });
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  });
+
+  app.get("/api/earth/status", async (_req, res) => {
+    try {
+      const { earthHostStatus } = await import("./lib/earth/host");
+      res.json(earthHostStatus());
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        url: null,
+        mode: null,
+        reason: error instanceof Error ? error.message : "Clyra Earth status is unavailable",
+      });
+    }
+  });
+
+  // Real Google OAuth for the web surface: "Sign in" opens a new browser tab
+  // to Google's own consent screen (no fake in-app account picker), and the
+  // Clyra tab polls /api/google/status until the callback below stores tokens.
+  app.get("/api/google/status", async (_req, res) => {
+    try {
+      res.json({ ok: true, configured: isGoogleWebOAuthConfigured(), ...(await getGoogleWebStatus()) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Google status is unavailable" });
+    }
+  });
+
+  app.get("/api/google/oauth/start", (req, res) => {
+    if (!isGoogleWebOAuthConfigured()) {
+      res.status(503).send("Google sign-in is not configured for this Clyra server (missing CLYRA_GOOGLE_CLIENT_ID in .env).");
+      return;
+    }
+    res.redirect(buildGoogleAuthUrl(req));
+  });
+
+  app.get("/api/google/oauth/callback", async (req, res) => {
+    const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
+    const result = await handleGoogleOAuthCallback({ code, state, error });
+    res.status(result.status).set("content-type", "text/html; charset=utf-8").set("cache-control", "no-store").send(result.html);
+  });
+
+  app.post("/api/google/disconnect", async (_req, res) => {
+    await clearGoogleWebTokens();
+    res.json({ ok: true });
   });
 
   app.get("/api/clipper/publishing/capabilities", async (req, res) => {
@@ -2191,36 +2367,79 @@ async function startServer() {
     req: express.Request,
     res: express.Response,
   ) => {
-    const apiKey = process.env.DEEPSEEK_API_KEY;
-    if (!apiKey) {
+    const { selectProviders } = await import("./lib/ai/model-capability-registry");
+    const candidates = (() => {
+      try {
+        // This endpoint preserves OpenAI-compatible SSE to the browser.
+        // Gemini's native streaming protocol is deliberately not faked here;
+        // its dedicated routes retain their own protocol adapter.
+        return selectProviders("fast-text").filter(
+          (provider) => provider.provider === "deepseek" || provider.provider === "ollama",
+        );
+      } catch {
+        return [];
+      }
+    })();
+    if (!candidates.length) {
       res.status(503).json({
         error:
-          "Clyra API is not configured. Add DEEPSEEK_API_KEY to .env or .env.local (server reads this file on startup).",
+          "Clyra Chat needs a configured streaming model. Add DEEPSEEK_API_KEY, or run Ollama and set CLYRA_OLLAMA_MODEL in .env.local.",
       });
       return;
     }
     try {
       const { prepareDeepseekChatBody } = await import("./lib/deepseek-models");
-      const requestBody = prepareDeepseekChatBody(
+      const rawBody =
         (req.body && typeof req.body === "object" ? req.body : {}) as Record<
           string,
           unknown
-        >,
-      );
-      const baseUrl = String(
-        process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
-      ).replace(/\/$/, "");
-      const upstream = await fetch(
-        `${baseUrl}/chat/completions`,
-        {
+        >;
+      let upstream: Response | null = null;
+      let requestBody: Record<string, unknown> = rawBody;
+      const failures: string[] = [];
+
+      for (const provider of candidates) {
+        const isDeepseek = provider.provider === "deepseek";
+        // `thinking` is a DeepSeek extension and must not be sent to the
+        // local OpenAI-compatible endpoint. Keep the user's stream and all
+        // standard chat fields unchanged so the existing Chat parser works.
+        requestBody = isDeepseek
+          ? prepareDeepseekChatBody(rawBody)
+          : (() => {
+              const { thinking: _thinking, ...compatibleBody } = rawBody;
+              return { ...compatibleBody, model: provider.model };
+            })();
+        const url = isDeepseek
+          ? `${provider.baseUrl}/chat/completions`
+          : `${provider.baseUrl}/v1/chat/completions`;
+        try {
+          const attempt = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
+              ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
           },
           body: JSON.stringify(requestBody),
-        },
-      );
+          });
+          if (attempt.ok) {
+            upstream = attempt;
+            break;
+          }
+          failures.push(`${provider.provider} returned ${attempt.status}`);
+          // Consume the small error response before retrying another
+          // configured provider, so keep-alive sockets can be reused.
+          await attempt.text().catch(() => "");
+        } catch (error) {
+          failures.push(`${provider.provider}: ${error instanceof Error ? error.message : "unreachable"}`);
+        }
+      }
+
+      if (!upstream) {
+        res.status(502).json({
+          error: `Clyra Chat could not reach a configured provider. ${failures.join("; ") || "No compatible provider responded."}`,
+        });
+        return;
+      }
 
       const contentType = upstream.headers.get("content-type");
       if (contentType) res.setHeader("Content-Type", contentType);
@@ -3997,6 +4216,17 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
   registerCoworkRoutes(app, {
     runWebSearchResearch,
     recordUsage: (input) => { void recordApiUsage(input).catch(() => undefined); },
+    browser: {
+      observe: getManagedBrowserObservation,
+      navigate: navigateManagedBrowser,
+      action: actOnManagedBrowser,
+      assist: async (task, onProgress) => {
+        const key = process.env.DEEPSEEK_API_KEY || process.env.MY_LLM_API_KEY;
+        if (!key) throw new Error("DeepSeek is not configured for browser work.");
+        return runManagedBrowserAgent(task, key, { onEvent: onProgress });
+      },
+      control: async (manual) => setManagedBrowserAgentControl(manual ? "take_control" : "return_control"),
+    },
   });
 
   app.get("/api/clipper/brand-kits", async (_req, res) => {
@@ -4512,6 +4742,15 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
   httpServer.listen(PORT, "127.0.0.1", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     void ensureVoicePipelineWorker();
+    // Keep the local static Earth host hot before the workspace is opened.
+    // This eliminates process startup and provider middleware latency from the
+    // first Earth visit; the renderer only needs to attach an already-running
+    // document when the user opens it.
+    if (process.env.CLYRA_EARTH_PREWARM !== "0") {
+      void import("./lib/earth/host")
+        .then(({ ensureEarthHost }) => ensureEarthHost())
+        .catch((error) => console.warn("[earth] background warmup failed:", error));
+    }
     // Electron owns the visible Chromium views during desktop runs. Its main
     // process restores those tabs before the UI loads, so launching a second
     // Playwright/CDP warmup here wastes startup time and can contend for the
@@ -4547,6 +4786,7 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     await Promise.allSettled([
       closeManagedBrowser(),
       stopAllDevServers(),
+      import("./lib/earth/host").then(({ stopEarthHost }) => stopEarthHost()),
       import("./lib/openhands/m1-stack").then(({ shutdownM1Stack }) => shutdownM1Stack()),
     ]);
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

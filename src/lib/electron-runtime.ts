@@ -1,5 +1,34 @@
 export type ElectronSurfaceBounds = { x: number; y: number; width: number; height: number };
 
+export type SpotifyProfile = { id: string; displayName: string; email?: string; image?: string; product?: string };
+export type SpotifyPlaylist = {
+  id: string;
+  name: string;
+  uri: string;
+  images?: Array<{ url: string }>;
+  tracks?: { total: number };
+  owner?: { display_name?: string };
+};
+export type SpotifyDevice = { id: string; name: string; type: string; is_active: boolean; volume_percent?: number | null };
+export type SpotifyTrack = {
+  id: string;
+  name: string;
+  uri: string;
+  duration_ms: number;
+  artists: Array<{ name: string }>;
+  album: { name: string; images?: Array<{ url: string }> };
+};
+export type SpotifyPlaybackState = {
+  is_playing: boolean;
+  progress_ms: number | null;
+  item: SpotifyTrack | null;
+  device: SpotifyDevice | null;
+  shuffle_state?: boolean;
+  repeat_state?: "off" | "track" | "context";
+};
+export type SpotifyQueue = { currently_playing: SpotifyTrack | null; queue: SpotifyTrack[] };
+export type SpotifyPlaylistItem = { addedAt: string; track: SpotifyTrack };
+
 export type ClyraDesktopBridge = {
   runtime: "electron";
   preview?: {
@@ -123,9 +152,47 @@ export type ClyraDesktopBridge = {
     onAuthState: (callback: (payload: { connected: boolean; email?: string; pending?: boolean; error?: string }) => void) => () => void;
     onAgentProgress: (callback: (payload: { runId: string; service: "clyra" | "research" | "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive"; state: "running" | "completed" | "failed"; label: string; detail: string }) => void) => () => void;
   };
+  spotify?: {
+    status: () => Promise<{ connected: boolean; profile?: SpotifyProfile | null }>;
+    signIn: () => Promise<{ ok: boolean; pending?: boolean; error?: string }>;
+    disconnect: () => Promise<{ ok: boolean }>;
+    profile: () => Promise<{ ok: boolean; profile?: SpotifyProfile; error?: string; code?: string }>;
+    playlists: () => Promise<{ ok: boolean; playlists?: SpotifyPlaylist[]; error?: string; code?: string }>;
+    playlistTracks: (playlistId: string) => Promise<{ ok: boolean; items?: SpotifyPlaylistItem[]; error?: string; code?: string }>;
+    devices: () => Promise<{ ok: boolean; devices?: SpotifyDevice[]; error?: string; code?: string }>;
+    playbackState: () => Promise<{ ok: boolean; state?: SpotifyPlaybackState | null; error?: string; code?: string }>;
+    queue: () => Promise<{ ok: boolean; queue?: SpotifyQueue | null; error?: string; code?: string }>;
+    recentlyPlayed: () => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; error?: string; code?: string }>;
+    savedTracks: () => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; error?: string; code?: string }>;
+    libraryContains: (uris: string[]) => Promise<{ ok: boolean; contains?: boolean[]; error?: string; code?: string }>;
+    saveLibrary: (uris: string[]) => Promise<{ ok: boolean; error?: string; code?: string }>;
+    removeLibrary: (uris: string[]) => Promise<{ ok: boolean; error?: string; code?: string }>;
+    search: (
+      query: string,
+      types?: string,
+      limit?: number,
+    ) => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; playlists?: SpotifyPlaylist[]; error?: string; code?: string }>;
+    control: (payload: {
+      action: "play" | "pause" | "next" | "previous" | "seek" | "volume" | "transfer" | "shuffle" | "repeat" | "queue";
+      deviceId?: string;
+      positionMs?: number;
+      volumePercent?: number;
+      contextUri?: string;
+      uri?: string;
+      uris?: string[];
+      play?: boolean;
+      state?: boolean | "off" | "track" | "context";
+    }) => Promise<{ ok: boolean; error?: string; code?: string }>;
+    onAuthState: (callback: (payload: { connected: boolean; profile?: SpotifyProfile | null; pending?: boolean; error?: string }) => void) => () => void;
+  };
   research: {
     execute: (payload: { prompt: string; runId?: string; checkpointId?: string; answers?: string; action?: "start" | "continue" | "cancel" }) => Promise<{ ok: boolean; text: string; needsClarification?: boolean; checkpointId?: string; questions?: string[]; analysisPrompt?: string; sources?: Array<{ url: string; publisher: string; branch: string }>; assumptions?: string[]; paused?: boolean; cancelled?: boolean }>;
     onAgentProgress: (callback: (payload: { runId: string; service: "clyra" | "research"; state: "running" | "completed" | "failed"; label: string; detail: string }) => void) => () => void;
+  };
+  memory?: {
+    list: (projectId: string) => Promise<Array<{ id: string; text: string; createdAt: number; updatedAt: number }>>;
+    search: (projectId: string, query: string, limit?: number) => Promise<Array<{ id: string; text: string; score: number }>>;
+    add: (projectId: string, text: string) => Promise<{ saved: boolean; updated?: boolean; id?: string; reason?: string }>;
   };
   terminal?: {
     open: (payload: { projectId: string; tabId?: string }) => Promise<{ ok: boolean; cwd?: string }>;

@@ -7,6 +7,8 @@ import {
   Globe2,
   Grid2X2,
   MessageCircle,
+  Orbit,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
@@ -21,11 +23,26 @@ export type LauncherToolId =
   | "fake-text"
   | "shorts"
   | "notes"
-  | "cowork";
+  | "cowork"
+  | "spotify"
+  | "earth"
+  | "care";
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
   onClose: () => void;
+}
+
+function ClyraMusicGlyph({ className }: { className?: string }) {
+  // This is a launcher glyph, so it intentionally follows the same quiet,
+  // monochrome outlined family as every other application icon.
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden="true">
+      <path d="M4 15.25c2.05 0 2.05-5.5 4.1-5.5s2.05 7 4.1 7 2.05-10.5 4.1-10.5 2.05 6.25 3.7 6.25" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="4" cy="15.25" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="19.9" cy="12.5" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 interface LauncherTool {
@@ -38,12 +55,15 @@ interface LauncherTool {
 }
 
 const tools: LauncherTool[] = [
+  { id: "care", label: "Clyra Care", shortLabel: "Care", detail: "Understand storage and safely reclaim space", icon: ShieldCheck, accent: "#3977F6" },
   { id: "vibe", label: "Vibe Coder", shortLabel: "Vibe Coder", detail: "Build and preview production applications", icon: Code2, accent: "#0f172a" },
   { id: "chat", label: "Chat", shortLabel: "Chat", detail: "Think, write and reason with Clyra", icon: MessageCircle, accent: "#1e293b" },
   { id: "shorts", label: "Shorts Studio", shortLabel: "Shorts", detail: "Fake texts, Would You Rather, and AI clips", icon: Clapperboard, accent: "#334155" },
   { id: "browser", label: "AI Browser", shortLabel: "Browser", detail: "Research and act across live websites", icon: Globe2, accent: "#1e293b" },
   { id: "notes", label: "Clyra Notes", shortLabel: "Notes", detail: "Capture, organise, and review your notes", icon: BookOpen, accent: "#1e293b" },
   { id: "cowork", label: "Clyra Cowork", shortLabel: "Cowork", detail: "A team of persistent AI workers with their own workspaces", icon: Users, accent: "#1e293b" },
+  { id: "spotify", label: "Clyra Music", shortLabel: "Music", detail: "Browse, search, and play your music", icon: ClyraMusicGlyph, accent: "#3B82F6" },
+  { id: "earth", label: "Clyra Earth", shortLabel: "Earth", detail: "Live 3D globe, navigation, and world intelligence", icon: Orbit, accent: "#0f172a" },
   // Dictation is no longer a launcher tile — it is a system-wide background
   // feature (Clyra Anywhere) that runs whether or not this window is open,
   // not a workspace you "open" from here. See electron/dictation-manager.mjs.

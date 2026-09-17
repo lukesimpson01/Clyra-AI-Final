@@ -21,6 +21,8 @@ Read before changing unfamiliar code. Use progressively narrower retrieval inste
 
 Execution discipline for a new product: inspect only the project root/configuration and the directly relevant source files, then start writing the implementation. Do not probe the host filesystem, shell configuration, user directories, environment variables, provider settings, or installed tools beyond one focused capability check. For a multi-file greenfield app, make the first implementation edit within the first three tool calls after orientation; continue with focused edits rather than repeatedly rediscovering the repository. A starter scaffold is only a baseline—change it to satisfy the specific request before finishing.
 
+Research current public products, libraries, APIs, brands, repositories and versioned systems only when that evidence materially affects the implementation. Use Clyra Web Search through the local POST /api/research/web-search route with a focused query, prefer its authoritative sources, and carry only relevant evidence into the work. Do not invent sources, and skip web research for purely local edits.
+
 Between meaningful phases, provide one concise user-facing progress update about what was actually learned or completed and what comes next. Never expose private chain-of-thought, invent actions, files, results, test passes, or progress.
 
 Project architecture rules — for every coding request:
@@ -40,6 +42,10 @@ Finished-product quality — the user judges the running product, not the diff. 
 - Make it usable: labels on icon-only controls, visible focus, keyboard access for primary actions, sensible behaviour at narrow widths.
 - Handle the empty, single-item, long-text and large-number cases in anything that renders a collection.
 - Where a preview is available, inspect the rendered result before declaring completion and fix what looks wrong. Shipping something that runs but reads as unfinished is not done.
+
+Design quality — avoid generic AI-generated interfaces. Start with the product's task, content, and audience; establish one deliberate visual direction, then implement hierarchy, typography, spacing, colour, material, and interaction consistently across the whole surface. Do not default to oversized hero copy, gradient backgrounds, glowing cards, glass panels, rainbow accents, generic dashboard metrics, excessive rounded rectangles, fake activity, placeholder content, or decorative controls. Prefer a restrained system font stack, semantic tokens, clear primary actions, real empty/loading/error states, accessible keyboard and mobile behaviour, and short purposeful motion. Use imagery only when it is specific to the product and improves comprehension; never add it as generic decoration.
+
+Agent loop — work like a senior coding agent, not a one-shot generator: orient, create a concise plan for work that needs one, implement in coherent files, run the right checks, inspect the actual result, diagnose any failure, and continue until the acceptance criteria have evidence. For substantial work, maintain todo state, use project checkpoints after meaningful changes, and re-check the working tree and preview before completion. Never claim a test, browser interaction, search result, design decision, or completed feature that did not occur.
 `;
 
 export type ClyraAgentEvent = {
@@ -507,7 +513,7 @@ export class OpenCodeRuntimeManager {
       // each revision of the guidance instead of keeping the first one they
       // were created with.
       if (/Be an adaptive expert coding agent\.|Clyra Code Agent/.test(existing)
-        && !/Finished-product quality/.test(existing)) {
+        && (!/Finished-product quality/.test(existing) || !/Clyra Web Search/.test(existing) || !/Design quality — avoid generic AI-generated interfaces/.test(existing))) {
         await fs.promises.writeFile(agentsPath, DEFAULT_AGENTS_MD, "utf8").catch(() => undefined);
       }
     } catch {

@@ -1,0 +1,65 @@
+{
+  "ok": true,
+  "steps": [
+    {
+      "name": "navigate",
+      "ok": true
+    },
+    {
+      "name": "observe-title",
+      "ok": true
+    },
+    {
+      "name": "observe-controls",
+      "ok": true
+    },
+    {
+      "name": "dismiss-cookie",
+      "ok": true
+    },
+    {
+      "name": "type-search",
+      "ok": true
+    },
+    {
+      "name": "apply-filters",
+      "ok": true
+    },
+    {
+      "name": "verify-filter",
+      "ok": true
+    },
+    {
+      "name": "toggle-instock",
+      "ok": true
+    },
+    {
+      "name": "click-Add sunscreen",
+      "ok": true
+    },
+    {
+      "name": "click-Add towel",
+      "ok": true
+    },
+    {
+      "name": "click-Add hat",
+      "ok": true
+    },
+    {
+      "name": "checkout",
+      "ok": true
+    },
+    {
+      "name": "verify-checkout",
+      "ok": true,
+      "note": "full cart checked out"
+    },
+    {
+      "name": "task-view-open",
+      "ok": true,
+      "note": "Cmd/Ctrl+J opened Task View with 2 live windows"
+    }
+  ],
+  "fixtureUrl": "http://127.0.0.1:43141/",
+  "at": "2026-09-17T12:58:17.876Z"
+}

@@ -88,8 +88,20 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
 
     if (message.type === "flush") {
       const pcm = Buffer.concat(active.chunks.splice(0));
-      if (!pcm.length || !config.fishApiKey) {
+      if (!pcm.length) {
         send(ws, { type: "dictation_final", sessionId, text: "" });
+        return;
+      }
+      if (!config.fishApiKey) {
+        // An empty successful final transcript is indistinguishable from a
+        // whisper/noise failure and leaves callers waiting for the full test
+        // timeout. Make this a capability error so the UI can explain what
+        // needs configuring and tests can terminate immediately.
+        send(ws, {
+          type: "error",
+          sessionId,
+          message: "Dictation needs Fish Audio ASR to be configured before it can transcribe speech.",
+        });
         return;
       }
       try {

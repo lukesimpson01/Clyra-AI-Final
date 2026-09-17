@@ -9,7 +9,7 @@ Browser mic (WebRTC)
         VAD/turn detection (Silero)
         Fish Audio STT (/v1/asr)     -- final per utterance, rolling partials
     ← Pipecat pipeline: STT → LLM → TTS, with real barge-in/interruption
-  → DeepSeek (OpenAI-compatible) LLM -- or the in-process Test Mode echo route
+  → Configured cloud LLM or local Ollama (OpenAI-compatible) -- or Test Mode echo
   → Fish Audio TTS (streaming, wss://api.fish.audio/v1/tts/live)
   → Browser speaker (WebRTC)
 ```
@@ -18,9 +18,10 @@ Pipecat's `PipelineTask(enable_rtvi=True)` emits connection/listening/
 thinking/speaking/transcript events over the WebRTC data channel; the
 frontend consumes them via `@pipecat-ai/client-react`.
 
-**LLM rule:** DeepSeek is the only LLM provider, same key/model as the rest
-of the app. **Test Mode** (a UI toggle, off by default) replaces the
-DeepSeek call with an in-process loopback route
+**LLM rule:** Voice uses the configured Clyra LLM endpoint. It can use
+DeepSeek, an explicitly configured OpenAI-compatible endpoint, or an opt-in
+local Ollama model. **Test Mode** (a UI toggle, off by default) replaces the
+normal LLM call with an in-process loopback route
 ([echo_llm.py](../../backend/voice-pipeline/echo_llm.py)) that streams back
 exactly what Fish STT heard — every other stage (WebRTC, VAD, Fish STT, Fish
 TTS, barge-in) still runs for real. It exists so voice-call development
@@ -51,6 +52,9 @@ FISH_AUDIO_API_KEY=
 FISH_TTS_REFERENCE_ID=       # Fish voice id
 FISH_TTS_MODEL=              # e.g. s1 / s2-pro
 DEEPSEEK_API_KEY=            # existing chat key, reused as-is
+# Optional local, open-source fallback (Ollama must already be running).
+# CLYRA_OLLAMA_MODEL=qwen3:4b
+# OLLAMA_HOST=http://127.0.0.1:11434
 VOICE_SAMPLE_RATE=16000
 VOICE_PIPELINE_URL=http://127.0.0.1:8787
 ```

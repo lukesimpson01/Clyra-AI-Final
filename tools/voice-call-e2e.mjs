@@ -504,6 +504,14 @@ async function main() {
     throw error;
   }
 
+  // Fish backs both production call STT/TTS and dictation ASR. Do this
+  // capability check before spending half a minute streaming a fixture only
+  // to receive an inevitable empty transcript/error.
+  const voiceConfig = await fetch(`${baseUrl}/api/voice/config`).then((res) => res.json()).catch(() => null);
+  if (!voiceConfig?.fishConfigured) {
+    throw new Error("Fish Audio is not configured on the target Clyra server; live transcription cannot be benchmarked.");
+  }
+
   const pcmPath = await ensurePcm16(inputArg, outDir);
   fs.copyFileSync(pcmPath, path.join(outDir, path.basename(pcmPath)));
 

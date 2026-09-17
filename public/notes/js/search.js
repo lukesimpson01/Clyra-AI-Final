@@ -1,7 +1,7 @@
 /* Workspace search. Opens on recents, searches titles, block text and
    database values, and hands back a result rather than navigating itself so
    it can also serve "link to page" and "move to". */
-import { el, clear, icon, modal, pushLayer, position, mod, modKey, append } from "./dom.js";
+import { el, clear, icon, pushLayer, mod, modKey, append } from "./dom.js";
 import { api } from "./api.js";
 import { state, getPageMeta } from "./state.js";
 
@@ -50,7 +50,7 @@ export function openSearch({ title = "Search", onSelect, onClose, filterKinds } 
   });
   const filterBar = el("div", { class: "search-filters" });
   const results = el("div", { class: "search-results scroll", role: "listbox" });
-  const node = el("div", { class: "modal search-modal", role: "dialog", "aria-modal": "true", "aria-label": title },
+  const node = el("div", { class: "command-palette", role: "dialog", "aria-label": title },
     el("div", { class: "search-header" }, icon("search", 16), input),
     filterBar,
     results,
@@ -64,7 +64,9 @@ export function openSearch({ title = "Search", onSelect, onClose, filterKinds } 
   let activeIndex = 0;
   let classFilter = null;
   let token = 0;
-  const entry = pushLayer(node, { scrim: true, onClose });
+  /* This is a workspace jump menu, not a separate mode. It stays a compact
+     dropdown over the current note so the writing surface remains in view. */
+  const entry = pushLayer(node, { onClose });
 
   const buildFilters = () => {
     clear(filterBar);

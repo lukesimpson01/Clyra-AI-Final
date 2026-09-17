@@ -174,7 +174,7 @@ function rebuildLinks(pageId: string, blocks: Block[]) {
 /* --------------------------------------------------------------- pages */
 
 const PAGE_COLUMNS =
-  "id,parent_id,kind,database_id,title,icon,cover,cover_offset,class_id,favorite,locked,full_width,text_size,font_style,sort,trashed_at,created_at,updated_at";
+  "id,parent_id,kind,database_id,title,icon,cover,cover_offset,class_id,favorite,locked,full_width,text_size,font_style,colour_categories,sort,trashed_at,created_at,updated_at";
 
 export function listPages(includeTrashed = false) {
   return db
@@ -266,6 +266,7 @@ export function updatePage(id: string, patch: Record<string, unknown>) {
     title: "title", icon: "icon", cover: "cover", coverOffset: "cover_offset",
     parentId: "parent_id", classId: "class_id", favorite: "favorite", locked: "locked",
     fullWidth: "full_width", textSize: "text_size", fontStyle: "font_style", sort: "sort",
+    colourCategories: "colour_categories",
   };
   const assignments: string[] = [];
   const values: unknown[] = [];

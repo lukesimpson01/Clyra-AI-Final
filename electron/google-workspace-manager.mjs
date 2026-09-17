@@ -106,7 +106,11 @@ export class GoogleWorkspaceManager {
   scheduleFollowUpTimer(item) { const delay=new Date(item.dueAt).getTime()-Date.now(); if (delay <= 0 || delay > 2_147_000_000) return; const existing=this.followUpTimers.get(item.id); if(existing) clearTimeout(existing); const timer=setTimeout(() => { this.followUpTimers.delete(item.id); if (Notification.isSupported()) new Notification({ title:"Clyra follow-up", body:`${item.subject || "Email"}${item.note ? ` — ${item.note}` : ""}` }).show(); }, delay); this.followUpTimers.set(item.id,timer); }
   async status() { const tokens = await this.readTokens(); return { connected: Boolean(tokens?.refresh_token || tokens?.access_token), email: tokens?.email || "" }; }
   async disconnect() { await fs.unlink(this.tokenPath).catch(() => undefined); this.emit({ connected:false }); return { ok:true }; }
-  tokenForm(values) { return new URLSearchParams({ client_id:this.clientId, client_secret:this.clientSecret, ...values }); }
+  // PKCE (code_verifier/code_challenge, used below in signIn/handleCallback)
+  // makes client_secret optional — a public "Desktop app" OAuth client in
+  // Google Cloud Console only issues a Client ID. Include the secret only
+  // when one has actually been configured.
+  tokenForm(values) { return new URLSearchParams({ client_id:this.clientId, ...(this.clientSecret ? { client_secret:this.clientSecret } : {}), ...values }); }
   async parseTokenResponse(response, stage) {
     const raw = await response.text(); let body = {};
     try { body = raw ? JSON.parse(raw) : {}; } catch { /* The response is intentionally never logged. */ }
@@ -126,7 +130,7 @@ export class GoogleWorkspaceManager {
   }
   async signIn() {
     if (this.authAttempt) return { ok:true, pending:true };
-    if (!this.clientId || !this.clientSecret) return { ok:false, error:"Google Desktop OAuth is not configured in the local .env file." };
+    if (!this.clientId) return { ok:false, error:"Google Desktop OAuth is not configured in the local .env file." };
     const state = base64url(crypto.randomBytes(32));
     const codeVerifier = base64url(crypto.randomBytes(64));
     const codeChallenge = base64url(crypto.createHash("sha256").update(codeVerifier).digest());

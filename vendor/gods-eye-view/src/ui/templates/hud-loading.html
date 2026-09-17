@@ -1,0 +1,32 @@
+  <!-- Intelligence HUD Overlay -->
+  <div id="intel-hud"></div>
+
+  <!-- Loading screen -->
+  <div id="loading-screen">
+    <div class="loader-content">
+      <h2>Clyra Earth</h2>
+      <div class="clyra-loader-emblem" aria-hidden="true">
+        <svg viewBox="0 0 112 112" focusable="false">
+          <defs>
+            <radialGradient id="clyra-loader-ocean" cx="35%" cy="28%" r="75%">
+              <stop offset="0%" stop-color="#eff5f8" />
+              <stop offset="58%" stop-color="#bdd0dd" />
+              <stop offset="100%" stop-color="#7899b3" />
+            </radialGradient>
+            <clipPath id="clyra-loader-clip"><circle cx="56" cy="56" r="36" /></clipPath>
+          </defs>
+          <ellipse class="clyra-loader-orbit clyra-loader-orbit-rear" cx="56" cy="56" rx="49" ry="18" />
+          <g clip-path="url(#clyra-loader-clip)">
+            <circle cx="56" cy="56" r="36" fill="url(#clyra-loader-ocean)" />
+            <path class="clyra-loader-land" d="M27 47c7-11 15-12 20-7l5 8-4 8-9 1-5 9-8-5zm36-17c13 3 22 13 23 27l-10 3-7-7 2-8-7-6zm3 30 13 2-1 10-10 9-7-5 2-9z" />
+            <path class="clyra-loader-shade" d="M56 18c22 5 36 20 36 38S78 89 56 94c13-11 19-24 19-38S69 29 56 18z" />
+          </g>
+          <circle class="clyra-loader-rim" cx="56" cy="56" r="36" />
+          <ellipse class="clyra-loader-orbit clyra-loader-orbit-front" cx="56" cy="56" rx="49" ry="18" />
+        </svg>
+      </div>
+      <p class="clyra-loader-copy">Preparing your world</p>
+      <div class="clyra-loader-progress" aria-hidden="true"><span></span></div>
+      <p class="loader-status">Preparing Earth...</p>
+    </div>
+  </div>

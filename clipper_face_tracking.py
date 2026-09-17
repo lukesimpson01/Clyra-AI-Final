@@ -106,10 +106,11 @@ MAX_OCCLUSION_S = 0.40
 ACTIVE_SPEAKER_SWITCH_HOLD_MS = 650
 ACTIVE_SPEAKER_SWITCH_MARGIN = 0.12
 TRACKING_FPS_BY_QUALITY = {
-    # Every selected clip gets a per-output-frame crop path.  The profiles
-    # govern landmark refresh / spatial detail rather than dropping temporal
-    # samples and making a moving subject step between stale boxes.
-    "low_memory": 30.0,
+    # Eco analysis deliberately samples a proxy at 12 fps; forward/backward
+    # optical flow and the crop interpolator fill the trajectory between
+    # observations. This avoids decoding every output frame on 4 GB machines
+    # while keeping movement continuous at final render cadence.
+    "low_memory": 12.0,
     "balanced": 60.0,
     "high_quality": 60.0,
     "gpu": 60.0,
@@ -2614,7 +2615,10 @@ def _analyse_proxy_stream(
             if tracking_quality in {"high_quality", "gpu"}:
                 adaptive_stride = 1
             elif tracking_quality == "low_memory":
-                adaptive_stride = 2
+                # Detector refresh is ~3 Hz at Eco's 12 fps proxy. Optical
+                # flow covers the inexpensive intervening frames and forces
+                # an immediate re-detect when confidence drops.
+                adaptive_stride = 4
             else:
                 adaptive_stride = 1 if flow_motion > 0.006 or last_motion > 0.006 else 2
             should_detect = (

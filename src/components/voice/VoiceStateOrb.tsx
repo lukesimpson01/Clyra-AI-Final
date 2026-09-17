@@ -125,7 +125,7 @@ export function VoiceStateOrb({
          floating separately around it — "blob", singular. */
       const wobble = reduced ? 0 : 1;
       blobPath((angle, i) => {
-        const breathe = state === "idle" || state === "connecting"
+        const breathe = state === "idle" || state === "connecting" || state === "reconnecting"
           ? Math.sin(seconds * 1.1) * 0.02
           : 0;
         const speakBulge = state === "speaking"

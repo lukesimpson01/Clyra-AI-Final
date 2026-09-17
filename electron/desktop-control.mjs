@@ -89,6 +89,7 @@ export class DesktopControlService {
   constructor() {
     this.cursorWindow = null;
     this.manualControl = false;
+    this.paused = false;
     this.active = false;
     this.guideOnly = false;
     this.xdotool = null;
@@ -107,9 +108,14 @@ export class DesktopControlService {
     return { ok: true, driver };
   }
 
-  async ensureCursorOverlay() {
-    if (this.cursorWindow && !this.cursorWindow.isDestroyed()) return this.cursorWindow;
-    const display = screen.getPrimaryDisplay();
+  async ensureCursorOverlay(display = screen.getPrimaryDisplay()) {
+    if (this.cursorWindow && !this.cursorWindow.isDestroyed()) {
+      // Screen coordinates can be negative on a left-hand monitor. Keeping
+      // the transparent overlay on the display that owns the target avoids
+      // mixing physical and device-independent coordinates.
+      this.cursorWindow.setBounds(display.bounds, false);
+      return this.cursorWindow;
+    }
     const { width, height } = display.bounds;
     this.cursorWindow = new BrowserWindow({
       width,
@@ -152,15 +158,27 @@ export class DesktopControlService {
     if (!cursor) {
       if (this.cursorWindow && !this.cursorWindow.isDestroyed()) {
         this.cursorWindow.webContents.executeJavaScript('window.__setAIPresence(false); true', true).catch(() => {});
-        setTimeout(() => {
-          try { if (!this.cursorWindow.isDestroyed()) this.cursorWindow.hide(); } catch (_) {}
-        }, 450);
+        // Stopping or pausing control must not leave a delayed AI cursor on
+        // screen. The window remains reusable, but is hidden immediately.
+        try { this.cursorWindow.hide(); } catch (_) {}
       }
       return { ok: true };
     }
-    const win = await this.ensureCursorOverlay();
+    const x = Number(cursor.x);
+    const y = Number(cursor.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: "Cursor coordinates are invalid." };
+    const display = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) });
+    const win = await this.ensureCursorOverlay(display);
+    const payload = {
+      x: Math.round(x - display.bounds.x),
+      y: Math.round(y - display.bounds.y),
+      label: String(cursor.label || "Clyra").slice(0, 96),
+      kind: String(cursor.kind || "move"),
+      guide: Boolean(cursor.guide),
+      paused: this.paused,
+    };
     win.showInactive();
-    await win.webContents.executeJavaScript('window.__setAIPresence(true); true', true);
+    await win.webContents.executeJavaScript(`window.__setAIPresence(${JSON.stringify(payload)}); true`, true);
     return { ok: true };
   }
 
@@ -179,7 +197,7 @@ export class DesktopControlService {
   async move(x, y, label = "Moving") {
     const point = { x: Math.round(x), y: Math.round(y) };
     await this.setCursor({ ...point, label, kind: "move", guide: this.guideOnly });
-    if (this.manualControl || this.guideOnly) return { ok: true, skipped: this.guideOnly ? "guide" : "manualControl", point };
+    if (this.paused || this.manualControl || this.guideOnly) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl", point };
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["mousemove", "--sync", String(point.x), String(point.y)], { timeout: 3_000 });
     } else if (process.platform === "darwin") {
@@ -197,7 +215,7 @@ export class DesktopControlService {
     }
     const point = { x: Math.round(x ?? this.lastPoint.x), y: Math.round(y ?? this.lastPoint.y) };
     await this.move(point.x, point.y, label);
-    if (this.manualControl) return { ok: true, skipped: "manualControl", point };
+    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl", point };
     if (this.xdotool) {
       const btn = button === "right" ? "3" : button === "middle" ? "2" : "1";
       await execFileAsync(this.xdotool, ["click", btn], { timeout: 3_000 });
@@ -222,7 +240,7 @@ export class DesktopControlService {
       return { ok: true, skipped: "guide" };
     }
     await this.setCursor({ ...this.lastPoint, label, kind: "type" });
-    if (this.manualControl) return { ok: true, skipped: "manualControl" };
+    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
     const value = String(text || "");
     if (!value) return { ok: true };
     if (this.xdotool) {
@@ -243,7 +261,7 @@ export class DesktopControlService {
       return { ok: true, skipped: "guide" };
     }
     await this.setCursor({ ...this.lastPoint, label, kind: "key" });
-    if (this.manualControl) return { ok: true, skipped: "manualControl" };
+    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
     } else if (process.platform === "darwin") {
@@ -266,6 +284,15 @@ export class DesktopControlService {
     return { ok: true, manualControl: this.manualControl };
   }
 
+  /** Pause prevents every subsequent injected input and removes the visible
+   * control affordance. Existing desktop actions are intentionally atomic
+   * (no held mouse buttons); the next queued action is therefore fenced. */
+  async setPaused(enabled) {
+    this.paused = Boolean(enabled);
+    if (this.paused) await this.setCursor(null);
+    return { ok: true, paused: this.paused };
+  }
+
   setGuideOnly(enabled) {
     this.guideOnly = Boolean(enabled);
     return { ok: true, guideOnly: this.guideOnly };
@@ -273,6 +300,7 @@ export class DesktopControlService {
 
   async runAction(action) {
     if (!action || typeof action !== "object") throw new Error("Invalid desktop action");
+    if (this.paused) return { ok: false, error: "Desktop control is paused." };
     this.active = true;
     try {
       switch (action.type) {
@@ -287,7 +315,7 @@ export class DesktopControlService {
         case "key":
           return this.key(action.key, action.label || "Key");
         case "scroll": {
-          if (this.guideOnly || this.manualControl) return { ok: true, skipped: this.guideOnly ? "guide" : "manualControl" };
+          if (this.paused || this.guideOnly || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
           const amount = Math.max(-20, Math.min(20, Number(action.deltaY ?? action.amount) || 0));
           if (process.platform === "win32") {
             const wheel = Math.round(amount >= 0 ? 120 : -120);
@@ -324,7 +352,15 @@ export class DesktopControlService {
 
 const AI_PRESENCE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
   *{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none;user-select:none;-webkit-user-select:none}
-</style></head><body><script>
-  window.__setAIPresence=()=>{};
-  window.__openCluelySetAICursor=()=>{};
+  #edge{position:fixed;inset:0;opacity:0;transition:opacity 120ms ease;background:linear-gradient(90deg,rgba(47,129,255,.34),transparent 7%,transparent 93%,rgba(47,129,255,.34)),linear-gradient(0deg,rgba(47,129,255,.20),transparent 8%,transparent 92%,rgba(47,129,255,.20));box-shadow:inset 0 0 32px rgba(62,141,255,.28)}
+  #cursor{position:fixed;left:0;top:0;width:22px;height:22px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 36% 30%,#fff 0 8%,#9ed1ff 10% 22%,#297eff 45%,#1260d9 100%);box-shadow:0 0 0 3px rgba(91,165,255,.24),0 4px 16px rgba(13,93,220,.48);opacity:0;transition:left 95ms cubic-bezier(.2,.8,.2,1),top 95ms cubic-bezier(.2,.8,.2,1),opacity 100ms ease}
+  #cursor.guide{background:radial-gradient(circle at 36% 30%,#fff 0 8%,#c6e7ff 10% 22%,#50a4ff 45%,#2678dd 100%)}
+  #pulse{position:fixed;left:0;top:0;width:42px;height:42px;border:2px solid rgba(93,173,255,.86);border-radius:50%;transform:translate(-50%,-50%) scale(.35);opacity:0}
+  #pulse.click{animation:ripple 430ms ease-out}@keyframes ripple{0%{opacity:.92;transform:translate(-50%,-50%) scale(.35)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.25)}}
+  #label{position:fixed;left:0;top:0;transform:translate(16px,14px);padding:5px 8px;border-radius:7px;background:rgba(8,30,72,.86);color:#fff;font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.01em;white-space:nowrap;opacity:0;transition:opacity 100ms ease}
+  body.active #cursor,body.active #label{opacity:1}body.controlling #edge{opacity:1}
+</style></head><body><div id="edge"></div><div id="pulse"></div><div id="cursor"></div><div id="label"></div><script>
+  const cursor=document.getElementById('cursor'), pulse=document.getElementById('pulse'), label=document.getElementById('label');
+  window.__setAIPresence=(value)=>{const on=Boolean(value);document.body.classList.toggle('active',on);if(!on)return;const x=Math.round(value.x||0),y=Math.round(value.y||0);cursor.style.left=pulse.style.left=label.style.left=x+'px';cursor.style.top=pulse.style.top=label.style.top=y+'px';cursor.classList.toggle('guide',Boolean(value.guide));document.body.classList.toggle('controlling',!value.guide&&!value.paused);label.textContent=value.label||'Clyra';pulse.classList.remove('click');if(value.kind==='click'){void pulse.offsetWidth;pulse.classList.add('click')}};
+  window.__openCluelySetAICursor=window.__setAIPresence;
 </script></body></html>`;

@@ -5,27 +5,33 @@ import type { VoiceCallStatus } from "../../hooks/useVoiceCall";
 const STATUS_COPY: Record<VoiceCallStatus, string> = {
   idle: "Idle",
   connecting: "Connecting",
+  reconnecting: "Reconnecting",
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Speaking",
+  paused: "Paused",
   error: "Error",
 };
 
 const STATUS_COLOR: Record<VoiceCallStatus, string> = {
   idle: "text-slate-400",
   connecting: "text-slate-400",
+  reconnecting: "text-slate-400",
   listening: "text-slate-500",
   thinking: "text-amber-500",
   speaking: "text-blue-500",
+  paused: "text-slate-500",
   error: "text-rose-500",
 };
 
 const DOT_COLOR: Record<VoiceCallStatus, string> = {
   idle: "bg-slate-300",
   connecting: "bg-slate-300",
+  reconnecting: "bg-slate-300",
   listening: "bg-slate-400",
   thinking: "bg-amber-400",
   speaking: "bg-blue-500",
+  paused: "bg-slate-400",
   error: "bg-rose-500",
 };
 
@@ -72,7 +78,7 @@ export function VoiceStage({
 
   let contentKey: string = status;
   let content: ReactNode = null;
-  if (status === "thinking" || status === "connecting") {
+  if (status === "thinking" || status === "connecting" || status === "reconnecting") {
     content = <ThinkingPulse />;
   } else if (status === "speaking" && latestCaption) {
     contentKey = "speaking-" + latestCaption.slice(0, 24);

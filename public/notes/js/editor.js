@@ -65,6 +65,7 @@ export class Editor {
     this.history = [];
     this.future = [];
     this.historyTimer = null;
+    this.lastColourCategory = null;
     this.typingBurst = false;
     this.baseline = cloneTree(this.blocks);
     this.container = el("div", { class: "blocks" });
@@ -477,6 +478,10 @@ export class Editor {
   onInput(block, line) {
     block.text = readSpans(line);
     this.updatePlaceholder(line, block);
+    if (this.replaceArrowShorthand(block, line)) {
+      this.commit("type");
+      return;
+    }
     if (prefOn("markdownShortcuts") && this.applyMarkdown(block, line)) return;
     if (block.type === "text" && prefOn("codeDetection")) {
       const language = detectCodeLanguage(spansText(block.text));
@@ -493,6 +498,24 @@ export class Editor {
     this.checkSlash(block, line);
     this.updateSmartAnswer(block);
     this.commit("type");
+  }
+
+  /* A small writing aid, not a markdown mode: swap the two-character arrows
+     only at the caret, keep the surrounding span's formatting, and repaint
+     once. That lets a student use -> / <- in prose without turning ordinary
+     hyphens or code into a surprise transformation. */
+  replaceArrowShorthand(block, line) {
+    if (block.type === "code") return false;
+    const caret = caretOffset(line);
+    if (caret < 2) return false;
+    const typed = spansText(block.text).slice(caret - 2, caret);
+    const replacement = typed === "->" ? "→" : typed === "<-" ? "←" : null;
+    if (!replacement) return false;
+    const source = sliceSpans(block.text, caret - 1, caret)[0] || {};
+    block.text = replaceRange(block.text, caret - 2, caret, [{ ...source, t: replacement }]);
+    this.paint(line, block);
+    setCaret(line, caret - 1);
+    return true;
   }
 
   /* Markdown shortcuts fire on the space or character that completes them,
@@ -628,6 +651,9 @@ export class Editor {
     }
     if (modKey(event) && event.key.toLowerCase() === "e" && selection && !selection.collapsed) {
       event.preventDefault(); this.toggleMark(block, line, "c"); return;
+    }
+    if (modKey(event) && event.shiftKey && event.key.toLowerCase() === "h" && selection && !selection.collapsed && this.lastColourCategory) {
+      event.preventDefault(); this.applySmartHighlight(block, line, this.lastColourCategory); return;
     }
     if (modKey(event) && event.key.toLowerCase() === "d") {
       event.preventDefault(); this.duplicateBlock(block); return;
@@ -984,15 +1010,46 @@ export class Editor {
     this.commit("link", true);
   }
 
-  applyColor(block, line, { color, background }) {
+  applyColor(block, line, { color, background, colorHex, backgroundHex }) {
     const range = selectionRangeIn(line);
     if (!range || range.collapsed) return;
     this.push();
-    if (color !== undefined) block.text = applyMark(block.text, range.start, range.end, "col", color === "default" ? null : color);
-    if (background !== undefined) block.text = applyMark(block.text, range.start, range.end, "bg", background === "default" ? null : background);
+    if (color !== undefined || colorHex !== undefined) {
+      const token = colorHex ? "custom" : color === "default" ? null : color;
+      block.text = applyMark(block.text, range.start, range.end, "col", token);
+      block.text = applyMark(block.text, range.start, range.end, "colHex", colorHex || null);
+    }
+    if (background !== undefined || backgroundHex !== undefined) {
+      const token = backgroundHex ? "custom" : background === "default" ? null : background;
+      block.text = applyMark(block.text, range.start, range.end, "bg", token);
+      block.text = applyMark(block.text, range.start, range.end, "bgHex", backgroundHex || null);
+    }
     this.paint(line, block);
     setCaretRange(line, range.start, range.end);
     this.commit("color", true);
+  }
+
+  applyTextStyle(block, line, patch) {
+    const range = selectionRangeIn(line);
+    if (!range || range.collapsed) return;
+    this.push();
+    for (const [key, value] of Object.entries(patch)) block.text = applyMark(block.text, range.start, range.end, key, value || null);
+    this.paint(line, block); setCaretRange(line, range.start, range.end); this.commit("text-style", true);
+  }
+
+  applySmartHighlight(block, line, category, savedRange) {
+    const range = savedRange || selectionRangeIn(line);
+    if (!range || range.collapsed) return;
+    this.push();
+    const stamp = new Date().toISOString();
+    const id = `hl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    for (const [key, value] of Object.entries({
+      bg: "custom", bgHex: category.colour, categoryId: category.categoryId,
+      highlightId: id, highlightCreatedAt: stamp,
+    })) block.text = applyMark(block.text, range.start, range.end, key, value);
+    this.paint(line, block);
+    setCaretRange(line, range.start, range.end);
+    this.commit("smart-highlight", true);
   }
 
   /* The caller may pass the range it captured earlier: by the time an action
@@ -1346,7 +1403,13 @@ Object.assign(Editor.prototype, {
       { type: "separator" },
       { label: "Move up", icon: "chevron_right", shortcut: "↑", onSelect: () => this.shift(block, -1) },
       { label: "Move down", icon: "chevron_right", shortcut: "↓", onSelect: () => this.shift(block, 1) },
-      isTextBlock(block) ? { label: "Colour", icon: "palette", onSelect: () => this.colorMenu(block, anchor) } : null,
+      /* block.props.color only ever renders as the callout's background tint
+         (see the callout wrapper above, and KEEP_PROPS, which reserves
+         `color` for callout alone) — never as literal text colour. Showing
+         this on any other text block used to be a silent no-op, since
+         nothing else reads the prop. Gate it to callouts, where it does
+         something. */
+      block.type === "callout" ? { label: "Highlight colour", icon: "palette", onSelect: () => this.colorMenu(block, anchor) } : null,
       block.type === "bulleted" ? { label: "Bullet style", icon: "bullet", onSelect: () => this.bulletStyleMenu(block, anchor) } : null,
       state.aiConfigured ? { type: "separator" } : null,
       state.aiConfigured ? { label: "Ask AI about this", icon: "sparkle", onSelect: () => this.openAiComposer(block, { seedText: spansText(block.text) }) } : null,
@@ -1364,12 +1427,18 @@ Object.assign(Editor.prototype, {
     })), { search: true, searchPlaceholder: "Turn into…" });
   },
 
+  /* This sets the callout's background tint, not a text colour — see the
+     callout wrapper's render and the gating in blockMenu() above. The label
+     and swatch icon match tableTintMenu()'s highlight picker rather than the
+     inline toolbar's lettered text-colour swatches, so the two don't look
+     like the same kind of control. */
   colorMenu(block, anchor) {
     menu(anchor, [
-      { type: "label", label: "Text" },
+      { type: "label", label: "Highlight" },
       ...COLORS.map((color) => ({
         label: color === "default" ? "Default" : color[0].toUpperCase() + color.slice(1),
-        icon: el("span", { style: { color: `var(--c-${color})`, fontWeight: "600" }, text: "A" }),
+        checked: (block.props?.color || "default") === color,
+        icon: el("span", { class: "tint-swatch", style: { background: color === "default" ? "var(--background-subtle)" : `var(--c-${color}-bg)` } }),
         onSelect: () => { block.props = { ...block.props, color }; block.__dirty = true; this.render(); this.commit("block-color", true); },
       })),
     ], { align: "start" });

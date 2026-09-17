@@ -28,6 +28,9 @@ import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
 import { createVibePreflight, normalizeEffort, type VibeEffort, type VibePreflight } from "../vibe-agent-v3/preflight";
 import { recordVibeUsage, type ModelUsageEvent } from "../vibe-agent-v3/usage-analytics";
+import { CodingTaskController } from "../vibe-runtime/task-controller";
+import { runWorkspaceValidation } from "../vibe-runtime/validation";
+import { automaticFrontendSkill } from "../vibe-skills/frontend-design";
 
 const execFileAsync = promisify(execFile);
 
@@ -137,6 +140,8 @@ type ActiveRun = {
   reasoningTokens: number;
   toolCallIds: Set<string>;
   messageCount: number;
+  validationAttempts: number;
+  settling: boolean;
 };
 
 type ProjectRuntime = {
@@ -149,6 +154,7 @@ type ProjectRuntime = {
   runs: Map<string, ActiveRun>;
   listeners: Set<(event: ClyraAgentEvent) => void>;
   events: ClyraAgentEvent[];
+  controllers: Map<string, CodingTaskController>;
   checkpointQueue?: Promise<void>;
   saveQueue?: Promise<void>;
 };
@@ -357,7 +363,12 @@ export class DeepSeekHarnessRuntimeManager {
       reasoningTokens: 0,
       toolCallIds: new Set<string>(),
       messageCount: 1,
+      validationAttempts: 0,
+      settling: false,
     });
+    const controller = this.controller(project, sessionId);
+    await controller.begin(text, this.defaultPlan(preflight));
+    await controller.phase(preflight.mode === "plan" ? "PLANNING" : "EXPLORING", "Preparing focused repository context");
 
     const messageId = `user-${randomUUID().slice(0, 8)}`;
     session.messages.push({
@@ -369,7 +380,14 @@ export class DeepSeekHarnessRuntimeManager {
     this.persist(project);
 
     this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "busy" } } });
-    await client.prompt(sessionId, [{ type: "text", text }]);
+    // Skills extend the active task context rather than becoming a giant
+    // permanent system prompt. The raw user request remains the durable chat
+    // message; this short, selected guidance only accompanies this turn.
+    const skill = automaticFrontendSkill(text);
+    await client.prompt(sessionId, [
+      ...(skill ? [{ type: "text" as const, text: skill }] : []),
+      { type: "text" as const, text },
+    ]);
     return { ok: true };
   }
 
@@ -381,6 +399,7 @@ export class DeepSeekHarnessRuntimeManager {
   async abort(projectId: string, sessionId: string) {
     const project = this.projects.get(projectId);
     if (!project) return { ok: true };
+    await this.controller(project, sessionId).requestCancel();
     const client = project.client;
     project.client = null;
     project.starting = null;
@@ -389,6 +408,32 @@ export class DeepSeekHarnessRuntimeManager {
     await this.finalizeUsage(project, sessionId, "cancelled");
     this.publish(project, { type: "session.idle", properties: { sessionID: sessionId } });
     return { ok: true };
+  }
+
+  /** Pause safely closes the SDK process after durable state is written. The
+   * DSH wire protocol has no pause token; resume starts a new turn against the
+   * same persisted workspace and ledger rather than pretending a process is
+   * still running. */
+  async pause(projectId: string, sessionId: string) {
+    const project = this.requiredProject(projectId);
+    await this.controller(project, sessionId).requestPause();
+    const client = project.client;
+    project.client = null;
+    project.starting = null;
+    project.streams.delete(sessionId);
+    await client?.close().catch(() => undefined);
+    await this.finalizeUsage(project, sessionId, "cancelled");
+    this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "paused" } } });
+    return { ok: true };
+  }
+
+  async resume(projectId: string, sessionId: string) {
+    const project = this.requiredProject(projectId);
+    const controller = this.controller(project, sessionId);
+    const ledger = await controller.get();
+    if (!ledger.pauseRequested) throw new Error("This coding task is not paused.");
+    await controller.update((task) => { task.pauseRequested = false; task.phase = "EXECUTING"; });
+    return this.prompt(projectId, sessionId, "[clyra:internal] Resume the existing task from the persisted task ledger and workspace. Preserve completed work, inspect the current diff, continue the next unfinished plan step, then validate before completion.");
   }
 
   /**
@@ -445,6 +490,7 @@ export class DeepSeekHarnessRuntimeManager {
       runs: new Map(),
       listeners: new Set(),
       events: [],
+      controllers: new Map(),
     };
     this.projects.set(projectId, project);
     this.restore(project);
@@ -455,6 +501,26 @@ export class DeepSeekHarnessRuntimeManager {
     const project = this.projects.get(projectId);
     if (!project) throw new Error("Start the Clyra Code runtime for this project first.");
     return project;
+  }
+
+  private controller(project: ProjectRuntime, sessionId: string) {
+    let controller = project.controllers.get(sessionId);
+    if (!controller) {
+      // Keep task state beside the project metadata, not in the model-owned
+      // workspace. A tool cannot overwrite Clyra's recovery ledger.
+      controller = new CodingTaskController(clyraDataPath("projects", project.projectId), sessionId);
+      project.controllers.set(sessionId, controller);
+    }
+    return controller;
+  }
+
+  private defaultPlan(preflight: VibePreflight) {
+    if (["ask", "plan", "review"].includes(preflight.mode)) return [];
+    return [
+      { id: "inspect", objective: "Inspect the relevant implementation", files: [], validation: [], status: "active" as const },
+      { id: "implement", objective: "Implement the requested change", files: [], validation: [], status: "pending" as const },
+      { id: "verify", objective: "Run and inspect relevant validation", files: [], validation: ["project validation"], status: "pending" as const },
+    ];
   }
 
   private adoptSession(project: ProjectRuntime, sessionId: string) {
@@ -728,6 +794,7 @@ export class DeepSeekHarnessRuntimeManager {
     };
     stream.tools.set(callId, part);
     project.runs.get(sessionId)?.toolCallIds.add(callId);
+    void this.controller(project, sessionId).recordTool(part.tool ?? "tool", JSON.stringify(part.state.input ?? {}).slice(0, 800), "started");
     this.record(project, sessionId, { ...part });
   }
 
@@ -762,6 +829,15 @@ export class DeepSeekHarnessRuntimeManager {
     };
     stream.tools.set(callId, part);
     this.record(project, sessionId, { ...part });
+    const controller = this.controller(project, sessionId);
+    void controller.recordTool(part.tool ?? "tool", JSON.stringify(part.state.input ?? {}).slice(0, 800), isError ? "failed" : "completed", part.state.error);
+    if (isError) {
+      void controller.shouldChangeStrategy().then((result) => {
+        if (!result.stuck) return;
+        void controller.recordRecovery(result.reason);
+        this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "debugging", message: result.reason } } });
+      });
+    }
     this.persist(project);
     if (!isError) this.queueGitCheckpoint(project, sessionId, part.tool ?? "agent action");
   }
@@ -783,7 +859,44 @@ export class DeepSeekHarnessRuntimeManager {
   }
 
   private async settleTurn(project: ProjectRuntime, sessionId: string, status: ModelUsageEvent["status"]) {
-    if (!project.runs.has(sessionId)) return;
+    const run = project.runs.get(sessionId);
+    // DSH can emit both `turn/end` and an `idle` status for the same turn.
+    // Without this guard they race and run validation twice, creating duplicate
+    // evidence or duplicate recovery prompts.
+    if (!run || run.settling) return;
+    run.settling = true;
+    const controller = this.controller(project, sessionId);
+    if (status === "success" && !["ask", "plan", "review"].includes(run.preflight.mode)) {
+      await controller.phase("VALIDATING", "Running repository validation");
+      this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "validating" } } });
+      const evidence = await runWorkspaceValidation(project.projectPath).catch((error) => [{ name: "workspace validation", status: "failed" as const, output: redact(error instanceof Error ? error.message : String(error)), startedAt: new Date().toISOString(), completedAt: new Date().toISOString() }]);
+      for (const check of evidence) {
+        await controller.update((ledger) => ledger.tests.push({ name: check.name, status: check.status, output: check.output?.slice(0, 4_000) }));
+        this.publish(project, { type: "validation.result", properties: { sessionID: sessionId, validation: check } });
+      }
+      const failed = evidence.find((check) => check.status === "failed");
+      if (failed) {
+        const canRecover = await controller.canRecover();
+        if (canRecover && run.validationAttempts < 3) {
+          run.validationAttempts += 1;
+          await controller.recordRecovery(`${failed.name} failed; use its real output to repair the implementation.`);
+          this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "busy", message: "Repairing a failed validation" } } });
+          try {
+            await (await this.client(project)).prompt(sessionId, [{ type: "text", text: `[clyra:internal] Validation failed: ${failed.name}\n${String(failed.output || "No output").slice(-8_000)}\nInspect the failure, repair the smallest relevant code, then rerun the validation. Do not claim completion until it passes.` }]);
+            run.settling = false;
+            return;
+          } catch (error) {
+            this.lastError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        await controller.phase("BLOCKED", `${failed.name} still fails after bounded repair attempts`);
+        status = "error";
+        this.publish(project, { type: "session.error", properties: { sessionID: sessionId, error: { message: `Validation failed: ${failed.name}. Completed changes are preserved.` } } });
+      } else {
+        await controller.phase("REVIEWING", "Reviewing verification evidence");
+        await controller.phase("COMPLETED", "Validation evidence recorded");
+      }
+    }
     this.persist(project);
     await this.finalizeUsage(project, sessionId, status);
     this.publish(project, { type: "session.idle", properties: { sessionID: sessionId } });

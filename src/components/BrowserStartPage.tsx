@@ -1,4 +1,4 @@
-import { Plus, Search, Sparkles } from "lucide-react";
+import { ArrowUp, Globe2, Plus, Search, Sparkles } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useState, type FormEvent } from "react";
 import { cn } from "../lib/utils";
@@ -50,6 +50,8 @@ type BrowserStartPageProps = {
   history?: BrowserStartHistoryEntry[];
   bookmarks?: BrowserStartBookmark[];
   onNavigate: (target: string) => void;
+  /** Opens the shared Clyra composer with an editable task draft. */
+  onOpenAgent?: (draft?: string) => void;
   onAskAgent: (prompt: string) => void;
   onOpenSettings?: () => void;
   className?: string;
@@ -148,8 +150,9 @@ export function BrowserStartPage({
   history = [],
   bookmarks = [],
   onNavigate,
-  onAskAgent: _onAskAgent,
-  onOpenSettings: _onOpenSettings,
+  onOpenAgent,
+  onAskAgent,
+  onOpenSettings,
   className,
 }: BrowserStartPageProps) {
   const [query, setQuery] = useState("");
@@ -203,6 +206,13 @@ export function BrowserStartPage({
     onNavigate(next);
     setQuery("");
   };
+  const openAgentDraft = (draft: string) => {
+    // New-tab suggestions should never launch an under-specified autonomous
+    // run. They open the same Clyra composer used everywhere else, with a
+    // useful starting brief that the person can refine before sending.
+    if (onOpenAgent) onOpenAgent(draft);
+    else onAskAgent(draft);
+  };
 
   return (
     <div
@@ -212,7 +222,8 @@ export function BrowserStartPage({
       )}
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
     >
-      <div className="relative mx-auto flex w-full max-w-[700px] flex-1 flex-col items-center px-6 pb-16 pt-[13vh]">
+      <div className="clyra-browser-start__light" aria-hidden />
+      <div className="relative mx-auto flex w-full max-w-[700px] flex-1 flex-col items-center px-6 pb-16 pt-[12vh]">
         <motion.div
           initial={{ opacity: 0, y: 8, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -227,7 +238,7 @@ export function BrowserStartPage({
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.04 }}
           className="mt-4 text-[36px] font-semibold tracking-[-0.025em] text-[#1d1d1f]"
         >
-          Clyra
+          Explore with Clyra
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 6 }}
@@ -235,7 +246,7 @@ export function BrowserStartPage({
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.06 }}
           className="mt-2 text-[15px] text-[#6e6e73]"
         >
-          Search the web or browse with Clyra
+          Search directly, or give Clyra a task to complete on the web.
         </motion.p>
 
         <motion.form
@@ -261,6 +272,26 @@ export function BrowserStartPage({
           ) : null}
         </motion.form>
 
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.15 }}
+          className="mt-3 flex w-full max-w-[660px] items-center justify-between gap-3 px-1"
+        >
+          <p className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-[#8a8a90]">
+            <Globe2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+            Google search, tabs, history and bookmarks are all ready.
+          </p>
+          <button
+            type="button"
+            onClick={() => openAgentDraft("Research this topic on the web, compare reliable sources, and give me a concise answer with links.")}
+            className="group flex shrink-0 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-3 py-1.5 text-[12px] font-medium text-white shadow-[0_2px_8px_rgba(0,0,0,0.12)] transition-transform duration-200 hover:-translate-y-px hover:bg-[#303034]"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#a9c7ff]" strokeWidth={1.8} />
+            Ask Clyra <ArrowUp className="h-3.5 w-3.5 opacity-70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          </button>
+        </motion.div>
+
         {showAskHint ? (
           <motion.p
             initial={{ opacity: 0, y: 4 }}
@@ -269,8 +300,7 @@ export function BrowserStartPage({
             className="mt-3.5 flex items-center gap-1.5 text-[13.5px] text-[#9a9a9f]"
           >
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-[color:var(--clyra-accent)]" strokeWidth={1.75} />
-            Want Clyra to browse with you? Press{" "}
-            <span className="font-medium text-[#6e6e73]">Ask Clyra</span> in the top-right.
+            Clyra can plan, act, verify results, and hand control back whenever you want.
           </motion.p>
         ) : null}
 
@@ -278,7 +308,7 @@ export function BrowserStartPage({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.22 }}
-          className="mt-12 flex w-full max-w-[660px] flex-wrap justify-center gap-x-7 gap-y-4"
+          className="mt-10 flex w-full max-w-[660px] flex-wrap justify-center gap-x-7 gap-y-4"
         >
           {shortcuts.map((item) => (
             <button
@@ -298,6 +328,7 @@ export function BrowserStartPage({
           <button
             type="button"
             aria-label="Add favourite"
+            onClick={() => onOpenSettings?.()}
             className="clyra-browser-favourite group flex w-[62px] flex-col items-center gap-2 text-center"
           >
             <span className="grid h-[46px] w-[46px] place-items-center rounded-[13px] border border-dashed border-black/[0.1] text-[#9a9a9f] transition-[transform,box-shadow,background-color,border-color] duration-[180ms] group-hover:border-black/[0.16] group-hover:text-[#6e6e73]">
@@ -307,12 +338,35 @@ export function BrowserStartPage({
           </button>
         </motion.div>
 
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.25 }}
+          className="mt-10 grid w-full max-w-[660px] grid-cols-1 gap-2 sm:grid-cols-3"
+        >
+          {[
+            ["Research a topic", "Research this topic on the web. Use trustworthy sources, compare the key points, and cite what you find."],
+            ["Compare options", "Find and compare the best options for this request, including price, trade-offs, and a clear recommendation."],
+            ["Complete a task", "Complete this task in the browser. Show me your plan, verify each important step, and pause if you need a decision."],
+          ].map(([label, prompt]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => openAgentDraft(prompt)}
+              className="group rounded-[14px] border border-black/[0.065] bg-white/80 px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(0,0,0,0.025)] transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-px hover:border-black/[0.12] hover:shadow-[0_8px_20px_rgba(20,30,50,0.06)]"
+            >
+              <span className="block text-[12.5px] font-medium text-[#303034]">{label}</span>
+              <span className="mt-1 block text-[11.5px] leading-4 text-[#8a8a90]">Open an agent task</span>
+            </button>
+          ))}
+        </motion.div>
+
         {recent.length ? (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.28 }}
-            className="mt-14 w-full max-w-[660px]"
+            transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.3 }}
+            className="mt-10 w-full max-w-[660px]"
           >
             <p className="mb-1.5 px-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#9a9a9f]">
               Recent

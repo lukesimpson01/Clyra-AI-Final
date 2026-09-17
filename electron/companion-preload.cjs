@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("clyraCompanion", {
   startGuide: (question) => ipcRenderer.invoke("companion:start-guide", { question }),
   startControl: () => ipcRenderer.invoke("companion:start-control"),
   takeManualControl: () => ipcRenderer.invoke("companion:take-control"),
+  pauseAi: () => ipcRenderer.invoke("companion:pause"),
   resumeAi: () => ipcRenderer.invoke("companion:resume"),
   stopControl: () => ipcRenderer.invoke("companion:stop"),
   runAction: (action) => ipcRenderer.invoke("companion:action", { action }),

@@ -38,6 +38,7 @@ export class CompanionManager {
       seeing: false,
       controlling: false,
       guiding: false,
+      paused: false,
       manualControl: false,
       status: "Ready",
       transcript: "",
@@ -256,9 +257,10 @@ export class CompanionManager {
   }
 
   async startControl() {
-    this.#pushState({ controlling: true, guiding: false, manualControl: false, status: "AI has control" });
+    this.#pushState({ controlling: true, guiding: false, paused: false, manualControl: false, status: "AI has control" });
     await this.options.desktop.setGuideOnly(false);
     await this.options.desktop.setManualControl(false);
+    await this.options.desktop.setPaused(false);
     const display = screen.getPrimaryDisplay();
     const cx = display.bounds.x + display.bounds.width / 2;
     const cy = display.bounds.y + display.bounds.height / 2;
@@ -267,7 +269,8 @@ export class CompanionManager {
   }
 
   async takeManualControl() {
-    this.#pushState({ manualControl: true, status: "You have control" });
+    this.#pushState({ manualControl: true, paused: true, status: "You have control" });
+    await this.options.desktop.setPaused(true);
     await this.options.desktop.setManualControl(true);
     await this.options.desktop.setCursor(null);
     return { ok: true };
@@ -276,15 +279,32 @@ export class CompanionManager {
   async resumeAi() {
     this.#pushState({
       manualControl: false,
+      paused: false,
       controlling: this.state.controlling || !this.state.guiding,
       status: this.state.guiding ? "Guiding — pointing only" : "AI has control",
     });
     await this.options.desktop.setManualControl(false);
-    return { ok: true };
+    await this.options.desktop.setPaused(false);
+    // A user may have moved windows, navigated, or changed displays while
+    // they had control. Do not allow a resumed run to act on stale bounds.
+    const observation = await this.seeScreen("Refresh the visible desktop state before resuming control.");
+    if (!observation.ok) {
+      this.#pushState({ paused: true, manualControl: true, status: "Could not refresh the screen — you have control" });
+      await this.options.desktop.setPaused(true);
+      return { ok: false, error: observation.error || "A fresh observation is required before resuming." };
+    }
+    return { ok: true, observation: { capturedAt: observation.capture?.capturedAt, bounds: observation.capture?.bounds } };
+  }
+
+  async pauseAi() {
+    this.#pushState({ paused: true, status: "Paused — you have control" });
+    await this.options.desktop.setPaused(true);
+    return { ok: true, paused: true };
   }
 
   async stopControl() {
-    this.#pushState({ controlling: false, guiding: false, manualControl: false, status: "Stopped" });
+    this.#pushState({ controlling: false, guiding: false, paused: false, manualControl: false, status: "Stopped" });
+    await this.options.desktop.setPaused(false);
     await this.options.desktop.setManualControl(false);
     await this.options.desktop.setGuideOnly(false);
     await this.options.desktop.setCursor(null);
@@ -292,6 +312,7 @@ export class CompanionManager {
   }
 
   async runDesktopAction(action) {
+    if (this.state.paused || this.state.manualControl) return { ok: false, error: "Desktop control is paused; observe and resume before acting." };
     if (action?.type === "point") {
       if (!this.state.guiding && !this.state.controlling) await this.startGuide();
       return this.options.desktop.runAction(action);

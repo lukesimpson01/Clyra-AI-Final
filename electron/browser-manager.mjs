@@ -747,7 +747,11 @@ export class ChromiumBrowserManager {
       return { url: location.href, title: document.title, loading: document.readyState === "loading", viewport: { width: innerWidth, height: innerHeight, scrollX: scrollX, scrollY: scrollY, pageHeight, zoom: 1 }, headings, elements, visibleText: [...new Set(lines)].slice(0, 160), mainText: clean(root?.innerText || "", ${maxChars}), structuredData: [] };
     })()`, true);
     const signals = injectionSignals([...page.visibleText, page.mainText]);
-    const fingerprint = crypto.createHash("sha1").update(`${page.url}|${page.title}|${page.visibleText.slice(0, 80).join("|")}|${page.elements.map((item) => `${item.id}:${item.value}:${item.checked}`).join("|")}`).digest("hex").slice(0, 16);
+    // The native desktop observer needs the same verification fidelity as the
+    // Playwright fallback. A bounded main-text snapshot catches status-only
+    // UI updates (cart counters, save notices, inline confirmations) that do
+    // not alter a form value or a listed interactive element.
+    const fingerprint = crypto.createHash("sha1").update(`${page.url}|${page.title}|${page.visibleText.slice(0, 80).join("|")}|${page.mainText.slice(0, 4_000)}|${page.elements.map((item) => `${item.id}:${item.value}:${item.checked}:${item.enabled}`).join("|")}`).digest("hex").slice(0, 16);
     return {
       page: { url: page.url, title: page.title, loading: page.loading, fingerprint },
       viewport: page.viewport,

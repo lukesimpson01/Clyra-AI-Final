@@ -11,9 +11,11 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 export type VoiceCallStatus =
   | "idle"
   | "connecting"
+  | "reconnecting"
   | "listening"
   | "thinking"
   | "speaking"
+  | "paused"
   | "error";
 
 export type VoiceTurn = { role: "user" | "assistant"; content: string };
@@ -44,6 +46,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const [captionLines, setCaptionLines] = useState<string[]>([]);
   const [turns, setTurns] = useState<VoiceTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const clientRef = useRef<PipecatClient | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -51,14 +54,21 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const reconnectsRef = useRef(0);
   const pendingUserTextRef = useRef("");
   const pendingAssistantTextRef = useRef("");
+  const pendingLlmTextRef = useRef("");
+  const receivedTtsTextRef = useRef(false);
   const statusRef = useRef<VoiceCallStatus>("idle");
   const everConnectedRef = useRef(false);
   const turnsRef = useRef<VoiceTurn[]>([]);
 
   const appendCaption = useCallback((chunk: string) => {
+    if (!chunk) return;
     setCaptionLines((prev) => {
       const merged = [...prev];
-      merged[merged.length - 1] = `${merged[merged.length - 1] ?? ""}${chunk}`;
+      // Providers are not required to emit onBotLlmStarted before their first
+      // text token. Do not write to array[-1] in that case: it silently loses
+      // the first caption and makes a healthy call look mute.
+      const index = Math.max(0, merged.length - 1);
+      merged[index] = `${merged[index] ?? ""}${chunk}`;
       return merged.slice(-MAX_CAPTION_LINES);
     });
   }, []);
@@ -67,7 +77,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const userText = pendingUserTextRef.current.trim();
     const assistantText = pendingAssistantTextRef.current.trim();
     if (userText && assistantText) {
-      setTurns((prev) => [...prev, { role: "user", content: userText }, { role: "assistant", content: assistantText }]);
+      const next = [...turnsRef.current, { role: "user" as const, content: userText }, { role: "assistant" as const, content: assistantText }];
+      // Keep the telemetry source synchronous with UI state. endCall() can
+      // run in the same React turn as this commit, before a state setter has
+      // been flushed.
+      turnsRef.current = next;
+      setTurns(next);
       optionsRef.current.onTurn?.({ userText, assistantText });
     }
     pendingUserTextRef.current = "";
@@ -93,23 +108,24 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     sessionIdRef.current = null;
     setActive(false);
     setStatus("idle");
+    setElapsedSeconds(0);
     setPartialTranscript("");
     setCaptionLines([]);
     if (sessionId) {
-      try {
-        await fetch("/voice/end", {
+      // Telemetry must never hold the user hostage on the call screen. A
+      // network outage is exactly when End needs to be immediate; the server
+      // also cleans abandoned sessions on its own timeout.
+      void fetch("/voice/end", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sessionId,
-            history: turns,
+            history: turnsRef.current,
             bargeIns: bargeInsRef.current,
             reconnects: reconnectsRef.current,
           }),
-        });
-      } catch {
-        // Best-effort telemetry only.
-      }
+          signal: AbortSignal.timeout(5_000),
+        }).catch(() => undefined);
     }
   }, [commitTurn, teardownClient, turns]);
 
@@ -122,10 +138,23 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     pendingAssistantTextRef.current = "";
     setCaptionLines([]);
     setTurns([]);
+    turnsRef.current = [];
+    setElapsedSeconds(0);
     bargeInsRef.current = 0;
     reconnectsRef.current = 0;
 
     try {
+      // Avoid asking for microphone access and then opening a call surface
+      // that can only fail because its required STT/TTS provider is absent.
+      // Test mode still uses Fish STT/TTS, so it has the same prerequisite.
+      const configResponse = await fetch("/api/voice/config", { signal: AbortSignal.timeout(5_000) });
+      const config = await configResponse.json().catch(() => null) as { enabled?: boolean; fishConfigured?: boolean } | null;
+      if (!configResponse.ok || !config?.enabled) {
+        throw new Error("Voice calling is unavailable on this Clyra installation.");
+      }
+      if (!config.fishConfigured) {
+        throw new Error("Voice needs Fish Audio STT and TTS to be configured before a call can start.");
+      }
       const sessionResponse = await fetch("/voice/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,27 +184,48 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           onBotLlmStarted: () => {
             setStatus("thinking");
             pendingAssistantTextRef.current = "";
+            pendingLlmTextRef.current = "";
+            receivedTtsTextRef.current = false;
             setCaptionLines((prev) => [...prev, ""]);
           },
           onBotStartedSpeaking: () => setStatus("speaking"),
-          onBotStoppedSpeaking: () => setStatus("listening"),
+          onBotStoppedSpeaking: () => {
+            // TTS is the canonical spoken text. Some providers do not emit
+            // it, however, so use the completed LLM text only after speech
+            // finishes rather than committing a half-built assistant turn.
+            if (!receivedTtsTextRef.current && pendingLlmTextRef.current.trim()) {
+              pendingAssistantTextRef.current = pendingLlmTextRef.current;
+              appendCaption(pendingLlmTextRef.current);
+            }
+            commitTurn();
+            setStatus("listening");
+          },
           onUserTranscript: (data: TranscriptData) => {
             if (data.final) {
-              pendingUserTextRef.current = data.text;
+              // Repeated final events are common during WebRTC reconnects;
+              // replace the in-progress utterance instead of duplicating it.
+              pendingUserTextRef.current = data.text.trim();
               setPartialTranscript("");
             } else {
               setPartialTranscript(data.text);
             }
           },
           onBotTtsText: (data: BotTTSTextData) => {
+            receivedTtsTextRef.current = true;
             pendingAssistantTextRef.current += data.text;
             appendCaption(data.text);
           },
           onBotLlmText: (data: BotLLMTextData) => {
-            // Test Mode / providers that don't emit botTtsText separately.
-            if (!pendingAssistantTextRef.current) appendCaption(data.text);
+            // Keep a fallback transcript but do not render it beside TTS: a
+            // provider can emit both streams and displaying both doubles the
+            // caption. onBotStoppedSpeaking selects this only when no TTS
+            // text arrived.
+            pendingLlmTextRef.current += data.text;
           },
-          onBotLlmStopped: () => commitTurn(),
+          onBotLlmStopped: () => {
+            // The LLM can finish before TTS playback. Finalisation belongs to
+            // onBotStoppedSpeaking so the saved Chat turn is the full answer.
+          },
           onError: (message) => {
             const data = message?.data as { message?: string } | undefined;
             setError(data?.message || "Voice call error.");
@@ -217,7 +267,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
             if (state === "connected" || state === "ready") everConnectedRef.current = true;
             if ((state === "connecting" || state === "authenticating") && everConnectedRef.current) {
               reconnectsRef.current += 1;
-              setStatus("connecting");
+              setStatus("reconnecting");
             } else if (state === "connecting" || state === "authenticating") {
               setStatus("connecting");
             }
@@ -262,6 +312,15 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   }, [turns]);
 
   useEffect(() => {
+    if (!active) return;
+    const startedAt = Date.now();
+    const tick = () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  useEffect(() => {
     return () => {
       void teardownClient();
     };
@@ -276,6 +335,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     partialTranscript,
     captionLines,
     turns,
+    elapsedSeconds,
     error,
     startCall,
     endCall,

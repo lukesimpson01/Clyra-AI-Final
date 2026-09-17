@@ -683,7 +683,19 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val
   );
 }
 
-export default function WebBrowserWorkspace() {
+type WebBrowserWorkspaceProps = {
+  /** A task drafted in the main Clyra composer before Browser mounts. */
+  initialTaskDraft?: string;
+  /** A deterministic navigation already requested and verified by Chat. */
+  initialUrl?: string;
+  /** Increments for every explicit Browse launch, including an empty draft. */
+  launchRequestId?: number;
+  /** Only used for read-only intents already approved by the user in Chat. */
+  autoRunInitialTask?: boolean;
+  onTaskDraftConsumed?: () => void;
+};
+
+export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl = "", launchRequestId = 0, autoRunInitialTask = false, onTaskDraftConsumed }: WebBrowserWorkspaceProps) {
   const desktopChromium = isElectronRuntime();
   const [browserState, setBrowserState] = useState<BrowserState | null>(null);
   const [address, setAddress] = useState("");
@@ -707,6 +719,23 @@ export default function WebBrowserWorkspace() {
   const [sideView, setSideView] = useState<SideView>("agent");
   // Start with Ask Clyra closed so a new browser / new tab opens on the page canvas.
   const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => {
+    // /browse <request> comes from the main Clyra composer. Preserve the
+    // request as an editable, page-aware draft; autonomous control begins
+    // only after the user deliberately sends it from this workspace.
+    try {
+      const draft = window.sessionStorage.getItem("clyra-browser-task-draft");
+      if (!draft) return;
+      window.sessionStorage.removeItem("clyra-browser-task-draft");
+      sideLockRef.current = true;
+      setSideView("agent");
+      setSideOpen(true);
+      setTask(draft);
+    } catch {
+      // Storage can be unavailable in strict privacy contexts; direct
+      // browser launch remains fully usable without an initial draft.
+    }
+  }, []);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findResult, setFindResult] = useState<{ total: number; current: number } | null>(null);
@@ -783,6 +812,22 @@ export default function WebBrowserWorkspace() {
   const previousActiveTabRef = useRef("default");
   const agentOriginTabRef = useRef<string | null>(null);
   const sideLockRef = useRef(false);
+  const consumedExternalDraftRef = useRef<string | null>(null);
+  const autoRunDraftRef = useRef<{ key: string; task: string } | null>(null);
+  useEffect(() => {
+    const draft = initialTaskDraft.trim();
+    const key = `${launchRequestId}:${draft}`;
+    if ((!launchRequestId && !draft) || consumedExternalDraftRef.current === key) return;
+    consumedExternalDraftRef.current = key;
+    sideLockRef.current = true;
+    setSideView("agent");
+    setSideOpen(true);
+    if (draft) {
+      if (autoRunInitialTask) autoRunDraftRef.current = { key, task: draft };
+      setTask(draft);
+      onTaskDraftConsumed?.();
+    }
+  }, [autoRunInitialTask, initialTaskDraft, launchRequestId, onTaskDraftConsumed]);
   const handledAgentSessionsRef = useRef(new Set(
     messages
       .map((message) => message.id)
@@ -918,14 +963,17 @@ export default function WebBrowserWorkspace() {
       await loadState();
       await syncAgentSession();
       if (cancelled || !mountedRef.current) return;
-      // Every Browser open lands on the large Clyra welcome (same as a new tab).
+      // A direct Chat request (for example “Open YouTube”) outranks the normal
+      // welcome page. Without this boundary the mount-time Google navigation
+      // could overwrite an already verified Chat navigation.
+      const openingTarget = initialUrl.trim() || "https://www.google.com/";
       await requestBrowser("/api/openbrowser/navigate", {
-        body: { target: "https://www.google.com/" },
+        body: { target: openingTarget },
         quiet: true,
       }).catch(() => undefined);
       if (!cancelled && mountedRef.current) {
         setSideOpen(false);
-        setAddress("google.com");
+        setAddress(openingTarget);
       }
     })();
     return () => {
@@ -935,7 +983,7 @@ export default function WebBrowserWorkspace() {
       if (scrollTimerRef.current != null) window.clearTimeout(scrollTimerRef.current);
       if (viewportTimerRef.current != null) window.clearTimeout(viewportTimerRef.current);
     };
-  }, [loadState, requestBrowser, syncAgentSession]);
+  }, [initialUrl, loadState, requestBrowser, syncAgentSession]);
 
   useEffect(() => {
     const desktop = getElectronDesktop();
@@ -1415,6 +1463,17 @@ export default function WebBrowserWorkspace() {
       }
     }
   };
+
+  // A user asking Chat to inspect public pages should not have to repeat the
+  // same instruction inside Browser. This is deliberately limited to the
+  // caller's read-only classifier; Browser's own agent continues to pause for
+  // credentials, payments and any review-required web action.
+  useEffect(() => {
+    const pending = autoRunDraftRef.current;
+    if (!pending || pending.key !== `${launchRequestId}:${initialTaskDraft.trim()}` || isAgentBusy) return;
+    autoRunDraftRef.current = null;
+    void runAgentTask(pending.task);
+  }, [initialTaskDraft, isAgentBusy, launchRequestId, runAgentTask]);
 
   const clickPreview = async (event: ReactMouseEvent<HTMLImageElement>) => {
     if (!browserState || isBrowserBusy) return;
@@ -1950,7 +2009,10 @@ export default function WebBrowserWorkspace() {
 
         {/* Page | divider | sidebar */}
         <div className="flex min-h-0 flex-1">
-        <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+        <section className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-white",
+          aiInControl && "clyra-browser-control-surface",
+        )}>
           {findOpen ? (
               <div
                 className="absolute right-3 top-3 z-[80] flex h-9 items-center gap-1.5 rounded-[10px] border border-[var(--atlas-divider)] bg-white px-2 shadow-[0_10px_28px_rgba(15,23,42,0.14)]"
@@ -1999,6 +2061,10 @@ export default function WebBrowserWorkspace() {
             className="group relative min-h-0 flex-1 overflow-hidden bg-white outline-none"
             aria-label="Interactive browser page"
           >
+            {/* A quiet edge wash is status feedback, not a veil: the live
+                page remains completely readable and immediately interactive
+                if the person takes control. */}
+            {aiInControl ? <div className="clyra-browser-control-wash" aria-hidden /> : null}
             {activeInternalTab ? (
               <BrowserInternalPage
                 page={activeInternalTab.page}
@@ -2021,6 +2087,12 @@ export default function WebBrowserWorkspace() {
                 onNavigate={(target) => {
                   setAddress(target);
                   void navigate(undefined, target);
+                }}
+                onOpenAgent={(draft = "") => {
+                  sideLockRef.current = true;
+                  setSideOpen(true);
+                  setSideView("agent");
+                  setTask(draft);
                 }}
                 onAskAgent={(prompt) => {
                   sideLockRef.current = true;

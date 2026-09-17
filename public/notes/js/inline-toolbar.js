@@ -6,6 +6,7 @@ import { el, icon, iconButton, menu, modal, position, pushLayer, toast, mod, app
 import { markState, spansText, sliceSpans } from "./richtext.js";
 import { BLOCK_TYPES, TURN_INTO, COLORS } from "./block-types.js";
 import { state } from "./state.js";
+import { openColourPalette } from "./colour-coding.js";
 
 let current = null;
 
@@ -55,7 +56,7 @@ export function openInlineToolbar({ editor, block, line, range }) {
         checked: block.type === type, keywords: BLOCK_TYPES[type].keywords,
         onSelect: () => editor.turnInto(block, type),
       })), { search: true, searchPlaceholder: "Turn into…" })),
-    dropdown("Aa", "Text style", (anchor) => styleMenu(editor, anchor)),
+    dropdown("Aa", "Font and size", (anchor) => styleMenu(editor, block, line, anchor)),
     el("div", { class: "sep" }),
     markButton("bold", "Bold", "b", `${mod}+B`),
     markButton("italic", "Italic", "i", `${mod}+I`),
@@ -69,6 +70,7 @@ export function openInlineToolbar({ editor, block, line, range }) {
     el("div", { class: "sep" }),
     iconButton("link", "Link", (event) => promptLink(editor, block, line, range, event.currentTarget), { shortcut: `${mod}+K`, size: 15 }),
     iconButton("palette", "Colour and highlight", (event) => colorMenu(editor, block, line, event.currentTarget), { size: 15 }),
+    el("button", { class: "text-button smart-highlight-button", type: "button", "aria-label": "Highlight / Colour Code", onclick: (event) => openColourPalette(editor, block, line, event.currentTarget, range) }, icon("highlight", 14), "Highlight", icon("chevron_down", 11)),
   );
 
   const entry = pushLayer(node, { closeOnOutside: false, onClose: () => { current = null; } });
@@ -142,21 +144,46 @@ function colorMenu(editor, block, line, anchor) {
     }
     return grid;
   };
-  menu(anchor, [
+  let entry;
+  const applyCustom = (patch) => {
+    editor.applyColor(block, line, patch);
+    entry?.close("custom-colour");
+  };
+  entry = menu(anchor, [
     { type: "label", label: "Text" },
     { type: "custom", render: () => swatchGrid("text") },
+    { type: "custom", render: () => customColourField("Text", "#337ea9", (hex) => applyCustom({ colorHex: hex })) },
     { type: "separator" },
     { type: "label", label: "Highlight" },
     { type: "custom", render: () => swatchGrid("bg") },
+    { type: "custom", render: () => customColourField("Highlight", "#fff0a8", (hex) => applyCustom({ backgroundHex: hex })) },
   ], { align: "center", class: "color-menu" });
+}
+
+/* The named palette keeps notes coherent, while a native picker gives students
+   the one-off highlighter shade they actually use in class. */
+function customColourField(label, value, onPick) {
+  const input = el("input", {
+    class: "custom-colour-input", type: "color", value,
+    "aria-label": `Custom ${label.toLowerCase()} colour`,
+  });
+  input.addEventListener("change", () => onPick(input.value));
+  return el("label", { class: "custom-colour-row" },
+    el("span", { text: `Custom ${label.toLowerCase()}` }), input);
 }
 
 /* Font and text size belong to the page, so the menu labels them that way
    rather than implying they apply only to the selection. */
-function styleMenu(editor, anchor) {
+function styleMenu(editor, block, line, anchor) {
   const page = editor.page;
   const apply = (patch) => editor.onPageStyle?.(patch);
   menu(anchor, [
+    { type: "label", label: "Selection font" },
+    ...[["inherit", "Default"], ["Georgia, serif", "Serif"], ["ui-monospace, monospace", "Mono"]].map(([value, label]) => ({ label, onSelect: () => editor.applyTextStyle(block, line, { font: value === "inherit" ? null : value }) })),
+    { type: "separator" },
+    { type: "label", label: "Selection size" },
+    ...[["0.875em", "Small"], ["1em", "Medium"], ["1.18em", "Large"]].map(([size, label]) => ({ label, onSelect: () => editor.applyTextStyle(block, line, { size }) })),
+    { type: "separator" },
     { type: "label", label: "Page font" },
     ...[["default", "Default"], ["serif", "Serif"], ["mono", "Mono"], ["rounded", "Rounded"]].map(([value, label]) => ({
       label, checked: (page.font_style || "default") === value,

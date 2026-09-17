@@ -21,6 +21,65 @@
   --dsh-row-height: 24px;
   --dsh-row-font: 13px;
   --dsh-sweep-width: 300px;
+  --cc-canvas: #fbfbfa;
+  --cc-header: color-mix(in srgb, #ffffff 88%, transparent);
+  --cc-hairline: rgba(27, 31, 35, 0.075);
+  --cc-shadow-soft: 0 1px 1px rgba(15, 23, 42, 0.025), 0 10px 30px rgba(15, 23, 42, 0.035);
+  background: var(--cc-canvas);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.cc-conversation-panel { box-shadow: inset -1px 0 var(--cc-hairline); }
+
+.cc-workspace-header {
+  border-bottom: 1px solid var(--cc-hairline);
+  background: var(--cc-header);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.cc-project-context {
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+}
+
+.cc-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--cc-hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--composer-surface) 86%, transparent);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.cc-agent-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.72; }
+.cc-agent-status--active { color: var(--accent-blue); border-color: color-mix(in srgb, var(--accent-blue) 20%, var(--cc-hairline)); }
+.cc-agent-status--warning { color: var(--warning-amber); }
+.cc-agent-status--error { color: var(--deletion-red); }
+
+.cc-quick-actions { padding: 3px; border: 1px solid var(--cc-hairline); border-radius: 11px; background: color-mix(in srgb, #fff 78%, transparent); box-shadow: var(--cc-shadow-soft); }
+.cc-quick-action { transition: color 150ms ease, background-color 150ms ease, transform 150ms ease; }
+.cc-quick-action:hover { background: rgba(15, 23, 42, 0.045); color: #303236; }
+.cc-quick-action:active { transform: scale(0.98); }
+
+@media (max-width: 760px) {
+  .cc-project-context { display: none; }
+  .cc-agent-status { padding: 0 7px; font-size: 10px; }
+  .cc-welcome { padding-top: 4vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-quick-action { transition: none; }
 }
 
 /* ============================================================

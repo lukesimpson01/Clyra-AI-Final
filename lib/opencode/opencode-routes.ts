@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
 import { codingBackend, codingBackendModelStatus, codingBackendVersion, codingRuntimeManager } from "../coding-backend";
 import { getVibeUsageAnalytics, type UsageRange } from "../vibe-agent-v3/usage-analytics";
+import { publicRuntimeDiagnostic, publicRuntimeEvent, publicRuntimeMessages } from "./public-runtime-view";
 
 const execFileAsync = promisify(execFile);
 
@@ -109,6 +110,7 @@ No fixed tool-call quota. Scale effort to the request. Read before editing. Pref
 
 Research-before-build policy:
 - When a request names or links a current public product, website, framework, library, API, repository, brand, or versioned design system, research authoritative public sources before implementation. Prefer the official site, docs, organisation/repository and release notes; do not build from stale memory or random screenshots.
+- When web research is needed, use Clyra's own local research capability rather than inventing sources: POST a focused query to http://127.0.0.1:3000/api/research/web-search, read its returned source material, and carry only relevant evidence into the implementation. Never run it for a purely local change.
 - Then inspect this project, plan the adaptation, implement, run the relevant checks, open the preview, compare and correct visible issues. Keep research out of simple local refactors where external context adds no value.
 
 Project architecture rules — for every coding request:
@@ -120,6 +122,10 @@ Project architecture rules — for every coding request:
 - For greenfield web apps, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files.
 - Never navigate to a file: URL, start a separate preview server, or kill background processes. Clyra owns the local preview; finish the implementation and use the approved preview surface.
 - For desktop/Electron requests, build the product first as a responsive web application that runs in the live development preview. Then add a minimal Electron main/preload wrapper, safe BrowserWindow configuration, and package scripts around that same web app. Do not make the live preview depend on Electron or native-only APIs; it must remain usable in Chromium at every responsive preview size.
+
+Design quality:
+- Do not produce generic AI-dashboard styling. Build one restrained, product-specific visual system with clear hierarchy, intentional type, semantic colour, responsive layouts, honest empty/loading/error states, accessible interactions, and motion only when it explains a state change.
+- Avoid decorative gradients, glow, auroras, glass-card piles, fake metrics, placeholder content, oversized rounded controls, generic icon mosaics, and controls that do not work. Inspect the rendered preview and repair visible quality or interaction issues before finishing.
 `,
           "utf8",
         ).catch(() => undefined);
@@ -136,7 +142,7 @@ Project architecture rules — for every coding request:
   });
 
   app.get("/api/opencode/diagnostic/:projectId", (req, res) => {
-    try { res.json(codingRuntimeManager().inspect(safeProjectId(req.params.projectId))); }
+    try { res.json(publicRuntimeDiagnostic(codingRuntimeManager().inspect(safeProjectId(req.params.projectId)))); }
     catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Project not found." }); }
   });
 
@@ -167,7 +173,7 @@ Project architecture rules — for every coding request:
   });
 
   app.get("/api/opencode/sessions/:projectId/:sessionId/messages", async (req, res) => {
-    try { res.json(await codingRuntimeManager().messages(safeProjectId(req.params.projectId), req.params.sessionId)); }
+    try { res.json(publicRuntimeMessages(await codingRuntimeManager().messages(safeProjectId(req.params.projectId), req.params.sessionId))); }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not fetch history." }); }
   });
 
@@ -232,6 +238,20 @@ Project architecture rules — for every coding request:
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not abort session." }); }
   });
 
+  app.post("/api/opencode/sessions/:projectId/:sessionId/pause", async (req, res) => {
+    const runtime = codingRuntimeManager();
+    if (!runtime.pause) return res.status(501).json({ error: "Pause is unavailable in the selected coding backend." });
+    try { await runtime.pause(safeProjectId(req.params.projectId), req.params.sessionId); res.json({ ok: true }); }
+    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not pause session." }); }
+  });
+
+  app.post("/api/opencode/sessions/:projectId/:sessionId/resume", async (req, res) => {
+    const runtime = codingRuntimeManager();
+    if (!runtime.resume) return res.status(501).json({ error: "Resume is unavailable in the selected coding backend." });
+    try { await runtime.resume(safeProjectId(req.params.projectId), req.params.sessionId); res.json({ ok: true }); }
+    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not resume session." }); }
+  });
+
   app.post("/api/opencode/sessions/:projectId/:sessionId/permissions/:permissionId", async (req, res) => {
     const response = String(req.body?.response || "deny");
     if (!["allow", "always", "deny"].includes(response)) return res.status(400).json({ error: "Invalid permission response." });
@@ -246,7 +266,10 @@ Project architecture rules — for every coding request:
     res.setHeader("Connection", "keep-alive");
     const id = randomUUID();
     try {
-      subscriptions.set(id, codingRuntimeManager().subscribe(projectId, (event) => sendSse(res, event)));
+      subscriptions.set(id, codingRuntimeManager().subscribe(projectId, (event) => {
+        const safe = publicRuntimeEvent(event as unknown as Record<string, unknown>);
+        if (safe) sendSse(res, safe);
+      }));
       req.on("close", () => { subscriptions.get(id)?.(); subscriptions.delete(id); });
     } catch (error) { sendSse(res, { type: "runtime.error", error: error instanceof Error ? error.message : String(error) }); res.end(); }
   });

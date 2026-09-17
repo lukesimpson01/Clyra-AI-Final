@@ -11,7 +11,7 @@
  * isn't a sound operation — an interrupted stream is better retried by the
  * user (Clyra's chat composer already supports stopping and resending).
  */
-import { selectProvider, type ModelCapability, type ProviderConfig } from "./model-capability-registry";
+import { selectProviders, type ModelCapability, type ProviderConfig } from "./model-capability-registry";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -164,19 +164,61 @@ function parseGeminiResponse(payload: any): { text: string; usage?: ChatCompleti
   return { text, usage };
 }
 
+function buildOllamaBody(config: ProviderConfig, request: ChatCompletionRequest) {
+  return {
+    url: `${config.baseUrl}/api/chat`,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: config.model,
+      messages: request.messages,
+      stream: false,
+      options: {
+        temperature: request.temperature ?? 0.5,
+        num_predict: request.maxTokens ?? 2_000,
+      },
+      ...(request.responseFormat === "json_object" ? { format: "json" } : {}),
+    }),
+  };
+}
+
+function parseOllamaResponse(payload: any): { text: string; usage?: ChatCompletionResult["usage"] } {
+  const promptTokens = Number(payload?.prompt_eval_count);
+  const completionTokens = Number(payload?.eval_count);
+  const hasUsage = Number.isFinite(promptTokens) || Number.isFinite(completionTokens);
+  return {
+    text: String(payload?.message?.content || ""),
+    usage: hasUsage
+      ? {
+          ...(Number.isFinite(promptTokens) ? { promptTokens } : {}),
+          ...(Number.isFinite(completionTokens) ? { completionTokens } : {}),
+          totalTokens: (Number.isFinite(promptTokens) ? promptTokens : 0) + (Number.isFinite(completionTokens) ? completionTokens : 0),
+        }
+      : undefined,
+  };
+}
+
+function requestForProvider(config: ProviderConfig, request: ChatCompletionRequest) {
+  if (config.provider === "deepseek") return buildDeepseekBody(config, request);
+  if (config.provider === "gemini") return buildGeminiBody(config, request);
+  return buildOllamaBody(config, request);
+}
+
+function parseProviderResponse(config: ProviderConfig, payload: any) {
+  if (config.provider === "deepseek") return parseDeepseekResponse(payload);
+  if (config.provider === "gemini") return parseGeminiResponse(payload);
+  return parseOllamaResponse(payload);
+}
+
 /**
- * Run a single-shot chat completion against whichever configured provider
- * supports the requested capability, with retries/backoff/timeout/circuit
- * breaking. Throws NoProviderAvailableError if nothing is configured for
- * that capability — never silently degrades to a different modality.
+ * Run a single-shot chat completion against one configured provider, with
+ * retries/backoff/timeout/circuit breaking. The outer router may then try a
+ * configured provider with the same capability; it never substitutes an
+ * unrelated modality.
  */
-export async function chatComplete(request: ChatCompletionRequest): Promise<ChatCompletionResult> {
-  const config = selectProvider(request.capability);
+async function completeWithProvider(config: ProviderConfig, request: ChatCompletionRequest): Promise<ChatCompletionResult> {
   const breakerKey = `${config.provider}:${config.model}`;
   assertBreakerClosed(breakerKey);
-
-  const { url, headers, body } =
-    config.provider === "deepseek" ? buildDeepseekBody(config, request) : buildGeminiBody(config, request);
+  const { url, headers, body } = requestForProvider(config, request);
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -199,7 +241,8 @@ export async function chatComplete(request: ChatCompletionRequest): Promise<Chat
         throw new Error(`${config.provider} returned ${response.status}: ${detail.slice(0, 300)}`);
       }
       const payload = await response.json();
-      const parsed = config.provider === "deepseek" ? parseDeepseekResponse(payload) : parseGeminiResponse(payload);
+      const parsed = parseProviderResponse(config, payload);
+      if (!parsed.text.trim()) throw new Error(`${config.provider} returned an empty completion`);
       recordSuccess(breakerKey);
       return { ...parsed, provider: config.provider, model: config.model, attempts: attempt };
     } catch (error) {
@@ -218,4 +261,24 @@ export async function chatComplete(request: ChatCompletionRequest): Promise<Chat
     }
   }
   throw lastError instanceof Error ? lastError : new Error(`${config.provider} request failed after ${MAX_ATTEMPTS} attempts`);
+}
+
+/**
+ * Complete with the best configured provider, then use another *configured*
+ * provider only when the first one genuinely fails. Local Ollama is opt-in;
+ * no install, model pull, or cloud-to-local data transfer happens implicitly.
+ */
+export async function chatComplete(request: ChatCompletionRequest): Promise<ChatCompletionResult> {
+  const candidates = selectProviders(request.capability);
+  const failures: string[] = [];
+  for (const config of candidates) {
+    if (request.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      return await completeWithProvider(config, request);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError" && request.signal?.aborted) throw error;
+      failures.push(`${config.provider}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(`All configured providers failed for ${request.capability}. ${failures.join(" | ")}`);
 }

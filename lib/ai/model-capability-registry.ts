@@ -7,8 +7,9 @@
  * rather than assumptions, and so a missing key produces one clear error
  * instead of N slightly different ones.
  *
- * Only Gemini and DeepSeek are modeled — Clyra does not assume other paid
- * providers are available.
+ * Cloud providers are optional. A locally-running Ollama instance can be
+ * registered explicitly as a small, open-source fallback; Clyra never
+ * downloads a model or starts a heavyweight runtime on a user's behalf.
  */
 
 export type ModelCapability =
@@ -20,7 +21,7 @@ export type ModelCapability =
   | "long-context"
   | "tool-calling";
 
-export type ProviderId = "deepseek" | "gemini";
+export type ProviderId = "deepseek" | "gemini" | "ollama";
 
 export interface ProviderConfig {
   provider: ProviderId;
@@ -49,6 +50,13 @@ const GEMINI_VISION_CAPABILITIES: ModelCapability[] = [
   ...GEMINI_TEXT_CAPABILITIES,
   "image-understanding",
   "audio",
+];
+
+const OLLAMA_CAPABILITIES: ModelCapability[] = [
+  "fast-text",
+  "deep-reasoning",
+  "coding",
+  "long-context",
 ];
 
 function looksLikeRealKey(key: string | undefined): key is string {
@@ -80,34 +88,56 @@ function geminiConfig(): ProviderConfig | null {
   };
 }
 
+/**
+ * Opt-in local model support. Requiring an explicit model name avoids a
+ * misleading "local fallback" that fails because no model was ever pulled.
+ * Ollama's native API needs no API key and keeps prompts on this machine.
+ */
+function ollamaConfig(): ProviderConfig | null {
+  const model = String(process.env.CLYRA_OLLAMA_MODEL || process.env.CLYRA_LOCAL_MODEL || "").trim();
+  if (!model || process.env.CLYRA_LOCAL_LLM_ENABLED === "false") return null;
+  return {
+    provider: "ollama",
+    model,
+    apiKey: "",
+    baseUrl: String(process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/$/, ""),
+    capabilities: OLLAMA_CAPABILITIES,
+  };
+}
+
 /** What's actually configured right now — read fresh each call, never cached,
  * since env vars can change between a dev server restart and this process. */
 export function getConfiguredProviders(): ProviderConfig[] {
-  return [deepseekConfig(), geminiConfig()].filter((config): config is ProviderConfig => config !== null);
+  return [deepseekConfig(), geminiConfig(), ollamaConfig()].filter((config): config is ProviderConfig => config !== null);
 }
 
 export class NoProviderAvailableError extends Error {
   constructor(capability: ModelCapability) {
     super(
-      `No configured provider supports "${capability}". Clyra only routes to Gemini and DeepSeek — ` +
-        `check that DEEPSEEK_API_KEY or GEMINI_API_KEY is set in .env.local.`,
+      `No configured provider supports "${capability}". Set DEEPSEEK_API_KEY, GEMINI_API_KEY, ` +
+        `or run Ollama locally and set CLYRA_OLLAMA_MODEL in .env.local.`,
     );
     this.name = "NoProviderAvailableError";
   }
 }
 
 /**
- * Pick a provider for the requested capability. DeepSeek is preferred for
- * everything it supports (cheaper, and it's Clyra's primary text/coding
- * provider) — Gemini is only selected for capabilities DeepSeek doesn't
- * have configured here (image/audio understanding), matching the intended
- * routing philosophy: don't pay for Gemini on plain text DeepSeek can do.
+ * Pick the first provider for the requested capability. DeepSeek remains the
+ * normal text/coding route; Gemini covers its distinct vision/audio
+ * capabilities; an explicitly configured local model may be preferred for
+ * privacy or cost with CLYRA_PREFER_LOCAL_LLM=true.
  */
 export function selectProvider(capability: ModelCapability): ProviderConfig {
-  const configured = getConfiguredProviders();
-  const deepseek = configured.find((config) => config.provider === "deepseek" && config.capabilities.includes(capability));
-  if (deepseek) return deepseek;
-  const gemini = configured.find((config) => config.provider === "gemini" && config.capabilities.includes(capability));
-  if (gemini) return gemini;
-  throw new NoProviderAvailableError(capability);
+  return selectProviders(capability)[0];
+}
+
+/** Ordered usable providers. The router can move to the next one after a
+ * genuine upstream failure instead of claiming that one provider is Clyra. */
+export function selectProviders(capability: ModelCapability): ProviderConfig[] {
+  const configured = getConfiguredProviders().filter((config) => config.capabilities.includes(capability));
+  const preferredLocal = process.env.CLYRA_PREFER_LOCAL_LLM === "true";
+  const order: ProviderId[] = preferredLocal ? ["ollama", "deepseek", "gemini"] : ["deepseek", "gemini", "ollama"];
+  const candidates = order.flatMap((provider) => configured.filter((config) => config.provider === provider));
+  if (!candidates.length) throw new NoProviderAvailableError(capability);
+  return candidates;
 }

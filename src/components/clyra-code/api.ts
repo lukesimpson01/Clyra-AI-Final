@@ -256,6 +256,12 @@ export const api = {
       { method: "POST", body: JSON.stringify({ text, agent, effort }) },
     ),
 
+  pauseSession: (projectId: string, sessionId: string) =>
+    json<{ ok: boolean }>(`/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/pause`, { method: "POST" }),
+
+  resumeSession: (projectId: string, sessionId: string) =>
+    json<{ ok: boolean }>(`/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/resume`, { method: "POST" }),
+
   uploadAttachments: (projectId: string, files: UploadedCodeAttachment[]) =>
     json<{ attachments: Array<{ name: string; path: string; type: string }> }>(
       `/api/opencode/projects/${enc(projectId)}/attachments`,

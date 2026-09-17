@@ -305,7 +305,14 @@
   .workspace { --rail-width: 320px; }
 }
 @media (max-width: 860px) {
-  .workspace:not(.rail-hidden) { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+  /* The desktop hidden-panel rules have higher specificity than the base
+     mobile rule. Override every stored sidebar/rail combination here so a
+     narrow Notes window always gives the editor the full available width. */
+  .workspace,
+  .workspace.sidebar-hidden,
+  .workspace.rail-hidden,
+  .workspace.sidebar-hidden.rail-hidden,
+  .workspace:not(.rail-hidden) { grid-template-columns: minmax(0, 1fr); }
   .rail { position: fixed; inset: 0 0 0 auto; width: min(92vw, 380px); z-index: 40; }
   .workspace.rail-hidden .rail { pointer-events: none; }
 }

@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -71,6 +72,26 @@ try {
   }
   const python = spawnSync('python3', ['-m', 'py_compile', path.join(ROOT, 'scripts/opencluely-bridge/macos-input.py')], { encoding: 'utf8' });
   assert.equal(python.status, 0, python.stderr || python.stdout);
+
+  // The desktop path is a safety contract, not merely a model API contract.
+  // Keep these checks source-level because Electron's OS APIs are unavailable
+  // in a headless Node test runner; the interactive QA panel exercises them
+  // on a permitted desktop separately.
+  const [desktop, companion, preload, main] = await Promise.all([
+    readFile(path.join(ROOT, 'electron/desktop-control.mjs'), 'utf8'),
+    readFile(path.join(ROOT, 'electron/companion-manager.mjs'), 'utf8'),
+    readFile(path.join(ROOT, 'electron/companion-preload.cjs'), 'utf8'),
+    readFile(path.join(ROOT, 'electron/main.mjs'), 'utf8'),
+  ]);
+  assert.match(desktop, /#edge/);
+  assert.match(desktop, /#cursor/);
+  assert.match(desktop, /#pulse/);
+  assert.match(desktop, /screen\.getDisplayNearestPoint/);
+  assert.match(desktop, /async setPaused\(enabled\)/);
+  assert.match(companion, /async pauseAi\(\)/);
+  assert.match(companion, /await this\.seeScreen\("Refresh the visible desktop state before resuming control\."\)/);
+  assert.match(preload, /pauseAi: \(\) => ipcRenderer\.invoke\("companion:pause"\)/);
+  assert.match(main, /ipcMain\.handle\("companion:pause"/);
 
   console.log('PASS computer-agent offline contract tests');
 } finally {

@@ -5,6 +5,7 @@ import { Editor, makeBlock, uploadFile } from "./editor.js";
 import { plain } from "./richtext.js";
 import { state, loadPage, queueMetaSave, flushPage, getPageMeta, refreshPages, withError } from "./state.js";
 import { openSearch } from "./search.js";
+import { openColourLegend } from "./colour-coding.js";
 
 const COVERS = [
   "linear-gradient(120deg, #d5e3f0 0%, #eef2f6 100%)",
@@ -62,6 +63,7 @@ export class PageView {
     if (page.text_size && page.text_size !== "medium") canvas.classList.add(`text-${page.text_size}`);
     if (page.font_style && page.font_style !== "default") canvas.classList.add(`font-${page.font_style}`);
     this.canvas = canvas;
+    this.activeColourFilters = new Set();
 
     if (page.cover) append(canvas, this.buildCover());
 
@@ -86,6 +88,7 @@ export class PageView {
     this.editor.onCreateChildPage = (block) => this.createChildPage(block);
     this.editor.onLinkPage = (block) => this.linkPage(block);
     this.editor.onPageStyle = (patch) => this.setMeta(mapStyle(patch));
+    this.applyColourFocus();
     requestAnimationFrame(() => this.context.revealBlock?.());
 
     this.quickstart = el("div", { class: "quickstart" });
@@ -137,9 +140,27 @@ export class PageView {
 
   buildHeadActions() {
     const row = el("div", { class: "page-head-actions" });
+    append(row, el("button", { class: "text-button colour-key-trigger", type: "button", onclick: (event) => openColourLegend(this, event.currentTarget) }, icon("palette", 15), "Colour key"));
     if (!this.page.icon) append(row, el("button", { class: "text-button", type: "button", onclick: (event) => this.iconMenu(event.currentTarget) }, icon("callout", 15), "Add icon"));
     if (!this.page.cover) append(row, el("button", { class: "text-button", type: "button", onclick: (event) => this.coverMenu(event.currentTarget) }, icon("image", 15), "Add cover"));
     return row;
+  }
+
+  toggleColourFocus(categoryId) {
+    if (this.activeColourFilters.has(categoryId)) this.activeColourFilters.delete(categoryId);
+    else this.activeColourFilters.add(categoryId);
+    this.applyColourFocus();
+  }
+
+  clearColourFocus() { this.activeColourFilters.clear(); this.applyColourFocus(); }
+
+  applyColourFocus() {
+    if (!this.canvas) return;
+    const active = this.activeColourFilters || new Set();
+    this.canvas.classList.toggle("colour-focus-active", active.size > 0);
+    this.canvas.querySelectorAll(".smart-highlight").forEach((node) => {
+      node.classList.toggle("colour-focus-match", active.has(node.dataset.categoryId));
+    });
   }
 
   buildTitle() {

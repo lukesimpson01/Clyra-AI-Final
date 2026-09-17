@@ -10,7 +10,9 @@ export const MARKS = ["b", "i", "u", "s", "c"];
 const sameMarks = (a, b) =>
   MARKS.every((mark) => Boolean(a[mark]) === Boolean(b[mark])) &&
   a.col === b.col && a.bg === b.bg && a.href === b.href && a.page === b.page &&
-  a.date === b.date && a.eq === b.eq;
+  a.date === b.date && a.eq === b.eq && a.colHex === b.colHex && a.bgHex === b.bgHex &&
+  a.highlightId === b.highlightId && a.categoryId === b.categoryId && a.highlightNote === b.highlightNote &&
+  a.font === b.font && a.size === b.size;
 
 export function normalizeSpans(spans) {
   const out = [];
@@ -25,6 +27,8 @@ export function normalizeSpans(spans) {
 }
 
 export const spansText = (spans) => (spans || []).map((span) => span.t ?? "").join("");
+
+const safeHex = (value) => /^#[0-9a-f]{6}$/i.test(String(value || "")) ? String(value) : null;
 
 /* ------------------------------------------------------- spans -> DOM */
 
@@ -50,15 +54,24 @@ function renderSpan(span, context) {
   if (span.u) wrap("u");
   if (span.s) wrap("s");
   if (span.col || span.bg) {
+    const color = safeHex(span.colHex) || (span.col && span.col !== "default" && span.col !== "custom" ? `var(--c-${span.col})` : "");
+    const background = safeHex(span.bgHex) || (span.bg && span.bg !== "default" && span.bg !== "custom" ? `var(--c-${span.bg}-bg)` : "");
     wrap("span", {
-      class: "rt-color",
+      class: "rt-color", "data-color": span.col || "", "data-background": span.bg || "",
+      "data-color-hex": safeHex(span.colHex) || "", "data-background-hex": safeHex(span.bgHex) || "",
+      "data-highlight-id": span.highlightId || "", "data-category-id": span.categoryId || "",
+      "data-highlight-note": span.highlightNote || "", "data-highlight-created-at": span.highlightCreatedAt || "",
       style: {
-        color: span.col && span.col !== "default" ? `var(--c-${span.col})` : "",
-        background: span.bg && span.bg !== "default" ? `var(--c-${span.bg}-bg)` : "",
+        color,
+        background,
         borderRadius: span.bg ? "3px" : "",
         padding: span.bg ? "0 2px" : "",
       },
     });
+    if (span.categoryId) node.classList.add("smart-highlight");
+  }
+  if (span.font || span.size) {
+    wrap("span", { class: "rt-type", "data-font": span.font || "", "data-size": span.size || "", style: { fontFamily: span.font || "", fontSize: span.size || "" } });
   }
   if (span.href) {
     wrap("a", { class: "rt-link", href: span.href, target: "_blank", rel: "noreferrer noopener" });
@@ -96,6 +109,14 @@ export function readSpans(root) {
       if (tag === "A" && child.getAttribute("href")) next.href = child.getAttribute("href");
       if (child.dataset?.color) next.col = child.dataset.color;
       if (child.dataset?.background) next.bg = child.dataset.background;
+      if (safeHex(child.dataset?.colorHex)) next.colHex = child.dataset.colorHex;
+      if (safeHex(child.dataset?.backgroundHex)) next.bgHex = child.dataset.backgroundHex;
+      if (child.dataset?.highlightId) next.highlightId = child.dataset.highlightId;
+      if (child.dataset?.categoryId) next.categoryId = child.dataset.categoryId;
+      if (child.dataset?.highlightNote) next.highlightNote = child.dataset.highlightNote;
+      if (child.dataset?.highlightCreatedAt) next.highlightCreatedAt = child.dataset.highlightCreatedAt;
+      if (child.dataset?.font) next.font = child.dataset.font;
+      if (child.dataset?.size) next.size = child.dataset.size;
       walk(child, next);
     }
   };

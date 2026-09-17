@@ -206,6 +206,15 @@
   background: var(--background-subtle); border-radius: 3px;
 }
 
+/* Custom highlighter colours are deliberately a quiet extension of the
+   existing named swatches, rather than a second visual system. */
+.custom-colour-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 6px 8px 2px; padding: 5px 0 0; border-top: 1px solid var(--border-soft);
+  color: var(--text-secondary); font-size: 12px;
+}
+.custom-colour-input { width: 28px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: pointer; }
+
 /* Instant local-math result. This deliberately reads as a quiet annotation,
    not as assistant output, because no model or network request produced it. */
 .smart-answer {
@@ -344,6 +353,28 @@
 .inline-toolbar .text-button { height: 28px; }
 .inline-toolbar .sep { width: 1px; height: 18px; margin: 0 3px; background: var(--border-soft); }
 .inline-toolbar .ai { color: var(--accent-text); }
+.smart-highlight-button { gap: 4px; }
+.smart-highlight-button svg:first-child { color: var(--text-secondary); }
+
+/* Smart colour coding is intentionally stationery-soft; neutral controls keep
+   the editor calm while the content itself carries the study signal. */
+.colour-code-grid { display: grid; gap: 2px; min-width: 225px; padding: 3px; }
+.colour-code-choice, .colour-legend-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 31px; padding: 5px 7px; border-radius: var(--radius-sm); text-align: left; color: var(--text-primary); font-size: 13px; }
+.colour-code-choice:hover, .colour-legend-row:hover, .colour-legend-row.is-active { background: var(--background-hover); }
+.colour-code-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(30,30,30,.12); }
+.colour-legend { min-width: 260px; max-height: 310px; overflow: auto; padding: 3px; }
+.colour-legend-copy { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.colour-legend-copy strong { font-weight: 550; }
+.colour-legend-copy small { color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.colour-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.colour-legend-empty { margin: 8px; color: var(--text-tertiary); font-size: 12px; line-height: 1.45; }
+.colour-category-form { display: grid; gap: 10px; }
+.colour-category-form label { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-size: 13px; }
+.colour-picker { width: 32px; height: 25px; border: 0; padding: 0; background: none; }
+.smart-highlight { transition: opacity 190ms var(--ease), filter 190ms var(--ease), box-shadow 190ms var(--ease); }
+.colour-focus-active .text-line { opacity: .48; transition: opacity 190ms var(--ease); }
+.colour-focus-active .smart-highlight { opacity: .38; }
+.colour-focus-active .smart-highlight.colour-focus-match { opacity: 1; filter: saturate(1.08); box-shadow: 0 0 0 1px rgba(30,30,30,.08); }
 
 /* ---------------------------------------------------------- slash menu */
 

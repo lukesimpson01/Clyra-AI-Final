@@ -9,7 +9,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 const BASE = process.env.CLYRA_URL || "http://127.0.0.1:3000";
-const OUT = process.env.CLYRA_VISUAL_ARTIFACTS || "/opt/cursor/artifacts";
+// Keep QA output inside the project by default. `/opt/cursor` exists only in
+// one development image and made the supposedly portable browser test fail
+// before Clyra could exercise a single action.
+const OUT = process.env.CLYRA_VISUAL_ARTIFACTS || path.join(process.cwd(), "qa-artifacts", "browser-complex");
 const fixturePort = 43141;
 await fs.mkdir(OUT, { recursive: true });
 
@@ -123,7 +126,10 @@ try {
   assert.match(String(observation.page?.title || ""), /Complex Shop/i);
   mark("observe-title", true);
 
-  for (const name of ["Search products", "Apply filters", "In stock only", "Dismiss cookie banner", "Add sunscreen", "Add towel", "Add hat"]) {
+  // The desktop browser deliberately reports actionable controls in the
+  // visible viewport.  Verify the initial controls first; lower products are
+  // discovered through the same scroll-and-observe loop an agent uses.
+  for (const name of ["Search products", "Apply filters", "In stock only", "Dismiss cookie banner", "Add sunscreen", "Add towel"]) {
     assert.ok(
       observation.elements.some((el) => el.name === name || el.label === name || el.text === name),
       `Missing control: ${name}`,
@@ -158,7 +164,14 @@ try {
 
   for (const label of ["Add sunscreen", "Add towel", "Add hat"]) {
     observation = await observe();
-    await action({ type: "click", target: elementByName(observation, label) });
+    let target = observation.elements.find((element) => element.name === label || element.label === label || element.text === label);
+    if (!target) {
+      await action({ type: "scroll", direction: "down", amount: 560 });
+      observation = await observe();
+      target = observation.elements.find((element) => element.name === label || element.label === label || element.text === label);
+    }
+    assert.ok(target, `Expected ${label} after observing the current viewport`);
+    await action({ type: "click", target: { elementId: target.id } });
     mark(`click-${label}`, true);
   }
 
@@ -196,8 +209,14 @@ try {
   await page.keyboard.press("Control+J");
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(OUT, "atlas-ui-03-task-view.png") });
-  const taskViewVisible = await page.locator("text=Task View").first().isVisible().catch(() => false);
-  mark("task-view-open", taskViewVisible, { note: taskViewVisible ? "Cmd/Ctrl+J opened Task View" : "overlay not visible in web shell" });
+  // Task View deliberately uses compact per-window labels rather than a
+  // generic "Task View" heading. Verify the actual state contract and the
+  // two real workspace windows instead of looking for copy that is not part
+  // of the product design.
+  const taskView = page.locator('.clyra-task-view[data-task-view-phase="open"]');
+  const taskViewVisible = await taskView.isVisible().catch(() => false);
+  const taskWindowCount = taskViewVisible ? await taskView.locator(".clyra-task-view__window").count() : 0;
+  mark("task-view-open", taskViewVisible && taskWindowCount >= 2, { note: taskViewVisible ? `Cmd/Ctrl+J opened Task View with ${taskWindowCount} live windows` : "overview state was not open" });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(450);
   await page.screenshot({ path: path.join(OUT, "atlas-ui-04-after-taskview.png") });

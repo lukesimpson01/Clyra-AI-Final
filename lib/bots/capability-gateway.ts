@@ -52,6 +52,15 @@ export type CapabilityHandler = (
 
 /** Keys whose values must never reach an execution log or an agent prompt. */
 const SECRET_KEYS = /(^|_)(api[_-]?key|token|secret|password|authorization|cookie|credential)s?($|_)/i;
+const DESTRUCTIVE_COMMAND = /(^|\s|;|&&|\|\|)(rm|rmdir|mv|chmod|chown|kill|pkill|curl|wget|npm\s+publish|git\s+push)(\s|$)/i;
+
+/** The policy boundary derives high-risk actions from structured tool input.
+ * Callers may add a stricter action but cannot suppress this classification. */
+function inferredAction(request: CapabilityRequest) {
+  if (request.capability === "terminal" && DESTRUCTIVE_COMMAND.test(String(request.input.command || ""))) return "destructive_command";
+  if (request.capability === "files" && String(request.input.operation || "") === "delete") return "file_delete_outside_project";
+  return request.action;
+}
 
 /**
  * Strip anything credential-shaped before it is logged.
@@ -105,11 +114,12 @@ export class CapabilityGateway {
 
   async call(request: CapabilityRequest, context: GatewayCallContext): Promise<GatewayResult> {
     const started = Date.now();
+    const action = inferredAction(request);
     const base = {
       at: new Date().toISOString(),
       botId: context.botId,
       capability: request.capability,
-      action: request.action ?? null,
+      action: action ?? null,
       input: redact(request.input) as Record<string, unknown>,
     };
     const finish = (outcome: ExecutionLogEntry["outcome"], detail: string): ExecutionLogEntry => {
@@ -124,7 +134,7 @@ export class CapabilityGateway {
       return { ok: false, error: `No handler is registered for "${request.capability}".`, log: finish("error", "unregistered capability") };
     }
 
-    const decision = checkPermission(context.permissions, request.capability, request.action);
+    const decision = checkPermission(context.permissions, request.capability, action);
     if (!decision.allowed) {
       return { ok: false, error: decision.reason, log: finish("denied", decision.reason) };
     }

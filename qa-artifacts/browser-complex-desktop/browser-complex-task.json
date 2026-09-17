@@ -1,0 +1,64 @@
+{
+  "ok": false,
+  "steps": [
+    {
+      "name": "navigate",
+      "ok": true
+    },
+    {
+      "name": "observe-title",
+      "ok": true
+    },
+    {
+      "name": "observe-controls",
+      "ok": true
+    },
+    {
+      "name": "dismiss-cookie",
+      "ok": true
+    },
+    {
+      "name": "type-search",
+      "ok": true
+    },
+    {
+      "name": "apply-filters",
+      "ok": true
+    },
+    {
+      "name": "verify-filter",
+      "ok": true
+    },
+    {
+      "name": "toggle-instock",
+      "ok": true
+    },
+    {
+      "name": "click-Add sunscreen",
+      "ok": true
+    },
+    {
+      "name": "click-Add towel",
+      "ok": true
+    },
+    {
+      "name": "click-Add hat",
+      "ok": true
+    },
+    {
+      "name": "checkout",
+      "ok": true
+    },
+    {
+      "name": "verify-checkout",
+      "ok": true,
+      "note": "full cart checked out"
+    },
+    {
+      "name": "task-view-open",
+      "ok": false,
+      "note": "overlay not visible in web shell"
+    }
+  ],
+  "error": "AssertionError [ERR_ASSERTION]: [{\"name\":\"task-view-open\",\"ok\":false,\"note\":\"overlay not visible in web shell\"}]\n\nfalse !== true\n\n    at file:///Users/lukesimpson/Documents/Coding%20Projects/Clyra-AI-Final/tools/browser-complex-task-e2e.mjs:223:10"
+}

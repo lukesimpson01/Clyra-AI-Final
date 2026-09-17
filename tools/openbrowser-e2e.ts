@@ -6,7 +6,9 @@ const appBase =
   process.env.CLYRA_URL ||
   process.env.CLYRA_API_BASE ||
   process.env.CLYRA_SERVICE_URL ||
-  "http://127.0.0.1:31415";
+  // Match the server's documented development default. CI or packaged runs
+  // can still point at a different instance with CLYRA_URL.
+  "http://127.0.0.1:3000";
 const fixturePort = Number(process.env.CLYRA_BROWSER_FIXTURE_PORT || 43119);
 const fixtureUrl = `http://127.0.0.1:${fixturePort}/catalogue`;
 
@@ -235,7 +237,15 @@ try {
     agentActions = complete.steps.length;
   }
 
-  await api("/api/openbrowser/navigate", { method: "POST", body: JSON.stringify({ target: originalUrl }) });
+  // A person may have left the shared development browser on a temporary
+  // localhost page whose server has since stopped. That should not turn a
+  // successful interaction test into a cleanup failure; restore a safe,
+  // normal browser page when the former location is no longer reachable.
+  try {
+    await api("/api/openbrowser/navigate", { method: "POST", body: JSON.stringify({ target: originalUrl }) });
+  } catch {
+    await api("/api/openbrowser/navigate", { method: "POST", body: JSON.stringify({ target: "https://www.google.com/" }) });
+  }
   for (const capacityTabUrl of capacityTabUrls) {
     const current = await api("/api/openbrowser/state");
     if (current.state.tabs.length >= 8) break;

@@ -34,6 +34,8 @@ export interface CodingRuntimeManager {
     effort?: VibeEffort,
   ): Promise<unknown>;
   abort(projectId: string, sessionId: string): Promise<unknown>;
+  pause?(projectId: string, sessionId: string): Promise<unknown>;
+  resume?(projectId: string, sessionId: string): Promise<unknown>;
   respondPermission(projectId: string, sessionId: string, permissionId: string, response: string): Promise<unknown>;
   subscribe(projectId: string, listener: (event: ClyraAgentEvent) => void): () => void;
 }

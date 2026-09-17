@@ -17,6 +17,9 @@ import { normalisePermissions } from "./permissions";
 import { ConversationError, ConversationStore } from "./conversations";
 import { generateReply, selectResponders } from "./runtime";
 import { ensureWorkspace, workspaceRoot, WorkspaceViolationError } from "./workspace";
+import { CoworkTaskStore, CoworkTaskError } from "./tasks";
+import { CoworkTaskRuntime } from "./task-runtime";
+import type { BrowserAction } from "../openbrowser/browser-runtime";
 
 export interface CoworkDeps {
   /** Clyra's existing research/web-search implementation. */
@@ -26,6 +29,14 @@ export interface CoworkDeps {
     provider: string; model: string; feature: string;
     usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   }) => void;
+  /** Existing semantic Playwright browser. Cowork never uses screenshots. */
+  browser: {
+    observe: () => Promise<unknown>;
+    navigate: (target: string) => Promise<unknown>;
+    action: (action: BrowserAction) => Promise<unknown>;
+    assist: (task: string, onProgress?: (event: unknown) => void) => Promise<unknown>;
+    control: (manual: boolean) => Promise<unknown>;
+  };
 }
 
 /** Commands refused outright — the damage is not worth an approval prompt. */
@@ -37,6 +48,7 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
   const store = new BotStore();
   const conversations = new ConversationStore();
   const gateway = new CapabilityGateway();
+  const tasks = new CoworkTaskStore();
   const mailbox = new AgentMailbox({
     resolveName: async (name) => {
       const bots = await store.list();
@@ -56,6 +68,32 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
     }));
   gateway.register("research", async (input) =>
     deps.runWebSearchResearch({ query: String(input.query || ""), maxResults: 8, fetchTop: 4 }));
+
+  gateway.register("browser", async (input, context) => {
+    const operation = String(input.operation || "observe");
+    if (operation === "observe") return deps.browser.observe();
+    if (operation === "navigate") {
+      const target = String(input.target || input.url || "").trim();
+      if (!target || target.length > 2_000) throw new Error("A valid browser target is required.");
+      return deps.browser.navigate(target);
+    }
+    if (operation === "action") {
+      const action = input.action as BrowserAction | undefined;
+      if (!action || typeof action !== "object" || typeof action.type !== "string") throw new Error("A structured browser action is required.");
+      return deps.browser.action(action);
+    }
+    if (operation === "assist") {
+      const task = String(input.task || "").trim();
+      if (!task || task.length > 8_000) throw new Error("A valid browser task is required.");
+      // The existing browser runner gives semantic observation, state
+      // verification, and selector recovery. Its progress becomes Cowork's
+      // real activity record through the gateway output.
+      return deps.browser.assist(task);
+    }
+    if (operation === "take_control") return deps.browser.control(true);
+    if (operation === "resume_agent") return deps.browser.control(false);
+    throw new Error(`Unsupported browser operation "${operation}".`);
+  });
 
   gateway.register("files", async (input, context) => {
     const operation = String(input.operation || "read");
@@ -99,6 +137,19 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
     });
   });
 
+  let runtime: CoworkTaskRuntime;
+  runtime = new CoworkTaskRuntime({
+    tasks, gateway, getBot: async (id) => store.get(id),
+    delegate: async (from, parent, name, request) => {
+      const candidates = await store.list();
+      const target = candidates.find((item) => item.name.toLowerCase() === name.toLowerCase() || item.slug.toLowerCase() === name.toLowerCase());
+      if (!target || target.id === from.id) return null;
+      const child = await tasks.create({ conversationId: parent.conversationId, projectId: parent.projectId, parentId: parent.id, botId: target.id, title: request.slice(0, 100), objective: request });
+      void runtime.run(child.id);
+      return child.id;
+    },
+  });
+
   const findBot = async (id: string): Promise<Bot | null> => store.get(String(id));
   const fail = (res: any, status: number, error: unknown) =>
     res.status(status).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -136,6 +187,41 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
 
   app.get("/api/bots/:id/log", async (req, res) => {
     res.json({ ok: true, entries: gateway.recentLog(String(req.params.id), 200) });
+  });
+
+  // ── Durable task graph ──────────────────────────────────────────────
+  app.get("/api/cowork/tasks", async (req, res) => {
+    try {
+      res.json({ ok: true, tasks: await tasks.list({
+        conversationId: typeof req.query.conversationId === "string" ? req.query.conversationId : undefined,
+        botId: typeof req.query.botId === "string" ? req.query.botId : undefined,
+      }) });
+    } catch (error) { fail(res, 500, error); }
+  });
+
+  app.get("/api/cowork/tasks/:id", async (req, res) => {
+    try {
+      const task = await tasks.get(String(req.params.id));
+      if (!task) { fail(res, 404, new Error("That task no longer exists.")); return; }
+      res.json({ ok: true, task, children: (await tasks.list()).filter((item) => item.parentId === task.id) });
+    } catch (error) { fail(res, 500, error); }
+  });
+
+  app.post("/api/cowork/tasks/:id/:operation", async (req, res) => {
+    try {
+      const id = String(req.params.id); const operation = String(req.params.operation);
+      const task = await tasks.get(id); if (!task) { fail(res, 404, new Error("That task no longer exists.")); return; }
+      if (operation === "pause") { runtime.pause(id); res.json({ ok: true, task: await tasks.transition(id, "paused", { currentStep: "Paused — resume performs a fresh observation" }, { kind: "thinking", label: "Task paused" }) }); return; }
+      if (operation === "stop") { runtime.stop(id); res.json({ ok: true, task: await tasks.transition(id, "cancelled", { currentStep: "Stopped by user" }, { kind: "error", label: "Task stopped" }) }); return; }
+      if (operation === "resume") {
+        const next = task.state === "paused" ? await tasks.transition(id, "running", { currentStep: "Resuming with a fresh observation" }, { kind: "thinking", label: "Task resumed" }) : task;
+        void runtime.run(id); res.json({ ok: true, task: next }); return;
+      }
+      if (operation === "retry") { const next = await tasks.retry(id); void runtime.run(id); res.json({ ok: true, task: next }); return; }
+      if (operation === "approve") { if (task.state !== "awaiting_approval") { fail(res, 400, new Error("That task is not awaiting approval.")); return; } void runtime.run(id, true); res.json({ ok: true, task }); return; }
+      if (operation === "reject") { if (task.state !== "awaiting_approval") { fail(res, 400, new Error("That task is not awaiting approval.")); return; } res.json({ ok: true, task: await tasks.transition(id, "blocked", { currentStep: "Approval rejected", error: "The requested action was rejected.", pendingAction: null }, { kind: "approval", label: "Approval rejected" }) }); return; }
+      fail(res, 400, new Error("Unsupported task operation."));
+    } catch (error) { fail(res, error instanceof CoworkTaskError ? 400 : 500, error); }
   });
 
   // ── Capability invocation ───────────────────────────────────────────
@@ -316,6 +402,15 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
         text, addressed: responders.map((bot) => bot.id),
       });
 
+      // Start a durable background job for each addressed coworker. The HTTP
+      // response remains quick, while every meaningful action is checkpointed
+      // and visible to the renderer through the task endpoints.
+      const launched = await Promise.all(responders.map(async (bot) => {
+        const task = await tasks.create({ conversationId: thread.id, botId: bot.id, title: text.slice(0, 100), objective: text });
+        void runtime.run(task.id);
+        return task;
+      }));
+
       const replies = [];
       for (const bot of responders) {
         await store.setStatus(bot.id, "thinking", "Replying");
@@ -351,7 +446,7 @@ export function registerCoworkRoutes(app: Express, deps: CoworkDeps) {
         }
       }
 
-      res.json({ ok: true, messages: await conversations.messages(thread.id), replies });
+      res.json({ ok: true, messages: await conversations.messages(thread.id), replies, tasks: launched });
     } catch (error) { fail(res, 500, error); }
   });
 

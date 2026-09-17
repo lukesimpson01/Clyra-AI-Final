@@ -19,6 +19,7 @@ const MIN_CONVERSATION = 400;
 const MIN_PREVIEW = 520;
 const SIDEBAR_EXPANDED = 236;
 const SIDEBAR_COLLAPSED = 0;
+const PANEL_SPRING = { type: "spring" as const, stiffness: 420, damping: 38, mass: 0.82 };
 
 const WELCOME_SUBTITLES = [
   ["Turn an ", "idea", " into something real."],
@@ -400,6 +401,41 @@ export default function ClyraCodeWorkspace() {
   /* -------------------- helpers -------------------- */
   const activeProject = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const taskTitle = state.sessionTitle || (state.log.length ? "Task" : "");
+  const agentStatus = useMemo(() => {
+    if (state.connection === "reconnecting") return { label: "Reconnecting", tone: "warning" as const };
+    if (state.runState === "failed") return { label: "Needs attention", tone: "error" as const };
+    if (running) {
+      const active = [...actionList].reverse().find((action) => action.status === "active" || action.status === "queued");
+      const labels: Partial<Record<AgentAction["kind"], string>> = {
+        read: "Reading files", search: "Searching project", research: "Researching", edit: "Editing", create: "Creating files",
+        command: "Running command", build: "Building", check: "Checking", test: "Testing", preview: "Checking preview",
+      };
+      return { label: active ? labels[active.kind] || "Working" : "Preparing", tone: "active" as const };
+    }
+    return { label: state.sessionId ? "Ready to continue" : "Ready", tone: "idle" as const };
+  }, [actionList, running, state.connection, state.runState, state.sessionId]);
+  const terminalError = useMemo(() => {
+    // Session errors include failures before an agent has had a chance to
+    // produce an action (for example, an unavailable provider on Send).
+    if (state.error) {
+      return {
+        id: `session:${state.runStartedAt ?? state.runEndedAt ?? 0}:${state.error}`,
+        message: state.error,
+      };
+    }
+    // Tool errors can occur inside an otherwise continuing run. Surface the
+    // latest concrete one in the terminal too, where multiline diagnostics are
+    // easier to read and copy than in the compact activity row.
+    const failedAction = [...actionList].reverse().find((action) =>
+      action.status === "error" && Boolean(action.error || action.output),
+    );
+    if (!failedAction) return null;
+    const detail = (failedAction.error || failedAction.output || "Tool failed").trim();
+    return {
+      id: `action:${failedAction.id}:${failedAction.endedAt ?? failedAction.startedAt}:${detail}`,
+      message: `${failedAction.target}: ${detail}`,
+    };
+  }, [actionList, state.error, state.runEndedAt, state.runStartedAt]);
   const desktopProject = /\b(?:desktop|electron)\b/i.test(`${activeProject?.name ?? ""} ${taskTitle}`);
   const canLaunchElectronPreview = Boolean(window.clyraDesktop?.preview?.launch);
   const launchDesktopPreview = useCallback(async () => {
@@ -651,7 +687,7 @@ export default function ClyraCodeWorkspace() {
       />
       {!sidebarCollapsed ? <div className="cc-resize-handle" aria-hidden /> : null}
 
-      <div className="absolute right-1 top-1.5 z-40 flex h-[37px] items-center gap-0.5">
+      <div className="cc-workspace-actions absolute right-1 top-1.5 z-40 flex h-[37px] items-center gap-0.5">
         {activeProject ? <GitHubPopover projectId={activeProject.id} projectName={activeProject.name} /> : null}
         {desktopProject && preview.session?.url && canLaunchElectronPreview ? (
           <button
@@ -679,8 +715,8 @@ export default function ClyraCodeWorkspace() {
       <motion.section
         initial={false}
         animate={{ width: conversationTargetWidth }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        className="flex min-h-0 shrink-0 flex-col overflow-hidden bg-[color:var(--main-background)]"
+        transition={reducedMotion ? { duration: 0 } : PANEL_SPRING}
+        className="cc-conversation-panel flex min-h-0 shrink-0 flex-col overflow-hidden bg-[color:var(--main-background)]"
       >
         {state.connection === "reconnecting" && running ? (
           <motion.div
@@ -692,7 +728,7 @@ export default function ClyraCodeWorkspace() {
           </motion.div>
         ) : null}
 
-        <header className="relative flex h-[44px] shrink-0 items-center gap-2 border-b border-black/[0.055] bg-white/[0.92] px-3.5 backdrop-blur-[16px]">
+        <header className="cc-workspace-header relative flex h-[48px] shrink-0 items-center gap-2 px-3.5">
           {sidebarCollapsed ? (
             <button
               type="button"
@@ -710,9 +746,11 @@ export default function ClyraCodeWorkspace() {
                 <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[var(--text-primary)]">
                   {taskTitle || "New task"}
                 </h1>
+                <div className="cc-project-context truncate">{activeProject.name}</div>
               </div>
             </>
           ) : <span className="flex-1" aria-hidden />}
+          <span className={`cc-agent-status cc-agent-status--${agentStatus.tone}`} aria-live="polite">{agentStatus.label}</span>
         </header>
 
         {
@@ -724,7 +762,7 @@ export default function ClyraCodeWorkspace() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
                 transition={{ duration: reducedMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
-                className="cc-scroll flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pt-[9vh]"
+                className="cc-welcome cc-scroll flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pt-[9vh]"
               >
                 <div className="mx-auto flex w-full max-w-[620px] flex-col items-center px-5 text-center">
                   <ClyraMark size={40} />
@@ -758,7 +796,7 @@ export default function ClyraCodeWorkspace() {
                       onEffortChange={setEffort}
                     />
                   </div>
-                  <div className="mt-4 flex items-center justify-center gap-1.5">
+                  <div className="cc-quick-actions mt-4 flex items-center justify-center gap-1.5">
                     {quickStartTiles.map((entry) => {
                       const Icon = entry.icon;
                       return (
@@ -766,7 +804,7 @@ export default function ClyraCodeWorkspace() {
                           key={entry.label}
                           type="button"
                           onClick={() => suggestPrompt(entry.prompt)}
-                          className="flex h-[36px] items-center gap-1.5 rounded-[9px] px-3 text-[12.5px] text-[#696B70] transition-colors duration-150 hover:bg-black/[0.035] hover:text-[#303236]"
+                          className="cc-quick-action flex h-[36px] items-center gap-1.5 rounded-[9px] px-3 text-[12.5px] text-[#696B70]"
                         >
                           <Icon className="h-[14px] w-[14px] text-[#7D8086]" strokeWidth={1.65} />
                           {entry.label}
@@ -895,7 +933,7 @@ export default function ClyraCodeWorkspace() {
         animate={rightPanelOpen
           ? { width: previewTargetWidth, x: 0, opacity: 1 }
           : { width: 0, x: 8, opacity: 0 }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        transition={reducedMotion ? { duration: 0 } : PANEL_SPRING}
         className={cn("flex min-h-0 shrink-0 overflow-hidden", !rightPanelOpen && "pointer-events-none")}
         aria-hidden={!rightPanelOpen || undefined}
       >
@@ -933,6 +971,7 @@ export default function ClyraCodeWorkspace() {
         height={terminalHeight}
         onHeightChange={setTerminalHeight}
         onToggle={() => setTerminalOpen((open) => !open)}
+        reportedError={terminalError}
         agentActivityCount={agentActivityCount}
       />
       <AnimatePresence>

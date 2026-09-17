@@ -8,11 +8,15 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 
-const source = path.join(process.cwd(), "data", "notes", "clyra-notes.db");
 const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "clyra-notes-test-"));
 await fs.mkdir(path.join(sandbox, "data", "notes"), { recursive: true });
-if (await fs.stat(source).then(() => true, () => false)) {
-  /* backup() checkpoints the WAL, so the copy matches what the app sees. */
+const migrationFixture = process.env.CLYRA_NOTES_MIGRATION_FIXTURE;
+if (migrationFixture) {
+  // A migration test may opt into a dedicated fixture. Never copy the
+  // developer's or user's working Notes database into an isolation test:
+  // existing pages/chats make fresh-workspace assertions nondeterministic.
+  const source = path.resolve(migrationFixture);
+  if (!await fs.stat(source).then(() => true, () => false)) throw new Error(`Migration fixture does not exist: ${source}`);
   await new Database(source, { readonly: true }).backup(path.join(sandbox, "data", "notes", "clyra-notes.db"));
 }
 process.chdir(sandbox);
@@ -112,8 +116,11 @@ async function main() {
   const bad = store.addProperty(database.id, { name: "Broken", type: "formula", config: { expression: 'prop("Nope") + 1' } }) as any;
   check("bad formula rejected", Boolean(bad.error), bad);
 
-  const r1 = store.createRecord(database.id, { values: { [titleProp.id]: "Essay", [statusProp.id]: "doing", [dueProp.id]: { start: "2026-09-10" }, [score.id]: 42, [weight.id]: 50 } })!;
-  const r2 = store.createRecord(database.id, { values: { [titleProp.id]: "Lab report", [statusProp.id]: "done", [dueProp.id]: { start: "2026-08-01" }, [score.id]: 18, [weight.id]: 20 } })!;
+  // Date-relative filters must be tested with dates relative to the day the
+  // suite runs; fixed 2026 fixtures silently become stale over time.
+  const isoDay = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const r1 = store.createRecord(database.id, { values: { [titleProp.id]: "Essay", [statusProp.id]: "doing", [dueProp.id]: { start: isoDay(30) }, [score.id]: 42, [weight.id]: 50 } })!;
+  const r2 = store.createRecord(database.id, { values: { [titleProp.id]: "Lab report", [statusProp.id]: "done", [dueProp.id]: { start: isoDay(-30) }, [score.id]: 18, [weight.id]: 20 } })!;
   const r3 = store.createRecord(database.id, { values: { [titleProp.id]: "Quiz", [statusProp.id]: "todo", [score.id]: 9, [weight.id]: 10 } })!;
   const records = store.listRecords(database.id);
   check("three records", records.length === 3, records.length);

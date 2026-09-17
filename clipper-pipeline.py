@@ -53,7 +53,10 @@ from clipper_intelligence import (
 )
 
 
-TMP_ROOT = "./tmp"
+# The desktop server supplies CLYRA_TMP_DIR so caches live beside the user's
+# Clyra data, not beside a potentially read-only packaged application.  Keep
+# the relative path for the standalone developer workflow.
+TMP_ROOT = (os.environ.get("CLYRA_TMP_DIR") or "./tmp").strip() or "./tmp"
 ARTIFACT_CACHE_DIR = "clipper-cache"
 CLIP_ARTIFACT_DIR = "clipper-artifacts"
 
@@ -1043,11 +1046,21 @@ def local_clip_score(candidate, moment_type):
     clarity = min(12, 4 + int(len(set(words)) / max(1, len(words)) * 10))
     pacing = min(8, int(len(words) / duration * 2.0))
     relevance = min(14, keyword_matches * 3)
-    total = max(1, min(100, hook + standalone + density + clarity + pacing + relevance))
+    # Persist the components rather than presenting a magic percentage. This
+    # is intentionally a *clip potential* score, not a virality prediction.
+    breakdown = {
+        "hook": {"score": hook, "max": 22},
+        "context_independence": {"score": standalone, "max": 20},
+        "speech_density": {"score": density, "max": 16},
+        "clarity": {"score": clarity, "max": 12},
+        "pacing": {"score": pacing, "max": 8},
+        "query_relevance": {"score": relevance, "max": 14},
+    }
+    total = max(1, min(100, sum(item["score"] for item in breakdown.values())))
     hook_label = "Strong hook" if hook >= 16 else "Solid setup"
     finish_label = "complete thought" if complete else "needs cleaner ending"
     reason = f"{total} — {hook_label}, {finish_label}, and prompt-relevant pacing."
-    return {"score": int(total), "reason": reason[:220]}
+    return {"score": int(total), "reason": reason[:220], "score_breakdown": breakdown}
 
 
 def apply_clip_scores(candidates, moment_type, use_llm=True):
@@ -1059,6 +1072,7 @@ def apply_clip_scores(candidates, moment_type, use_llm=True):
         local = local_clip_score(item, moment_type)
         item["score"] = int(local["score"])
         item["reason"] = local["reason"]
+        item["score_breakdown"] = local["score_breakdown"]
         item["score_source"] = "local"
         scored.append(item)
 
@@ -2052,6 +2066,85 @@ def probe_duration(path_value):
         raise RuntimeError("Unable to read source duration with ffmpeg")
     hours, minutes, seconds = match.groups()
     return max(0.0, (int(hours) * 3600) + (int(minutes) * 60) + float(seconds))
+
+
+def validate_export(output_path, expected_width, expected_height, expected_duration, caption_words=None):
+    """Verify a rendered delivery file before it reaches the editor.
+
+    FFmpeg successfully exiting is not sufficient: a damaged mux can still
+    produce a file, and a filter mistake can leave a silent/black output. This
+    deliberately uses ffprobe's stream metadata (not a heuristic) and keeps a
+    compact report with the clip artifact for support and retry diagnostics.
+    """
+    report = {
+        "checked": True,
+        "ok": False,
+        "path": os.path.basename(str(output_path)),
+        "expected": {
+            "width": int(expected_width),
+            "height": int(expected_height),
+            "durationSeconds": round(float(expected_duration), 3),
+        },
+        "errors": [],
+        "warnings": [],
+    }
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 1024:
+        report["errors"].append("Output file is missing or unexpectedly small")
+        return report
+    if not FFPROBE:
+        # This is a degraded environment, not a fabricated validation pass.
+        report["warnings"].append("ffprobe unavailable; stream validation was not possible")
+        report["ok"] = True
+        report["degraded"] = True
+        return report
+    try:
+        probe = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration:stream=index,codec_type,codec_name,width,height,avg_frame_rate", "-of", "json", output_path],
+            check=False, capture_output=True, text=True, timeout=30,
+        )
+        if probe.returncode != 0:
+            report["errors"].append((probe.stderr or "ffprobe failed").strip()[-500:])
+            return report
+        payload = json.loads(probe.stdout or "{}")
+        streams = payload.get("streams") if isinstance(payload, dict) else []
+        video = next((item for item in streams if item.get("codec_type") == "video"), None)
+        audio = next((item for item in streams if item.get("codec_type") == "audio"), None)
+        duration = float((payload.get("format") or {}).get("duration") or 0.0)
+        report["actual"] = {
+            "durationSeconds": round(duration, 3),
+            "videoCodec": video.get("codec_name") if video else None,
+            "audioCodec": audio.get("codec_name") if audio else None,
+            "width": int(video.get("width") or 0) if video else 0,
+            "height": int(video.get("height") or 0) if video else 0,
+            "frameRate": video.get("avg_frame_rate") if video else None,
+        }
+        if not video:
+            report["errors"].append("No video stream")
+        if not audio:
+            report["errors"].append("No audio stream")
+        if video and (int(video.get("width") or 0) != int(expected_width) or int(video.get("height") or 0) != int(expected_height)):
+            report["errors"].append("Output dimensions do not match the selected aspect ratio")
+        # A short tail difference is normal at a source keyframe boundary;
+        # beyond 0.75 seconds it is a real sync/cut defect worth rejecting.
+        if duration <= 0 or abs(duration - float(expected_duration)) > 0.75:
+            report["errors"].append("Output duration differs materially from the requested clip duration")
+    except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"ffprobe validation failed: {exc}")
+        return report
+
+    last_end = -0.001
+    for word in caption_words or []:
+        try:
+            start, end = float(word.get("start", 0)), float(word.get("end", 0))
+        except (AttributeError, TypeError, ValueError):
+            report["errors"].append("Caption timing contains an invalid word timestamp")
+            break
+        if end < start or start < last_end - 0.03 or end > float(expected_duration) + 0.25:
+            report["errors"].append("Caption timing is not monotonic or exceeds the rendered clip")
+            break
+        last_end = max(last_end, end)
+    report["ok"] = not report["errors"]
+    return report
 
 
 def source_quality_report(path_value):
@@ -4192,7 +4285,10 @@ def main():
     burn_captions = config_flag(cfg.get("burn_captions", cfg.get("burnCaptions")), False)
     remove_fillers = bool(cfg.get("remove_fillers", True))
     render_quality = normalise_render_quality(cfg.get("render_quality") or cfg.get("renderQuality") or "premium")
-    clip_count = min(8, max(1, int(cfg.get("clip_count", 3))))
+    # Ten distinct suggestions is the standard full-video review set. Keep a
+    # modest upper bound so an accidental value cannot queue an unbounded
+    # number of expensive renders.
+    clip_count = min(12, max(1, int(cfg.get("clip_count", 3))))
     # The 720p option is a genuine fast lane: avoid downloading and decoding
     # pixels the final delivery cannot use.
     source_max_height = 720 if render_quality == "balanced" else 1080
@@ -4272,12 +4368,37 @@ def main():
                 stream_url = source
                 fallback_path = source
                 local_source = True
+                # pytubefix can fail before it exposes metadata while yt-dlp
+                # still successfully imports the public master. The rest of
+                # the pipeline always needs a display title, so retain a
+                # neutral source-derived fallback instead of dereferencing an
+                # uninitialised local later in cache/artifact construction.
+                title = os.path.splitext(os.path.basename(source))[0].replace("-", " ").replace("_", " ").strip() or "Imported public video"
                 try:
                     duration = probe_duration(source)
                 except Exception:
                     duration = requested_duration
-                words = transcribe_clip_words(source)
-                source_words_word_accurate = True
+                # Reuse the durable timed transcript for the same public URL.
+                # A retry after a render/tracker failure must not spend another
+                # full long-video Whisper pass just to reach the failed stage.
+                cached_words = read_json(os.path.join(
+                    TMP_ROOT, ARTIFACT_CACHE_DIR,
+                    source_fingerprint(requested_source_identity),
+                    "transcript-words.json",
+                ), [])
+                if isinstance(cached_words, list) and cached_words:
+                    words = [
+                        {"word": str(row.get("text") or row.get("word") or ""),
+                         "start": float(row.get("startMs", row.get("start", 0)) or 0) / (1000 if "startMs" in row else 1),
+                         "end": float(row.get("endMs", row.get("end", 0)) or 0) / (1000 if "endMs" in row else 1),
+                         "confidence": row.get("confidence"), "speakerId": row.get("speakerId")}
+                        for row in cached_words if isinstance(row, dict)
+                    ]
+                    source_words_word_accurate = bool(words)
+                    emit("captions", "running", message=f"Reusing {len(words)} cached timed transcript words.")
+                else:
+                    words = transcribe_clip_words(source)
+                    source_words_word_accurate = True
 
         audit_source = source if local_source and os.path.isfile(source) else (fallback_path or stream_url)
         emit("source-audit", "running", message="Auditing master media quality before rendering...", overall=16)
@@ -5244,6 +5365,25 @@ def main():
             if not os.path.exists(output_path) or os.path.getsize(output_path) <= 1024:
                 fail(f"Encoder did not produce candidate {candidate_index + 1}")
 
+            export_validation = validate_export(
+                output_path,
+                OUTPUT_WIDTH,
+                OUTPUT_HEIGHT,
+                clip_duration,
+                transcribed_words if candidate_captions_enabled else [],
+            )
+            write_json(os.path.join(artifact_dir, "export-validation.json"), export_validation)
+            if not export_validation.get("ok"):
+                detail = "; ".join(export_validation.get("errors") or ["unknown validation failure"])
+                fail(f"Candidate {candidate_index + 1} failed export validation: {detail}")
+            emit(
+                "validate",
+                "complete",
+                message=f"Candidate {candidate_index + 1} passed stream, duration, and timing validation.",
+                export_validation=export_validation,
+                overall=candidate_progress(0.98),
+            )
+
             persist_clip_artifacts(
                 artifact_dir,
                 words=transcribed_words,
@@ -5260,6 +5400,7 @@ def main():
                     "clip_duration": clip_duration,
                     "reason": str(candidate.get("reason") or ""),
                     "score": int(candidate.get("score", 50)),
+                    "score_breakdown": candidate.get("score_breakdown") or {},
                     "hashtags": {"viral": "#viral #shorts", "funny": "#funny #shorts", "dramatic": "#story #shorts"}.get(moment_type, "#shorts"),
                     "virality_score": round(float(candidate.get("score", 50)) / 10, 1),
                     "aspect_ratio": aspect,
@@ -5286,6 +5427,7 @@ def main():
                     "source_quality": source_quality,
                     "output_name": output_name,
                     "face_tracking": crop_plan.get("faceTracking"),
+                    "export_validation": export_validation,
                 },
                 plate_path=plate_path if os.path.isfile(plate_path) else None,
                 subtitle_path=subtitle_path,
@@ -5319,6 +5461,7 @@ def main():
                 "virality_score": round(float(score) / 10, 1),
                 "score": score,
                 "clip_potential_score": score,
+                "score_breakdown": candidate.get("score_breakdown") or {},
                 "score_source": candidate.get("score_source", "local"),
                 "file_size": os.path.getsize(output_path),
                 "timing_source": timing_source,
@@ -5347,6 +5490,7 @@ def main():
                 },
                 "artifact_id": os.path.basename(artifact_dir),
                 "face_tracking": crop_plan.get("faceTracking"),
+                "export_validation": export_validation,
                 "available_faces": available_faces,
                 "crop_keyframes": crop_plan.get("cropKeyframes") or [],
                 "face_overlay": crop_plan.get("faceOverlay") or [],

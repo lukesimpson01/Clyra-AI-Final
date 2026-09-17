@@ -1291,8 +1291,17 @@ Rules:
 * Never flatten notes into one paragraph.
 * If the user asks for email instead of notes, ignore this notes layout and write a clean email with normal line breaks.`;
 
+export function wantsCodeMode(userText: string) {
+  return /```|\b(?:code|snippet|script|function|component|javascript|typescript|python|html|css|sql|bash|shell|json|api)\b/i.test(userText);
+}
+
 export function wantsNotesMode(userText: string) {
-  return /\b(notes?|summary|summarize|study notes|meeting notes|class notes|tutorial notes|takeaways)\b/i.test(
+  // "Notes" is also a product name and a common qualifier in code requests
+  // (for example, "match Clyra Notes' runner").  Code should remain a chat
+  // artifact so its fenced-block copy/run/preview controls are never replaced
+  // by the editable document surface.
+  const asksForCode = wantsCodeMode(userText);
+  return !asksForCode && /\b(notes?|summary|summarize|study notes|meeting notes|class notes|tutorial notes|takeaways)\b/i.test(
     userText,
   );
 }

@@ -16,7 +16,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { createTerminalBridge, type TerminalBridge } from "../../lib/terminalBridge";
 import { buildRunScript, getLanguageDisplayName } from "../../lib/runnableLanguages";
-import { AGENT_EASE } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 
 const TAB_ID = "chat-run";
@@ -25,26 +24,29 @@ const MAX_HEIGHT = 560;
 const DEFAULT_HEIGHT = 300;
 
 const TERM_THEME = {
-  background: "#1E1E1E",
-  foreground: "#E4E4E4",
+  // Mirrors the shared Clyra Notes runner exactly: code may be technical, but
+  // the terminal remains a calm extension of the light workspace rather than
+  // switching the user into a second visual language.
+  background: "#FFFFFF",
+  foreground: "#282B2F",
   cursor: "#3977F6",
-  cursorAccent: "#1E1E1E",
-  selectionBackground: "rgba(57,119,246,0.28)",
-  black: "#1E1E1E",
-  red: "#E06C75",
-  green: "#4FAE74",
-  yellow: "#D9A04C",
-  blue: "#61AFEF",
-  magenta: "#C678DD",
-  cyan: "#56B6C2",
-  white: "#ABB2BF",
-  brightBlack: "#5C6370",
-  brightRed: "#E88B92",
-  brightGreen: "#7FCC9C",
-  brightYellow: "#E6B673",
-  brightBlue: "#8EC3F4",
-  brightMagenta: "#D6A6E9",
-  brightCyan: "#80C6D0",
+  cursorAccent: "#FFFFFF",
+  selectionBackground: "rgba(57,119,246,0.16)",
+  black: "#3F4347",
+  red: "#C24949",
+  green: "#268A50",
+  yellow: "#B87918",
+  blue: "#3977F6",
+  magenta: "#9A5CC9",
+  cyan: "#1F8A9A",
+  white: "#B7B9BD",
+  brightBlack: "#96989D",
+  brightRed: "#E07B7B",
+  brightGreen: "#4FAE74",
+  brightYellow: "#D9A04C",
+  brightBlue: "#7CA6F8",
+  brightMagenta: "#BC8FDF",
+  brightCyan: "#57B6C4",
   brightWhite: "#FFFFFF",
 };
 
@@ -201,26 +203,27 @@ export function TerminalRunnerProvider({ children }: { children: ReactNode }) {
       {typeof document !== "undefined" && everOpened
         ? createPortal(
             <div
-              className="fixed inset-x-0 bottom-0 z-[70] flex justify-center px-3 pb-3 sm:px-6"
+              className="fixed inset-x-0 bottom-0 z-[70]"
               style={{ pointerEvents: open ? "auto" : "none" }}
             >
               <motion.div
-                initial={{ height: 0, opacity: 0, y: 16 }}
-                animate={{ height: open ? height : 0, opacity: open ? 1 : 0, y: open ? 0 : 16 }}
-                transition={{ duration: 0.22, ease: AGENT_EASE }}
-                className="flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-black/[0.08] bg-[#1E1E1E] shadow-[0_24px_60px_rgba(15,23,42,0.35)]"
+                initial={{ y: "100%" }}
+                animate={{ y: open ? "0%" : "100%" }}
+                transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+                className="flex w-full flex-col overflow-hidden border-t border-black/[0.07] bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.09)]"
+                style={{ height }}
               >
                 <div
                   className="h-1.5 shrink-0 cursor-row-resize"
                   onPointerDown={onDragStart}
                   aria-hidden
                 />
-                <div className="flex h-9 shrink-0 items-center justify-between border-b border-white/[0.08] px-3">
-                  <div className="flex items-center gap-2 text-[12px] font-medium text-white/85">
+                <div className="flex h-9 shrink-0 items-center justify-between border-b border-black/[0.07] px-3">
+                  <div className="flex items-center gap-2 text-[12px] font-medium text-[#282b2f]">
                     <TerminalSquare className="h-3.5 w-3.5" strokeWidth={1.7} />
                     <span>Terminal</span>
                     {runningLabel ? (
-                      <span className="text-[11px] font-normal text-white/50">Running {runningLabel}</span>
+                      <span className="text-[11px] font-normal text-[#787774]">Running {runningLabel}</span>
                     ) : null}
                     {status === "failed" ? (
                       <span className="text-[11px] font-normal text-[#E06C75]">Shell unavailable</span>
@@ -231,7 +234,7 @@ export function TerminalRunnerProvider({ children }: { children: ReactNode }) {
                       type="button"
                       aria-label="Collapse terminal"
                       onClick={() => setOpen(false)}
-                      className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-[#787774] transition-colors hover:bg-black/[0.05] hover:text-[#282b2f]"
                     >
                       <ChevronDown className="h-4 w-4" strokeWidth={1.8} />
                     </button>
@@ -246,7 +249,7 @@ export function TerminalRunnerProvider({ children }: { children: ReactNode }) {
                         setRunningLabel(null);
                         termRef.current?.reset();
                       }}
-                      className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-[#787774] transition-colors hover:bg-black/[0.05] hover:text-[#282b2f]"
                     >
                       <X className="h-3.5 w-3.5" strokeWidth={1.8} />
                     </button>
@@ -257,7 +260,7 @@ export function TerminalRunnerProvider({ children }: { children: ReactNode }) {
                     mountRef.current = node;
                     if (node) setHostReady(true);
                   }}
-                  className={cn("min-h-0 flex-1 bg-[#1E1E1E] px-2.5 pb-2 pt-1.5")}
+                  className={cn("min-h-0 flex-1 bg-white px-2.5 pb-2 pt-1.5")}
                 />
               </motion.div>
             </div>,

@@ -78,9 +78,36 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     onAuthState: (callback) => subscribe("google:auth-state", callback),
     onAgentProgress: (callback) => subscribe("google:agent-progress", callback),
   },
+  spotify: {
+    status: () => ipcRenderer.invoke("spotify:status"),
+    signIn: () => ipcRenderer.invoke("spotify:sign-in"),
+    disconnect: () => ipcRenderer.invoke("spotify:disconnect"),
+    profile: () => ipcRenderer.invoke("spotify:profile"),
+    playlists: () => ipcRenderer.invoke("spotify:playlists"),
+    playlistTracks: (playlistId) => ipcRenderer.invoke("spotify:playlist-tracks", { playlistId }),
+    devices: () => ipcRenderer.invoke("spotify:devices"),
+    playbackState: () => ipcRenderer.invoke("spotify:playback-state"),
+    queue: () => ipcRenderer.invoke("spotify:queue"),
+    recentlyPlayed: () => ipcRenderer.invoke("spotify:recently-played"),
+    savedTracks: () => ipcRenderer.invoke("spotify:saved-tracks"),
+    libraryContains: (uris) => ipcRenderer.invoke("spotify:library-contains", { uris }),
+    saveLibrary: (uris) => ipcRenderer.invoke("spotify:library-save", { uris }),
+    removeLibrary: (uris) => ipcRenderer.invoke("spotify:library-remove", { uris }),
+    search: (query, types, limit) => ipcRenderer.invoke("spotify:search", { query, types, limit }),
+    control: (payload) => ipcRenderer.invoke("spotify:control", payload),
+    onAuthState: (callback) => subscribe("spotify:auth-state", callback),
+  },
   research: {
     execute: (payload) => ipcRenderer.invoke("research:execute", payload),
     onAgentProgress: (callback) => subscribe("research:agent-progress", callback),
+  },
+  // Memory remains entirely in Electron main's encrypted local store. The
+  // renderer supplies a project namespace, never a filesystem location or
+  // raw store handle, so project facts cannot bleed between workspaces.
+  memory: {
+    list: (projectId) => ipcRenderer.invoke("memory:list", { userId: `project:${String(projectId || "local").slice(0, 120)}` }),
+    search: (projectId, query, limit) => ipcRenderer.invoke("memory:search", { userId: `project:${String(projectId || "local").slice(0, 120)}`, query: String(query || "").slice(0, 800), limit: Math.max(1, Math.min(10, Number(limit) || 5)) }),
+    add: (projectId, text) => ipcRenderer.invoke("memory:add", { userId: `project:${String(projectId || "local").slice(0, 120)}`, text: String(text || "").slice(0, 800), force: true }),
   },
   terminal: {
     open: (payload) => ipcRenderer.invoke("terminal:open", payload),

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "bf2afdbe-2984-47c2-92db-20f995cec0b9",
+    "title": "Biology study session",
+    "description": "",
+    "location": "",
+    "start": "2026-09-17T23:00:00.000Z",
+    "end": "2026-09-18T00:00:00.000Z",
+    "allDay": false,
+    "recurrence": "none",
+    "subjectId": "38fd273a-18a5-4486-8c21-78916640af4c",
+    "reminderMinutesBefore": 30,
+    "googleEventId": null,
+    "googleEtag": null,
+    "source": "clyra",
+    "createdAt": "2026-09-13T09:44:00.928Z",
+    "updatedAt": "2026-09-13T09:44:00.928Z"
+  }
+]

@@ -9,454 +9,242 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
 } from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import { cn } from "../lib/utils";
 
-export type TaskViewPreview = {
-  /** A PNG captured from the real Electron surface, never reconstructed UI. */
-  src: string;
-  width: number;
-  height: number;
-  nativeLayer?: {
-    src: string;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-    imageWidth: number;
-    imageHeight: number;
-  };
-};
+/** @deprecated: retained temporarily for Electron's native BrowserView bridge. */
+export type TaskViewPreview = { src: string; width: number; height: number; nativeLayer?: unknown };
 
 export type TaskViewTab = {
   id: string;
   label: string;
-  icon: ReactNode;
-  preview?: TaskViewPreview;
+  /** The real mounted Clyra application. Never a re-rendered thumbnail. */
+  content: ReactNode;
 };
 
 type Rect = { left: number; top: number; width: number; height: number };
+type Phase = "closed" | "opening" | "open" | "closing";
 
-const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
-const OPEN_MS = 520;
-const SELECT_MS = 560;
-const EXIT_MS = 220;
-const REFLOW_MS = 340;
-const GAP = 24;
-const PAD_X = 40;
-const PAD_Y = 32;
-const HEADER_H = 80;
-const FOOTER_H = 36;
+// Must match the `transform` transition duration on .clyra-task-view__window
+// in index.css (520ms). SETTLE_BUFFER_MS is a small margin so the phase flip
+// that re-enables clicks / calls onSelect/onClose never preempts the visual
+// animation. That small margin prevents the phase change from clipping the
+// tail of the zoom with a visible snap as the window settles.
+const TRANSFORM_MS = 520;
+const SETTLE_BUFFER_MS = 30;
+// Card entrances are offset by at most six 18ms beats. Keep the opening
+// phase through that final beat so a card never becomes interactive midway
+// through its arrival.
+const OPEN_MS = TRANSFORM_MS + 6 * 18 + SETTLE_BUFFER_MS;
+const CLOSE_MS = TRANSFORM_MS + SETTLE_BUFFER_MS;
+const TAB_CLOSE_MS = 260;
+const GAP = 26;
+const PAD_X = 44;
+const PAD_Y = 42;
+const LABEL_H = 25;
+const emptyRect: Rect = { left: 0, top: 0, width: 1, height: 1 };
 
-function columnCount(count: number) {
-  if (count <= 1) return 1;
-  if (count === 2) return 2;
-  if (count <= 4) return 2;
-  if (count <= 9) return 3;
-  return 4;
+function aspectOf(source: Rect) {
+  return Math.max(0.45, Math.min(3.2, source.width / Math.max(1, source.height)));
 }
 
-/**
- * Every card is solved before it enters the DOM. Images then use one uniform
- * contain scale, so the real captured tool never crops or reflows internally.
- */
-export function computeTaskViewCards(
-  tabs: Array<Pick<TaskViewTab, "preview">>,
-  viewportWidth: number,
-  viewportHeight: number,
-): Rect[] {
-  const count = tabs.length;
+/** Chooses the grid with the largest live-window scale, retaining its ratio. */
+export function computeTaskViewCards(count: number, source: Rect, viewport: Rect): Rect[] {
   if (!count) return [];
-  const columns = columnCount(count);
+  const availableW = Math.max(240, viewport.width - PAD_X * 2);
+  const availableH = Math.max(180, viewport.height - PAD_Y * 2);
+  aspectOf(source); // clamps pathological source measurements before solving.
+  let best: { columns: number; scale: number } | null = null;
+  for (let columns = 1; columns <= Math.min(count, 6); columns += 1) {
+    const rows = Math.ceil(count / columns);
+    const cellW = (availableW - GAP * (columns - 1)) / columns;
+    const cellH = (availableH - GAP * (rows - 1)) / rows - LABEL_H;
+    const scale = Math.min(cellW / source.width, cellH / source.height, 1);
+    if (!best || scale > best.scale) best = { columns, scale };
+  }
+  const columns = best?.columns ?? 1;
   const rows = Math.ceil(count / columns);
-  const contentLeft = PAD_X;
-  const contentTop = PAD_Y + HEADER_H;
-  const contentWidth = Math.max(280, viewportWidth - PAD_X * 2);
-  const contentHeight = Math.max(180, viewportHeight - contentTop - PAD_Y - FOOTER_H);
-  const cellWidth = (contentWidth - GAP * (columns - 1)) / columns;
-  const cellHeight = Math.max(128, (contentHeight - GAP * (rows - 1)) / rows);
-
-  return tabs.map((tab, index) => {
-    const ratio = Math.max(0.25, Math.min(4, (tab.preview?.width || 16) / (tab.preview?.height || 10)));
+  const cellW = (availableW - GAP * (columns - 1)) / columns;
+  const cellH = (availableH - GAP * (rows - 1)) / rows;
+  const scale = Math.max(0.08, best?.scale ?? 1);
+  const width = source.width * scale;
+  const height = source.height * scale;
+  const usedH = rows * cellH + GAP * (rows - 1);
+  const topOffset = Math.max(PAD_Y, (viewport.height - usedH) / 2);
+  return Array.from({ length: count }, (_, index) => {
     const col = index % columns;
     const row = Math.floor(index / columns);
-    const availableHeight = Math.max(90, cellHeight - FOOTER_H);
-    let width = cellWidth;
-    let height = width / ratio;
-    if (height > availableHeight) {
-      height = availableHeight;
-      width = height * ratio;
-    }
-    if (count === 1) {
-      width = Math.min(contentWidth, Math.max(width, Math.min(980, contentWidth)));
-      height = width / ratio;
-      if (height > availableHeight) {
-        height = availableHeight;
-        width = height * ratio;
-      }
-    }
-    const cellLeft = contentLeft + col * (cellWidth + GAP);
-    const cellTop = contentTop + row * (cellHeight + GAP);
     return {
-      left: Math.max(PAD_X, cellLeft + (cellWidth - width) / 2),
-      top: Math.max(contentTop, cellTop + (availableHeight - height) / 2),
+      left: viewport.left + PAD_X + col * (cellW + GAP) + (cellW - width) / 2,
+      top: viewport.top + topOffset + row * (cellH + GAP) + Math.max(0, (cellH - LABEL_H - height) / 2),
       width,
       height,
     };
   });
 }
 
-function rectOf(sceneRef?: RefObject<HTMLElement | null>): Rect {
-  const rect = sceneRef?.current?.getBoundingClientRect();
-  if (rect && rect.width > 0 && rect.height > 0) {
-    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-  }
-  return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-}
-
-function transformBetween(from: Rect, to: Rect) {
-  // Independent X/Y scale so the FLIP zoom fills the target rect completely
-  // instead of stopping ~90% short when aspect ratios differ.
-  const scaleX = from.width / Math.max(1, to.width);
-  const scaleY = from.height / Math.max(1, to.height);
+function transformFor(source: Rect, target: Rect): CSSProperties {
+  // First = source rect, Last = target rect. The child keeps source geometry;
+  // only this outer compositor layer translates and uniformly scales. Scale
+  // is computed by the caller (guarded against a zero-size source) and passed
+  // in separately as --task-view-target-scale, which is the one CSS actually
+  // reads — this function only owns the translate offset.
+  const x = source.left - target.left;
+  const y = source.top - target.top;
   return {
-    x: from.left - to.left,
-    y: from.top - to.top,
-    scaleX,
-    scaleY,
-  };
+    "--task-view-x": `${x}px`,
+    "--task-view-y": `${y}px`,
+  } as CSSProperties;
 }
 
-function cardStyle(card: Rect, extra?: CSSProperties): CSSProperties {
-  return { left: card.left, top: card.top, width: card.width, height: card.height + FOOTER_H, ...extra };
-}
-
-export type TaskViewHandle = {
-  closeToActive: () => void;
-};
+export type TaskViewHandle = { closeToActive: () => void; toggle: () => void };
 
 export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
   open: boolean;
   tabs: TaskViewTab[];
   activeId: string;
-  sceneRef?: RefObject<HTMLElement | null>;
   onSelect: (id: string) => void;
   onClose: () => void;
-  onCloseTab?: (id: string) => void;
-}>(function WorkspaceTaskView({
-  open,
-  tabs,
-  activeId,
-  sceneRef,
-  onSelect,
-  onClose,
-  onCloseTab,
-}, ref) {
-  const [cards, setCards] = useState<Rect[]>([]);
-  const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [closingId, setClosingId] = useState<string | null>(null);
+  onCloseTab: (id: string) => void;
+}>(function WorkspaceTaskView({ open, tabs, activeId, onSelect, onClose, onCloseTab }, ref) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [source, setSource] = useState<Rect>(emptyRect);
+  const [viewport, setViewport] = useState<Rect>(emptyRect);
+  const [phase, setPhase] = useState<Phase>(open ? "opening" : "closed");
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
-  const cardNodes = useRef(new Map<string, HTMLDivElement>());
-  const previousRects = useRef(new Map<string, DOMRect>());
-  const locked = useRef(false);
-  const entered = useRef(false);
-  const resizeTimer = useRef<number | null>(null);
-  const orderedIds = useMemo(() => tabs.map((tab) => tab.id).join("|"), [tabs]);
+  const [closingTabId, setClosingTabId] = useState<string | null>(null);
+  const phaseRef = useRef(phase);
+  const completionRef = useRef<number | null>(null);
+  const tabCloseTimerRef = useRef<number | null>(null);
+  phaseRef.current = phase;
 
-  const updateLayout = useCallback(() => {
-    setCards(computeTaskViewCards(tabs, window.innerWidth, window.innerHeight));
-  }, [tabs]);
-
-  const animateReflow = useCallback(() => {
-    cardNodes.current.forEach((node, id) => {
-      const previous = previousRects.current.get(id);
-      const next = node.getBoundingClientRect();
-      previousRects.current.set(id, next);
-      if (!previous) return;
-      const deltaX = previous.left - next.left;
-      const deltaY = previous.top - next.top;
-      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return;
-      node.animate(
-        [
-          { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
-          { transform: "translate3d(0, 0, 0)" },
-        ],
-        { duration: REFLOW_MS, easing: EASE, fill: "both" },
-      ).finished.finally(() => {
-        node.style.willChange = "auto";
-      });
-      node.style.willChange = "transform";
-    });
+  const measure = useCallback(() => {
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!rect || rect.width < 2 || rect.height < 2) return;
+    const next = { left: 0, top: 0, width: rect.width, height: rect.height };
+    setViewport(next);
+    setSource(next);
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) return;
-    updateLayout();
-  }, [open, orderedIds, updateLayout]);
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (hostRef.current) observer.observe(hostRef.current);
+    return () => observer.disconnect();
+  }, [measure]);
 
-  useLayoutEffect(() => {
-    if (!open || !cards.length) return;
-    const frame = requestAnimationFrame(() => {
-      if (locked.current) return;
-      if (!entered.current) {
-        entered.current = true;
-        const scene = rectOf(sceneRef);
-        tabs.forEach((tab, index) => {
-          const node = cardNodes.current.get(tab.id);
-          const card = cards[index];
-          if (!node || !card) return;
-          const from = tab.id === activeId ? transformBetween(scene, card) : null;
-          node.style.willChange = "transform, opacity";
-          if (tab.id === activeId && from) {
-            node.animate(
-              [
-                { transform: `translate3d(${from.x}px, ${from.y}px, 0) scale(${from.scaleX}, ${from.scaleY})`, opacity: 1 },
-                { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-              ],
-              { duration: OPEN_MS, easing: EASE, fill: "both" },
-            ).finished.finally(() => { node.style.willChange = "auto"; });
-          } else {
-            // Wait for the active card to finish zooming so siblings don't
-            // "spawn in" while the FLIP still looks incomplete.
-            node.style.opacity = "0";
-            window.setTimeout(() => {
-              node.animate(
-                [
-                  { transform: "translate3d(0, 14px, 0) scale(.94)", opacity: 0 },
-                  { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-                ],
-                { duration: OPEN_MS * 0.55, easing: EASE, fill: "both" },
-              ).finished.finally(() => { node.style.willChange = "auto"; });
-            }, OPEN_MS * 0.72);
-          }
-        });
-        return;
-      }
-      animateReflow();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [animateReflow, cards, open, activeId]);
+  const cards = useMemo(() => computeTaskViewCards(tabs.length, source, viewport), [source, tabs.length, viewport]);
+  const settle = useCallback((next: Phase, duration: number, complete?: () => void) => {
+    if (completionRef.current != null) window.clearTimeout(completionRef.current);
+    setPhase(next);
+    completionRef.current = window.setTimeout(() => {
+      completionRef.current = null;
+      complete?.();
+    }, duration);
+  }, []);
 
   useEffect(() => {
-    if (!open) entered.current = false;
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onResize = () => {
-      if (resizeTimer.current != null) window.clearTimeout(resizeTimer.current);
-      resizeTimer.current = window.setTimeout(updateLayout, 100);
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      if (resizeTimer.current != null) window.clearTimeout(resizeTimer.current);
-    };
-  }, [open, updateLayout]);
+    if (open) {
+      // Two rAFs, not one: the frame that just committed still renders the
+      // "closed" transform (this effect runs after that paint), so a single
+      // rAF can land in the same paint cycle the browser is still preparing
+      // and get coalesced away — the class flip and the pre-flip state would
+      // never both hit the screen, and the transition plays no differently
+      // than a hard cut. A second rAF guarantees the browser has genuinely
+      // painted the pre-flip frame before the transition-triggering class
+      // change lands, so the transform reliably animates instead of
+      // occasionally snapping straight to its end state.
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => settle("opening", OPEN_MS, () => setPhase("open")));
+      });
+      return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
+    }
+    if (phaseRef.current !== "closed") settle("closing", CLOSE_MS, () => setPhase("closed"));
+    return () => { if (completionRef.current != null) window.clearTimeout(completionRef.current); };
+  }, [open, settle]);
 
   const closeToActive = useCallback(() => {
-    if (locked.current) return;
-    locked.current = true;
-    const activeIndex = tabs.findIndex((tab) => tab.id === activeId);
-    const activeCard = activeIndex >= 0 ? cards[activeIndex] : undefined;
-    const activePreview = activeIndex >= 0 ? tabs[activeIndex]?.preview : undefined;
-    if (!activeCard || !activePreview) {
-      onClose();
-      locked.current = false;
-      return;
-    }
-    const scene = rectOf(sceneRef);
-    const node = cardNodes.current.get(activeId);
-    if (!node) {
-      onClose();
-      locked.current = false;
-      return;
-    }
-    const delta = transformBetween(scene, activeCard);
-    node.style.zIndex = "4";
-    node.animate(
-      [
-        { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-        { transform: `translate3d(${delta.x}px, ${delta.y}px, 0) scale(${delta.scaleX}, ${delta.scaleY})`, opacity: 1 },
-      ],
-      { duration: SELECT_MS, easing: EASE, fill: "both" },
-    ).finished.finally(() => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          onClose();
-          locked.current = false;
-        });
-      });
-    });
-  }, [activeId, cards, onClose, sceneRef, tabs]);
-
-  const selectTab = useCallback((id: string) => {
-    if (locked.current || selectingId) return;
-    const index = tabs.findIndex((tab) => tab.id === id);
-    const card = cards[index];
-    const tab = tabs[index];
-    const node = cardNodes.current.get(id);
-    if (!card || !tab?.preview || !node) {
-      onSelect(id);
-      return;
-    }
-    locked.current = true;
+    if (phaseRef.current === "closed" || phaseRef.current === "closing") return;
+    settle("closing", CLOSE_MS, () => { setPhase("closed"); onClose(); });
+  }, [onClose, settle]);
+  const closeTab = useCallback((id: string) => {
+    // Keep one window available as an anchor for Task View. A close control on
+    // the final card would promise an action that cannot leave a usable view.
+    if (phaseRef.current !== "open" || closingTabId || tabs.length < 2) return;
+    setClosingTabId(id);
+    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
+    tabCloseTimerRef.current = window.setTimeout(() => {
+      tabCloseTimerRef.current = null;
+      setClosingTabId(null);
+      onCloseTab(id);
+    }, TAB_CLOSE_MS);
+  }, [closingTabId, onCloseTab, tabs.length]);
+  const select = useCallback((id: string) => {
+    if (phaseRef.current === "closing" || selectingId) return;
     setSelectingId(id);
-    cardNodes.current.forEach((other, otherId) => {
-      if (otherId === id) return;
-      other.animate(
-        [{ opacity: 1, transform: "translate3d(0,0,0) scale(1)" }, { opacity: 0, transform: "translate3d(0, 6px, 0) scale(.96)" }],
-        { duration: SELECT_MS * 0.7, easing: EASE, fill: "forwards" },
-      );
-    });
-    const scene = rectOf(sceneRef);
-    const delta = transformBetween(scene, card);
-    node.style.zIndex = "4";
-    node.animate(
-      [
-        { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-        { transform: `translate3d(${delta.x}px, ${delta.y}px, 0) scale(${delta.scaleX}, ${delta.scaleY})`, opacity: 1 },
-      ],
-      { duration: SELECT_MS, easing: EASE, fill: "both" },
-    ).finished.finally(() => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          onSelect(id);
-          locked.current = false;
-          setSelectingId(null);
-        });
-      });
-    });
-  }, [cards, onSelect, sceneRef, selectingId, tabs]);
-
-  const closeTab = useCallback((event: React.MouseEvent, id: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!onCloseTab || locked.current || tabs.length <= 1) return;
-    const node = cardNodes.current.get(id);
-    if (!node) {
-      onCloseTab(id);
+    settle("closing", CLOSE_MS, () => { setPhase("closed"); setSelectingId(null); onSelect(id); });
+  }, [onSelect, selectingId, settle]);
+  const toggle = useCallback(() => {
+    if (phaseRef.current === "closing") {
+      // Reversing mid-close: the window is already mid-flight on the CSS
+      // transform, so re-applying the open transform target lets it animate
+      // smoothly back out from wherever it currently is — no snap, no
+      // restart from scratch.
+      setSelectingId(null);
+      settle("opening", OPEN_MS, () => setPhase("open"));
       return;
     }
-    locked.current = true;
-    setClosingId(id);
-    node.animate(
-      [
-        { opacity: 1, transform: "translate3d(0,0,0) scale(1)" },
-        { opacity: 0, transform: "translate3d(0,6px,0) scale(.94)" },
-      ],
-      { duration: EXIT_MS, easing: EASE, fill: "forwards" },
-    ).finished.finally(() => {
-      previousRects.current = new Map(
-        [...cardNodes.current].filter(([key]) => key !== id).map(([key, value]) => [key, value.getBoundingClientRect()]),
-      );
-      onCloseTab(id);
-      setClosingId(null);
-      locked.current = false;
-    });
-  }, [onCloseTab, tabs.length]);
+    closeToActive();
+  }, [closeToActive, settle]);
 
   useEffect(() => {
-    if (!open) return;
+    if (phase === "closed") return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeToActive();
-        return;
-      }
-      if (!tabs.length || locked.current) return;
-      const current = focusedId ?? activeId;
-      const index = Math.max(0, tabs.findIndex((tab) => tab.id === current));
-      if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) {
-        event.preventDefault();
-        const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
-        setFocusedId(tabs[(index + direction + tabs.length) % tabs.length]!.id);
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        selectTab(current);
-      }
+      if (event.key === "Escape") { event.preventDefault(); closeToActive(); }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeId, closeToActive, focusedId, open, selectTab, tabs]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [closeToActive, phase]);
+  useEffect(() => () => {
+    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
+  }, []);
+  useImperativeHandle(ref, () => ({ closeToActive, toggle }), [closeToActive, toggle]);
 
-  useImperativeHandle(ref, () => ({ closeToActive }), [closeToActive]);
-
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div className="fixed inset-0 z-[1200] overflow-y-auto bg-[#707887]" role="dialog" aria-modal="true" aria-label="Task View">
-      <button type="button" className="absolute inset-0 cursor-default" aria-label="Close task view" onClick={closeToActive} />
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-10 flex items-end justify-between gap-4 px-8 pb-2 pt-8 sm:px-10">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/70">Task View</p>
-          <h2 className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-white">Open tools</h2>
-        </div>
-        <button type="button" onClick={closeToActive} className="pointer-events-auto rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/90 transition-colors hover:bg-white/20">Esc to close</button>
-      </div>
-      <div className="relative min-h-full" style={{ minHeight: Math.max(window.innerHeight, PAD_Y + HEADER_H + Math.ceil(tabs.length / columnCount(tabs.length)) * 190 + PAD_Y) }}>
-        {tabs.map((tab, index) => {
-          const card = cards[index];
-          if (!card) return null;
-          const active = tab.id === activeId;
-          const focused = (focusedId ?? activeId) === tab.id;
-          return (
-            <div
-              key={tab.id}
-              ref={(node) => {
-                if (node) cardNodes.current.set(tab.id, node);
-                else cardNodes.current.delete(tab.id);
-              }}
-              className="absolute origin-top-left"
-              style={cardStyle(card, { pointerEvents: selectingId ? "none" : "auto" })}
-            >
-              <button
-                type="button"
-                onClick={() => selectTab(tab.id)}
-                onFocus={() => setFocusedId(tab.id)}
-                aria-label={`Switch to ${tab.label}`}
-                aria-current={active ? "true" : undefined}
-                className={cn("group absolute inset-x-0 top-0 overflow-hidden rounded-[14px] border bg-slate-900 shadow-[0_18px_50px_rgba(0,0,0,.28)] outline-none transition-[border-color,box-shadow] duration-200", active || focused ? "border-white/90 ring-1 ring-white/25" : "border-white/25 hover:border-white/70")}
-                style={{ height: card.height }}
-              >
-                {tab.preview ? (
-                  <span className="relative block h-full w-full">
-                    <img src={tab.preview.src} width={tab.preview.width} height={tab.preview.height} draggable={false} className="block h-full w-full object-contain object-center" alt={`${tab.label} preview`} />
-                    {tab.preview.nativeLayer ? (
-                      <img
-                        src={tab.preview.nativeLayer.src}
-                        width={tab.preview.nativeLayer.imageWidth}
-                        height={tab.preview.nativeLayer.imageHeight}
-                        draggable={false}
-                        className="absolute object-fill"
-                        style={{
-                          left: `${(tab.preview.nativeLayer.left / tab.preview.width) * 100}%`,
-                          top: `${(tab.preview.nativeLayer.top / tab.preview.height) * 100}%`,
-                          width: `${(tab.preview.nativeLayer.width / tab.preview.width) * 100}%`,
-                          height: `${(tab.preview.nativeLayer.height / tab.preview.height) * 100}%`,
-                        }}
-                        alt=""
-                      />
-                    ) : null}
-                  </span>
-                ) : (
-                  <div className="grid h-full w-full place-items-center bg-slate-800 text-xs font-medium text-white/70">Preparing current tool…</div>
-                )}
-              </button>
-              {onCloseTab && tabs.length > 1 ? <button type="button" aria-label={`Close ${tab.label}`} onClick={(event) => closeTab(event, tab.id)} className={cn("absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border border-white/30 bg-slate-950/70 text-white opacity-0 transition-opacity hover:bg-slate-800 focus:opacity-100", focused || closingId === tab.id ? "opacity-100" : "group-hover:opacity-100")}><X className="h-3.5 w-3.5" /></button> : null}
-              <div className="absolute bottom-0 left-0 right-0 flex h-[36px] items-center gap-2 px-1 text-white">
-                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-white/15">{tab.icon}</span>
-                <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{tab.label}</span>
-                {active ? <span className="text-[9px] font-semibold uppercase tracking-wide text-white/60">Active</span> : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>,
-    document.body,
-  );
+  const overview = phase === "opening" || phase === "open";
+  const transitioning = phase !== "closed";
+  return <div ref={hostRef} className={cn("clyra-task-view", overview && "clyra-task-view--open", phase === "closing" && "clyra-task-view--closing")} data-task-view-phase={phase} data-task-view-selecting={selectingId ? "true" : "false"}>
+    <div className="clyra-task-view__backdrop" aria-hidden />
+    {tabs.map((tab, index) => {
+      const target = cards[index] ?? source;
+      const isActive = tab.id === activeId;
+      const isSelected = selectingId === tab.id;
+      const isClosing = closingTabId === tab.id;
+      // Two independent concerns that a single `isInteractive` flag used to
+      // conflate, applied to the whole window: whether the real mounted app
+      // (chat, browser, notes, ...) receives clicks, and whether the
+      // transparent "select this window" overlay does. Folding both into one
+      // flag driven by `overview` meant the ACTIVE window's own content went
+      // pointer-events:none for the entire normal "closed" phase — the app's
+      // default resting state — so no button or input in any workspace could
+      // be reached by a real mouse click; only synthetic/dispatched events
+      // (keyboard shortcuts, programmatic focus) still worked. Every
+      // workspace mounts through this component, so this affected all of
+      // them, not just one.
+      const contentInteractive = overview ? false : isActive;
+      const hitAreaInteractive = overview && !selectingId && !closingTabId;
+      const tabCloseInteractive = phase === "open" && tabs.length > 1 && !selectingId && !closingTabId;
+      const scale = Math.min(target.width / Math.max(1, source.width), target.height / Math.max(1, source.height));
+      return <div key={tab.id} className={cn("clyra-task-view__window", isActive && "is-active", hoveredId === tab.id && "is-hovered", isSelected && "is-selected", isClosing && "is-closing-tab")} style={{ left: target.left, top: target.top, width: source.width, height: source.height, zIndex: isClosing || isSelected ? 5 : isActive ? 3 : 2, ...transformFor(source, target), "--task-view-target-scale": String(scale), "--task-view-order": String(Math.min(index, 6)) } as CSSProperties} onPointerEnter={() => setHoveredId(tab.id)} onPointerLeave={() => setHoveredId((current) => current === tab.id ? null : current)}>
+        <button type="button" aria-label={`Switch to ${tab.label}`} aria-current={isActive ? "true" : undefined} className="clyra-task-view__hit-area" style={{ pointerEvents: hitAreaInteractive ? "auto" : "none" }} tabIndex={hitAreaInteractive ? 0 : -1} onClick={() => select(tab.id)} />
+        <div className="clyra-task-view__surface" style={{ pointerEvents: contentInteractive ? "auto" : "none" }}>{tab.content}</div>
+        <div className="clyra-task-view__label" aria-hidden>{tab.label}</div>
+        <button type="button" className="clyra-task-view__tab-close" aria-label={`Close ${tab.label}`} title={`Close ${tab.label}`} tabIndex={tabCloseInteractive ? 0 : -1} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); closeTab(tab.id); }}>
+          <span aria-hidden>×</span>
+        </button>
+      </div>;
+    })}
+    {transitioning ? <button type="button" aria-label="Close Task View" className="clyra-task-view__dismiss" onClick={closeToActive} tabIndex={-1} /> : null}
+  </div>;
 });

@@ -211,6 +211,7 @@
       </div>
       <div class="controls-row" id="controls">
         <div class="pill"><span class="live"></span><span id="controlLabel">AI has control</span></div>
+        <button type="button" id="pauseAi">Pause</button>
         <button type="button" id="takeControl">Take control</button>
         <button type="button" id="resumeAi" class="hidden">Resume AI</button>
         <button type="button" class="stop" id="stopControl">Stop</button>
@@ -245,7 +246,8 @@
     const controls = document.getElementById("controls");
     const controlLabel = document.getElementById("controlLabel");
     const takeControl = document.getElementById("takeControl");
-    const resumeAi = document.getElementById("resumeAi");
+      const resumeAi = document.getElementById("resumeAi");
+      const pauseAi = document.getElementById("pauseAi");
     const stopControl = document.getElementById("stopControl");
     const blobWrap = document.getElementById("blobWrap");
     const contextChip = document.getElementById("contextChip");
@@ -402,6 +404,7 @@
       const result = await api.startGuide(input.value.trim() || "Show me where to click");
       controls.classList.add("show");
       controlLabel.textContent = "Guiding — pointing only";
+      pauseAi.classList.add("hidden");
       takeControl.classList.add("hidden");
       resumeAi.classList.add("hidden");
       document.getElementById("guideBtn").classList.add("recording");
@@ -415,6 +418,7 @@
       await api.startControl();
       controls.classList.add("show");
       controlLabel.textContent = "AI has control";
+      pauseAi.classList.remove("hidden");
       takeControl.classList.remove("hidden");
       resumeAi.classList.add("hidden");
       document.getElementById("controlBtn").classList.add("recording");
@@ -432,23 +436,39 @@
     document.getElementById("collapseBtn").addEventListener("click", () => { input.blur(); collapse(); });
     blobWrap.addEventListener("click", () => { input.focus(); expand(); });
 
-    takeControl.addEventListener("click", async () => {
+      takeControl.addEventListener("click", async () => {
       await api.takeManualControl();
+      pauseAi.classList.add("hidden");
       takeControl.classList.add("hidden");
       resumeAi.classList.remove("hidden");
       controlLabel.textContent = "You have control";
       setBlob("idle");
+      });
+    pauseAi.addEventListener("click", async () => {
+      await api.pauseAi();
+      pauseAi.classList.add("hidden");
+      takeControl.classList.add("hidden");
+      resumeAi.classList.remove("hidden");
+      controlLabel.textContent = "Paused — you have control";
+      setBlob("idle");
     });
     resumeAi.addEventListener("click", async () => {
-      await api.resumeAi();
+      const resumed = await api.resumeAi();
+      if (!resumed?.ok) {
+        controlLabel.textContent = "Paused — refresh failed";
+        append("system", resumed?.error || "I need a fresh screen observation before I can resume.");
+        return;
+      }
       resumeAi.classList.add("hidden");
       takeControl.classList.remove("hidden");
+      pauseAi.classList.remove("hidden");
       controlLabel.textContent = "AI has control";
       setBlob("controlling");
     });
     stopControl.addEventListener("click", async () => {
       await api.stopControl();
       controls.classList.remove("show");
+      pauseAi.classList.remove("hidden");
       document.getElementById("guideBtn").classList.remove("recording");
       document.getElementById("controlBtn").classList.remove("recording");
       setBlob("idle");

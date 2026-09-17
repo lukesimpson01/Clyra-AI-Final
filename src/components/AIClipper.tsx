@@ -130,6 +130,7 @@ type ClipResult = {
   virality_score?: number;
   score?: number;
   clip_potential_score?: number;
+  score_breakdown?: Record<string, { score?: number; max?: number }>;
   score_source?: string;
   file_size?: number;
   timing_source?: string;
@@ -2561,6 +2562,15 @@ export default function AIClipper({
                     <div className="min-w-0">
                       <h2 className="text-[15px] font-semibold leading-5 text-slate-900">{selected.title}</h2>
                       {selected.reason ? <p className="mt-1.5 text-[11px] leading-5 text-slate-500">{selected.reason}</p> : null}
+                      {selected.score_breakdown && Object.keys(selected.score_breakdown).length ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Measured clip score factors">
+                          {Object.entries(selected.score_breakdown).map(([factor, value]) => (
+                            <span key={factor} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600">
+                              {factor.replace(/_/g, " ")} {value.score ?? 0}/{value.max ?? 0}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       {selected.caption_collision?.detected ? (
                         <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-2 text-[10px] leading-4 text-amber-800">
                           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
