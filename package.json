@@ -23,7 +23,9 @@
     "build:server": "esbuild server.ts --platform=node --target=node18 --bundle --format=esm --outfile=dist/server.js --banner:js=\"import { createRequire as __clyraCreateRequire } from 'node:module'; import { fileURLToPath as __clyraFileURLToPath } from 'node:url'; import { dirname as __clyraDirname } from 'node:path'; const require = __clyraCreateRequire(import.meta.url); var __filename = __clyraFileURLToPath(import.meta.url); var __dirname = __clyraDirname(__filename);\" --external:electron --external:vite --external:dotenv --external:better-sqlite3 --external:playwright --external:playwright-core --external:chromium-bidi/*",
     "build": "vite build && npm run build:server",
     "preview": "vite preview",
+<<<<<<< ours
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prebuild": "node tools/copy-maplibre-worker.mjs",
     "lint": "tsc --noEmit",
     "notes:template-shots": "node tools/notes-template-shots.mjs",
     "sqlite:node": "node tools/sqlite-abi.mjs node",
@@ -72,13 +74,14 @@
     "test:study-brain": "tsx tools/study-brain-unit-tests.ts",
     "test:notes": "node tools/sqlite-abi.mjs node && tsx tools/notes-workspace-unit-tests.ts",
     "notes:vendor": "node -e \"const f=require('fs');f.mkdirSync('public/notes/vendor',{recursive:true});f.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js','public/notes/vendor/xterm.js');f.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js','public/notes/vendor/addon-fit.js');f.copyFileSync('node_modules/@xterm/xterm/css/xterm.css','public/notes/vendor/xterm.css');console.log('notes vendor refreshed')\"",
-    "earth:setup": "node tools/earth-setup.mjs",
-    "earth:build": "npm --prefix vendor/gods-eye-view run build",
-    "earth:test": "npm --prefix vendor/gods-eye-view test",
-    "test:earth:harness": "node tools/clyra-earth-command-harness.mjs",
-    "test:earth:bridge": "CLYRA_EARTH_HARNESS=bridge node tools/clyra-earth-command-harness.mjs",
-    "test:earth:capabilities": "node tools/clyra-earth-capability-harness.mjs",
-    "earth:doctor": "npm --prefix vendor/gods-eye-view run doctor"
+    "test:map:visual": "tsx tools/clyra-standard-map-visual.ts",
+    "test:map": "tsx tools/clyra-maps-e2e.ts",
+    "test:map:app": "tsx tools/clyra-maps-app-e2e.ts"
+=======
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "test:computer-use": "tsx --test lib/computer-use/*.test.ts"
+>>>>>>> theirs
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
@@ -246,6 +249,7 @@
     "@pipecat-ai/client-js": "^1.13.0",
     "@pipecat-ai/client-react": "^1.8.1",
     "@pipecat-ai/small-webrtc-transport": "^1.10.6",
+    "@turf/turf": "^7.4.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
     "archiver": "^7.0.1",
@@ -253,8 +257,10 @@
     "helmet": "^8.3.0",
     "isomorphic-git": "^1.41.4",
     "liquid-glass-react": "^1.1.1",
+    "maplibre-gl": "^6.10.0",
     "node-pty": "^1.1.0",
     "pixi.js": "^8.19.0",
+    "supercluster": "^8.0.1",
     "three": "^0.185.1"
   }
 }

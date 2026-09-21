@@ -147,7 +147,8 @@ equal(transcript[0].parts[0].type, "text");
 const diagnostic = publicRuntimeDiagnostic({ projectId: "qa", events: [privateReasoningEvent] }) as { events: Array<Record<string, unknown>> };
 equal(diagnostic.events[0].payload, undefined, "diagnostics expose metadata, never event payloads");
 
-// SQLite durability keeps an interrupted snapshot separate by project.
+// SQLite durability writes every execution boundary, so a host restart resumes
+// after the last verified step instead of replaying the entire workflow.
 const dir = mkdtempSync(path.join(tmpdir(), "clyra-agent-"));
 try {
   const store = new MissionStore(path.join(dir, "missions.sqlite"));
@@ -156,5 +157,95 @@ try {
   const interrupted = { ...saved, id: "interrupted", state: "PAUSED" as const, updatedAt: Date.now() };
   store.save(interrupted); equal(store.interrupted()[0]?.id, "interrupted"); store.close();
 } finally { rmSync(dir, { recursive: true, force: true }); }
+
+const restartDir = mkdtempSync(path.join(tmpdir(), "clyra-agent-restart-"));
+try {
+  const store = new MissionStore(path.join(restartDir, "missions.sqlite"));
+  let callsAfterRestart = 0;
+  let secondActionStarted!: () => void;
+  const secondActionStartedPromise = new Promise<void>((resolve) => { secondActionStarted = resolve; });
+  const durableTool = baseTool({
+    execute: async (_args, context) => {
+      callsAfterRestart += 1;
+      if (callsAfterRestart === 1) return { ok: true, evidence: [{ kind: "record" as const, value: "first-verified" }] };
+      if (callsAfterRestart === 2) {
+        secondActionStarted();
+        return await new Promise((resolve) => context.signal.addEventListener("abort", () => resolve({ ok: false, error: { code: "CANCELLED" as const, message: "paused" } }), { once: true }));
+      }
+      return { ok: true, evidence: [{ kind: "record" as const, value: "second-verified" }] };
+    },
+  });
+  const durablePlan = {
+    objective: "restart-safe mission",
+    steps: [
+      { id: "first", description: "verified before restart", toolId: durableTool.id, args: { value: "one" }, dependsOn: [], status: "pending" as const },
+      { id: "second", description: "interrupted in flight", toolId: durableTool.id, args: { value: "two" }, dependsOn: ["first"], status: "pending" as const },
+    ],
+  };
+  const firstHost = new MissionRuntime(durablePlan, {
+    tools: [durableTool],
+    verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length), evidence: toolResult.evidence }),
+    checkpoint: (record) => store.save(record),
+  }, "restart-safe", "project-restart");
+  store.save(firstHost.snapshot());
+  const activeRun = firstHost.run();
+  await secondActionStartedPromise;
+  firstHost.pause();
+  result = await activeRun;
+  equal(result.state, "PAUSED");
+  const storedPaused = store.get("restart-safe");
+  equal(storedPaused?.plan.steps[0]?.status, "completed", "verified work must survive the restart");
+  equal(storedPaused?.plan.steps[1]?.status, "pending", "interrupted work must return to a safe pending state");
+
+  const restartedHost = new MissionRuntime(storedPaused!.plan, {
+    tools: [durableTool],
+    verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length), evidence: toolResult.evidence }),
+    checkpoint: (record) => store.save(record),
+    initialRecord: storedPaused!,
+  }, storedPaused!.id, storedPaused!.projectId);
+  result = await restartedHost.resumePersisted();
+  equal(result.state, "COMPLETED", "explicit restart resume must finish the remaining work");
+  equal(callsAfterRestart, 3, "a completed step must not be replayed after restart");
+  check(result.traces.some((trace) => /recovered after interruption/.test(trace.event)), "the recovery boundary must be auditable");
+  store.close();
+} finally { rmSync(restartDir, { recursive: true, force: true }); }
+
+// A restart must preserve the exact approval handoff; no unreviewed mutation
+// can be executed just because its original mission has been reconstructed.
+const approvalRestart = new MissionRuntime(plan("test.review"), {
+  tools: [review], verify: async () => ({ ok: true }), requestApproval: async () => false,
+}, "approval-restart");
+result = await approvalRestart.run();
+equal(result.state, "WAITING_FOR_APPROVAL"); equal(result.approval?.stepId, "one");
+const resumedApproval = new MissionRuntime(result.plan, {
+  tools: [review], verify: async () => ({ ok: true }), requestApproval: async (step) => step.id === "one", initialRecord: result,
+}, result.id, result.projectId);
+result = await resumedApproval.approveAndResume("one");
+equal(result.state, "COMPLETED", "only the persisted approval's exact step can resume");
+
+// Long-horizon safety gate: the runtime must retain its original objective and
+// verification requirement beyond a toy three-step loop. Unique, bounded
+// inputs avoid the deliberate repeated-action watchdog while exercising 120
+// checkpointable tool/observe/verify cycles.
+let largeMissionCalls = 0;
+const largeMissionTool = baseTool({ execute: async () => {
+  largeMissionCalls += 1;
+  return { ok: true, evidence: [{ kind: "record" as const, value: `operation-${largeMissionCalls}` }] };
+} });
+const largeMission = new MissionRuntime({
+  objective: "complete a bounded 120-operation verification workflow",
+  steps: Array.from({ length: 120 }, (_, index) => ({
+    id: `operation-${index + 1}`,
+    description: `Verify operation ${index + 1}`,
+    toolId: largeMissionTool.id,
+    args: { value: `input-${index + 1}` },
+    dependsOn: index === 0 ? [] : [`operation-${index}`],
+    status: "pending" as const,
+  })),
+}, { tools: [largeMissionTool], verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length), evidence: toolResult.evidence }) }, "large-mission");
+result = await largeMission.run();
+equal(result.state, "COMPLETED", "a 120-operation workflow must finish within the bounded runtime");
+equal(largeMissionCalls, 120, "every long-horizon operation must be individually executed and verified");
+equal(result.plan.steps.filter((step) => step.status === "completed").length, 120);
 
 console.log(`CLYRA AGENT SYSTEM\nLive Tool Registry        ${liveServerRegistry.length}/${liveServerRegistry.length} PASS\nCatalog Contracts         ${registry.length}/${registry.length} PASS\nRouter Tests             100/100 PASS\nMission Runtime           PASS\nRecovery + Security       PASS\nSQLite Durability         PASS\nAssertions: ${assertions}\nOverall: PASS`);

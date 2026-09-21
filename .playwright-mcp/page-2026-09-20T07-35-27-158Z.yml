@@ -1,0 +1,121 @@
+- generic [ref=f8e4]:
+  - generic [ref=f8e6]:
+    - tablist "Clyra workspace" [ref=f8e8]:
+      - tab "Chat" [ref=f8e9]
+      - tab "Vibe Coder" [ref=f8e20]
+      - tab "Shorts" [ref=f8e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=f8e39]:
+    - generic [ref=f8e40]:
+      - generic [ref=f8e41]:
+        - region "Map" [ref=f8e42]
+        - group [ref=f8e43]:
+          - generic "Toggle attribution" [ref=f8e44] [cursor=pointer]
+          - generic [ref=f8e45]:
+            - link "OpenFreeMap" [ref=f8e46] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=f8e47] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=f8e48] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=f8e49]:
+        - generic [ref=f8e50]:
+          - textbox "Search places" [active] [ref=f8e54]: Sydney
+          - button "Clear" [ref=f8e82] [cursor=pointer]
+        - listbox [ref=f8e86]:
+          - option "Sydney Sydney, New South Wales, Australia city Directions Set origin" [ref=f8e87] [cursor=pointer]:
+            - generic [ref=f8e92]:
+              - strong [ref=f8e93]: Sydney
+              - generic [ref=f8e94]: Sydney, New South Wales, Australia
+              - emphasis [ref=f8e95]: city
+            - generic [ref=f8e96]:
+              - button "Directions" [ref=f8e97]
+              - button "Set origin" [ref=f8e100]
+          - option "Sydney Sydney, Nova Scotia, Canada city Directions Set origin" [ref=f8e105] [cursor=pointer]:
+            - generic [ref=f8e110]:
+              - strong [ref=f8e111]: Sydney
+              - generic [ref=f8e112]: Sydney, Nova Scotia, Canada
+              - emphasis [ref=f8e113]: city
+            - generic [ref=f8e114]:
+              - button "Directions" [ref=f8e115]
+              - button "Set origin" [ref=f8e118]
+          - option "Sydney Sydney, Florida, United States district Directions Set origin" [ref=f8e123] [cursor=pointer]:
+            - generic [ref=f8e128]:
+              - strong [ref=f8e129]: Sydney
+              - generic [ref=f8e130]: Sydney, Florida, United States
+              - emphasis [ref=f8e131]: district
+            - generic [ref=f8e132]:
+              - button "Directions" [ref=f8e133]
+              - button "Set origin" [ref=f8e136]
+          - option "Sydney CBD Sydney CBD, Sydney, New South Wales, Australia other Directions Set origin" [ref=f8e141] [cursor=pointer]:
+            - generic [ref=f8e146]:
+              - strong [ref=f8e147]: Sydney CBD
+              - generic [ref=f8e148]: Sydney CBD, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e149]: other
+            - generic [ref=f8e150]:
+              - button "Directions" [ref=f8e151]
+              - button "Set origin" [ref=f8e154]
+          - option "Sydney Opera House Sydney Opera House, 2, Macquarie Street, Sydney, Sydney, New South Wales, Australia house Directions Set origin" [ref=f8e159] [cursor=pointer]:
+            - generic [ref=f8e164]:
+              - strong [ref=f8e165]: Sydney Opera House
+              - generic [ref=f8e166]: Sydney Opera House, 2, Macquarie Street, Sydney, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e167]: house
+            - generic [ref=f8e168]:
+              - button "Directions" [ref=f8e169]
+              - button "Set origin" [ref=f8e172]
+          - option "Sydney (Kingsford Smith) Airport Sydney (Kingsford Smith) Airport, Departure Plaza, Mascot, Sydney, New South Wales, Australia house Directions Set origin" [ref=f8e177] [cursor=pointer]:
+            - generic [ref=f8e182]:
+              - strong [ref=f8e183]: Sydney (Kingsford Smith) Airport
+              - generic [ref=f8e184]: Sydney (Kingsford Smith) Airport, Departure Plaza, Mascot, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e185]: house
+            - generic [ref=f8e186]:
+              - button "Directions" [ref=f8e187]
+              - button "Set origin" [ref=f8e190]
+          - option "Sydney Olympic Park Sydney Olympic Park, Sydney, New South Wales, Australia district Directions Set origin" [ref=f8e195] [cursor=pointer]:
+            - generic [ref=f8e200]:
+              - strong [ref=f8e201]: Sydney Olympic Park
+              - generic [ref=f8e202]: Sydney Olympic Park, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e203]: district
+            - generic [ref=f8e204]:
+              - button "Directions" [ref=f8e205]
+              - button "Set origin" [ref=f8e208]
+          - option "Sydney Harbour Bridge Sydney Harbour Bridge, Harbour Bridge Cycleway, Millers Point, Sydney, New South Wales, Australia house Directions Set origin" [ref=f8e213] [cursor=pointer]:
+            - generic [ref=f8e218]:
+              - strong [ref=f8e219]: Sydney Harbour Bridge
+              - generic [ref=f8e220]: Sydney Harbour Bridge, Harbour Bridge Cycleway, Millers Point, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e221]: house
+            - generic [ref=f8e222]:
+              - button "Directions" [ref=f8e223]
+              - button "Set origin" [ref=f8e226]
+          - option "Sydney Motorsport Park Sydney Motorsport Park, Peter Brock Drive, Eastern Creek, Sydney, New South Wales, Australia house Directions Set origin" [ref=f8e231] [cursor=pointer]:
+            - generic [ref=f8e236]:
+              - strong [ref=f8e237]: Sydney Motorsport Park
+              - generic [ref=f8e238]: Sydney Motorsport Park, Peter Brock Drive, Eastern Creek, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e239]: house
+            - generic [ref=f8e240]:
+              - button "Directions" [ref=f8e241]
+              - button "Set origin" [ref=f8e244]
+          - option "Sydney Tower Sydney Tower, Market Street, Sydney, Sydney, New South Wales, Australia house Directions Set origin" [ref=f8e249] [cursor=pointer]:
+            - generic [ref=f8e254]:
+              - strong [ref=f8e255]: Sydney Tower
+              - generic [ref=f8e256]: Sydney Tower, Market Street, Sydney, Sydney, New South Wales, Australia
+              - emphasis [ref=f8e257]: house
+            - generic [ref=f8e258]:
+              - button "Directions" [ref=f8e259]
+              - button "Set origin" [ref=f8e262]
+      - generic "Map controls" [ref=f8e55]:
+        - button "Switch to 3D" [ref=f8e56] [cursor=pointer]: 3D
+        - button "Save this view" [ref=f8e57] [cursor=pointer]
+        - button "Map style" [ref=f8e60] [cursor=pointer]
+        - button "Locate me" [ref=f8e65] [cursor=pointer]
+        - button "Zoom in" [ref=f8e69] [cursor=pointer]
+        - button "Zoom out" [ref=f8e71] [cursor=pointer]
+    - generic [ref=f8e73]:
+      - button "Ask Clyra" [ref=f8e74] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=f8e77]:
+        - /placeholder: Ask Clyra…

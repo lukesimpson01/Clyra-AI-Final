@@ -133,6 +133,12 @@ export const api = {
       body: JSON.stringify({ path }),
     }).then((r) => r.project),
 
+  importGitHubProject: (url: string) =>
+    json<{ project: VibeProject }>("/api/vibe/projects/import-github", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }).then((r) => r.project),
+
   renameProject: (id: string, name: string) =>
     json<{ project: VibeProject }>(`/api/vibe/projects/${enc(id)}`, {
       method: "PATCH",

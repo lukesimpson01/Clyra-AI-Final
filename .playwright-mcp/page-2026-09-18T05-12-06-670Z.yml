@@ -1,0 +1,41 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - tablist "Clyra workspace" [ref=e8]:
+      - tab "Chat" [ref=e9]
+      - tab "Vibe Coder" [ref=e20]
+      - tab "Shorts" [ref=e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=e39]:
+    - generic [ref=e40]:
+      - generic:
+        - region "Map" [ref=e41]
+        - group [ref=e42]:
+          - generic "Toggle attribution" [ref=e43] [cursor=pointer]
+          - generic [ref=e44]:
+            - link "OpenFreeMap" [ref=e45] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=e46] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=e47] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=e49]:
+        - textbox "Search Maps" [active] [ref=e53]: Hornsby
+        - button "Clear" [ref=e85] [cursor=pointer]
+      - generic "Map controls" [ref=e54]:
+        - button "Map style" [ref=e55] [cursor=pointer]
+        - button "Locate me" [ref=e60] [cursor=pointer]
+        - button "3D map" [ref=e63] [cursor=pointer]
+      - generic "Zoom" [ref=e68]:
+        - button "Zoom in" [ref=e69] [cursor=pointer]
+        - button "Zoom out" [ref=e71] [cursor=pointer]
+      - generic [aria-hidden] [ref=e73]: Explore
+    - generic [ref=e76]:
+      - button "Ask Clyra" [ref=e77] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=e80]:
+        - /placeholder: Ask Clyra about this map…
+      - button "Send" [ref=e81] [cursor=pointer]

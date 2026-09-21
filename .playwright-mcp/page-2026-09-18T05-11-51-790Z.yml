@@ -1,0 +1,85 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - tablist "Clyra workspace" [ref=e8]:
+      - tab "Chat" [ref=e9]
+      - tab "Vibe Coder" [ref=e20]
+      - tab "Shorts" [ref=e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=e39]:
+    - generic [ref=e40]:
+      - generic:
+        - region "Map" [ref=e41]
+        - group [ref=e42]:
+          - generic "Toggle attribution" [ref=e43] [cursor=pointer]
+          - generic [ref=e44]:
+            - link "OpenFreeMap" [ref=e45] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=e46] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=e47] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - textbox "Search Maps" [active] [ref=e53]: Hornsby
+          - button "Clear" [ref=e85] [cursor=pointer]
+        - listbox [ref=e89]:
+          - option "Hornsby Hornsby, New South Wales, Australia Directions Set origin" [ref=e90] [cursor=pointer]:
+            - generic [ref=e94]:
+              - strong [ref=e95]: Hornsby
+              - generic [ref=e96]: Hornsby, New South Wales, Australia
+            - generic [ref=e97]:
+              - button "Directions" [ref=e98]
+              - button "Set origin" [ref=e101]
+          - option "Hornsby Hornsby, Tennessee, United States Directions Set origin" [ref=e106] [cursor=pointer]:
+            - generic [ref=e110]:
+              - strong [ref=e111]: Hornsby
+              - generic [ref=e112]: Hornsby, Tennessee, United States
+            - generic [ref=e113]:
+              - button "Directions" [ref=e114]
+              - button "Set origin" [ref=e117]
+          - option "Hornsby Hornsby, Station Street, Hornsby, New South Wales, Australia Directions Set origin" [ref=e122] [cursor=pointer]:
+            - generic [ref=e126]:
+              - strong [ref=e127]: Hornsby
+              - generic [ref=e128]: Hornsby, Station Street, Hornsby, New South Wales, Australia
+            - generic [ref=e129]:
+              - button "Directions" [ref=e130]
+              - button "Set origin" [ref=e133]
+          - option "Hornsby Hornsby, Illinois, United States Directions Set origin" [ref=e138] [cursor=pointer]:
+            - generic [ref=e142]:
+              - strong [ref=e143]: Hornsby
+              - generic [ref=e144]: Hornsby, Illinois, United States
+            - generic [ref=e145]:
+              - button "Directions" [ref=e146]
+              - button "Set origin" [ref=e149]
+          - option "Hornsby Hornsby, Cumwhitton, England, United Kingdom Directions Set origin" [ref=e154] [cursor=pointer]:
+            - generic [ref=e158]:
+              - strong [ref=e159]: Hornsby
+              - generic [ref=e160]: Hornsby, Cumwhitton, England, United Kingdom
+            - generic [ref=e161]:
+              - button "Directions" [ref=e162]
+              - button "Set origin" [ref=e165]
+          - option "Hornsby Bend Hornsby Bend, Texas, United States Directions Set origin" [ref=e170] [cursor=pointer]:
+            - generic [ref=e174]:
+              - strong [ref=e175]: Hornsby Bend
+              - generic [ref=e176]: Hornsby Bend, Texas, United States
+            - generic [ref=e177]:
+              - button "Directions" [ref=e178]
+              - button "Set origin" [ref=e181]
+      - generic "Map controls" [ref=e54]:
+        - button "Map style" [ref=e55] [cursor=pointer]
+        - button "Locate me" [ref=e60] [cursor=pointer]
+        - button "3D map" [ref=e63] [cursor=pointer]
+      - generic "Zoom" [ref=e68]:
+        - button "Zoom in" [ref=e69] [cursor=pointer]
+        - button "Zoom out" [ref=e71] [cursor=pointer]
+      - generic [aria-hidden] [ref=e73]: Explore
+    - generic [ref=e76]:
+      - button "Ask Clyra" [ref=e77] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=e80]:
+        - /placeholder: Ask Clyra about this map…
+      - button "Send" [ref=e81] [cursor=pointer]

@@ -1,10 +1,10 @@
 import path from "node:path";
 import { clyraDataPath } from "../runtime-paths";
-import { ensureEarthHost } from "../earth/host";
+import { searchPlaces } from "../maps/geocoding";
 import * as notes from "../notes/store";
 import { runWebSearchResearch } from "../research/research-handlers";
 import { createClyraToolRegistry, routeObjective } from "./catalog";
-import { MissionRuntime, type Json, type MissionPlan, type ToolResult } from "./core";
+import { MissionRuntime, type Json, type MissionPlan, type MissionRecord, type ToolResult } from "./core";
 import { MissionStore } from "./mission-store";
 
 /** Convert a user objective into the literal place name the Earth geocoder
@@ -73,18 +73,38 @@ export class ServerMissionService {
     return null;
   }
   async execute(input: { missionId?: string; projectId?: string; plan: MissionPlan; approvedStepIds?: string[] }) {
-    const approved = new Set(input.approvedStepIds || []);
-    const runtime = new MissionRuntime(input.plan, {
-      tools: createClyraToolRegistry(this.bindings()),
-      requestApproval: async (step) => approved.has(step.id),
-      verify: async (step, result) => this.verify(step.toolId, result),
-      recover: async ({ error }) => error.code === "NETWORK_ERROR" || error.code === "RATE_LIMIT" || error.code === "TOOL_TIMEOUT" ? "retry" : "fail",
-    }, input.missionId, input.projectId);
+    const runtime = this.createRuntime(input.plan, input.missionId, input.projectId, input.approvedStepIds);
+    // Save before the first action, then on every runtime checkpoint. A host
+    // restart can therefore return the caller to the last safe boundary.
+    this.store.save(runtime.snapshot());
     const record = await runtime.run();
     this.store.save(record);
     return record;
   }
+  get(missionId: string) { return this.store.get(missionId); }
+  async resume(input: { missionId: string; approvedStepIds?: string[] }) {
+    const saved = this.store.get(input.missionId);
+    if (!saved) return null;
+    const approved = new Set(input.approvedStepIds || []);
+    const runtime = this.createRuntime(saved.plan, saved.id, saved.projectId, input.approvedStepIds, saved);
+    const record = saved.state === "WAITING_FOR_APPROVAL" && saved.approval && approved.has(saved.approval.stepId)
+      ? await runtime.approveAndResume(saved.approval.stepId)
+      : await runtime.resumePersisted();
+    this.store.save(record);
+    return record;
+  }
   interrupted() { return this.store.interrupted(); }
+  private createRuntime(plan: MissionPlan, missionId?: string, projectId?: string, approvedStepIds?: string[], initialRecord?: MissionRecord) {
+    const approved = new Set(approvedStepIds || []);
+    return new MissionRuntime(plan, {
+      tools: createClyraToolRegistry(this.bindings()),
+      requestApproval: async (step) => approved.has(step.id),
+      verify: async (step, result) => this.verify(step.toolId, result),
+      recover: async ({ error }) => error.code === "NETWORK_ERROR" || error.code === "RATE_LIMIT" || error.code === "TOOL_TIMEOUT" ? "retry" : "fail",
+      checkpoint: (record) => this.store.save(record),
+      initialRecord,
+    }, missionId, projectId);
+  }
   private bindings() {
     return {
       "notes.search": async (args: Json): Promise<ToolResult> => {
@@ -103,30 +123,20 @@ export class ServerMissionService {
       },
       "maps.search": async (args: Json, context): Promise<ToolResult> => {
         const query = String((args as { query?: string }).query || "").trim().slice(0, 200);
-        const earth = await ensureEarthHost();
-        if (!earth.ok || !earth.url) {
-          return { ok: false, error: { code: "NETWORK_ERROR", message: earth.reason || "Clyra Earth is unavailable.", retryable: true } };
+        if (!query) {
+          return { ok: false, error: { code: "FILE_NOT_FOUND", message: "A place query is required." } };
         }
-        const target = new URL("/api/geocode", earth.url);
-        target.searchParams.set("q", query);
-        const response = await fetch(target, { headers: { Accept: "application/json" }, signal: context.signal });
-        if (!response.ok) {
-          return { ok: false, error: { code: response.status === 429 ? "RATE_LIMIT" : "NETWORK_ERROR", message: `Clyra Earth place search failed (${response.status}).`, retryable: response.status >= 500 || response.status === 429 } };
-        }
-        const payload = await response.json() as { results?: unknown[] };
-        const places = (Array.isArray(payload.results) ? payload.results : []).flatMap((candidate) => {
-          const item = candidate as { formatted_address?: unknown; types?: unknown; geometry?: { location?: { lat?: unknown; lng?: unknown } }; address_components?: Array<{ long_name?: unknown }> };
-          const lat = Number(item.geometry?.location?.lat);
-          const lng = Number(item.geometry?.location?.lng);
-          const name = typeof item.address_components?.[0]?.long_name === "string"
-            ? item.address_components[0].long_name.trim()
-            : typeof item.formatted_address === "string" ? item.formatted_address.trim() : "";
-          if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
-          return [{ name, address: typeof item.formatted_address === "string" ? item.formatted_address : name, lat, lng, types: Array.isArray(item.types) ? item.types.filter((type): type is string => typeof type === "string").slice(0, 6) : [] }];
-        }).slice(0, 12);
+        const results = await searchPlaces(query, context.signal);
+        const places = results.slice(0, 12).map((place) => ({
+          name: place.label,
+          address: place.formattedAddress || place.label,
+          lat: place.latitude,
+          lng: place.longitude,
+          types: [place.type, place.placeClass].filter((type): type is string => typeof type === "string" && type.length > 0).slice(0, 6),
+        }));
         return places.length
-          ? { ok: true, data: { places }, evidence: places.map((place) => ({ kind: "observation" as const, value: `earth:${place.lat},${place.lng}:${place.name}` })) }
-          : { ok: false, error: { code: "FILE_NOT_FOUND", message: "Clyra Earth returned no verifiable places for that query." } };
+          ? { ok: true, data: { places }, evidence: places.map((place) => ({ kind: "observation" as const, value: `maps:${place.lat},${place.lng}:${place.name}` })) }
+          : { ok: false, error: { code: "FILE_NOT_FOUND", message: "Clyra Maps returned no verifiable places for that query." } };
       },
       "browser.search": async (args: Json): Promise<ToolResult> => {
         const outcome = await runWebSearchResearch({ query: String((args as { query?: string }).query || ""), maxResults: 6, fetchTop: 3 });
@@ -144,7 +154,7 @@ export class ServerMissionService {
     if (toolId === "browser.search") return { ok: result.evidence.some((item) => item.kind === "url" && /^https?:\/\//.test(item.value)), evidence: result.evidence, reason: "Search returned no valid source URL." };
     if (toolId === "maps.search") {
       const places = (result.data as { places?: Array<{ lat?: number; lng?: number }> } | undefined)?.places || [];
-      return { ok: places.length > 0 && places.every((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng)), evidence: result.evidence, reason: "Clyra Earth returned no places with valid coordinates." };
+      return { ok: places.length > 0 && places.every((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng)), evidence: result.evidence, reason: "Clyra Maps returned no places with valid coordinates." };
     }
     return { ok: true, evidence: result.evidence };
   }

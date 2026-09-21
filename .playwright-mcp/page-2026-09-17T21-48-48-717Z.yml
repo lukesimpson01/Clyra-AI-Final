@@ -1,0 +1,15 @@
+- generic [active] [ref=e1]:
+  - generic "Interactive Earth. Drag to pan and scroll to zoom." [ref=e6]
+  - region "Visible map targets" [ref=e7]:
+    - status
+  - navigation "View switcher"
+  - generic:
+    - generic:
+      - heading "Clyra Earth" [level=2]
+      - paragraph: Preparing your world
+      - paragraph: Preparing Earth...
+  - generic [ref=e8]:
+    - link [ref=e11] [cursor=pointer]:
+      - /url: https://cesium.com/
+      - img "Cesium ion" [ref=e12]
+    - button "Data attribution" [ref=e13] [cursor=pointer]

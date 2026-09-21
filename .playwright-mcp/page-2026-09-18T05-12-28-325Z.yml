@@ -1,0 +1,85 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - tablist "Clyra workspace" [ref=e8]:
+      - tab "Chat" [ref=e9]
+      - tab "Vibe Coder" [ref=e20]
+      - tab "Shorts" [ref=e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=e39]:
+    - generic [ref=e40]:
+      - generic:
+        - region "Map" [ref=e41]
+        - group [ref=e42]:
+          - generic "Toggle attribution" [ref=e43] [cursor=pointer]
+          - generic [ref=e44]:
+            - link "OpenFreeMap" [ref=e45] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=e46] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=e47] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - textbox "Search Maps" [active] [ref=e53]: Chatswood
+          - button "Clear" [ref=e85] [cursor=pointer]
+        - listbox [ref=e186]:
+          - option "Chatswood Chatswood, New South Wales, Australia Directions Set origin" [ref=e187] [cursor=pointer]:
+            - generic [ref=e191]:
+              - strong [ref=e192]: Chatswood
+              - generic [ref=e193]: Chatswood, New South Wales, Australia
+            - generic [ref=e194]:
+              - button "Directions" [ref=e195]
+              - button "Set origin" [ref=e198]
+          - option "Chatswood Chatswood, Thomas Lane, Chatswood, New South Wales, Australia Directions Set origin" [ref=e203] [cursor=pointer]:
+            - generic [ref=e207]:
+              - strong [ref=e208]: Chatswood
+              - generic [ref=e209]: Chatswood, Thomas Lane, Chatswood, New South Wales, Australia
+            - generic [ref=e210]:
+              - button "Directions" [ref=e211]
+              - button "Set origin" [ref=e214]
+          - option "Chatswood Chatswood, Kaipātiki, Auckland, New Zealand / Aotearoa Directions Set origin" [ref=e219] [cursor=pointer]:
+            - generic [ref=e223]:
+              - strong [ref=e224]: Chatswood
+              - generic [ref=e225]: Chatswood, Kaipātiki, Auckland, New Zealand / Aotearoa
+            - generic [ref=e226]:
+              - button "Directions" [ref=e227]
+              - button "Set origin" [ref=e230]
+          - option "Chatswood Chatswood, Nevertire, New South Wales, Australia Directions Set origin" [ref=e235] [cursor=pointer]:
+            - generic [ref=e239]:
+              - strong [ref=e240]: Chatswood
+              - generic [ref=e241]: Chatswood, Nevertire, New South Wales, Australia
+            - generic [ref=e242]:
+              - button "Directions" [ref=e243]
+              - button "Set origin" [ref=e246]
+          - option "Chatswood High School Chatswood High School, 24, Centennial Avenue, Chatswood, Chatswood, New South Wales, Australia Directions Set origin" [ref=e251] [cursor=pointer]:
+            - generic [ref=e255]:
+              - strong [ref=e256]: Chatswood High School
+              - generic [ref=e257]: Chatswood High School, 24, Centennial Avenue, Chatswood, Chatswood, New South Wales, Australia
+            - generic [ref=e258]:
+              - button "Directions" [ref=e259]
+              - button "Set origin" [ref=e262]
+          - option "Chatswood Reservoir No. 2 Chatswood Reservoir No. 2, Mowbray Road, Artarmon, Sydney, New South Wales, Australia Directions Set origin" [ref=e267] [cursor=pointer]:
+            - generic [ref=e271]:
+              - strong [ref=e272]: Chatswood Reservoir No. 2
+              - generic [ref=e273]: Chatswood Reservoir No. 2, Mowbray Road, Artarmon, Sydney, New South Wales, Australia
+            - generic [ref=e274]:
+              - button "Directions" [ref=e275]
+              - button "Set origin" [ref=e278]
+      - generic "Map controls" [ref=e54]:
+        - button "Map style" [ref=e55] [cursor=pointer]
+        - button "Locate me" [ref=e60] [cursor=pointer]
+        - button "3D map" [ref=e63] [cursor=pointer]
+      - generic "Zoom" [ref=e68]:
+        - button "Zoom in" [ref=e69] [cursor=pointer]
+        - button "Zoom out" [ref=e71] [cursor=pointer]
+      - generic [aria-hidden] [ref=e73]: Explore
+    - generic [ref=e76]:
+      - button "Ask Clyra" [ref=e77] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=e80]:
+        - /placeholder: Ask Clyra about this map…
+      - button "Send" [ref=e81] [cursor=pointer]

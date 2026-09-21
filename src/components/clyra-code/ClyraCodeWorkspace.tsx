@@ -108,7 +108,15 @@ function encodeAttachment(file: File): Promise<string> {
  * sidebar, live agent work log, and the project preview. Every rendered
  * action mirrors a real OpenCode harness event.
  */
-export default function ClyraCodeWorkspace() {
+export default function ClyraCodeWorkspace({
+  initialProjectId,
+  onInitialProjectOpened,
+}: {
+  /** A project imported from Chat. It is consumed once, then normal Vibe
+   * navigation remains entirely user-controlled. */
+  initialProjectId?: string;
+  onInitialProjectOpened?: (projectId: string) => void;
+} = {}) {
   const reducedMotion = useReducedMotion();
   const {
     state: rawState,
@@ -169,6 +177,22 @@ export default function ClyraCodeWorkspace() {
   const suggestPrompt = useCallback((text: string) => {
     setSuggestion((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
   }, []);
+
+  const openedInitialProjectRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialProjectId || openedInitialProjectRef.current === initialProjectId) return;
+    let cancelled = false;
+    void loadProjects().then(() => {
+      if (cancelled) return;
+      openedInitialProjectRef.current = initialProjectId;
+      selectProject(initialProjectId);
+      onInitialProjectOpened?.(initialProjectId);
+    }).catch(() => {
+      // The normal workspace error handling remains responsible for an
+      // unavailable project. Do not claim an import opened when it didn't.
+    });
+    return () => { cancelled = true; };
+  }, [initialProjectId, loadProjects, onInitialProjectOpened, selectProject]);
 
   /* -------------------- open existing project -------------------- */
   const [importingProject, setImportingProject] = useState(false);

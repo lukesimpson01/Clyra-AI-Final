@@ -223,7 +223,7 @@ export function BrowserStartPage({
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
     >
       <div className="clyra-browser-start__light" aria-hidden />
-      <div className="relative mx-auto flex w-full max-w-[700px] flex-1 flex-col items-center px-6 pb-16 pt-[12vh]">
+      <div className="relative mx-auto flex w-full max-w-[760px] flex-1 flex-col items-center px-6 pb-16 pt-[15vh]">
         <motion.div
           initial={{ opacity: 0, y: 8, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -236,17 +236,17 @@ export function BrowserStartPage({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.04 }}
-          className="mt-4 text-[36px] font-semibold tracking-[-0.025em] text-[#1d1d1f]"
+          className="mt-4 text-center text-[36px] font-semibold tracking-[-0.035em] text-[#1d1d1f]"
         >
-          Explore with Clyra
+          What can I help you explore?
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.06 }}
-          className="mt-2 text-[15px] text-[#6e6e73]"
+          className="mt-2 text-center text-[14px] text-[#6e6e73]"
         >
-          Search directly, or give Clyra a task to complete on the web.
+          Ask a question, browse the web, or hand Clyra a task.
         </motion.p>
 
         <motion.form
@@ -254,15 +254,15 @@ export function BrowserStartPage({
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.1 }}
           onSubmit={submitSearch}
-          className="clyra-browser-search mt-8 flex h-[54px] w-full max-w-[660px] items-center gap-2.5 rounded-[17px] border border-black/[0.08] bg-white px-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-[border-color,box-shadow] duration-200"
+          className="clyra-browser-search mt-7 flex h-[58px] w-full max-w-[680px] items-center gap-2.5 rounded-[18px] border border-black/[0.1] bg-white px-4 shadow-[0_5px_18px_rgba(15,23,42,0.07)] transition-[border-color,box-shadow] duration-200"
         >
           <Search className="h-[17px] w-[17px] shrink-0 text-[#9a9a9f]" strokeWidth={1.75} />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search or enter an address"
+            placeholder="Ask Clyra or type a URL"
             className="min-w-0 flex-1 bg-transparent text-[15px] text-[#1d1d1f] outline-none placeholder:text-[#9a9a9f]"
-            aria-label="Search or enter an address"
+            aria-label="Ask Clyra or type a URL"
             autoFocus
           />
           {isMac ? (
@@ -276,11 +276,11 @@ export function BrowserStartPage({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.26, ease: EASE, delay: 0.15 }}
-          className="mt-3 flex w-full max-w-[660px] items-center justify-between gap-3 px-1"
+          className="mt-3 flex w-full max-w-[680px] items-center justify-between gap-3 px-1"
         >
           <p className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-[#8a8a90]">
             <Globe2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
-            Google search, tabs, history and bookmarks are all ready.
+            Browse, compare sources, or let Clyra work alongside you.
           </p>
           <button
             type="button"
@@ -288,7 +288,7 @@ export function BrowserStartPage({
             className="group flex shrink-0 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-3 py-1.5 text-[12px] font-medium text-white shadow-[0_2px_8px_rgba(0,0,0,0.12)] transition-transform duration-200 hover:-translate-y-px hover:bg-[#303034]"
           >
             <Sparkles className="h-3.5 w-3.5 text-[#a9c7ff]" strokeWidth={1.8} />
-            Ask Clyra <ArrowUp className="h-3.5 w-3.5 opacity-70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            Start a task <ArrowUp className="h-3.5 w-3.5 opacity-70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
           </button>
         </motion.div>
 
@@ -300,7 +300,7 @@ export function BrowserStartPage({
             className="mt-3.5 flex items-center gap-1.5 text-[13.5px] text-[#9a9a9f]"
           >
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-[color:var(--clyra-accent)]" strokeWidth={1.75} />
-            Clyra can plan, act, verify results, and hand control back whenever you want.
+            Clyra can research, plan, act, and pause for your approval.
           </motion.p>
         ) : null}
 
@@ -308,7 +308,7 @@ export function BrowserStartPage({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.22 }}
-          className="mt-10 flex w-full max-w-[660px] flex-wrap justify-center gap-x-7 gap-y-4"
+          className="mt-9 flex w-full max-w-[680px] flex-wrap justify-center gap-x-7 gap-y-4"
         >
           {shortcuts.map((item) => (
             <button
@@ -342,12 +342,12 @@ export function BrowserStartPage({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={motionOff ?? { duration: 0.28, ease: EASE, delay: 0.25 }}
-          className="mt-10 grid w-full max-w-[660px] grid-cols-1 gap-2 sm:grid-cols-3"
+          className="mt-8 grid w-full max-w-[680px] grid-cols-1 gap-2 sm:grid-cols-3"
         >
           {[
             ["Research a topic", "Research this topic on the web. Use trustworthy sources, compare the key points, and cite what you find."],
             ["Compare options", "Find and compare the best options for this request, including price, trade-offs, and a clear recommendation."],
-            ["Complete a task", "Complete this task in the browser. Show me your plan, verify each important step, and pause if you need a decision."],
+            ["Take action", "Complete this task in the browser. Show me your plan, verify each important step, and pause if you need a decision."],
           ].map(([label, prompt]) => (
             <button
               key={label}
@@ -356,7 +356,7 @@ export function BrowserStartPage({
               className="group rounded-[14px] border border-black/[0.065] bg-white/80 px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(0,0,0,0.025)] transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-px hover:border-black/[0.12] hover:shadow-[0_8px_20px_rgba(20,30,50,0.06)]"
             >
               <span className="block text-[12.5px] font-medium text-[#303034]">{label}</span>
-              <span className="mt-1 block text-[11.5px] leading-4 text-[#8a8a90]">Open an agent task</span>
+              <span className="mt-1 block text-[11.5px] leading-4 text-[#8a8a90]">Open a guided task</span>
             </button>
           ))}
         </motion.div>

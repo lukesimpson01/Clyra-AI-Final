@@ -85,7 +85,7 @@ const accentColors = [
   { label: "Violet", value: "#7c3aed" },
   { label: "Sunset", value: "#ea580c" },
   { label: "Forest", value: "#16a34a" },
-  { label: "Rose", value: "#e11d48" },
+  { label: "Dream pink", value: "#ec4899" },
   { label: "Graphite", value: "#475569" },
 ];
 

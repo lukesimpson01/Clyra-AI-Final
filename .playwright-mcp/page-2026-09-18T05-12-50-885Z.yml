@@ -1,0 +1,83 @@
+- generic [ref=e4]:
+  - generic [ref=e6]:
+    - tablist "Clyra workspace" [ref=e8]:
+      - tab "Chat" [ref=e9]
+      - tab "Vibe Coder" [ref=e20]
+      - tab "Shorts" [ref=e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=e39]:
+    - generic [ref=e40]:
+      - generic:
+        - region "Map" [ref=e41]
+        - group [ref=e42]:
+          - generic "Toggle attribution" [ref=e43] [cursor=pointer]
+          - generic [ref=e44]:
+            - link "OpenFreeMap" [ref=e45] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=e46] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=e47] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=e49]:
+        - textbox "Search Maps" [ref=e53]: Chatswood
+        - button "Clear" [ref=e85] [cursor=pointer]
+      - complementary "Directions" [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Directions
+          - button "Close" [ref=e290] [cursor=pointer]
+        - tablist "Travel mode" [ref=e294]:
+          - tab "Driving" [selected] [ref=e295] [cursor=pointer]
+          - tab "Walking" [ref=e300] [cursor=pointer]
+          - tab "Transit" [ref=e304] [cursor=pointer]
+          - tab "Cycling" [ref=e309] [cursor=pointer]
+        - generic [ref=e315]:
+          - paragraph [ref=e318]:
+            - generic [ref=e319]: From
+            - strong [ref=e320]: Current Location
+          - paragraph [ref=e323]:
+            - generic [ref=e324]: To
+            - strong [ref=e325]: Chatswood
+        - generic [ref=e326]:
+          - strong [ref=e327]: 16 min
+          - generic [ref=e328]: · 12 km
+        - list [ref=e329]:
+          - listitem [ref=e330]:
+            - generic [ref=e333]:
+              - strong [ref=e334]: Turn left onto King Street
+              - generic [ref=e335]: In 40 m
+          - listitem [ref=e336]:
+            - generic [ref=e339]:
+              - strong [ref=e340]: Turn right onto Castlereagh Street
+              - generic [ref=e341]: In 185 m
+          - listitem [ref=e342]:
+            - generic [ref=e345]:
+              - strong [ref=e346]: Turn right onto Market Street
+              - generic [ref=e347]: In 367 m
+          - listitem [ref=e348]:
+            - generic [ref=e351]:
+              - strong [ref=e352]: Turn right onto Clarence Street
+              - generic [ref=e353]: In 855 m
+          - listitem [ref=e354]:
+            - generic [ref=e357]:
+              - strong [ref=e358]: Continue onto Western Distributor Onramp
+              - generic [ref=e359]: In 263 m
+        - button "Start" [ref=e360] [cursor=pointer]
+      - generic "Map controls" [ref=e54]:
+        - button "Map style" [ref=e55] [cursor=pointer]
+        - button "Locate me" [ref=e60] [cursor=pointer]
+        - button "3D map" [ref=e63] [cursor=pointer]
+      - generic "Zoom" [ref=e68]:
+        - button "Zoom in" [ref=e69] [cursor=pointer]
+        - button "Zoom out" [ref=e71] [cursor=pointer]
+      - generic [aria-hidden] [ref=e73]: Explore
+      - alert [ref=e363]: "Invalid LngLat object: (NaN, -90)"
+    - generic [ref=e76]:
+      - button "Ask Clyra" [ref=e77] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=e80]:
+        - /placeholder: Ask Clyra about this map…
+      - button "Send" [ref=e81] [cursor=pointer]

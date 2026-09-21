@@ -1,0 +1,37 @@
+- generic [ref=f7e4]:
+  - generic [ref=f7e6]:
+    - tablist "Clyra workspace" [ref=f7e8]:
+      - tab "Chat" [ref=f7e9]
+      - tab "Vibe Coder" [ref=f7e20]
+      - tab "Shorts" [ref=f7e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=f7e39]:
+    - generic [ref=f7e40]:
+      - generic [ref=f7e41]:
+        - region "Map" [ref=f7e42]
+        - group [ref=f7e43]:
+          - generic "Toggle attribution" [ref=f7e44] [cursor=pointer]
+          - generic [ref=f7e45]:
+            - link "OpenFreeMap" [ref=f7e46] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=f7e47] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=f7e48] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - textbox "Search places" [ref=f7e54]
+      - generic "Map controls" [ref=f7e55]:
+        - button "Switch to 3D" [ref=f7e56] [cursor=pointer]: 3D
+        - button "Save this view" [ref=f7e57] [cursor=pointer]
+        - button "Map style" [ref=f7e60] [cursor=pointer]
+        - button "Locate me" [ref=f7e65] [cursor=pointer]
+        - button "Zoom in" [ref=f7e69] [cursor=pointer]
+        - button "Zoom out" [ref=f7e71] [cursor=pointer]
+    - generic [ref=f7e73]:
+      - button "Ask Clyra" [ref=f7e74] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=f7e77]:
+        - /placeholder: Ask Clyra…

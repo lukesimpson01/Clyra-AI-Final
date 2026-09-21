@@ -149,6 +149,10 @@ export interface ClyraComposerShellProps {
 
   connections: ComposerConnectionsState;
 
+  /** Imports a public GitHub repository into a Clyra-owned Vibe workspace.
+   * It is optional so this shell can stay usable in embedded/offline builds. */
+  onImportGitHubRepo?: (url: string) => Promise<void>;
+
   transcript: ReactNode;
   welcomeSubtitle?: ReactNode;
   /** Applied to the transcript scroll container so existing
@@ -255,6 +259,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onSideQueryChange,
     usage,
     connections,
+    onImportGitHubRepo,
     transcript,
     welcomeSubtitle,
     transcriptContainerId,
@@ -277,6 +282,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const [editChatId, setEditChatId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [tempNote, setTempNote] = useState(false);
+  const [repoImportOpen, setRepoImportOpen] = useState(false);
+  const [repoUrl, setRepoUrl] = useState("");
+  const [repoImporting, setRepoImporting] = useState(false);
+  const [repoImportError, setRepoImportError] = useState<string | null>(null);
   const hasMountedTempToggleRef = useRef(false);
   const [headroom, setHeadroom] = useState(260);
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -491,6 +500,27 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     setEditChatId(null);
   };
 
+  const openRepositoryImport = () => {
+    if (!onImportGitHubRepo) return;
+    setRepoImportError(null);
+    setRepoImportOpen(true);
+  };
+
+  const submitRepositoryImport = async () => {
+    if (!onImportGitHubRepo || !repoUrl.trim() || repoImporting) return;
+    setRepoImporting(true);
+    setRepoImportError(null);
+    try {
+      await onImportGitHubRepo(repoUrl.trim());
+      setRepoImportOpen(false);
+      setRepoUrl("");
+    } catch (error) {
+      setRepoImportError(error instanceof Error ? error.message : "Clyra could not import that repository.");
+    } finally {
+      setRepoImporting(false);
+    }
+  };
+
   const groupLabels: ComposerChatRow["group"][] = ["Today", "Previous 7 days", "Earlier"];
   const filteredChats = useMemo(() => {
     const q = sideQuery.trim().toLowerCase();
@@ -513,6 +543,54 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         overflow: "hidden",
       }}
     >
+      {repoImportOpen ? (
+        <div
+          role="presentation"
+          onMouseDown={() => !repoImporting && setRepoImportOpen(false)}
+          style={{ position: "absolute", inset: 0, zIndex: 80, display: "grid", placeItems: "center", padding: 20, background: "rgba(18,20,24,0.18)" }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clyra-import-repository-title"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => { event.preventDefault(); void submitRepositoryImport(); }}
+            style={{ width: "min(100%, 440px)", borderRadius: 18, border: "1px solid rgba(16,18,24,0.10)", background: "#FFFFFF", padding: 20, boxShadow: "0 24px 72px rgba(16,18,24,0.22)" }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <span style={{ display: "grid", width: 34, height: 34, placeItems: "center", borderRadius: 10, background: "rgba(16,18,24,0.055)", color: "#15171C" }} aria-hidden>
+                <GitHubIcon size={18} />
+              </span>
+              <span style={{ flex: 1 }}>
+                <strong id="clyra-import-repository-title" style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#15171C" }}>Bring in a GitHub repository</strong>
+                <span style={{ display: "block", marginTop: 3, fontSize: 12, lineHeight: 1.45, color: "#63676F" }}>Clyra makes a separate local workspace from a public repository, then opens it in Vibe.</span>
+              </span>
+              <button type="button" onClick={() => setRepoImportOpen(false)} disabled={repoImporting} aria-label="Close repository import" style={iconGhostButtonStyle(28)}>
+                <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </div>
+            <label style={{ display: "block", marginTop: 18, fontSize: 11.5, fontWeight: 600, color: "#41444B" }}>
+              Repository URL
+              <input
+                autoFocus
+                value={repoUrl}
+                onChange={(event) => setRepoUrl(event.target.value)}
+                placeholder="https://github.com/owner/repository"
+                disabled={repoImporting}
+                style={{ display: "block", width: "100%", height: 40, marginTop: 7, boxSizing: "border-box", border: "1px solid rgba(16,18,24,0.13)", borderRadius: 10, background: "#FFFFFF", padding: "0 11px", outline: "none", color: "#15171C", fontFamily: "inherit", fontSize: 13 }}
+              />
+            </label>
+            {repoImportError ? <p role="alert" style={{ margin: "9px 0 0", color: "#B33A2B", fontSize: 12, lineHeight: 1.45 }}>{repoImportError}</p> : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button type="button" onClick={() => setRepoImportOpen(false)} disabled={repoImporting} style={{ height: 34, padding: "0 12px", border: "none", borderRadius: 9, background: "transparent", color: "#5C6069", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}>Cancel</button>
+              <button type="submit" disabled={!repoUrl.trim() || repoImporting} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 13px", border: "none", borderRadius: 9, background: "#15171C", color: "#FFFFFF", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, cursor: repoImporting ? "wait" : "pointer", opacity: !repoUrl.trim() || repoImporting ? 0.55 : 1 }}>
+                {repoImporting ? <span className="clyra-repository-import-spinner" aria-hidden /> : <GitHubIcon size={14} />}
+                {repoImporting ? "Importing…" : "Import repository"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       {/* Sidebar toggle */}
       <button
         type="button"
@@ -806,6 +884,16 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 </>
               )}
             </span>
+            {onImportGitHubRepo ? (
+              <button
+                type="button"
+                onClick={openRepositoryImport}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 30, marginTop: 18, padding: "0 10px", border: "1px solid rgba(16,18,24,0.10)", borderRadius: 8, background: "#FFFFFF", color: "#41444B", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 550 }}
+              >
+                <GitHubIcon size={14} />
+                Start with a GitHub repository
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -1170,6 +1258,17 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 </button>
               );
             })}
+            {onImportGitHubRepo ? (
+              <button
+                type="button"
+                data-dock="1"
+                title="Import GitHub repository"
+                onClick={openRepositoryImport}
+                style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, border: "none", borderRadius: 999, background: "transparent", color: "#4E525A", cursor: "pointer", willChange: "transform", transition: "opacity .28s ease, background .26s ease" }}
+              >
+                <GitHubIcon size={17} />
+              </button>
+            ) : null}
             <div style={{ width: 1, height: 16, background: "rgba(16,18,24,0.09)", margin: "0 5px" }} />
             <button
               type="button"
@@ -1227,6 +1326,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function GitHubIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 2.3a9.7 9.7 0 0 0-3.06 18.9c.48.09.66-.2.66-.46v-1.7c-2.68.58-3.24-1.14-3.24-1.14-.44-1.12-1.07-1.42-1.07-1.42-.88-.6.06-.58.06-.58.97.07 1.48.99 1.48.99.86 1.47 2.26 1.05 2.81.8.09-.63.34-1.06.61-1.3-2.14-.24-4.4-1.07-4.4-4.76 0-1.05.37-1.9.99-2.57-.1-.24-.43-1.22.09-2.54 0 0 .8-.26 2.64.98A9.2 9.2 0 0 1 12 7.16c.82 0 1.64.11 2.42.33 1.84-1.24 2.64-.98 2.64-.98.52 1.32.19 2.3.09 2.54.62.67.99 1.52.99 2.57 0 3.7-2.27 4.51-4.42 4.75.35.3.66.88.66 1.78v2.64c0 .26.17.56.67.46A9.7 9.7 0 0 0 12 2.3Z" />
+    </svg>
   );
 }
 

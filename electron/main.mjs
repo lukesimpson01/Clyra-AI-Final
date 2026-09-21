@@ -319,10 +319,9 @@ function configureUiSession() {
     }
     return candidates.some((candidate) => isClyraOrigin(String(candidate || "")));
   };
-  // Earth is framed from its own loopback port, so its location request is
-  // deliberately proxied through Clyra's top-level document. Only that known
-  // application origin may use geolocation; a remote page or an arbitrary
-  // loopback service never inherits the permission from the containing view.
+  // The Maps workspace runs in Clyra's own top-level document and uses the
+  // browser geolocation API directly. Only that known application origin may
+  // use geolocation; a remote page never inherits the permission.
   const allowGeolocationFromClyra = (requestingOrigin, details = {}) => [
     requestingOrigin,
     details.securityOrigin,

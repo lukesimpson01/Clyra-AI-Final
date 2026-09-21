@@ -6,8 +6,8 @@ import {
   Code2,
   Globe2,
   Grid2X2,
+  Map as MapIcon,
   MessageCircle,
-  Orbit,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -25,7 +25,7 @@ export type LauncherToolId =
   | "notes"
   | "cowork"
   | "spotify"
-  | "earth"
+  | "maps"
   | "care";
 
 interface AppLauncherProps {
@@ -63,7 +63,7 @@ const tools: LauncherTool[] = [
   { id: "notes", label: "Clyra Notes", shortLabel: "Notes", detail: "Capture, organise, and review your notes", icon: BookOpen, accent: "#1e293b" },
   { id: "cowork", label: "Clyra Cowork", shortLabel: "Cowork", detail: "A team of persistent AI workers with their own workspaces", icon: Users, accent: "#1e293b" },
   { id: "spotify", label: "Clyra Music", shortLabel: "Music", detail: "Browse, search, and play your music", icon: ClyraMusicGlyph, accent: "#3B82F6" },
-  { id: "earth", label: "Clyra Earth", shortLabel: "Earth", detail: "Live 3D globe, navigation, and world intelligence", icon: Orbit, accent: "#0f172a" },
+  { id: "maps", label: "Clyra Maps", shortLabel: "Maps", detail: "Beautiful maps, search, and turn-by-turn navigation", icon: MapIcon, accent: "#0A84FF" },
   // Dictation is no longer a launcher tile — it is a system-wide background
   // feature (Clyra Anywhere) that runs whether or not this window is open,
   // not a workspace you "open" from here. See electron/dictation-manager.mjs.

@@ -1,0 +1,121 @@
+- generic [ref=f8e4]:
+  - generic [ref=f8e6]:
+    - tablist "Clyra workspace" [ref=f8e8]:
+      - tab "Chat" [ref=f8e9]
+      - tab "Vibe Coder" [ref=f8e20]
+      - tab "Shorts" [ref=f8e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic [ref=f8e39]:
+    - generic [ref=f8e40]:
+      - generic [ref=f8e41]:
+        - region "Map" [ref=f8e42]
+        - group [ref=f8e43]:
+          - generic "Toggle attribution" [ref=f8e44] [cursor=pointer]
+          - generic [ref=f8e45]:
+            - link "OpenFreeMap" [ref=f8e46] [cursor=pointer]:
+              - /url: https://openfreemap.org
+            - link "© OpenMapTiles" [ref=f8e47] [cursor=pointer]:
+              - /url: https://www.openmaptiles.org/
+            - text: Data from
+            - link "OpenStreetMap" [ref=f8e48] [cursor=pointer]:
+              - /url: https://www.openstreetmap.org/copyright
+      - generic [ref=f8e49]:
+        - generic [ref=f8e50]:
+          - textbox "Search places" [active] [ref=f8e54]: Hornsby
+          - button "Clear" [ref=f8e267] [cursor=pointer]
+        - listbox [ref=f8e271]:
+          - option "Hornsby Hornsby, New South Wales, Australia city Directions Set origin" [ref=f8e272] [cursor=pointer]:
+            - generic [ref=f8e277]:
+              - strong [ref=f8e278]: Hornsby
+              - generic [ref=f8e279]: Hornsby, New South Wales, Australia
+              - emphasis [ref=f8e280]: city
+            - generic [ref=f8e281]:
+              - button "Directions" [ref=f8e282]
+              - button "Set origin" [ref=f8e285]
+          - option "Hornsby Hornsby, Tennessee, United States city Directions Set origin" [ref=f8e290] [cursor=pointer]:
+            - generic [ref=f8e295]:
+              - strong [ref=f8e296]: Hornsby
+              - generic [ref=f8e297]: Hornsby, Tennessee, United States
+              - emphasis [ref=f8e298]: city
+            - generic [ref=f8e299]:
+              - button "Directions" [ref=f8e300]
+              - button "Set origin" [ref=f8e303]
+          - option "Hornsby Hornsby, Station Street, Hornsby, New South Wales, Australia house Directions Set origin" [ref=f8e308] [cursor=pointer]:
+            - generic [ref=f8e313]:
+              - strong [ref=f8e314]: Hornsby
+              - generic [ref=f8e315]: Hornsby, Station Street, Hornsby, New South Wales, Australia
+              - emphasis [ref=f8e316]: house
+            - generic [ref=f8e317]:
+              - button "Directions" [ref=f8e318]
+              - button "Set origin" [ref=f8e321]
+          - option "Hornsby Hornsby, Illinois, United States district Directions Set origin" [ref=f8e326] [cursor=pointer]:
+            - generic [ref=f8e331]:
+              - strong [ref=f8e332]: Hornsby
+              - generic [ref=f8e333]: Hornsby, Illinois, United States
+              - emphasis [ref=f8e334]: district
+            - generic [ref=f8e335]:
+              - button "Directions" [ref=f8e336]
+              - button "Set origin" [ref=f8e339]
+          - option "Hornsby Hornsby, Cumwhitton, England, United Kingdom locality Directions Set origin" [ref=f8e344] [cursor=pointer]:
+            - generic [ref=f8e349]:
+              - strong [ref=f8e350]: Hornsby
+              - generic [ref=f8e351]: Hornsby, Cumwhitton, England, United Kingdom
+              - emphasis [ref=f8e352]: locality
+            - generic [ref=f8e353]:
+              - button "Directions" [ref=f8e354]
+              - button "Set origin" [ref=f8e357]
+          - option "Hornsby Hornsby, Texas, United States street Directions Set origin" [ref=f8e362] [cursor=pointer]:
+            - generic [ref=f8e367]:
+              - strong [ref=f8e368]: Hornsby
+              - generic [ref=f8e369]: Hornsby, Texas, United States
+              - emphasis [ref=f8e370]: street
+            - generic [ref=f8e371]:
+              - button "Directions" [ref=f8e372]
+              - button "Set origin" [ref=f8e375]
+          - option "Hornsby Hornsby, Station Street, Hornsby, New South Wales, Australia house Directions Set origin" [ref=f8e380] [cursor=pointer]:
+            - generic [ref=f8e385]:
+              - strong [ref=f8e386]: Hornsby
+              - generic [ref=f8e387]: Hornsby, Station Street, Hornsby, New South Wales, Australia
+              - emphasis [ref=f8e388]: house
+            - generic [ref=f8e389]:
+              - button "Directions" [ref=f8e390]
+              - button "Set origin" [ref=f8e393]
+          - option "Hornsby Hornsby, George Street, Hornsby, New South Wales, Australia house Directions Set origin" [ref=f8e398] [cursor=pointer]:
+            - generic [ref=f8e403]:
+              - strong [ref=f8e404]: Hornsby
+              - generic [ref=f8e405]: Hornsby, George Street, Hornsby, New South Wales, Australia
+              - emphasis [ref=f8e406]: house
+            - generic [ref=f8e407]:
+              - button "Directions" [ref=f8e408]
+              - button "Set origin" [ref=f8e411]
+          - option "Hornsby Hornsby, Station Street, Hornsby, New South Wales, Australia house Directions Set origin" [ref=f8e416] [cursor=pointer]:
+            - generic [ref=f8e421]:
+              - strong [ref=f8e422]: Hornsby
+              - generic [ref=f8e423]: Hornsby, Station Street, Hornsby, New South Wales, Australia
+              - emphasis [ref=f8e424]: house
+            - generic [ref=f8e425]:
+              - button "Directions" [ref=f8e426]
+              - button "Set origin" [ref=f8e429]
+          - option "Hornsby Bend Hornsby Bend, Texas, United States city Directions Set origin" [ref=f8e434] [cursor=pointer]:
+            - generic [ref=f8e439]:
+              - strong [ref=f8e440]: Hornsby Bend
+              - generic [ref=f8e441]: Hornsby Bend, Texas, United States
+              - emphasis [ref=f8e442]: city
+            - generic [ref=f8e443]:
+              - button "Directions" [ref=f8e444]
+              - button "Set origin" [ref=f8e447]
+      - generic "Map controls" [ref=f8e55]:
+        - button "Switch to 3D" [ref=f8e56] [cursor=pointer]: 3D
+        - button "Save this view" [ref=f8e57] [cursor=pointer]
+        - button "Map style" [ref=f8e60] [cursor=pointer]
+        - button "Locate me" [ref=f8e65] [cursor=pointer]
+        - button "Zoom in" [ref=f8e69] [cursor=pointer]
+        - button "Zoom out" [ref=f8e71] [cursor=pointer]
+    - generic [ref=f8e73]:
+      - button "Ask Clyra" [ref=f8e74] [cursor=pointer]
+      - textbox "Ask Clyra about this map" [ref=f8e77]:
+        - /placeholder: Ask Clyra…

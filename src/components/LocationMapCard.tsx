@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, Copy, MapPin, Navigation, Sparkles } from "lucide-react";
 import { cn } from "../lib/utils";
 
-/** A verified result from the Clyra Earth geocoder. */
+/** A verified result from the Clyra Maps geocoder. */
 export type LocationMapPlace = {
   name: string;
   address: string;
@@ -17,16 +17,16 @@ function formatCoordinate(value: number, positive: string, negative: string) {
 
 /**
  * A small, self-contained map preview for a chat response. It deliberately
- * does not embed a third-party map tile: the pin comes only from Clyra Earth's
+ * does not embed a third-party map tile: the pin comes only from Clyra Maps'
  * verified geocoder, and the full interactive map remains available on demand.
  */
 export function LocationMapCard({
   places,
-  onOpenEarth,
+  onOpenMaps,
   className,
 }: {
   places: LocationMapPlace[];
-  onOpenEarth?: (place: LocationMapPlace) => void;
+  onOpenMaps?: (place: LocationMapPlace) => void;
   className?: string;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -66,7 +66,7 @@ export function LocationMapCard({
         className,
       )}
       data-invert-ignore
-      aria-label={`Clyra Earth map for ${active.name}`}
+      aria-label={`Clyra Maps map for ${active.name}`}
     >
       <div className="relative h-[166px] overflow-hidden border-b border-slate-100 bg-[#edf5ff]">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 600 220" preserveAspectRatio="none" aria-hidden>
@@ -89,7 +89,7 @@ export function LocationMapCard({
         </svg>
         <div className="absolute left-4 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/80 bg-white/80 px-2.5 py-1 text-[10px] font-semibold tracking-[0.02em] text-slate-600 shadow-sm backdrop-blur">
           <Sparkles className="h-3 w-3 text-[var(--accent-600,#3269db)]" />
-          Clyra Earth
+          Clyra Maps
         </div>
         <div className="absolute bottom-3 right-4 rounded-md bg-white/70 px-1.5 py-1 font-mono text-[9px] font-medium text-slate-500 backdrop-blur">N ↑</div>
         {pinPositions.map((position, index) => {
@@ -126,8 +126,8 @@ export function LocationMapCard({
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] font-medium text-slate-400">{coordinateText}</span>
-          <button type="button" onClick={() => onOpenEarth?.(active)} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-600,#3269db)] px-3 py-1.5 text-[10.5px] font-semibold text-white shadow-sm transition hover:brightness-95 active:scale-[.98]">
-            <Navigation className="h-3.5 w-3.5" /> Open in Earth
+          <button type="button" onClick={() => onOpenMaps?.(active)} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-600,#3269db)] px-3 py-1.5 text-[10.5px] font-semibold text-white shadow-sm transition hover:brightness-95 active:scale-[.98]">
+            <Navigation className="h-3.5 w-3.5" /> Open in Maps
           </button>
         </div>
         {visiblePlaces.length > 1 ? <div className="mt-4 flex gap-1.5 overflow-x-auto pb-0.5">{visiblePlaces.map((place, index) => <button key={`${place.name}-${index}`} type="button" onClick={() => setActiveIndex(index)} className={cn("max-w-[130px] truncate rounded-full px-2.5 py-1 text-[10.5px] font-medium transition-colors", index === activeIndex ? "bg-blue-50 text-[var(--accent-700,#2452b6)]" : "bg-slate-50 text-slate-500 hover:bg-slate-100")}>{place.name}</button>)}</div> : null}

@@ -1,0 +1,16 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e6]:
+    - tablist "Clyra workspace" [ref=e8]:
+      - tab "Chat" [ref=e9]
+      - tab "Vibe Coder" [ref=e20]
+      - tab "Shorts" [ref=e25]
+    - generic: Connect Clyra Music
+    - generic:
+      - generic:
+        - generic: Clyra Music is a desktop feature
+        - generic: Open Clyra's desktop app to connect Spotify and control your music from here.
+  - generic:
+    - generic:
+      - generic:
+        - img "Bloub avatar, idle"
+      - progressbar "Preparing Clyra"

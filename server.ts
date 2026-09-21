@@ -181,6 +181,93 @@ function slugifyProjectName(input: string) {
   return cleaned || "clyra-vibe-project";
 }
 
+type PublicGitHubRepository = {
+  cloneUrl: string;
+  displayUrl: string;
+  name: string;
+};
+
+/**
+ * Keep remote imports deliberately narrow. The coding runtime may execute
+ * project scripts later, so this route only accepts an explicit public GitHub
+ * owner/repository URL — never an arbitrary Git transport, local path, SSH
+ * URL, credential-bearing URL, branch URL, or archive download.
+ */
+function parsePublicGitHubRepository(value: string): PublicGitHubRepository {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("Enter a public GitHub repository URL.");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Use an https://github.com/owner/repository URL without credentials.");
+  }
+  const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  if (segments.length !== 2 || !segments[0] || !segments[1]) {
+    throw new Error("Use a repository root URL, for example https://github.com/owner/repository.");
+  }
+  const [owner, rawRepository] = segments;
+  const repository = rawRepository.replace(/\.git$/i, "");
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(repository)
+  ) {
+    throw new Error("That GitHub owner or repository name is not valid.");
+  }
+  return {
+    cloneUrl: `https://github.com/${owner}/${repository}.git`,
+    displayUrl: `https://github.com/${owner}/${repository}`,
+    name: repository,
+  };
+}
+
+async function clonePublicGitHubRepository(
+  repository: PublicGitHubRepository,
+  destination: string,
+) {
+  await new Promise<void>((resolve, reject) => {
+    let stderr = "";
+    let timedOut = false;
+    const child = spawn(
+      "git",
+      ["clone", "--depth", "1", "--single-branch", "--no-tags", repository.cloneUrl, destination],
+      { stdio: ["ignore", "ignore", "pipe"], shell: false },
+    );
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, 75_000);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-2_000);
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(new Error(`GitHub import could not start: ${error.message}`));
+    });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        reject(new Error("GitHub import timed out. Try a smaller public repository."));
+        return;
+      }
+      if (code !== 0) {
+        const detail = stderr.replace(/\s+/g, " ").trim();
+        reject(new Error(detail ? `GitHub import failed: ${detail}` : "GitHub import failed. Check that the repository is public."));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 async function ensureDir(dir: string) {
   await fs.mkdir(dir, { recursive: true });
 }
@@ -1516,6 +1603,38 @@ async function startServer() {
     res.json({ ok: true, missions: missionService.interrupted() });
   });
 
+  app.get("/api/agent/missions/:missionId", (req, res) => {
+    const missionId = String(req.params.missionId || "").slice(0, 120);
+    const mission = missionService.get(missionId);
+    if (!mission) {
+      res.status(404).json({ ok: false, error: "Mission not found." });
+      return;
+    }
+    res.json({ ok: true, mission });
+  });
+
+  // Resumption is intentional: a stored workflow never wakes itself after a
+  // restart. In-flight actions re-enter via a fresh observe/verify boundary;
+  // waiting approvals additionally require the exact stored step id here.
+  app.post("/api/agent/missions/:missionId/resume", async (req, res) => {
+    const missionId = String(req.params.missionId || "").slice(0, 120);
+    try {
+      const mission = await missionService.resume({
+        missionId,
+        approvedStepIds: Array.isArray(req.body?.approvedStepIds)
+          ? req.body.approvedStepIds.filter((id: unknown) => typeof id === "string").slice(0, 50)
+          : [],
+      });
+      if (!mission) {
+        res.status(404).json({ ok: false, error: "Mission not found." });
+        return;
+      }
+      res.status(mission.state === "COMPLETED" ? 200 : 409).json({ ok: mission.state === "COMPLETED", mission });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "Mission could not resume." });
+    }
+  });
+
   // Usage is local-only application telemetry. It stores token/unit counts and
   // calculated cost metadata, never prompts, completions, API keys, or files.
   app.get("/api/usage", async (req, res) => {
@@ -1545,52 +1664,29 @@ async function startServer() {
     }
   });
 
-  // Clyra Earth boots on first use rather than at Clyra startup — the globe
-  // pulls in Cesium and a large provider stack, and most sessions never open
-  // it. The renderer calls this once when the workspace mounts and frames the
-  // returned loopback URL.
-  app.post("/api/earth/start", async (_req, res) => {
-    try {
-      const { ensureEarthHost } = await import("./lib/earth/host");
-      res.json(await ensureEarthHost());
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        url: null,
-        mode: null,
-        reason: error instanceof Error ? error.message : "Clyra Earth could not start",
-      });
-    }
-  });
-
-  // Keep the upper-left Earth search responsive even while the framed Cesium
-  // document is busy with a camera transition. This is a bounded same-machine
-  // proxy to the exact Earth geocoder—not a second location provider—so the
-  // suggestions and the command bar still resolve the same real places.
-  app.get("/api/earth/geocode", async (req, res) => {
+  // Clyra Maps place search. The vector map (OpenFreeMap) provides no
+  // geocoder, so place search is a separate, provider-independent backend
+  // that resolves OSM places over the network. The renderer debounces this.
+  app.get("/api/maps/geocode", async (req, res) => {
     const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
     if (!query || query.length > 200) {
       res.status(400).json({ error: "A place query of 1-200 characters is required" });
       return;
     }
-    let timeout: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6_000);
     try {
-      const { ensureEarthHost } = await import("./lib/earth/host");
-      const earth = await ensureEarthHost();
-      if (!earth.ok || !earth.url) {
-        res.status(503).json({ error: earth.reason ?? "Clyra Earth is unavailable" });
-        return;
-      }
-      const target = new URL("/api/geocode", earth.url);
-      target.searchParams.set("q", query);
-      timeout = setTimeout(() => controller.abort(), 5_000);
-      const response = await fetch(target, {
+      const { getGeocoderProvider, toGoogleShape } = await import("./lib/maps/geocoding");
+      const latitude = Number(req.query.lat);
+      const longitude = Number(req.query.lon);
+      const language = typeof req.query.lang === "string" ? req.query.lang.slice(0, 40) : undefined;
+      const results = await getGeocoderProvider().autocomplete(query, {
+        latitude: Number.isFinite(latitude) ? latitude : undefined,
+        longitude: Number.isFinite(longitude) ? longitude : undefined,
+        language,
         signal: controller.signal,
-        headers: { Accept: "application/json" },
       });
-      const body = await response.text();
-      res.status(response.status).type("application/json").send(body);
+      res.json(toGoogleShape(results));
     } catch (error) {
       res.status(503).json({
         error: error instanceof Error && error.name === "AbortError"
@@ -1598,22 +1694,36 @@ async function startServer() {
           : "Place search is temporarily unavailable",
       });
     } finally {
-      if (timeout) clearTimeout(timeout);
+      clearTimeout(timeout);
     }
   });
 
-  app.get("/api/earth/status", async (_req, res) => {
+  // Optional public-data layers are deliberately proxied, bounded, and cached
+  // independently of tiles. A failing live feed can never block base Maps.
+  app.get("/api/maps/live/earthquakes", async (_req, res) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7_000);
     try {
-      const { earthHostStatus } = await import("./lib/earth/host");
-      res.json(earthHostStatus());
+      const { getEarthquakes } = await import("./lib/maps/live-data");
+      res.setHeader("cache-control", "private, max-age=60");
+      res.json(await getEarthquakes(controller.signal));
     } catch (error) {
-      res.status(500).json({
-        ok: false,
-        url: null,
-        mode: null,
-        reason: error instanceof Error ? error.message : "Clyra Earth status is unavailable",
-      });
-    }
+      res.status(503).json({ error: error instanceof Error ? error.message : "Earthquake feed unavailable" });
+    } finally { clearTimeout(timeout); }
+  });
+
+  app.get("/api/maps/live/aircraft", async (req, res) => {
+    const lat = Number(req.query.lat); const lon = Number(req.query.lon); const radius = Number(req.query.radius);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) { res.status(400).json({ error: "A viewport center is required" }); return; }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7_000);
+    try {
+      const { getAircraft } = await import("./lib/maps/live-data");
+      res.setHeader("cache-control", "private, max-age=20");
+      res.json(await getAircraft(lat, lon, radius, controller.signal));
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : "Aircraft feed unavailable" });
+    } finally { clearTimeout(timeout); }
   });
 
   // Real Google OAuth for the web surface: "Sign in" opens a new browser tab
@@ -3509,6 +3619,57 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     }
   });
 
+  // Clone a public GitHub project into Clyra-owned storage. Unlike a folder
+  // import this is a copy, so Clyra never changes a remote checkout on the
+  // user's disk and never receives or stores GitHub credentials.
+  app.post("/api/vibe/projects/import-github", async (req, res) => {
+    let repository: PublicGitHubRepository;
+    try {
+      repository = parsePublicGitHubRepository(String(req.body?.url ?? ""));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Enter a public GitHub repository URL." });
+      return;
+    }
+    const id = `${slugifyProjectName(repository.name)}-${crypto.randomBytes(3).toString("hex")}`;
+    const now = new Date().toISOString();
+    const root = projectRoot(id);
+    try {
+      await ensureDir(root);
+      await clonePublicGitHubRepository(repository, path.join(root, "files"));
+      await ensureDir(path.join(root, "checkpoints"));
+      await ensureDir(path.join(root, "logs"));
+      await ensureDir(path.join(root, "preview"));
+      await ensureDir(path.join(root, ".agent"));
+      const metadata: VibeProjectMetadata = {
+        id,
+        name: repository.name,
+        prompt: `Imported public GitHub repository from ${repository.displayUrl}`,
+        mode: "plan",
+        status: "Ready",
+        createdAt: now,
+        updatedAt: now,
+        lastBuildStatus: "github-imported",
+        lastReviewStatus: "pending",
+      };
+      await writeJson(path.join(root, "metadata.json"), metadata);
+      await writeJson(path.join(root, ".agent", "state.json"), { status: "ready", taskCursor: 0, updatedAt: now });
+      await writeJson(path.join(root, ".agent", "memory.json"), {
+        projectId: id,
+        sourceRepository: repository.displayUrl,
+        designPreference: "match this repository's established conventions",
+        packageManager: "npm",
+        lastDecision: `Imported a public repository from ${repository.displayUrl}; inspect before changing it.`,
+        updatedAt: now,
+      });
+      res.status(201).json({ project: metadata, repository: repository.displayUrl });
+    } catch (error) {
+      // This unique project root was created for this attempt only. Removing
+      // it prevents failed clones from showing up as misleading empty projects.
+      await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Could not import that GitHub repository." });
+    }
+  });
+
   app.get("/api/vibe/projects/:id", async (req, res) => {
     const metadata = await readProjectMetadata(req.params.id);
     if (!metadata) {
@@ -4742,15 +4903,6 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
   httpServer.listen(PORT, "127.0.0.1", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     void ensureVoicePipelineWorker();
-    // Keep the local static Earth host hot before the workspace is opened.
-    // This eliminates process startup and provider middleware latency from the
-    // first Earth visit; the renderer only needs to attach an already-running
-    // document when the user opens it.
-    if (process.env.CLYRA_EARTH_PREWARM !== "0") {
-      void import("./lib/earth/host")
-        .then(({ ensureEarthHost }) => ensureEarthHost())
-        .catch((error) => console.warn("[earth] background warmup failed:", error));
-    }
     // Electron owns the visible Chromium views during desktop runs. Its main
     // process restores those tabs before the UI loads, so launching a second
     // Playwright/CDP warmup here wastes startup time and can contend for the
@@ -4786,7 +4938,6 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     await Promise.allSettled([
       closeManagedBrowser(),
       stopAllDevServers(),
-      import("./lib/earth/host").then(({ stopEarthHost }) => stopEarthHost()),
       import("./lib/openhands/m1-stack").then(({ shutdownM1Stack }) => shutdownM1Stack()),
     ]);
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

@@ -1725,6 +1725,45 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
 
   return (
     <div className="nui flex min-h-0 flex-1 bg-[var(--atlas-window-bg)]">
+      {/* The navigation rail is deliberately a browser control surface, not a
+          decorative clone. Every destination below opens one of Clyra's real
+          persisted browser features. It gives the browser its chat-first,
+          Atlas-like information architecture without borrowing product
+          names, marks, or copy. */}
+      <aside className="clyra-browser-rail hidden w-[216px] shrink-0 flex-col border-r border-[var(--atlas-divider)] bg-[var(--atlas-sidebar-bg)] p-2.5 lg:flex">
+        <button
+          type="button"
+          onClick={() => {
+            sideLockRef.current = true;
+            setSideView("agent");
+            setSideOpen(true);
+            setTask("");
+          }}
+          className="flex h-9 items-center gap-2 rounded-[9px] px-2.5 text-left text-[12px] font-medium text-[var(--atlas-text-primary)] transition-colors hover:bg-black/[0.045]"
+        >
+          <span className="grid h-5 w-5 place-items-center rounded-md bg-[var(--atlas-text-primary)] text-white"><Plus className="h-3.5 w-3.5" /></span>
+          New conversation
+        </button>
+        <button type="button" onClick={focusOmnibox} className="mt-1 flex h-8 items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]">
+          <Search className="h-3.5 w-3.5" /> Search the web
+        </button>
+        <div className="my-3 h-px bg-[var(--atlas-divider)]" />
+        <nav className="space-y-0.5" aria-label="Browser navigation">
+          <button type="button" onClick={() => openSideView("agent")} className={cn("flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] transition-colors hover:bg-black/[0.045]", sideOpen && sideView === "agent" && "bg-black/[0.05] text-[var(--atlas-text-primary)]", !(sideOpen && sideView === "agent") && "text-[var(--atlas-text-secondary)]")}><Bloub size={15} color={accentColor} /><span>Assistant</span></button>
+          <button type="button" onClick={() => openInternalPage("history")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><History className="h-3.5 w-3.5" /> History</button>
+          <button type="button" onClick={() => openInternalPage("bookmarks")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Bookmark className="h-3.5 w-3.5" /> Saved pages</button>
+          <button type="button" onClick={() => openSideView("downloads")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Download className="h-3.5 w-3.5" /> Downloads</button>
+        </nav>
+        <div className="mt-5 px-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--atlas-text-tertiary)]">Recent tabs</div>
+        <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+          {browserState?.tabs.slice(0, 10).map((tab) => (
+            <button key={tab.id} type="button" onClick={() => { setActiveInternalTabId(null); void performAction({ type: "switch_tab", tabId: tab.id }); }} className={cn("flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11px] transition-colors hover:bg-black/[0.045]", tab.active ? "text-[var(--atlas-text-primary)]" : "text-[var(--atlas-text-secondary)]")}>
+              <Globe2 className="h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" /><span className="truncate">{tab.title || "New tab"}</span>
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={() => openInternalPage("settings")} className="flex h-8 items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Settings2 className="h-3.5 w-3.5" /> Settings</button>
+      </aside>
       <motion.div
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}

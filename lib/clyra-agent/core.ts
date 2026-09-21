@@ -158,6 +158,13 @@ export type MissionRuntimeOptions = {
   verify: (step: MissionStep, result: ToolResult, context: ToolExecutionContext) => Promise<Verification>;
   requestApproval?: (step: MissionStep, tool: ClyraTool) => Promise<boolean>;
   recover?: (input: { record: MissionRecord; step: MissionStep; error: ClyraAgentError }) => Promise<"retry" | "replan" | "wait" | "fail">;
+  /** Receives a complete, serialisable snapshot after every meaningful state
+   * or step mutation. Persistence is deliberately outside the runtime so the
+   * same deterministic loop can run in web, desktop and test hosts. */
+  checkpoint?: (record: MissionRecord) => void;
+  /** A previously persisted mission. It is never auto-run by construction;
+   * callers must explicitly resume it after a process restart. */
+  initialRecord?: MissionRecord;
   now?: () => number;
   limits?: Partial<MissionLimits>;
 };
@@ -168,13 +175,59 @@ export class MissionRuntime {
     const errors = validateToolRegistry(options.tools); if (errors.length) throw new Error(`Invalid Clyra tool registry:\n${errors.join("\n")}`);
     this.options.tools.forEach((tool) => this.tools.set(tool.id, tool)); this.limits = { ...DEFAULT_MISSION_LIMITS, ...options.limits };
     if (!plan.objective.trim() || plan.steps.length > this.limits.maxSteps) throw new ClyraAgentError("INVALID_ARGUMENTS", "Mission plan is empty or exceeds its step limit.");
-    this.record = { id, projectId, state: "IDLE", plan: structuredClone(plan), traces: [], outputs: {}, startedAt: this.now(), updatedAt: this.now() };
+    const restored = options.initialRecord;
+    if (restored) {
+      if (!restored.id || !restored.plan?.objective || !Array.isArray(restored.plan.steps)) throw new ClyraAgentError("INVALID_ARGUMENTS", "The stored mission checkpoint is invalid.");
+      if (restored.plan.steps.length > this.limits.maxSteps) throw new ClyraAgentError("INVALID_ARGUMENTS", "The stored mission exceeds its step limit.");
+      this.record = structuredClone(restored);
+    } else {
+      this.record = { id, projectId, state: "IDLE", plan: structuredClone(plan), traces: [], outputs: {}, startedAt: this.now(), updatedAt: this.now() };
+    }
   }
   snapshot() { return structuredClone(this.record); }
   cancel() { this.controller.abort(); if (!isTerminal(this.record.state)) this.transition("CANCELLED", "cancelled"); }
   pause() { if (!isTerminal(this.record.state)) { this.controller.abort(); this.transition("PAUSED", "paused: active tools cancelled and a fresh observation is required before resume"); } }
   async resume() { if (this.record.state !== "PAUSED") throw new ClyraAgentError("UNKNOWN_STATE", "Only paused missions can resume."); this.controller = new AbortController(); this.transition("OBSERVING", "resume requires fresh observation"); this.transition("READY", "fresh observation required by adapter before its next action"); return this.run(); }
-  async continueAfterUser() { if (this.record.state !== "WAITING_FOR_USER") throw new ClyraAgentError("UNKNOWN_STATE", "Mission is not waiting for user input."); this.transition("READY", "user supplied required input"); return this.run(); }
+  /**
+   * Restore an interrupted, non-terminal mission without trusting the action
+   * that was in flight when the host stopped. A running step is returned to
+   * pending and will cross a fresh observation and verification boundary on
+   * the explicit resume request. Approval and user-input handoffs stay paused
+   * rather than being replayed implicitly.
+   */
+  async resumePersisted() {
+    if (isTerminal(this.record.state)) return this.snapshot();
+    if (this.record.state === "WAITING_FOR_APPROVAL" || this.record.state === "WAITING_FOR_USER") return this.snapshot();
+    const interrupted = this.record.plan.steps.filter((step) => step.status === "running");
+    for (const step of interrupted) step.status = "pending";
+    this.record.state = "PAUSED";
+    this.record.updatedAt = this.now();
+    this.record.traces.push({
+      at: this.record.updatedAt,
+      state: "PAUSED",
+      event: interrupted.length
+        ? "recovered after interruption: in-flight steps returned to pending for a fresh observation"
+        : "recovered after interruption: explicit resume requires a fresh observation",
+    });
+    this.checkpoint();
+    return this.resume();
+  }
+  /** Approvals are action-scoped even across a restart. This resumes only the
+   * exact stored approval and re-runs the normal approval gate before action. */
+  async approveAndResume(stepId: string) {
+    if (this.record.state !== "WAITING_FOR_APPROVAL" || this.record.approval?.stepId !== stepId) throw new ClyraAgentError("UNKNOWN_STATE", "This mission is not waiting for approval for that action.");
+    const step = this.record.plan.steps.find((candidate) => candidate.id === stepId);
+    if (!step) throw new ClyraAgentError("UNKNOWN_STATE", "The approved mission step no longer exists.");
+    delete this.record.approval;
+    this.transition("READY", "approval granted after recovery", step, step.toolId);
+    return this.run();
+  }
+  async continueAfterUser() {
+    if (this.record.state !== "WAITING_FOR_USER") throw new ClyraAgentError("UNKNOWN_STATE", "Mission is not waiting for user input.");
+    for (const step of this.record.plan.steps) if (step.status === "blocked") step.status = "pending";
+    this.transition("READY", "user supplied required input");
+    return this.run();
+  }
   async run(): Promise<MissionRecord> {
     if (this.record.state === "IDLE") { this.transition("UNDERSTANDING", "objective accepted"); this.transition("PLANNING", "plan validated"); this.transition("READY", "plan ready"); }
     while (!isTerminal(this.record.state)) {
@@ -192,9 +245,11 @@ export class MissionRuntime {
       const schemaErrors = validateJson(tool.inputSchema, resolvedArgs);
       if (schemaErrors.length) { await this.handleFailure(step, new ClyraAgentError("INVALID_ARGUMENTS", schemaErrors.join("; "))); continue; }
       if (tool.riskLevel !== "safe") {
-        this.transition("WAITING_FOR_APPROVAL", `approval required for ${tool.id}`, step, tool.id);
         this.record.approval = { stepId: step.id, toolId: tool.id, requestedAt: this.now() };
-        if (!(await this.options.requestApproval?.(step, tool))) { await this.handleFailure(step, new ClyraAgentError("PERMISSION_REQUIRED", `Approval is required for ${tool.name}.`)); continue; }
+        this.transition("WAITING_FOR_APPROVAL", `approval required for ${tool.id}`, step, tool.id);
+        // A declined or absent approval is a durable handoff, not a failed
+        // action. It must be explicitly resumed with this exact step ID.
+        if (!(await this.options.requestApproval?.(step, tool))) break;
         delete this.record.approval; this.transition("READY", "approval granted", step, tool.id);
       }
       await this.execute(step, tool, resolvedArgs);
@@ -208,6 +263,7 @@ export class MissionRuntime {
     if (this.record.state === "EXECUTING") this.trace("tool executing", step, tool.id);
     else this.transition("EXECUTING", "tool executing", step, tool.id);
     step.status = "running";
+    this.checkpoint();
     const attempt = (step.retries || 0) + 1; const started = this.now();
     const fingerprint = `${tool.id}:${JSON.stringify(args)}`;
     this.fingerprints.push(fingerprint); this.fingerprints = this.fingerprints.slice(-3);
@@ -227,7 +283,7 @@ export class MissionRuntime {
     // Pause aborts in-flight work to release mouse/keys and child processes,
     // but is deliberately not cancellation: retain the plan for a fresh,
     // post-resume observation.
-    if (this.record.state === "PAUSED") { step.status = "pending"; return; }
+    if (this.record.state === "PAUSED") { step.status = "pending"; this.checkpoint(); return; }
     if (error.code === "CANCELLED" || this.controller.signal.aborted) { step.status = "cancelled"; this.transition("CANCELLED", "cancelled", step); return; }
     this.failures += 1; step.retries = (step.retries || 0) + 1;
     this.transition("RECOVERING", error.message, step, undefined, undefined, error.code);
@@ -235,8 +291,8 @@ export class MissionRuntime {
     if (this.failures >= this.limits.maxConsecutiveToolFailures || recovery === "fail" || step.retries > this.limits.maxRetriesPerStep) {
       step.status = "failed"; this.record.error = { code: error.code, message: error.message }; this.transition("FAILED", error.message, step, undefined, undefined, error.code); return;
     }
-    if (recovery === "wait") { this.transition("WAITING_FOR_USER", error.message, step, undefined, undefined, error.code); return; }
-    if (recovery === "replan") { this.transition("REPLANNING", error.message, step, undefined, undefined, error.code); this.transition("READY", "replanned", step); return; }
+    if (recovery === "wait") { step.status = "blocked"; this.transition("WAITING_FOR_USER", error.message, step, undefined, undefined, error.code); return; }
+    if (recovery === "replan") { step.status = "pending"; this.transition("REPLANNING", error.message, step, undefined, undefined, error.code); this.transition("READY", "replanned", step); return; }
     step.status = "pending"; this.transition("READY", "retrying after recovery", step, undefined, undefined, error.code);
   }
   private nextStep() { return this.record.plan.steps.find((step) => step.status === "pending" && step.dependsOn.every((id) => this.record.plan.steps.find((candidate) => candidate.id === id)?.status === "completed")); }
@@ -253,8 +309,9 @@ export class MissionRuntime {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.resolveArgs(item)])) as Json;
     return value;
   }
-  private transition(to: MissionState, event: string, step?: MissionStep, toolId?: string, durationMs?: number, errorCode?: ClyraErrorCode) { assertTransition(this.record.state, to); this.record.state = to; this.record.updatedAt = this.now(); this.record.traces.push({ at: this.record.updatedAt, state: to, event, stepId: step?.id, toolId, durationMs, errorCode }); }
-  private trace(event: string, step?: MissionStep, toolId?: string, durationMs?: number, errorCode?: ClyraErrorCode) { this.record.updatedAt = this.now(); this.record.traces.push({ at: this.record.updatedAt, state: this.record.state, event, stepId: step?.id, toolId, durationMs, errorCode }); }
+  private transition(to: MissionState, event: string, step?: MissionStep, toolId?: string, durationMs?: number, errorCode?: ClyraErrorCode) { assertTransition(this.record.state, to); this.record.state = to; this.record.updatedAt = this.now(); this.record.traces.push({ at: this.record.updatedAt, state: to, event, stepId: step?.id, toolId, durationMs, errorCode }); this.checkpoint(); }
+  private trace(event: string, step?: MissionStep, toolId?: string, durationMs?: number, errorCode?: ClyraErrorCode) { this.record.updatedAt = this.now(); this.record.traces.push({ at: this.record.updatedAt, state: this.record.state, event, stepId: step?.id, toolId, durationMs, errorCode }); this.checkpoint(); }
+  private checkpoint() { this.options.checkpoint?.(this.snapshot()); }
   private now() { return this.options.now?.() || Date.now(); }
   private assertBudget() { if (this.now() - this.record.startedAt > this.limits.maxRuntimeMs) throw new ClyraAgentError("TOOL_TIMEOUT", "Mission runtime limit reached."); if (this.controller.signal.aborted) throw new ClyraAgentError("CANCELLED", "Mission cancelled."); }
   private async withTimeout<T>(value: Promise<T>, timeoutMs: number) { return await Promise.race([value, new Promise<T>((_, reject) => setTimeout(() => reject(new ClyraAgentError("TOOL_TIMEOUT", `Tool timed out after ${timeoutMs}ms.`, true)), timeoutMs))]); }
