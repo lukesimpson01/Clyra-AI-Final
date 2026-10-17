@@ -12,3 +12,12 @@ export function isGroundedWebResearchAnswer(answer: string, fetchedSourceCount: 
   const citations = [...trimmed.matchAll(/\[S(\d+)\]/g)].map((match) => Number(match[1]));
   return citations.length > 0 && citations.every((source) => Number.isInteger(source) && source >= 1 && source <= fetchedSourceCount);
 }
+
+/** The browser-safe view of a fetched source. Excerpts stay server-side. */
+export type WebCitationView = {
+  id: string;
+  url: string;
+  host: string;
+  title: string;
+  retrievedAt: string;
+};

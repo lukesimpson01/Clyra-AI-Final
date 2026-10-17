@@ -53,6 +53,23 @@ export default defineConfig(() => {
       holdUntilCrawlEnd: false,
     },
     server: {
+      // Keep the development renderer on Vite while routing Clyra's real
+      // agent/app APIs to the local service. Without this, `/api/*` falls
+      // back to index.html and an otherwise valid Chat agent run looks like a
+      // failed web search in browser QA.
+      proxy: {
+        "/api": {
+          target: process.env.CLYRA_API_ORIGIN || "http://127.0.0.1:3000",
+          changeOrigin: true,
+          ws: true,
+          // The desktop service serves its own API (Electron main sets
+          // CLYRA_API_SELF); skip the proxy so /api reaches the Express
+          // routes in the same process instead of looping to a sibling port.
+          ...(process.env.CLYRA_API_SELF === "1"
+            ? { bypass: (req: { url?: string }) => req.url ?? "/" }
+            : {}),
+        },
+      },
       // Clyra owns preview refreshes. Disabling Vite's page-level HMR avoids
       // a failed development WebSocket in embedded Chromium while project
       // previews still refresh through Clyra's explicit preview lifecycle.

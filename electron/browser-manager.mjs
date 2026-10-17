@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { dialog, Menu, session, WebContentsView } from "electron";
+import { agentChromeScript } from "./agent-chrome-script.mjs";
 
 const HOME_URL = "https://www.google.com/";
 const MAX_TABS = 16;
@@ -240,8 +241,20 @@ export class ChromiumBrowserManager {
     // Native views can be hidden without being resized to 2px, so CDP/DOM
     // inspection remains meaningful and tab state does not thrash on reopen.
     this.surface = { visible: false, bounds: { x: 0, y: 0, width: 1280, height: 720 } };
+    // Preview consumers (Cowork and task views) may ask for a frame while Chromium
+    // is intentionally hidden behind another Clyra workspace. Keep the last
+    // genuine frame so one slow hidden capture can never make us surface the
+    // BrowserView over the active workspace.
+    this.lastFrame = null;
+    this.frameCapture = null;
+    this.frameVersion = 0;
+    this.lastFrameVersion = -1;
     this.saveTimer = null;
     this.agent = { status: "idle", paused: false, manualControl: false };
+    // The in-page status pill reports clicks through a console token. A fresh
+    // random token per app session keeps it from colliding with page logs.
+    this.agentChromeToken = `__clyra_agent_control_${crypto.randomBytes(9).toString("hex")}`;
+    this.agentChromeStartedAt = 0;
     this.destroyed = false;
   }
 
@@ -383,6 +396,11 @@ export class ChromiumBrowserManager {
         autoplayPolicy: "no-user-gesture-required",
         spellcheck: true,
         backgroundThrottling: true,
+        // Keeps an actual compositor frame subscription alive for Cowork's live
+        // preview even while this WebContentsView is not the visible native
+        // layer. The same view still becomes the interactive full-screen
+        // Browser surface when Cowork opens it.
+        offscreen: true,
       },
     });
     const id = view.webContents.getOrCreateDevToolsTargetId();
@@ -428,6 +446,20 @@ export class ChromiumBrowserManager {
 
   wireTab(tab) {
     const contents = tab.view.webContents;
+    // Frame subscriptions are delivered by Chromium's renderer, unlike a
+    // native view snapshot. Keep a real latest frame when available so Cowork can
+    // observe a browser that is hidden behind the Clyra workspace without
+    // changing native view visibility.
+    try {
+      contents.beginFrameSubscription(false, (image) => {
+        if (!image || image.isEmpty() || this.destroyed || tab.id !== this.activeTabId) return;
+        this.lastFrame = image.toJPEG(82);
+        this.lastFrameVersion = this.frameVersion;
+      });
+    } catch {
+      // Older Electron runtimes may not expose frame subscriptions for a
+      // WebContentsView; captureFrame retains a bounded fallback below.
+    }
     contents.setWindowOpenHandler(({ url }) => {
       void this.createTab(url);
       return { action: "deny" };
@@ -468,6 +500,22 @@ export class ChromiumBrowserManager {
       if (details.reason !== "clean-exit") setTimeout(() => contents.reload(), 350);
     });
     contents.on("unresponsive", () => this.emitState());
+    // Navigation replaces the document, and with it the injected agent
+    // chrome. Re-apply it as soon as the new DOM exists, not only when the
+    // whole page has finished loading.
+    contents.on("dom-ready", () => {
+      if (tab.id === this.activeTabId) void this.syncAgentChrome();
+    });
+    contents.on("console-message", (...args) => {
+      const first = args[0];
+      const message = typeof first?.message === "string" ? first.message : String(args[2] ?? "");
+      if (!message.startsWith(`${this.agentChromeToken}:`)) return;
+      const command = message.slice(this.agentChromeToken.length + 1);
+      if (!["take_control", "return_control", "resume", "stop"].includes(command)) return;
+      if (this.uiView?.webContents && !this.uiView.webContents.isDestroyed()) {
+        this.uiView.webContents.send("browser:agent-control", { command, tabId: tab.id });
+      }
+    });
     contents.on("enter-html-full-screen", () => this.window.setFullScreen(true));
     contents.on("leave-html-full-screen", () => this.window.setFullScreen(false));
     contents.on("before-input-event", (event, input) => this.handleShortcut(event, input));
@@ -605,6 +653,21 @@ export class ChromiumBrowserManager {
       };
     }
     this.surface.visible = Boolean(visible);
+    // A genuine interactive Browser surface belongs above Clyra only while it
+    // is open. Background frame capture performs the inverse ordering so Cowork
+    // remains the visible native layer.
+    if (this.surface.visible) {
+      const active = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
+      if (active) {
+        try {
+          this.window.contentView.removeChildView(active.view);
+          this.window.contentView.addChildView(active.view);
+        } catch {
+          // The owning BrowserWindow may be tearing down; the normal tab loop
+          // below will no-op safely in that case.
+        }
+      }
+    }
     for (const [id, tab] of this.tabs) {
       const show = this.surface.visible && id === this.activeTabId;
       tab.view.setBounds(this.surface.bounds);
@@ -952,27 +1015,29 @@ export class ChromiumBrowserManager {
       const root = existing || Object.assign(document.createElement("div"), { id });
       if (!existing) {
         root.setAttribute("aria-hidden", "true");
-        root.style.cssText = "position:fixed;left:0;top:0;width:27px;height:33px;z-index:2147483647;pointer-events:none;will-change:transform;contain:layout style paint;transition:opacity 120ms ease;";
+        root.style.cssText = "position:fixed;left:0;top:0;width:26px;height:26px;z-index:2147483647;pointer-events:none;will-change:transform;contain:layout style paint;transition:opacity 120ms ease;";
         const glow = document.createElement("div");
         glow.dataset.part = "glow";
-        glow.style.cssText = "position:absolute;left:-13px;top:-13px;width:49px;height:49px;border-radius:999px;background:radial-gradient(circle,rgba(87,151,255,.24),rgba(63,128,255,.11) 39%,transparent 70%);filter:blur(4px);";
-        const pointer = document.createElement("div");
-        pointer.dataset.part = "pointer";
-        pointer.style.cssText = "position:absolute;left:0;top:0;width:28px;height:32px;filter:drop-shadow(0 0 1px rgba(255,255,255,.82)) drop-shadow(0 2px 4px rgba(16,24,40,.32)) drop-shadow(0 0 10px rgba(43,128,255,.32));transform-origin:5px 2px;";
-        pointer.innerHTML = '<svg viewBox="0 0 28 32" width="28" height="32" aria-hidden="true"><defs><linearGradient id="clyraNativeCursor" x1="2" y1="2" x2="22" y2="28" gradientUnits="userSpaceOnUse"><stop stop-color="#2b3039"/><stop offset=".42" stop-color="#15181d"/><stop offset="1" stop-color="#07080a"/></linearGradient></defs><path d="M4.62 2.72C3.09 1.91 1.57 3.43 2.39 4.96l8.36 16.3c.75 1.47 2.87 1.39 3.5-.13l2.69-6.51 6.51-2.69c1.52-.63 1.6-2.75.13-3.5L4.62 2.72Z" fill="url(#clyraNativeCursor)" stroke="rgba(255,255,255,.55)" stroke-width=".55" stroke-linejoin="round"/></svg>';
+        glow.style.cssText = "position:absolute;left:-13px;top:-13px;width:52px;height:52px;border-radius:999px;background:radial-gradient(circle,rgba(59,130,246,.34),rgba(59,130,246,.14) 40%,transparent 71%);filter:blur(3px);";
+        // A tailless Clyra control point is less visually intrusive than a
+        // traditional arrow and makes movement, click and type states clear
+        // without obscuring the page the agent is operating.
+        const core = document.createElement("div");
+        core.dataset.part = "core";
+        core.style.cssText = "position:absolute;left:7px;top:7px;width:12px;height:12px;border:2px solid rgba(255,255,255,.94);border-radius:999px;background:#2778ff;box-shadow:0 1px 5px rgba(15,23,42,.3),0 0 12px rgba(39,120,255,.7);transform-origin:center;";
         const caret = document.createElement("div");
         caret.dataset.part = "caret";
-        caret.style.cssText = "display:none;position:absolute;left:16px;top:6px;width:2px;height:22px;border-radius:999px;background:#1d1f24;box-shadow:0 0 0 1px rgba(255,255,255,.9),0 1px 5px rgba(52,97,177,.22);";
+        caret.style.cssText = "display:none;position:absolute;left:12px;top:1px;width:2px;height:24px;border-radius:999px;background:#2778ff;box-shadow:0 0 0 1px rgba(255,255,255,.94),0 0 9px rgba(39,120,255,.56);";
         const click = document.createElement("div");
         click.dataset.part = "click";
-        click.style.cssText = "display:none;position:absolute;left:-8px;top:-8px;width:26px;height:26px;border:1.5px solid rgba(83,145,255,.78);border-radius:999px;box-shadow:0 0 0 3px rgba(79,124,255,.11);";
+        click.style.cssText = "display:none;position:absolute;left:0;top:0;width:26px;height:26px;border:1.5px solid rgba(83,145,255,.82);border-radius:999px;box-shadow:0 0 0 3px rgba(79,124,255,.11);";
         const label = document.createElement("span");
         label.dataset.part = "label";
         label.style.cssText = "position:absolute;left:29px;top:1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid rgba(36,42,52,.12);border-radius:8px;background:rgba(255,255,255,.93);padding:5px 9px 5px 18px;color:#252a33;font:650 10.5px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:-.01em;box-shadow:0 5px 16px rgba(20,32,52,.16),inset 0 1px 0 rgba(255,255,255,.72);";
         const labelDot = document.createElement("i");
         labelDot.style.cssText = "position:absolute;left:8px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:999px;background:#4f7cff;box-shadow:0 0 0 2px rgba(79,124,255,.12);";
         label.append(labelDot);
-        root.append(glow, pointer, caret, click, label);
+        root.append(glow, core, caret, click, label);
         document.documentElement.appendChild(root);
       }
       const label = root.querySelector('[data-part="label"]');
@@ -983,22 +1048,22 @@ export class ChromiumBrowserManager {
         label.style.display = data.showLabel ? "block" : "none";
       }
       root.style.transition = data.reducedMotion ? "none" : "transform 280ms cubic-bezier(.16,1,.3,1), opacity 120ms ease";
-      root.style.transform = "translate3d(" + (data.x - 3) + "px," + (data.y - 2) + "px,0)";
+      root.style.transform = "translate3d(" + (data.x - 13) + "px," + (data.y - 13) + "px,0)";
       root.style.opacity = "1";
-      const pointer = root.querySelector('[data-part="pointer"]');
+      const core = root.querySelector('[data-part="core"]');
       const caret = root.querySelector('[data-part="caret"]');
       const click = root.querySelector('[data-part="click"]');
       if (caret) {
         caret.style.display = data.kind === "type" ? "block" : "none";
         caret.animate?.([{ opacity: 1 }, { opacity: .2 }, { opacity: 1 }], { duration: 880, iterations: data.kind === "type" ? Infinity : 1, easing: "steps(2,end)" });
       }
-      if (pointer) pointer.style.opacity = data.kind === "type" ? ".7" : "1";
+      if (core) core.style.opacity = data.kind === "type" ? ".34" : "1";
       if (click) {
         click.style.display = data.kind.includes("click") ? "block" : "none";
         if (data.kind.includes("click")) click.animate?.([{ transform: "scale(.42)", opacity: .88 }, { transform: "scale(1.52)", opacity: 0 }], { duration: 520, easing: "cubic-bezier(.16,1,.3,1)" });
       }
-      if (pointer) {
-        pointer.animate?.(
+      if (core) {
+        core.animate?.(
           data.kind.includes("click") ? [{ transform: "scale(1)" }, { transform: "scale(.82)" }, { transform: "scale(1)" }] : [{ opacity: 1 }, { opacity: 1 }],
           { duration: data.kind.includes("click") ? 190 : 1, easing: "ease-out" },
         );
@@ -1129,52 +1194,41 @@ export class ChromiumBrowserManager {
   }
 
   async syncAgentChrome() {
-    const contents = this.activeContents();
-    if (!contents || contents.isDestroyed()) return;
-    const active = ![
-      "idle",
-      "completed",
-      "failed",
-      "cancelled",
-      "waiting_for_user",
-      "paused",
-    ].includes(String(this.agent.status || "idle")) && !this.agent.manualControl;
-    const reducedMotion = Boolean(this.settings.reducedMotion);
-    await contents.executeJavaScript(`(() => {
-      const rootId = "__clyra_native_agent_border__";
-      const styleId = "__clyra_native_agent_border_style__";
-      const active = ${JSON.stringify(active)};
-      document.getElementById(rootId)?.remove();
-      document.getElementById(styleId)?.remove();
-      if (!active) return;
-      const style = document.createElement("style");
-      style.id = styleId;
-      style.textContent = ${JSON.stringify(`
-        @keyframes clyra-agent-beam-x { from { transform: translate3d(-42vw,0,0); } to { transform: translate3d(142vw,0,0); } }
-        @keyframes clyra-agent-beam-x-back { from { transform: translate3d(142vw,0,0); } to { transform: translate3d(-42vw,0,0); } }
-        @keyframes clyra-agent-beam-y { from { transform: translate3d(0,-42vh,0); } to { transform: translate3d(0,142vh,0); } }
-        @keyframes clyra-agent-beam-y-back { from { transform: translate3d(0,142vh,0); } to { transform: translate3d(0,-42vh,0); } }
-        #__clyra_native_agent_border__ .clyra-beam { position:absolute; border-radius:999px; background:linear-gradient(90deg,transparent,rgba(96,165,250,.45),#2563eb,rgba(125,211,252,.7),transparent); filter:drop-shadow(0 0 5px rgba(37,99,235,.85)); will-change:transform; }
-      `)};
-      document.documentElement.appendChild(style);
-      const root = document.createElement("div");
-      root.id = rootId;
-      root.setAttribute("aria-hidden", "true");
-      root.style.cssText = "position:fixed;inset:0;z-index:2147483646;pointer-events:none;overflow:hidden;contain:layout style paint;box-shadow:inset 0 0 0 1px rgba(59,130,246,.62),inset 0 0 18px rgba(59,130,246,.12);";
-      const specs = [
-        "left:0;top:0;width:34vw;height:2px;animation:clyra-agent-beam-x 2.35s linear infinite",
-        "right:0;top:0;width:2px;height:34vh;animation:clyra-agent-beam-y 2.35s .58s linear infinite",
-        "left:0;bottom:0;width:34vw;height:2px;animation:clyra-agent-beam-x-back 2.35s 1.16s linear infinite",
-        "left:0;top:0;width:2px;height:34vh;animation:clyra-agent-beam-y-back 2.35s 1.74s linear infinite",
-      ];
-      for (const css of specs) {
-        const beam = document.createElement("span");
-        beam.className = "clyra-beam";
-        beam.style.cssText = css + ${JSON.stringify(reducedMotion ? ";animation:none;opacity:.6" : "")};
-        root.appendChild(beam);
-      }
-      document.documentElement.appendChild(root);
-    })()`, true).catch(() => undefined);
+    const status = String(this.agent.status || "idle");
+    const running = ["planning", "observing", "executing", "verifying", "recovering"].includes(status);
+    const manualControl = Boolean(this.agent.manualControl);
+    const paused = !manualControl && (status === "paused" || status === "waiting_for_user" || Boolean(this.agent.paused));
+    const aura = running && !manualControl && !this.agent.paused;
+    const pill = aura || manualControl || paused;
+    if (aura && !this.agentChromeStartedAt) this.agentChromeStartedAt = Date.now();
+    if (!pill) this.agentChromeStartedAt = 0;
+    const label = manualControl
+      ? "You have control"
+      : paused
+        ? (status === "waiting_for_user" ? String(this.agent.message || "Waiting for you") : "Paused")
+        : String(this.agent.message || this.agent.task || "Working on your request");
+    const payload = pill
+      ? {
+          aura,
+          pill,
+          paused,
+          manualControl,
+          label: label.slice(0, 120),
+          startedAt: this.agentChromeStartedAt || Date.now(),
+          reducedMotion: Boolean(this.settings.reducedMotion),
+          token: this.agentChromeToken,
+        }
+      : null;
+    // Only the visible tab carries the agent layer; any other tab that still
+    // has one from an earlier activation is cleaned up.
+    for (const [id, tab] of this.tabs) {
+      const contents = tab?.view?.webContents;
+      if (!contents || contents.isDestroyed()) continue;
+      const data = id === this.activeTabId ? payload : null;
+      if (!data && !tab.agentChrome) continue;
+      tab.agentChrome = Boolean(data);
+      await contents.executeJavaScript(agentChromeScript(data), true).catch(() => undefined);
+    }
   }
 
   getState() {
@@ -1186,7 +1240,7 @@ export class ChromiumBrowserManager {
     return {
       url,
       title: active?.title || "New tab",
-      frameVersion: 0,
+      frameVersion: this.frameVersion,
       viewport: { width: bounds.width, height: bounds.height, scrollX: 0, scrollY: 0, pageHeight: bounds.height },
       loading: Boolean(active?.loading),
       elements: [],
@@ -1222,41 +1276,61 @@ export class ChromiumBrowserManager {
   }
 
   /**
-   * Capture the actual native Chromium surface for API consumers such as the
-   * AI browser workspace.  This deliberately captures the active WebContents
-   * rather than the host window: the browser remains observable even while
-   * its WebContentsView is temporarily hidden behind another Clyra workspace.
+   * Capture the actual native Chromium surface for API consumers such as Cowork.
+   * A hidden Chromium view does not always retain an addressable compositor
+   * frame. When a new frame is needed, place Clyra's own opaque UI view above
+   * the browser before letting Chromium paint at the normal bounds. The page
+   * is genuinely captured but can never flash over Cowork; a cached frame covers
+   * repeated reads while the browser has not changed.
    */
   async captureFrame() {
     const contents = this.activeContents();
     if (!contents || contents.isDestroyed()) {
       throw new Error("The active browser tab is unavailable for capture.");
     }
-    const tab = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
-    // Electron may indefinitely defer capturePage for a hidden WebContentsView.
-    // Briefly composite just this view, without focusing it, then restore its
-    // hidden state. This keeps the browser preview available to the UI/API
-    // while the user is in another Clyra workspace.
-    const restoreHidden = Boolean(tab && !this.surface.visible);
-    if (restoreHidden && tab) {
-      tab.view.setBounds(this.surface.bounds);
-      tab.view.setVisible(true);
-      contents.setBackgroundThrottling(false);
-      await new Promise((resolve) => setTimeout(resolve, 24));
-    }
-    try {
-      const image = await Promise.race([
-        contents.capturePage(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Browser frame capture timed out.")), 8_000)),
-      ]);
-      if (!image || image.isEmpty()) throw new Error("The active browser tab returned an empty frame.");
-      return image.toJPEG(82);
-    } finally {
-      if (restoreHidden && tab && !tab.view.webContents.isDestroyed()) {
-        tab.view.setVisible(false);
-        tab.view.webContents.setBackgroundThrottling(true);
+    if (this.lastFrame && this.lastFrameVersion === this.frameVersion) return this.lastFrame;
+    if (this.frameCapture) return this.frameCapture;
+    this.frameCapture = (async () => {
+      const tab = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
+      const needsCoveredPaint = Boolean(tab && !this.surface.visible);
+      try {
+        if (needsCoveredPaint && tab) {
+          // Keep the Clyra renderer above the native BrowserView before the
+          // latter becomes visible. Re-adding a WebContentsView preserves its
+          // contents and bounds, it only adjusts the native stacking order.
+          try {
+            this.window.contentView.removeChildView(this.uiView);
+            this.window.contentView.addChildView(this.uiView);
+          } catch {
+            // If the host is closing, the capture below returns its normal
+            // unavailable error rather than showing a transient browser view.
+          }
+          tab.view.setBounds(this.surface.bounds);
+          tab.view.setVisible(true);
+          contents.setBackgroundThrottling(false);
+          await new Promise((resolve) => setTimeout(resolve, 34));
+        }
+        const image = await Promise.race([
+          contents.capturePage(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Browser frame capture timed out.")), 4_000)),
+        ]);
+        if (!image || image.isEmpty()) throw new Error("The active browser tab returned an empty frame.");
+        this.lastFrame = image.toJPEG(82);
+        this.lastFrameVersion = this.frameVersion;
+        return this.lastFrame;
+      } catch (error) {
+        if (this.lastFrame) return this.lastFrame;
+        throw error;
+      } finally {
+        if (needsCoveredPaint && tab && !tab.view.webContents.isDestroyed()) {
+          tab.view.setVisible(false);
+          tab.view.setBounds(this.surface.bounds);
+          tab.view.webContents.setBackgroundThrottling(true);
+        }
+        this.frameCapture = null;
       }
-    }
+    })();
+    return this.frameCapture;
   }
 
   /**
@@ -1323,6 +1397,10 @@ export class ChromiumBrowserManager {
 
   emitState() {
     if (this.destroyed) return;
+    // This is consumed by Cowork's live preview. It changes only when the native
+    // browser emits real state, so the renderer never polls frames just to
+    // manufacture activity.
+    this.frameVersion += 1;
     try {
       if (this.uiView?.webContents && !this.uiView.webContents.isDestroyed()) {
         this.uiView.webContents.send("browser:state", this.getState());
@@ -1346,6 +1424,7 @@ export class ChromiumBrowserManager {
       }
       try {
         if (tab.view?.webContents && !tab.view.webContents.isDestroyed()) {
+          tab.view.webContents.endFrameSubscription?.();
           tab.view.webContents.close({ waitForBeforeUnload: false });
         }
       } catch {

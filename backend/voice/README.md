@@ -7,7 +7,7 @@ Browser mic (WebRTC)
   → POST /voice/offer (Node)         builds system prompt + history
     → POST /api/offer (Python)       Pipecat SmallWebRTCTransport SDP answer
         VAD/turn detection (Silero)
-        Fish Audio STT (/v1/asr)     -- final per utterance, rolling partials
+        Local whisper.cpp STT        -- final per utterance, rolling partials
     ← Pipecat pipeline: STT → LLM → TTS, with real barge-in/interruption
   → Configured cloud LLM or local Ollama (OpenAI-compatible) -- or Test Mode echo
   → Fish Audio TTS (streaming, wss://api.fish.audio/v1/tts/live)

@@ -1,69 +1,61 @@
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Activity, AppWindow, ChevronRight, CircleCheck, FolderSearch, HardDrive, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Activity, HardDrive, MemoryStick, RefreshCw, ShieldCheck } from "lucide-react";
+import { getElectronDesktop, type CareSnapshot } from "../../lib/electron-runtime";
 
-type CarePage = "Overview" | "Smart Scan" | "Cleanup" | "Storage" | "Duplicates" | "Applications" | "Startup" | "Performance" | "Privacy" | "System" | "Clyra AI";
+function Meter({ value, label, sublabel, icon: Icon }: { value: number; label: string; sublabel: string; icon: typeof Activity }) {
+  const safeValue = Math.max(0, Math.min(100, value));
+  return <section className="rounded-2xl border border-black/[.07] bg-white p-4 shadow-[0_8px_28px_rgba(15,23,42,.035)]">
+    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><Icon className="h-3.5 w-3.5 text-[#3977f6]" /><p className="text-[13px] font-medium text-[#303136]">{label}</p></div><p className="mt-1 truncate text-[12px] text-[#77787d]">{sublabel}</p></div><span className="shrink-0 text-[15px] font-semibold tracking-tight text-[#303136]">{safeValue}%</span></div>
+    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#ececea]"><div className="h-full rounded-full bg-[#3977f6] transition-[width] duration-300 ease-out" style={{ width: `${safeValue}%` }} /></div>
+  </section>;
+}
 
-const pages: Array<{ name: CarePage; icon: typeof Activity }> = [
-  { name: "Overview", icon: Activity }, { name: "Smart Scan", icon: Sparkles }, { name: "Cleanup", icon: Trash2 }, { name: "Storage", icon: HardDrive },
-  { name: "Duplicates", icon: FolderSearch }, { name: "Applications", icon: AppWindow }, { name: "Startup", icon: Activity }, { name: "Performance", icon: Activity },
-  { name: "Privacy", icon: ShieldCheck }, { name: "System", icon: Activity }, { name: "Clyra AI", icon: Sparkles },
-];
-
-const results = [
-  { title: "Application caches", detail: "Recreated automatically by installed apps", size: "3.8 GB", risk: "Safe" },
-  { title: "Temporary files", detail: "Old temporary extraction and diagnostic files", size: "1.4 GB", risk: "Safe" },
-  { title: "Old installers", detail: "Downloaded disk images and setup packages", size: "2.1 GB", risk: "Review" },
-  { title: "Browser history & sessions", detail: "Personal history — never selected automatically", size: "640 MB", risk: "Review" },
-];
-
-function Meter({ value, label, sublabel, color = "bg-[#3977f6]" }: { value: number; label: string; sublabel: string; color?: string }) {
-  return <div className="rounded-2xl border border-black/[.07] bg-white p-4 shadow-[0_8px_28px_rgba(15,23,42,.035)]">
-    <div className="flex items-start justify-between"><div><p className="text-[13px] font-medium text-[#303136]">{label}</p><p className="mt-1 text-[12px] text-[#8c8d93]">{sublabel}</p></div><span className="text-[15px] font-semibold tracking-tight text-[#303136]">{value}%</span></div>
-    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#ececea]"><motion.div initial={{ width: 0 }} animate={{ width: `${value}%` }} transition={{ duration: .7, ease: [0.22,1,.36,1] }} className={`h-full rounded-full ${color}`} /></div>
-  </div>;
+function formatScanTime(value?: string) {
+  if (!value) return "Not scanned yet";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Just now" : `Updated ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
 export function ClyraCareWorkspace() {
-  const [page, setPage] = useState<CarePage>("Overview");
-  const [scanning, setScanning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [complete, setComplete] = useState(false);
-  const reduceMotion = useReducedMotion();
-  useEffect(() => {
-    if (!scanning) return;
-    const timer = window.setInterval(() => setProgress((current) => {
-      const next = Math.min(100, current + 8);
-      if (next === 100) { window.clearInterval(timer); setScanning(false); setComplete(true); }
-      return next;
-    }), 240);
-    return () => window.clearInterval(timer);
-  }, [scanning]);
-  const scan = () => { setPage("Smart Scan"); setComplete(false); setProgress(0); setScanning(true); };
-  const currentDirectory = useMemo(() => progress < 35 ? "Checking safe temporary storage…" : progress < 70 ? "Reviewing installed applications…" : "Summarising results…", [progress]);
-  return <div data-care-motion={reduceMotion ? "reduced" : "full"} className="flex h-full min-h-0 bg-[#fbfbfa] font-sans text-[#303136]">
-    <aside className="flex w-[220px] shrink-0 flex-col border-r border-black/[.07] bg-[#f7f7f6] px-3 py-4">
-      <div className="mb-6 flex items-center gap-2 px-2 text-[13px] font-semibold tracking-tight"><span className="grid h-5 w-5 place-items-center rounded-md bg-[#3977f6] text-[11px] text-white">C</span> Clyra Care</div>
-      <nav className="grid gap-0.5">{pages.map(({ name, icon: Icon }) => <button key={name} onClick={() => setPage(name)} className={`flex h-8 items-center gap-2 rounded-lg px-2 text-left text-[12.5px] transition-colors ${page === name ? "bg-black/[.055] text-[#303136] font-medium" : "text-[#6f7076] hover:bg-black/[.035]"}`}><Icon className="h-3.5 w-3.5 stroke-[1.7]" />{name}</button>)}</nav>
-      <button className="mt-auto flex h-8 items-center gap-2 rounded-lg px-2 text-[12.5px] text-[#77787d] hover:bg-black/[.035]"><Activity className="h-3.5 w-3.5" />Settings</button>
+  const [snapshot, setSnapshot] = useState<CareSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const scan = useCallback(async () => {
+    const desktop = getElectronDesktop();
+    if (!desktop?.care) {
+      setError("Clyra Care reads local system status in the desktop app. No sample system data is shown in a browser.");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await desktop.care.scan();
+      if (!result.ok || !result.snapshot) throw new Error(result.error || "Clyra couldn't read local system status.");
+      setSnapshot(result.snapshot);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Clyra couldn't read local system status.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void scan(); }, [scan]);
+
+  return <div className="flex h-full min-h-0 bg-[#fbfbfa] font-sans text-[#303136]">
+    <aside className="hidden w-[220px] shrink-0 flex-col border-r border-black/[.07] bg-[#f7f7f6] px-3 py-4 sm:flex">
+      <div className="flex items-center gap-2 px-2 text-[13px] font-semibold tracking-tight"><span className="grid h-5 w-5 place-items-center rounded-md bg-[#3977f6] text-[11px] text-white">C</span>Clyra Care</div>
+      <div className="mt-7 rounded-lg bg-black/[.055] px-2 py-2 text-[12.5px] font-medium"><Activity className="mr-2 inline h-3.5 w-3.5" />Overview</div>
+      <p className="mt-4 px-2 text-[11px] leading-5 text-[#85868b]">Read-only system status. Clyra never removes files from this screen.</p>
     </aside>
     <main className="min-w-0 flex-1 overflow-auto">
-      <header className="sticky top-0 z-10 flex h-[58px] items-center justify-between border-b border-black/[.055] bg-[#fbfbfa]/90 px-8 backdrop-blur"><div><p className="text-[14px] font-semibold">{page}</p><p className="mt-0.5 text-[11px] text-[#999a9f]">Local-first system care</p></div><button onClick={scan} disabled={scanning} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#3977f6] px-3.5 text-[12.5px] font-medium text-white shadow-sm transition-transform hover:scale-[1.015] active:scale-[.98] disabled:opacity-60"><Sparkles className="h-3.5 w-3.5" />{scanning ? "Scanning…" : "Smart Scan"}</button></header>
-      <div className="mx-auto max-w-[1120px] p-8">
-        {page === "Overview" && <>
-          <div className="flex items-end justify-between"><div><p className="text-[28px] font-semibold tracking-[-.045em]">Your Mac looks healthy.</p><p className="mt-2 max-w-xl text-[13px] leading-6 text-[#77787d]">Storage is your main opportunity. Clyra only suggests changes with a measurable reason and a clear rollback path.</p></div><span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-medium text-emerald-700 sm:inline-flex">No urgent issues</span></div>
-          <div className="mt-7 grid gap-3 md:grid-cols-3"><Meter value={68} label="System drive" sublabel="326 GB of 480 GB used" /><Meter value={42} label="Memory" sublabel="6.7 GB of 16 GB in use" color="bg-[#69717e]" /><Meter value={18} label="CPU" sublabel="Normal background activity" color="bg-[#69717e]" /></div>
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_.8fr]"><section className="rounded-2xl border border-black/[.07] bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,.035)]"><div className="flex items-center justify-between"><div><p className="text-[13px] font-semibold">Reclaimable storage</p><p className="mt-1 text-[12px] text-[#85868b]">Found in the last completed scan</p></div><p className="text-[25px] font-semibold tracking-[-.04em]">7.3 GB</p></div><div className="mt-5 h-3 overflow-hidden rounded-full bg-[#f0f0ee]"><div className="h-full w-[62%] rounded-full bg-[#3977f6]" /></div><div className="mt-3 flex justify-between text-[11px] text-[#929399]"><span>154 GB free now</span><span>Estimated after cleanup: 161.3 GB</span></div></section><section className="rounded-2xl border border-black/[.07] bg-white p-5"><p className="text-[13px] font-semibold">Care status</p><div className="mt-4 space-y-3 text-[12px]">{[["Last scan", "Never"],["Last cleanup", "Never"],["Startup impact", "Low"]].map(([k,v]) => <div key={k} className="flex justify-between"><span className="text-[#87888d]">{k}</span><span className="font-medium">{v}</span></div>)}</div></section></div>
-        </>}
-        {page === "Smart Scan" && <section className="max-w-2xl"><p className="text-[28px] font-semibold tracking-[-.045em]">Smart Scan</p><p className="mt-2 text-[13px] leading-6 text-[#77787d]">Clyra checks safe cleanup, storage, applications and system health locally. Nothing is removed by a scan.</p>{scanning ? <div className="mt-8 rounded-2xl border border-black/[.07] bg-white p-6"><div className="flex items-center justify-between"><p className="text-[14px] font-medium">Scanning {Math.round(progress * 1834)} files…</p><p className="text-[13px] text-[#3977f6]">{progress}%</p></div><div className="mt-5 h-1.5 overflow-hidden rounded-full bg-[#ededeb]"><motion.div animate={{ width: `${progress}%` }} className="h-full rounded-full bg-[#3977f6]" /></div><p className="mt-4 text-[12px] text-[#898a8f]">{currentDirectory}</p><button onClick={() => setScanning(false)} className="mt-5 text-[12px] font-medium text-[#5d6573] hover:text-[#303136]">Pause scan</button></div> : complete ? <ScanResults onCleanup={() => setPage("Cleanup")} /> : <button onClick={scan} className="mt-7 rounded-lg bg-[#3977f6] px-4 py-2.5 text-[13px] font-medium text-white">Run Smart Scan</button>}</section>}
-        {(page === "Cleanup" || (page === "Smart Scan" && complete)) && <ScanResults onCleanup={() => setPage("Cleanup")} />}
-        {page !== "Overview" && page !== "Smart Scan" && page !== "Cleanup" && <section className="rounded-2xl border border-dashed border-black/[.13] bg-white/60 px-6 py-14 text-center"><FolderSearch className="mx-auto h-5 w-5 text-[#3977f6]" /><p className="mt-3 text-[14px] font-medium">{page} is ready for a local scan</p><p className="mt-1 text-[12px] text-[#85868b]">Open Smart Scan to collect safe, paginated system results.</p><button onClick={scan} className="mt-5 text-[12px] font-medium text-[#3977f6]">Run Smart Scan <ChevronRight className="inline h-3.5 w-3.5" /></button></section>}
+      <header className="sticky top-0 z-10 flex h-[58px] items-center justify-between border-b border-black/[.055] bg-[#fbfbfa]/95 px-5 backdrop-blur sm:px-8"><div><p className="text-[14px] font-semibold">Clyra Care</p><p className="mt-0.5 text-[11px] text-[#999a9f]">Local, read-only system status</p></div><button type="button" onClick={() => void scan()} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#3977f6] px-3.5 text-[12.5px] font-medium text-white shadow-sm transition-colors hover:bg-[#2868e8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3977f6] disabled:cursor-wait disabled:opacity-60"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />{loading ? "Refreshing…" : "Refresh"}</button></header>
+      <div className="mx-auto max-w-[1120px] p-5 sm:p-8">
+        <div className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-[28px] font-semibold tracking-[-.045em]">System status, without the guesswork.</h1><p className="mt-2 max-w-2xl text-[13px] leading-6 text-[#77787d]">Clyra reads drive capacity, memory, CPU load and the operating-system cache folder on this Mac. It does not inspect personal files or perform cleanup.</p></div><span className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-[11px] font-medium text-blue-700"><ShieldCheck className="h-3.5 w-3.5" />Read-only</span></div>
+        {error ? <section role="alert" className="mt-7 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-[14px] font-semibold text-amber-950">System status isn’t available here</p><p className="mt-1 text-[12px] leading-5 text-amber-800">{error}</p><button type="button" onClick={() => void scan()} className="mt-4 text-[12px] font-semibold text-[#2868e8] hover:text-[#1557d6]">Try again</button></section> : null}
+        {snapshot ? <><p className="mt-6 text-[12px] text-[#85868b]">{formatScanTime(snapshot.scannedAt)}</p><div className="mt-3 grid gap-3 md:grid-cols-3"><Meter value={snapshot.disk?.usedPercent ?? 0} label="System drive" sublabel={snapshot.disk ? `${snapshot.disk.usedLabel} of ${snapshot.disk.totalLabel} used` : "Drive capacity unavailable"} icon={HardDrive} /><Meter value={snapshot.memory.usedPercent} label="Memory" sublabel={`${snapshot.memory.usedLabel} of ${snapshot.memory.totalLabel} in use`} icon={MemoryStick} /><Meter value={snapshot.cpu.loadPercent} label="CPU load" sublabel={`${snapshot.cpu.cores} logical cores · 1 minute average`} icon={Activity} /></div><section className="mt-6 max-w-2xl rounded-2xl border border-black/[.07] bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,.035)]"><p className="text-[13px] font-semibold">Operating-system cache folder</p><p className="mt-1 text-[12px] leading-5 text-[#77787d]">{snapshot.caches.timedOut ? "Cache size wasn’t available within two seconds." : `${snapshot.caches.label} currently allocated to operating-system caches.`}</p><p className="mt-4 border-t border-black/[.055] pt-4 text-[11px] leading-5 text-[#85868b]">Cleanup and personal-file analysis are intentionally unavailable until Clyra can provide item-level review, a reversible action, and a clear permission step.</p></section></> : null}
       </div>
     </main>
   </div>;
-}
-
-function ScanResults({ onCleanup }: { onCleanup: () => void }) {
-  const [approved, setApproved] = useState(false);
-  return <section className="mt-7 max-w-3xl"><div className="flex items-end justify-between"><div><p className="text-[22px] font-semibold tracking-[-.035em]">7.3 GB safely reclaimable</p><p className="mt-1 text-[12px] text-[#85868b]">Recommended items are recreatable. Review items stay off by default.</p></div><button onClick={() => setApproved(true)} className="rounded-lg bg-[#3977f6] px-3.5 py-2 text-[12px] font-medium text-white">Preview cleanup</button></div><div className="mt-5 overflow-hidden rounded-2xl border border-black/[.07] bg-white">{results.map((item, i) => <motion.div key={item.title} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * .05 }} className="flex items-center gap-3 border-b border-black/[.055] px-4 py-3.5 last:border-0"><span className={`grid h-7 w-7 place-items-center rounded-lg ${item.risk === "Safe" ? "bg-blue-50 text-[#3977f6]" : "bg-amber-50 text-amber-600"}`}><HardDrive className="h-3.5 w-3.5" /></span><div className="min-w-0 flex-1"><p className="text-[12.5px] font-medium">{item.title}</p><p className="mt-0.5 truncate text-[11px] text-[#8c8d92]">{item.detail}</p></div><div className="text-right"><p className="text-[12.5px] font-medium">{item.size}</p><p className="mt-0.5 text-[10.5px] text-[#8c8d92]">{item.risk}</p></div></motion.div>)}</div><AnimatePresence>{approved && <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-[12px] text-[#4b5f87]"><CircleCheck className="h-4 w-4 shrink-0 text-[#3977f6]" />Preview created. Clyra will move selected user files to Trash when feasible; review items require an explicit selection.<button onClick={onCleanup} className="ml-auto shrink-0 font-medium text-[#3977f6]">Review</button></motion.div>}</AnimatePresence></section>;
 }

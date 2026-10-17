@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 export type WeatherDay = {
@@ -10,6 +10,13 @@ export type WeatherDay = {
   condition: string;
 };
 
+export type WeatherHour = {
+  time: string;
+  tempC: number;
+  precipProb: number;
+  weatherCode: number;
+};
+
 export type WeatherPayload = {
   location: string;
   region?: string;
@@ -17,15 +24,21 @@ export type WeatherPayload = {
   timezone?: string;
   observedAt?: string;
   matchedFrom?: string;
+  isCurrentLocation?: boolean;
   current: {
     tempC: number;
+    feelsLikeC: number;
     weatherCode: number;
     isDay: boolean;
     highC: number;
     lowC: number;
     precipProb: number;
+    humidity: number;
+    windKph: number;
+    windDirection: number;
     condition: string;
   };
+  hourly: WeatherHour[];
   daily: WeatherDay[];
 };
 
@@ -91,6 +104,100 @@ function formatDayLabel(isoDate: string, index: number) {
   return d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
+function formatHourLabel(isoTime: string) {
+  const d = new Date(isoTime);
+  if (Number.isNaN(d.getTime())) return isoTime;
+  return d.toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
+function StatChip({
+  icon,
+  value,
+  label,
+}: {
+  icon: ReactNode;
+  value: string;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1.5">
+      <span className="text-slate-400">{icon}</span>
+      <span className="text-[12.5px] font-semibold text-slate-700">{value}</span>
+      <span className="text-[11px] font-medium text-slate-400">{label}</span>
+    </div>
+  );
+}
+
+function DropletIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+      <path d="M12 2.5c2.8 3.7 6.5 8.4 6.5 12.3a6.5 6.5 0 1 1-13 0c0-3.9 3.7-8.6 6.5-12.3z" />
+    </svg>
+  );
+}
+
+function WindIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M3 8h11a2.6 2.6 0 1 0-2.6-2.6M3 12.5h15a2.6 2.6 0 1 1-2.6 2.6M3 16.8h8" />
+    </svg>
+  );
+}
+
+function ThermometerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+      <path d="M12 2.8a2.6 2.6 0 0 0-2.6 2.6v8.3a4.3 4.3 0 1 0 5.2 0V5.4A2.6 2.6 0 0 0 12 2.8zm0 1.6a1 1 0 0 1 1 1v9l.4.26a2.7 2.7 0 1 1-2.8 0l.4-.26v-9a1 1 0 0 1 1-1z" />
+    </svg>
+  );
+}
+
+function HourlyChart({ hourly, unit }: { hourly: WeatherHour[]; unit: "C" | "F" }) {
+  const points = hourly.slice(0, 12);
+  if (points.length < 2) return null;
+
+  const convert = (c: number) => (unit === "C" ? c : (c * 9) / 5 + 32);
+  const temps = points.map((p) => convert(p.tempC));
+  const min = Math.min(...temps);
+  const max = Math.max(...temps);
+  const span = Math.max(max - min, 1);
+
+  const width = 100;
+  const height = 34;
+  const stepX = width / (points.length - 1);
+  const coords = temps.map((t, i) => {
+    const x = i * stepX;
+    const y = height - ((t - min) / span) * (height - 8) - 4;
+    return { x, y };
+  });
+  const linePath = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L${coords[coords.length - 1]!.x.toFixed(1)},${height} L0,${height} Z`;
+
+  return (
+    <div className="mt-4 rounded-2xl bg-slate-50/70 px-3 pb-2 pt-3">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-14 w-full overflow-visible" preserveAspectRatio="none" aria-hidden>
+        <path d={areaPath} fill="url(#clyra-weather-hourly-gradient)" opacity={0.5} />
+        <path d={linePath} fill="none" stroke="#38bdf8" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <defs>
+          <linearGradient id="clyra-weather-hourly-gradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#7dd3fc" stopOpacity={0.55} />
+            <stop offset="100%" stopColor="#7dd3fc" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="mt-1.5 flex justify-between">
+        {points.map((p, i) => (
+          <div key={p.time + i} className="flex flex-1 flex-col items-center gap-0.5">
+            <span className="text-[10.5px] font-medium text-slate-400">
+              {i % 2 === 0 ? formatHourLabel(p.time) : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function WeatherDiagramCard({
   weather,
   className,
@@ -108,9 +215,11 @@ export function WeatherDiagramCard({
     return d.toLocaleDateString(undefined, { weekday: "long" });
   }, [weather.observedAt]);
 
-  const place = [weather.location, weather.region, weather.country]
-    .filter(Boolean)
-    .join(", ");
+  const place = weather.isCurrentLocation
+    ? weather.location
+      ? `Current location · ${weather.location}`
+      : "Current location"
+    : [weather.location, weather.region, weather.country].filter(Boolean).join(", ");
 
   const days = weather.daily?.length
     ? weather.daily
@@ -136,7 +245,7 @@ export function WeatherDiagramCard({
       <p className="text-[13px] font-medium tracking-[-0.01em] text-slate-500">
         {dayLabel} · {place}
       </p>
-      {weather.matchedFrom ? (
+      {weather.matchedFrom && !weather.isCurrentLocation ? (
         <p className="mt-1 text-[11.5px] font-medium text-slate-400">
           Matched from “{weather.matchedFrom}”
         </p>
@@ -186,14 +295,22 @@ export function WeatherDiagramCard({
         </div>
       </div>
 
+      <div className="mt-3.5 flex flex-wrap gap-2">
+        <StatChip icon={<ThermometerIcon />} value={`${convert(weather.current.feelsLikeC)}°`} label="Feels like" />
+        <StatChip icon={<DropletIcon />} value={`${Math.round(weather.current.humidity)}%`} label="Humidity" />
+        <StatChip icon={<WindIcon />} value={`${Math.round(weather.current.windKph)} km/h`} label="Wind" />
+      </div>
+
+      <HourlyChart hourly={weather.hourly} unit={unit} />
+
       <div className="mt-5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:thin]">
         <div className="flex min-w-max gap-3 px-0.5">
           {days.map((day, index) => (
             <div
               key={day.date}
-              className="flex w-[58px] flex-col items-center gap-1.5 rounded-2xl px-1 py-1 text-center"
+              className="flex w-[64px] flex-col items-center gap-1.5 rounded-2xl px-1 py-1 text-center"
             >
-              <span className="text-[11px] font-medium text-slate-500">
+              <span className="whitespace-nowrap text-[11px] font-medium text-slate-500">
                 {formatDayLabel(day.date, index)}
               </span>
               {weatherIcon(day.weatherCode, true, "sm")}

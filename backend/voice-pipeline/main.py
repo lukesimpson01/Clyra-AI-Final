@@ -1,4 +1,4 @@
-"""Clyra voice worker: Pipecat + SmallWebRTCTransport + Fish Audio + DeepSeek.
+"""Clyra voice worker: Pipecat + local whisper.cpp + DeepSeek.
 
 Started by `server.ts`'s `ensureVoicePipelineWorker()` (uvicorn main:app on
 127.0.0.1:8787, unreachable from outside localhost). Node's
@@ -15,6 +15,7 @@ app-specific fields travel inside `requestData` rather than at the top level.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 from aiortc.sdp import candidate_from_sdp
 from fastapi import FastAPI
@@ -24,10 +25,20 @@ from pydantic import BaseModel
 from config import load_config
 from echo_llm import router as echo_router
 from bot import run_bot
+from whisper_cpp_stt import shutdown_warm_server
 
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 
-app = FastAPI(title="Clyra Voice Pipeline", version="3.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    # Stops the warm whisper-server subprocess (see whisper_cpp_stt.py) so it
+    # doesn't outlive this worker.
+    await shutdown_warm_server()
+
+
+app = FastAPI(title="Clyra Voice Pipeline", version="3.0.0", lifespan=lifespan)
 app.include_router(echo_router)
 
 config = load_config()
@@ -58,11 +69,11 @@ def health() -> dict:
         "status": "ok",
         "architecture": {
             "transport": "pipecat-smallwebrtc",
-            "stt": "fish-audio",
+            "stt": "local-whisper.cpp",
             "tts": "fish-audio",
             "llm": "deepseek (or in-process echo route in Test Mode)",
         },
-        "fish_configured": bool(config.fish_api_key),
+        "tts_configured": bool(config.fish_api_key),
         "llm_configured": bool(config.llm_api_key),
         "sample_rate": config.sample_rate,
     }

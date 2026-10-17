@@ -1,0 +1,9 @@
+@keyframes clyraCursorClick { from { opacity:.5; transform:translate(-50%,-50%) scale(.5); } to { opacity:0; transform:translate(-50%,-50%) scale(2.4); } }
+@keyframes clyraActionResolve { from { opacity:1; } to { opacity:.64; } }
+@keyframes clyraAgentChipIn { from { opacity:0; transform:translateY(4px) scale(.9); } to { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes clyraControlOrbit { 0% { --clyra-control-angle:0deg; opacity:.5; } 50% { opacity:.88; } 100% { --clyra-control-angle:360deg; opacity:.5; } }
+@keyframes clyraPixelDissolve { from { opacity:.14; transform:translate3d(0,0,0); } to { opacity:.38; transform:translate3d(1px,-1px,0); } }
+@keyframes clyraControlBreathe { 0%,100% { opacity:.42; } 50% { opacity:.82; } }
+@keyframes clyraPanelIn { from { opacity:0; transform:translateX(12px); } to { opacity:1; transform:translateX(0); } }
+@keyframes clyraListIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .cowork *, .cowork *::before, .cowork *::after { scroll-behavior:auto!important; animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; } }

@@ -1,0 +1,14 @@
+{
+  "id": "claude",
+  "name": "Claude (Anthropic)",
+  "category": "AI & LLM",
+  "description": "Anthropic's AI assistant. Warm terracotta accent, clean editorial layout.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

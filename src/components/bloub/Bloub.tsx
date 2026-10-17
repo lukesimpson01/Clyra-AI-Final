@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useContext,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -28,6 +29,7 @@ import {
   type Look,
 } from "./engine";
 import { clamp, easings, lerp } from "./engine/math";
+import { BloubPauseContext } from "./BloubPauseContext";
 
 export type {
   BloubState,
@@ -465,6 +467,20 @@ export const Bloub = forwardRef<BloubHandle, BloubProps>(function Bloub(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const bloubPaused = useContext(BloubPauseContext);
+  useEffect(() => {
+    if (bloubPaused) {
+      runningRef.current = false;
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+    if (runningRef.current) return;
+    runningRef.current = true;
+    lastRef.current = 0;
+    rafRef.current = requestAnimationFrame(stepRef.current!);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [bloubPaused]);
 
   const ink = colorState;
   const vb = DEMI_VIEWBOX;

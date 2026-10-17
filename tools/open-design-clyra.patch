@@ -1,0 +1,1494 @@
+diff --git a/apps/daemon/src/server.ts b/apps/daemon/src/server.ts
+index a67ef5a..a687ab8 100644
+--- a/apps/daemon/src/server.ts
++++ b/apps/daemon/src/server.ts
+@@ -97,6 +97,7 @@ import {
+   registerStaticSpaFallback,
+   resolveStaticSpaFallbackPath,
+ } from './static-spa.js';
++import { installClyraBootstrap } from './clyra-bootstrap.js';
+ export {
+   isStaticSpaFallbackRequest,
+   resolveStaticSpaFallbackPath,
+@@ -3737,6 +3738,9 @@ export async function startServer({
+   });
+ 
+   if (fs.existsSync(staticDir)) {
++    // Clyra Design-tab bootstrap: injects the preconfigured provider and
++    // resolved-onboarding flags into the SPA shell before static serving.
++    installClyraBootstrap(app, staticDir);
+     app.use(express.static(staticDir));
+   }
+ 
+@@ -12373,10 +12377,15 @@ export async function startServer({
+       imageReferences: promptImagePaths.map((p) => `@${p}`).join(' '),
+       strategyInputStage: strategyTaskAtStart?.inputStage ?? null,
+         });
+-    const {
+-      composedPrompt: composed,
+-      clientInstructionPrompt,
+-    } = composedResult;
++    const composedBase = composedResult.composedPrompt;
++    // DeepSeek's reasoning models occasionally end a turn with reasoning
++    // only and no visible text, which the product reports as an empty run
++    // ("Unable to generate content"). Pin a reply contract so every turn
++    // ends with real assistant text.
++    const composed = def.id === 'byok-opencode' && !composedBase.includes('Clyra reply contract')
++      ? `${composedBase}\n\nClyra reply contract: always finish your turn with a short plain-text reply to the user, even when you only performed tool work. Never end a turn with no visible text.`
++      : composedBase;
++    const { clientInstructionPrompt } = composedResult;
+     if (strategyTaskAtStart?.inputStage === 'request') {
+       assertOdNextSemanticRequestFactProducerCoverage('request', {
+         prior_transcript: typeof priorTranscript === 'string' ? priorTranscript : '',
+diff --git a/apps/web/src/App.tsx b/apps/web/src/App.tsx
+index 41c4519..b6d1eb0 100644
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -64,6 +64,9 @@ import {
+   type ProjectRenameFenceToken,
+   type ProjectNameAuthorityResolution,
+ } from './components/ProjectView';
++import { ClyraSendToCodeButton } from './components/ClyraSendToCodeButton';
++import { ClyraDeployButton } from './components/ClyraDeployButton';
++import { isClyraEmbed } from './clyra-embed';
+ import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
+ import { projectsForWorkspaceChrome } from './runtime/workspace-chrome-projects';
+ import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
+@@ -1029,6 +1032,13 @@ function AppInner() {
+   configRef.current = config;
+   const latestPersistedConfigRef = useRef(config);
+   latestPersistedConfigRef.current = config;
++  // Inside Clyra's Design tab the embedded product carries the host's name,
++  // not its own brand.
++  useEffect(() => {
++    if (isClyraEmbed() && typeof document !== 'undefined') {
++      document.title = 'Clyra Design';
++    }
++  }, []);
+   const settingsDraftConfigRef = useRef<AppConfig | null>(null);
+   const completionFeedbackGestureConsumedRef = useRef(false);
+   useEffect(() => {
+@@ -5591,6 +5601,11 @@ function AppInner() {
+           }
+           onCreationHandoffSettled={handleCreationHandoffSettled}
+         />
++        <ClyraSendToCodeButton
++          projectId={activeProject.id}
++          projectName={activeProject.name ?? activeAuthoritativeProjectName}
++        />
++        <ClyraDeployButton projectId={activeProject.id} />
+         </div>
+       );
+     }
+diff --git a/apps/web/src/components/EntryNavRail.tsx b/apps/web/src/components/EntryNavRail.tsx
+index 2edb15a..7170e34 100644
+--- a/apps/web/src/components/EntryNavRail.tsx
++++ b/apps/web/src/components/EntryNavRail.tsx
+@@ -1,4 +1,5 @@
+ import { CodingPlanUsage } from './CodingPlanUsage';
++import { isClyraEmbed } from '../clyra-embed';
+ import planCardStyles from './PersonalPlanCard.module.css';
+ // Team-edition entry navigation rail (Lovart/Manus-style labeled column).
+ //
+@@ -2785,7 +2786,7 @@ export function EntryNavRail({
+                 >
+                   <Icon name="terminal" size={14} />
+                 </span>
+-                <span className="entry-nav-rail__account-name">{t('entry.localAccountName')}</span>
++                <span className="entry-nav-rail__account-name">{isClyraEmbed() ? 'Clyra Design' : t('entry.localAccountName')}</span>
+               </button>
+               <button
+                 type="button"
+diff --git a/apps/web/src/components/EntryShell.tsx b/apps/web/src/components/EntryShell.tsx
+index 19c12e6..5f9795f 100644
+--- a/apps/web/src/components/EntryShell.tsx
++++ b/apps/web/src/components/EntryShell.tsx
+@@ -129,6 +129,7 @@ import { HomeView, seedHomeComposerPrompt } from './HomeView';
+ import { entryStrategyRoutingFields } from './entry-strategy-routing';
+ import { EntryBlankState } from './EntryBlankState';
+ import { RecentProjectsStrip, type ProjectCollectionScope } from './RecentProjectsStrip';
++import { ClyraDesignRecents } from './ClyraDesignRecents';
+ import {
+   createPluginAuthoringHandoff,
+   createPluginUseHandoff,
+@@ -139,6 +140,7 @@ import {
+ import type { OnboardingEntry } from '../onboarding/onboarding-entry';
+ import type { PluginUseAction } from './plugins-home/useActions';
+ import { Icon } from './Icon';
++import { isClyraEmbed } from '../clyra-embed';
+ import { Button } from '@open-design/components';
+ import {
+   defaultAgentModelId,
+@@ -728,7 +730,7 @@ export function EntryShell({
+     accountFooterNotice = <RailAccountSyncTip />;
+   } else if (accountFooterState === 'recovering') {
+     accountFooterNotice = <RailAccountRecoveryTip />;
+-  } else if (accountFooterState === 'sign-in') {
++  } else if (accountFooterState === 'sign-in' && !isClyraEmbed()) {
+     accountFooterNotice = <CloudSignInTip />;
+   }
+   const workspaceContextRef = useRef(workspaceContext);
+@@ -1896,6 +1898,13 @@ export function EntryShell({
+                 promptHandoff={homePromptHandoff}
+                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}
+               />
++              {isClyraEmbed() && !projectsLoading && projects.length > 0 ? (
++                <ClyraDesignRecents
++                  projects={projects}
++                  onOpen={(id) => void onOpenProject(id, undefined)}
++                  onViewAll={() => changeView('projects')}
++                />
++              ) : null}
+             </div>
+             <div data-testid="entry-view-projects" data-active={view === 'projects' ? 'true' : 'false'} {...inactiveViewProps(view === 'projects')}>
+               {projectsLoading || skillsLoading || designSystemsLoading ? (
+diff --git a/apps/web/src/components/FileViewer.tsx b/apps/web/src/components/FileViewer.tsx
+index 61a630c..2f423c7 100644
+--- a/apps/web/src/components/FileViewer.tsx
++++ b/apps/web/src/components/FileViewer.tsx
+@@ -243,6 +243,8 @@ import { Icon } from './Icon';
+ import { RemixIcon } from './RemixIcon';
+ import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
+ import { HandoffButton } from './HandoffButton';
++import { ClyraSendToCodeButton } from './ClyraSendToCodeButton';
++import { isClyraEmbed } from '../clyra-embed';
+ import { SocialShareGrid } from './SocialShareGrid';
+ import { Toast } from './Toast';
+ import {
+@@ -7162,6 +7164,13 @@ function ReactComponentViewer({
+                 ) : null}
+               </div>
+               {viewerOnly ? null : (
++                isClyraEmbed() ? (
++                  <ClyraSendToCodeButton
++                    variant="inline"
++                    projectId={projectId}
++                    projectName={projectName}
++                  />
++                ) : (
+                 <HandoffButton
+                   projectId={projectId}
+                   projectKind={projectKind}
+@@ -7173,6 +7182,7 @@ function ReactComponentViewer({
+                   metricsConsent={metricsConsent}
+                   installationId={installationId}
+                 />
++                )
+               )}
+             </>
+           ) : null}
+@@ -17388,6 +17398,13 @@ function HtmlViewer({
+                 ) : null}
+               </div>
+               {viewerOnly ? null : (
++                isClyraEmbed() ? (
++                  <ClyraSendToCodeButton
++                    variant="inline"
++                    projectId={projectId}
++                    projectName={projectName}
++                  />
++                ) : (
+                 <HandoffButton
+                   projectId={projectId}
+                   projectKind={projectKind}
+@@ -17399,6 +17416,7 @@ function HtmlViewer({
+                   metricsConsent={metricsConsent}
+                   installationId={installationId}
+                 />
++                )
+               )}
+             </div>
+           ) : null}
+diff --git a/apps/web/src/components/chat/ExecutionShell.tsx b/apps/web/src/components/chat/ExecutionShell.tsx
+index 9b9762f..9dc17c9 100644
+--- a/apps/web/src/components/chat/ExecutionShell.tsx
++++ b/apps/web/src/components/chat/ExecutionShell.tsx
+@@ -17,6 +17,7 @@
+  */
+ import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+ import { useT } from '../../i18n';
++import { isClyraEmbed } from '../../clyra-embed';
+ import { Icon } from '../Icon';
+ import type { ExecutionShell as ShellData, ImageRow as ImageRowData, ShellItem, ThinkingTokens, TodoSegment } from '../../runtime/chat/contract';
+ import { isExpandable, isStruck } from '../../runtime/chat/contract';
+@@ -261,7 +262,16 @@ export function ExecutionShell({
+         <>
+           {/* 不给标签:紧跟着的就是「进行中」那行字,读屏念一遍就够 */}
+           <Orb state="connecting" box={24} className={styles.orb} />
+-          <span className={`${styles.shimmer} ${styles.head}`}>{t('chat.record.running')}</span>
++          {isClyraEmbed() ? (
++            <span className={`${styles.shimmer} ${styles.head}`}>Thinking</span>
++          ) : null}
++          {isClyraEmbed() ? (
++            <span className={styles.thinkDots} aria-hidden="true">
++              <i /><i /><i />
++            </span>
++          ) : (
++            <span className={`${styles.shimmer} ${styles.head}`}>{t('chat.record.running')}</span>
++          )}
+         </>
+       );
+     }
+diff --git a/apps/web/src/components/chat/primitives/ToolRow.tsx b/apps/web/src/components/chat/primitives/ToolRow.tsx
+index 6766348..43f3f47 100644
+--- a/apps/web/src/components/chat/primitives/ToolRow.tsx
++++ b/apps/web/src/components/chat/primitives/ToolRow.tsx
+@@ -172,7 +172,7 @@ export function ToolRow({
+       ? <span className={styles.why}>{t('chat.record.failed')}</span>
+       : null;
+ 
+-  const rowClass = `${styles.tool}${row.failed ? ` ${styles.fail}` : ''}`;
++  const rowClass = `${styles.tool}${row.failed ? ` ${styles.fail}` : ''}${row.pending ? ` ${styles.pending}` : ''}`;
+ 
+   /* 搜索:显示搜了什么、命中几处。命中数取代耗时 —— 用户关心的是找到没有,不是快不快 */
+   if (row.tool === 'search' && row.pattern && !row.failed) {
+@@ -211,7 +211,7 @@ export function ToolRow({
+       <div className={rowClass}>
+         {icon}
+         <span className={styles.name}>
+-          {verb} {fileName()}
++          <span className={styles.verb}>{verb} </span>{fileName()}
+         </span>
+         {row.delta
+           ? (
+diff --git a/apps/web/src/components/chat/primitives/record.module.css b/apps/web/src/components/chat/primitives/record.module.css
+index 76d276a..d24d174 100644
+--- a/apps/web/src/components/chat/primitives/record.module.css
++++ b/apps/web/src/components/chat/primitives/record.module.css
+@@ -697,6 +697,81 @@
+ .delta i { font-style: normal; }
+ .delta i + i { margin-inline-start: 5px; }
+ 
++/* Clyra embed: the edit delta reads green/red so the change direction is
++   obvious at a glance (+green −red), matching the host's action language. */
++.delta i:first-child {
++  color: #268A50;
++  font-weight: 600;
++}
++.delta i + i {
++  color: #C24949;
++  font-weight: 600;
++}
++
++/* Clyra embed: the action verb (Editing / Reading / Ran) is grey, the file
++   name is Clyra blue, and the row that is still working shimmers. */
++.tool .verb {
++  color: #96989D;
++  font-weight: 500;
++}
++.tool .file {
++  color: #3977F6;
++}
++.tool .file code {
++  color: #3977F6;
++  text-decoration-color: rgba(57, 119, 246, 0.4);
++}
++.tool.pending {
++  position: relative;
++  overflow: hidden;
++  background: rgba(57, 119, 246, 0.055);
++  border-color: rgba(57, 119, 246, 0.22);
++  border-radius: 9px;
++}
++.pending {}
++.thinkDots {
++  display: inline-flex;
++  align-items: center;
++  gap: 3px;
++  margin-inline-start: 6px;
++}
++.thinkDots i {
++  width: 4px;
++  height: 4px;
++  border-radius: 999px;
++  background: #3977F6;
++  animation: clyra-think-dot 1.2s ease-in-out infinite;
++}
++.thinkDots i:nth-child(2) { animation-delay: 0.15s; }
++.thinkDots i:nth-child(3) { animation-delay: 0.3s; }
++@keyframes clyra-think-dot {
++  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
++  30% { opacity: 1; transform: translateY(-3px); }
++}
++.tool.pending::after {
++  content: "";
++  position: absolute;
++  inset: 0;
++  background: linear-gradient(
++    100deg,
++    transparent 20%,
++    rgba(57, 119, 246, 0.12) 45%,
++    rgba(255, 255, 255, 0.35) 50%,
++    rgba(57, 119, 246, 0.12) 55%,
++    transparent 80%
++  );
++  background-size: 240% 100%;
++  animation: clyra-row-shimmer 1.6s ease-in-out infinite;
++  pointer-events: none;
++}
++@keyframes clyra-row-shimmer {
++  0% { background-position: 120% 0; }
++  100% { background-position: -120% 0; }
++}
++@media (prefers-reduced-motion: reduce) {
++  .tool.pending::after { animation: none; }
++}
++
+ .tool.fail {
+   border-color: var(--chat-red-border);
+   background: var(--chat-red-bg);
+diff --git a/apps/web/src/state/config.ts b/apps/web/src/state/config.ts
+index b7365c5..d06502e 100644
+--- a/apps/web/src/state/config.ts
++++ b/apps/web/src/state/config.ts
+@@ -678,16 +678,42 @@ function migrateRetiredKnownProviderModel(
+   return true;
+ }
+ 
++/**
++ * Clyra embeds OpenDesign as its Design tab. The daemon injects a bootstrap
++ * payload into the served shell (`window.__CLYRA_DESIGN_BOOTSTRAP__`) that
++ * preconfigures the provider from the environment and marks onboarding and
++ * the privacy disclosure as resolved, so the embedded product opens straight
++ * onto its workspace instead of the sign-in / setup screens. The merge here
++ * is idempotent and only wins while the bootstrap is present.
++ */
++export function applyClyraBootstrap(config: AppConfig): AppConfig {
++  const bootstrap = (
++    typeof window !== 'undefined'
++      ? (window as unknown as { __CLYRA_DESIGN_BOOTSTRAP__?: Partial<AppConfig> })
++      : {}
++  ).__CLYRA_DESIGN_BOOTSTRAP__;
++  if (!bootstrap || typeof bootstrap !== 'object') return config;
++  const { apiProtocolConfigs, ...rest } = bootstrap;
++  return {
++    ...config,
++    ...rest,
++    apiProtocolConfigs: {
++      ...(config.apiProtocolConfigs ?? {}),
++      ...(apiProtocolConfigs ?? {}),
++    },
++  };
++}
++
+ export function loadConfig(): AppConfig {
+   try {
+     const raw = localStorage.getItem(STORAGE_KEY);
+     if (!raw) {
+-      return {
++      return applyClyraBootstrap({
+         ...DEFAULT_CONFIG,
+         pet: normalizePet(DEFAULT_PET),
+         notifications: normalizeNotifications(DEFAULT_NOTIFICATIONS),
+         orbit: normalizeOrbit(DEFAULT_ORBIT),
+-      };
++      });
+     }
+     const parsed = JSON.parse(raw) as Partial<AppConfig>;
+     // Strip daemon-owned privacy fields if a stale localStorage payload
+@@ -815,14 +841,14 @@ export function loadConfig(): AppConfig {
+       }
+     }
+ 
+-    return merged;
++    return applyClyraBootstrap(merged);
+   } catch {
+-    return {
++    return applyClyraBootstrap({
+       ...DEFAULT_CONFIG,
+       pet: normalizePet(DEFAULT_PET),
+       notifications: normalizeNotifications(DEFAULT_NOTIFICATIONS),
+       orbit: normalizeOrbit(DEFAULT_ORBIT),
+-    };
++    });
+   }
+ }
+ 
+diff --git a/apps/web/src/styles/chat.css b/apps/web/src/styles/chat.css
+index 0e3617c..cd82f5a 100644
+--- a/apps/web/src/styles/chat.css
++++ b/apps/web/src/styles/chat.css
+@@ -516,6 +516,9 @@
+ }
+ 
+ /* -------- Messages -------------------------------------------------- */
++/* Clyra embed restyle: the message stream inherits the host product's
++   bubble language (subtle rounded surface, slate border, the same appear
++   motion as the Clyra chat) instead of the stock dark bubbles. */
+ .msg {
+   padding: 0;
+   background: transparent;
+@@ -524,11 +527,11 @@
+   word-wrap: break-word;
+   min-width: 0;
+   max-width: 100%;
+-  animation: msg-enter 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
++  animation: msg-enter 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+ }
+ @keyframes msg-enter {
+-  from { opacity: 0; transform: translateY(6px); }
+-  to { opacity: 1; transform: translateY(0); }
++  from { opacity: 0; transform: translateY(10px) scale(0.985); }
++  to { opacity: 1; transform: translateY(0) scale(1); }
+ }
+ @media (prefers-reduced-motion: reduce) {
+   .msg { animation: none; }
+@@ -602,14 +605,9 @@
+   --chat-message-muted-ink: #a3a3a3;
+ }
+ .msg.user {
+-  /* 气泡底色只能有一个出处:hover 变色、以及折行时盖住半个字的那道渐变,
+-     必须和它同色 —— 写死两处早晚会分叉。接入 chat 接缝后这条搬去 --chat-bub-bg(W1)。
+-     ------------------------------------------------------------
+-     稿子(PR #7170)把这枚底从 `--text-strong`(#202020)再压深一档到 #121212。
+-     不直接写在 `--bub-bg` 上,是因为**暗色下不能跟着压**:那边气泡是「浅底深字」
+-     (`color: var(--bg)`),再压成近黑就是黑底黑字。所以中间隔一枚
+-     `--chat-user-bubble-ground`,明暗各给各的。 */
+-  --chat-user-bubble-ground: #121212;
++  /* Clyra Code's user-bubble surface: a subtle rounded tint instead of the
++     stock near-black bubble, with the host's slate hairline border. */
++  --chat-user-bubble-ground: #F3F3F2;
+   --bub-bg: var(--chat-user-bubble-ground);
+ }
+ /* 暗色回到主题自己的最强墨色 —— 那边气泡是浅底,近黑会把白字吃掉。
+@@ -623,23 +621,26 @@
+   }
+ }
+ .msg.user .user-text {
+-  /* 稿子是深底白字,缺口在**右下**(原来是浅底深字、缺口在右上) */
++  /* Clyra embed: the exact Clyra Code user surface — subtle rounded tint,
++     no border, no shadow, 11px radius. */
+   white-space: pre-wrap;
+-  color: var(--bg);
++  color: #172033;
+   background: var(--bub-bg);
+   border: none;
+-  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
++  border-radius: 11px;
+   padding: 9px 13px;
+   line-height: 1.7;
+   font-size: 13px;
+-  /* 稿子 `.bub { font-weight: 500 }` —— 深底白字在常规字重下会显得比周围的
+-     助手正文更细;medium 把它拉回同一个视觉重量。 */
+   font-weight: 500;
+   box-shadow: none;
+-  /* 承载用户输入的容器要能把没有空格的一长串断开(链接 / token / 路径 / base64)。
+-     用 anywhere 不用 break-all:后者会把每个英文词都拆散 */
+   overflow-wrap: anywhere;
+   max-width: min(84%, 380px);
++  animation: clyra-embed-user-appear 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
++  transform-origin: bottom right;
++}
++@keyframes clyra-embed-user-appear {
++  from { opacity: 0; transform: translateY(10px) scale(0.96); }
++  to { opacity: 1; transform: translateY(0) scale(1); }
+ }
+ /* 在 .msg-stack 里气泡锁死 380(不跟着壳子的 412 变宽):412 的气泡离面板左缘
+    只剩 8px,「我说的话贴右边」这个读感就没了。 */
+@@ -688,7 +689,7 @@
+   padding: 0 0 0 26px;
+   border: none;
+   background: linear-gradient(to right, transparent 0, var(--bub-bg) 26px);
+-  color: var(--bg);
++  color: #172033;
+   font: inherit;
+   font-weight: 600;
+   line-height: 1.7;
+diff --git a/design-templates/mobile-app/SKILL.md b/design-templates/mobile-app/SKILL.md
+index 26489b0..79e7b96 100644
+--- a/design-templates/mobile-app/SKILL.md
++++ b/design-templates/mobile-app/SKILL.md
+@@ -100,3 +100,33 @@ One sentence before describing what's there. Stop after `</artifact>`.
+ - **Numerics in mono** via `.num` class.
+ - **Display in serif** via `var(--font-display)`.
+ - **No external images** — use `.ph-img` placeholders.
++
++
++## Clyra premium output rules (non-negotiable)
++
++**Never mock UI.** The page must never render a fake screenshot of an app,
++browser window, device frame, dashboard, or editor. Every visual slot is
++either real imagery or a neutral image placeholder:
++`<div class="ph-img" data-label="…">` styled as a soft grey tile with the
++label centred — or an `<img>` with an honest placeholder service
++(`https://picsum.photos/seed/<slug>/1600/900` copied locally when the brief
++names a real subject). A phone mock, browser chrome mock, or fake chart is a
++failed deliverable.
++
++**Modern, premium design language.**
++- One accent colour per page (from the design system), used for at most one
++  primary action per section. No purple-to-blue gradients, no glowing
++  borders, no sparkles, no decorative blobs.
++- Type first: a clear heading scale (display / h2 / h3 / body / caption),
++  tight tracking on large type, sentence case everywhere, no all-caps
++  paragraph labels.
++- A consistent spacing rhythm (4/8/16/24/48), generous section whitespace,
++  and hairline separators instead of heavy cards. Border-radius stays in a
++  single family (8–14px); nothing pill-shaped.
++- Quiet surfaces: near-white background, one neutral panel tone, hairline
++  borders. Depth only where it communicates interactivity.
++- Subtle, purposeful motion: 200–400ms ease-out fades and rises on scroll
++  entry; no looping decorative animation. Respect
++  `prefers-reduced-motion`.
++- Every section must answer a real question for the visitor. Remove any
++  section that exists only to fill space.
+diff --git a/design-templates/pricing-page/SKILL.md b/design-templates/pricing-page/SKILL.md
+index f3676ad..e016938 100644
+--- a/design-templates/pricing-page/SKILL.md
++++ b/design-templates/pricing-page/SKILL.md
+@@ -77,3 +77,33 @@ Emit between `<artifact>` tags:
+ ```
+ 
+ One sentence before the artifact, nothing after.
++
++
++## Clyra premium output rules (non-negotiable)
++
++**Never mock UI.** The page must never render a fake screenshot of an app,
++browser window, device frame, dashboard, or editor. Every visual slot is
++either real imagery or a neutral image placeholder:
++`<div class="ph-img" data-label="…">` styled as a soft grey tile with the
++label centred — or an `<img>` with an honest placeholder service
++(`https://picsum.photos/seed/<slug>/1600/900` copied locally when the brief
++names a real subject). A phone mock, browser chrome mock, or fake chart is a
++failed deliverable.
++
++**Modern, premium design language.**
++- One accent colour per page (from the design system), used for at most one
++  primary action per section. No purple-to-blue gradients, no glowing
++  borders, no sparkles, no decorative blobs.
++- Type first: a clear heading scale (display / h2 / h3 / body / caption),
++  tight tracking on large type, sentence case everywhere, no all-caps
++  paragraph labels.
++- A consistent spacing rhythm (4/8/16/24/48), generous section whitespace,
++  and hairline separators instead of heavy cards. Border-radius stays in a
++  single family (8–14px); nothing pill-shaped.
++- Quiet surfaces: near-white background, one neutral panel tone, hairline
++  borders. Depth only where it communicates interactivity.
++- Subtle, purposeful motion: 200–400ms ease-out fades and rises on scroll
++  entry; no looping decorative animation. Respect
++  `prefers-reduced-motion`.
++- Every section must answer a real question for the visitor. Remove any
++  section that exists only to fill space.
+diff --git a/design-templates/saas-landing/SKILL.md b/design-templates/saas-landing/SKILL.md
+index 7378343..a98b230 100644
+--- a/design-templates/saas-landing/SKILL.md
++++ b/design-templates/saas-landing/SKILL.md
+@@ -122,3 +122,33 @@ Things to notice:
+ - `data-od-id` tagging is how we wire elements to comment mode. Skills that want comment-mode compatibility must annotate their output.
+ 
+ See [`../../docs/skills-protocol.md`](../../docs/skills-protocol.md) for the full protocol.
++
++
++## Clyra premium output rules (non-negotiable)
++
++**Never mock UI.** The page must never render a fake screenshot of an app,
++browser window, device frame, dashboard, or editor. Every visual slot is
++either real imagery or a neutral image placeholder:
++`<div class="ph-img" data-label="…">` styled as a soft grey tile with the
++label centred — or an `<img>` with an honest placeholder service
++(`https://picsum.photos/seed/<slug>/1600/900` copied locally when the brief
++names a real subject). A phone mock, browser chrome mock, or fake chart is a
++failed deliverable.
++
++**Modern, premium design language.**
++- One accent colour per page (from the design system), used for at most one
++  primary action per section. No purple-to-blue gradients, no glowing
++  borders, no sparkles, no decorative blobs.
++- Type first: a clear heading scale (display / h2 / h3 / body / caption),
++  tight tracking on large type, sentence case everywhere, no all-caps
++  paragraph labels.
++- A consistent spacing rhythm (4/8/16/24/48), generous section whitespace,
++  and hairline separators instead of heavy cards. Border-radius stays in a
++  single family (8–14px); nothing pill-shaped.
++- Quiet surfaces: near-white background, one neutral panel tone, hairline
++  borders. Depth only where it communicates interactivity.
++- Subtle, purposeful motion: 200–400ms ease-out fades and rises on scroll
++  entry; no looping decorative animation. Respect
++  `prefers-reduced-motion`.
++- Every section must answer a real question for the visitor. Remove any
++  section that exists only to fill space.
+diff --git a/design-templates/waitlist-page/SKILL.md b/design-templates/waitlist-page/SKILL.md
+index a9c53c5..7a44bc9 100644
+--- a/design-templates/waitlist-page/SKILL.md
++++ b/design-templates/waitlist-page/SKILL.md
+@@ -226,3 +226,33 @@ Emit the artifact between tags:
+ One line of description above the artifact; nothing below.
+ 
+ **Post-emission:** If the user asks for changes, update the index.html in-place and re-run the P0 checklist gates before emitting the next version. Do not skip validation on iterations.
++
++
++## Clyra premium output rules (non-negotiable)
++
++**Never mock UI.** The page must never render a fake screenshot of an app,
++browser window, device frame, dashboard, or editor. Every visual slot is
++either real imagery or a neutral image placeholder:
++`<div class="ph-img" data-label="…">` styled as a soft grey tile with the
++label centred — or an `<img>` with an honest placeholder service
++(`https://picsum.photos/seed/<slug>/1600/900` copied locally when the brief
++names a real subject). A phone mock, browser chrome mock, or fake chart is a
++failed deliverable.
++
++**Modern, premium design language.**
++- One accent colour per page (from the design system), used for at most one
++  primary action per section. No purple-to-blue gradients, no glowing
++  borders, no sparkles, no decorative blobs.
++- Type first: a clear heading scale (display / h2 / h3 / body / caption),
++  tight tracking on large type, sentence case everywhere, no all-caps
++  paragraph labels.
++- A consistent spacing rhythm (4/8/16/24/48), generous section whitespace,
++  and hairline separators instead of heavy cards. Border-radius stays in a
++  single family (8–14px); nothing pill-shaped.
++- Quiet surfaces: near-white background, one neutral panel tone, hairline
++  borders. Depth only where it communicates interactivity.
++- Subtle, purposeful motion: 200–400ms ease-out fades and rises on scroll
++  entry; no looping decorative animation. Respect
++  `prefers-reduced-motion`.
++- Every section must answer a real question for the visitor. Remove any
++  section that exists only to fill space.
+diff --git a/design-templates/web-prototype/SKILL.md b/design-templates/web-prototype/SKILL.md
+index 7cf460e..239757b 100644
+--- a/design-templates/web-prototype/SKILL.md
++++ b/design-templates/web-prototype/SKILL.md
+@@ -99,3 +99,33 @@ index.html
+ OpenDesign derives the preview from the written project file. Do not also emit a source-code `<artifact>` block for the same generation turn.
+ 
+ One short summary after writing the file. Nothing after.
++
++
++## Clyra premium output rules (non-negotiable)
++
++**Never mock UI.** The page must never render a fake screenshot of an app,
++browser window, device frame, dashboard, or editor. Every visual slot is
++either real imagery or a neutral image placeholder:
++`<div class="ph-img" data-label="…">` styled as a soft grey tile with the
++label centred — or an `<img>` with an honest placeholder service
++(`https://picsum.photos/seed/<slug>/1600/900` copied locally when the brief
++names a real subject). A phone mock, browser chrome mock, or fake chart is a
++failed deliverable.
++
++**Modern, premium design language.**
++- One accent colour per page (from the design system), used for at most one
++  primary action per section. No purple-to-blue gradients, no glowing
++  borders, no sparkles, no decorative blobs.
++- Type first: a clear heading scale (display / h2 / h3 / body / caption),
++  tight tracking on large type, sentence case everywhere, no all-caps
++  paragraph labels.
++- A consistent spacing rhythm (4/8/16/24/48), generous section whitespace,
++  and hairline separators instead of heavy cards. Border-radius stays in a
++  single family (8–14px); nothing pill-shaped.
++- Quiet surfaces: near-white background, one neutral panel tone, hairline
++  borders. Depth only where it communicates interactivity.
++- Subtle, purposeful motion: 200–400ms ease-out fades and rises on scroll
++  entry; no looping decorative animation. Respect
++  `prefers-reduced-motion`.
++- Every section must answer a real question for the visitor. Remove any
++  section that exists only to fill space.
+diff --git a/apps/daemon/src/clyra-bootstrap.ts b/apps/daemon/src/clyra-bootstrap.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/daemon/src/clyra-bootstrap.ts
++// Clyra Design-tab bootstrap.
++//
++// OpenDesign is embedded inside Clyra as its Design tab. Clyra launches this
++// daemon with the DeepSeek credentials already resolved from its own
++// environment, and the daemon injects them (plus the flags that skip the
++// first-run sign-in / provider-setup screens) into the served SPA shell.
++// The web app merges `window.__CLYRA_DESIGN_BOOTSTRAP__` in its loadConfig().
++//
++// This deliberately only ever touches the SPA shell document; every other
++// static asset is served untouched by express.static below it.
++
++import type { Express, NextFunction, Request, Response } from 'express';
++import fs from 'node:fs';
++import path from 'node:path';
++
++const API_KEY_ENV_NAMES = ['OD_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY'];
++const BASE_URL_ENV_NAMES = ['OD_DEEPSEEK_BASE_URL', 'DEEPSEEK_BASE_URL'];
++const MODEL_ENV_NAMES = ['OD_DEEPSEEK_MODEL', 'DEEPSEEK_MODEL'];
++
++function envValue(names: string[]): string {
++  for (const name of names) {
++    const value = process.env[name];
++    if (typeof value === 'string' && value.trim()) return value.trim();
++  }
++  return '';
++}
++
++export function clyraBootstrapScript(): string {
++  const apiKey = envValue(API_KEY_ENV_NAMES);
++  if (!apiKey) return '';
++  const baseUrl = envValue(BASE_URL_ENV_NAMES) || 'https://api.deepseek.com';
++  const model = envValue(MODEL_ENV_NAMES) || 'deepseek-v4-pro';
++  const apiProtocol = baseUrl.includes('/anthropic') ? 'anthropic' : 'openai';
++  const apiConfig = {
++    baseUrl,
++    apiKey,
++    model,
++    apiVersion: '',
++    apiProviderBaseUrl: baseUrl,
++  };
++  const bootstrap = {
++    mode: 'daemon',
++    apiKey,
++    baseUrl,
++    model,
++    apiProtocol,
++    apiVersion: '',
++    apiProtocolConfigs: { [apiProtocol]: apiConfig },
++    apiProviderBaseUrl: baseUrl,
++    // The OpenCode CLI is the agent this machine runs (Clyra itself drives
++    // OpenCode for the Vibe Coder), and byok-opencode routes its runs
++    // through the DeepSeek credentials above. Codex is the product default
++    // but its install on this machine is broken, so pin the working one.
++    agentId: 'byok-opencode',
++    onboardingCompleted: true,
++    privacyDecisionAt: Date.now(),
++    configMigrationVersion: 3,
++    // Match the host product: Clyra Code's accent blue drives buttons,
++    // links, focus rings and the composer inside the embed.
++    accentColor: '#3977F6',
++  };
++  // The theme init script paints the accent before React hydrates, and it
++  // reads localStorage — seed that synchronously so the first paint already
++  // carries Clyra's blue instead of the product default. The rail-open seed
++  // keeps the sidebar docked open inside the embed (the product defaults it
++  // to collapsed, which reads as a broken sidebar in an iframe).
++  const accentSeed = `try{var c=JSON.parse(localStorage.getItem('open-design:config')||'{}');c.accentColor='#3977F6';localStorage.setItem('open-design:config',JSON.stringify(c));}catch(e){}try{localStorage.setItem('od.entry.railOpen','true');}catch(e){}`;
++  // Branding sweep: the embedded product carries Clyra's name everywhere.
++  // A MutationObserver rewrites any rendered text so no OpenDesign /
++  // OpenCode / Nexu string survives in menus, settings, or dialogs.
++  const brandSweep = `(function(){var R=[['OpenDesign','Clyra Design'],['OpenCode','Clyra'],['by Nexu Labs',''],['Research Preview','']];function s(n){if(n.nodeType===3){var t=n.nodeValue,v=null;for(var i=0;i<R.length;i++){if(t.indexOf(R[i][0])!==-1){t=t.split(R[i][0]).join(R[i][1]);v=true;}}if(v)n.nodeValue=t;}else if(n.nodeType===1&&n.childNodes){for(var i=0;i<n.childNodes.length;i++)s(n.childNodes[i]);}}function run(){if(document.body)s(document.body);}document.addEventListener('DOMContentLoaded',function(){run();new MutationObserver(function(){run();}).observe(document.body,{childList:true,subtree:true,characterData:true});});})();`;
++  // The Clyra Design theme lives in the web build (public/clyra-design.css)
++  // and is served by express.static; the shell just links it. It carries the
++  // light-theme sweep, the docked sidebar, the bubble polish, the welcome
++  // restyle and the Apple-style preview skeleton.
++  const themeLink = `<link rel="stylesheet" href="/clyra-design.css" />`;
++  return `<script>${accentSeed}</script><script>window.__CLYRA_DESIGN_BOOTSTRAP__=${JSON.stringify(bootstrap)};document.documentElement.setAttribute('data-clyra-embed','1');</script><script>${brandSweep}</script>${themeLink}`;
++}
++
++/**
++ * Registers a middleware that serves the SPA shell with the bootstrap script
++ * injected. Placed before express.static so `/` and deep links pick up the
++ * injected document while real files still flow to the static handler.
++ */
++export function installClyraBootstrap(app: Express, staticDir: string): void {
++  const script = clyraBootstrapScript();
++  if (!script) return;
++  const indexPath = path.join(staticDir, 'index.html');
++  if (!fs.existsSync(indexPath)) return;
++
++  // The daemon-side copy of the user preferences must agree with the web
++  // bootstrap: default the agent to the BYOK OpenCode runtime (Codex is the
++  // product default but is not installed on this machine), and keep the
++  // onboarding ratchet resolved. Only seeds; an existing explicit choice wins.
++  try {
++    const projectRoot = path.resolve(staticDir, '..', '..', '..');
++    const dataDir = process.env.OD_DATA_DIR?.trim()
++      ? path.isAbsolute(process.env.OD_DATA_DIR)
++        ? process.env.OD_DATA_DIR
++        : path.resolve(projectRoot, process.env.OD_DATA_DIR)
++      : path.join(projectRoot, '.od');
++    const configFile = path.join(dataDir, 'app-config.json');
++    let config: Record<string, unknown> = {};
++    try {
++      config = JSON.parse(fs.readFileSync(configFile, 'utf8')) as Record<string, unknown>;
++    } catch {
++      fs.mkdirSync(dataDir, { recursive: true });
++    }
++    let changed = false;
++    if (config.agentId === undefined || config.agentId === 'codex') {
++      config.agentId = 'byok-opencode';
++      changed = true;
++    }
++    if (config.onboardingCompleted !== true) {
++      config.onboardingCompleted = true;
++      changed = true;
++    }
++    if (changed) {
++      fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
++    }
++  } catch {
++    /* the daemon's own config reader stays authoritative on failure */
++  }
++
++  const shellHtml = (() => {
++    try {
++      let html = fs.readFileSync(indexPath, 'utf8');
++      if (!html.includes('__CLYRA_DESIGN_BOOTSTRAP__')) {
++        const headMatch = /<head([^>]*)>/i.exec(html);
++        if (headMatch) {
++          html = `${html.slice(0, headMatch.index + headMatch[0].length)}${script}${html.slice(headMatch.index + headMatch[0].length)}`;
++        }
++      }
++      return html;
++    } catch {
++      return null;
++    }
++  })();
++
++  app.use((req: Request, res: Response, next: NextFunction) => {
++    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
++    const pathname = req.path;
++    if (pathname.startsWith('/api/') || pathname === '/api') return next();
++    if (pathname.startsWith('/_next/') || pathname === '/_next') return next();
++    if (pathname.startsWith('/artifacts/') || pathname === '/artifacts') return next();
++    if (pathname.startsWith('/frames/') || pathname === '/frames') return next();
++
++    // Real files (including /favicon.ico and every hashed asset) go to
++    // express.static untouched. Only the shell document is rewritten.
++    const isShellRequest =
++      pathname === '/' || pathname === '/index.html' || pathname.endsWith('/');
++    const wantsDocument = isShellRequest
++      || ((req.headers.accept ?? '').includes('text/html')
++        && !fs.existsSync(path.join(staticDir, decodeURIComponent(pathname).replace(/^\/+/, ''))));
++    if (!wantsDocument || shellHtml == null) return next();
++
++    res.setHeader('Content-Type', 'text/html; charset=utf-8');
++    res.setHeader('Cache-Control', 'no-cache');
++    if (req.method === 'HEAD') return res.end();
++    res.send(shellHtml);
++  });
++}
+
+diff --git a/apps/web/public/clyra-design.css b/apps/web/public/clyra-design.css
+diff --git a/apps/web/src/clyra-embed.ts b/apps/web/src/clyra-embed.ts
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/web/src/clyra-embed.ts
++/**
++ * When OpenDesign runs embedded inside Clyra's Design tab, the daemon injects
++ * `window.__CLYRA_DESIGN_BOOTSTRAP__` into the SPA shell (see
++ * apps/daemon/src/clyra-bootstrap.ts). The embed preconfigures the provider
++ * and resolves onboarding, and the cloud sign-in surfaces are hidden: the
++ * embedded product is a local design tool, not an OpenDesign Cloud client.
++ */
++export function isClyraEmbed(): boolean {
++  if (typeof window === 'undefined') return false;
++  return (
++    (window as unknown as { __CLYRA_DESIGN_BOOTSTRAP__?: unknown })
++      .__CLYRA_DESIGN_BOOTSTRAP__ != null
++  );
++}
+
+diff --git a/apps/web/src/components/ClyraDeployButton.tsx b/apps/web/src/components/ClyraDeployButton.tsx
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/web/src/components/ClyraDeployButton.tsx
++import { useEffect, useRef, useState } from 'react';
++import { isClyraEmbed } from '../clyra-embed';
++import { Icon } from './Icon';
++
++type DeployResult = { type: string; projectId?: string; ok?: boolean; url?: string; error?: string };
++
++/**
++ * Deploys the current OpenDesign project to GitHub Pages for free. The heavy
++ * lifting (git push + Pages enable via the host's authenticated `gh` CLI)
++ * runs on the Clyra side; this button only posts `clyra:deploy` and renders
++ * the result that the host posts back.
++ */
++export function ClyraDeployButton({ projectId }: { projectId: string }) {
++  const [state, setState] = useState<'idle' | 'deploying' | 'live' | 'error'>('idle');
++  const [url, setUrl] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const busyRef = useRef(false);
++
++  useEffect(() => {
++    const onMessage = (event: MessageEvent) => {
++      const payload = event.data as DeployResult | null;
++      if (!payload || payload.type !== 'clyra:deploy-result' || payload.projectId !== projectId) return;
++      busyRef.current = false;
++      if (payload.ok && payload.url) {
++        setUrl(payload.url);
++        setState('live');
++      } else {
++        setError(payload.error ?? 'Deploy failed.');
++        setState('error');
++      }
++    };
++    window.addEventListener('message', onMessage);
++    return () => window.removeEventListener('message', onMessage);
++  }, [projectId]);
++
++  if (!isClyraEmbed() || !projectId) return null;
++
++  const deploy = () => {
++    if (busyRef.current) return;
++    busyRef.current = true;
++    setError(null);
++    setState('deploying');
++    try {
++      window.parent.postMessage({ type: 'clyra:deploy', projectId }, '*');
++    } catch {
++      busyRef.current = false;
++      setState('error');
++      setError('Could not reach Clyra to deploy.');
++    }
++  };
++
++  const openLive = () => {
++    if (url) window.open(url, '_blank', 'noopener,noreferrer');
++  };
++
++  if (state === 'live' && url) {
++    return (
++      <button
++        type="button"
++        onClick={openLive}
++        title={`Live at ${url}`}
++        style={{
++          position: 'fixed',
++          bottom: 64,
++          right: 18,
++          zIndex: 60,
++          display: 'inline-flex',
++          alignItems: 'center',
++          gap: 7,
++          height: 34,
++          padding: '0 13px',
++          borderRadius: 10,
++          border: '1px solid rgba(38, 138, 80, 0.35)',
++          background: '#ffffff',
++          color: '#268A50',
++          fontSize: 12.5,
++          fontWeight: 600,
++          letterSpacing: '-0.01em',
++          cursor: 'pointer',
++          boxShadow: '0 4px 14px rgba(31, 32, 36, 0.08)',
++          fontFamily: 'inherit',
++        }}
++      >
++        <Icon name="external-link" size={13} />
++        View live site
++      </button>
++    );
++  }
++
++  const deployGlyph = state === 'deploying'
++    ? (
++      <span
++        style={{
++          width: 13,
++          height: 13,
++          borderRadius: 999,
++          border: '1.5px solid #C1C3C7',
++          borderTopColor: '#3977F6',
++          animation: 'clyra-spin 0.8s linear infinite',
++          display: 'inline-block',
++        }}
++      />
++    )
++    : <Icon name={state === 'error' ? 'alert-triangle' : 'upload'} size={13} />;
++  const deployLabel = state === 'deploying'
++    ? 'Deploying…'
++    : state === 'error' ? 'Retry deploy' : 'Deploy to live site';
++
++  return (
++    <button
++      type="button"
++      onClick={deploy}
++      title={state === 'error' ? `${error} — retry` : 'Deploy this design to a live website on GitHub Pages (free)'}
++      style={{
++        position: 'fixed',
++        bottom: 64,
++        right: 18,
++        zIndex: 60,
++        display: 'inline-flex',
++        alignItems: 'center',
++        gap: 7,
++        height: 34,
++        padding: '0 13px',
++        borderRadius: 10,
++        border: '1px solid rgba(31, 32, 36, 0.1)',
++        background: '#ffffff',
++        color: state === 'error' ? '#C24949' : '#45474C',
++        fontSize: 12.5,
++        fontWeight: 600,
++        letterSpacing: '-0.01em',
++        cursor: 'pointer',
++        boxShadow: '0 4px 14px rgba(31, 32, 36, 0.08)',
++        fontFamily: 'inherit',
++        opacity: state === 'deploying' ? 0.7 : 1,
++      }}
++    >
++      {deployGlyph}
++      {deployLabel}
++    </button>
++  );
++}
+
+diff --git a/apps/web/src/components/ClyraSendToCodeButton.tsx b/apps/web/src/components/ClyraSendToCodeButton.tsx
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/web/src/components/ClyraSendToCodeButton.tsx
++import { isClyraEmbed } from '../clyra-embed';
++import { Icon } from './Icon';
++
++/**
++ * Embedded inside Clyra's Design tab, this button hands the current project
++ * back to the host: Clyra opens the project folder in its Code workspace,
++ * starts its preview, and the conversation continues in Clyra chat.
++ *
++ * The handoff travels over postMessage because the embedded product runs on
++ * its own origin (the local OpenDesign daemon); the Clyra shell listens for
++ * `clyra:send-to-code` and performs the import.
++ *
++ * `variant="inline"` renders the compact header action that replaces the
++ * editor handoff button in the artifact chrome; the default variant is the
++ * floating corner button on the project view.
++ */
++export function ClyraSendToCodeButton({
++  projectId,
++  projectName,
++  variant = 'floating',
++}: {
++  projectId: string;
++  projectName?: string | null;
++  variant?: 'floating' | 'inline';
++}) {
++  if (!isClyraEmbed() || !projectId) return null;
++
++  const send = () => {
++    try {
++      window.parent.postMessage(
++        { type: 'clyra:send-to-code', projectId, projectName: projectName ?? undefined },
++        '*',
++      );
++    } catch {
++      /* the embed is always same-machine; a closed parent is a no-op */
++    }
++  };
++
++  if (variant === 'inline') {
++    return (
++      <button
++        type="button"
++        onClick={send}
++        title="Continue this project in Clyra Code"
++        aria-label="Continue this project in Clyra Code"
++        style={{
++          display: 'inline-flex',
++          alignItems: 'center',
++          gap: 6,
++          height: 30,
++          padding: '0 12px',
++          borderRadius: 8,
++          border: 'none',
++          background: '#3977F6',
++          color: '#ffffff',
++          fontSize: 12,
++          fontWeight: 600,
++          letterSpacing: '-0.01em',
++          cursor: 'pointer',
++          boxShadow: '0 1px 2px rgba(31, 32, 36, 0.08)',
++          fontFamily: 'inherit',
++          transition: 'opacity 140ms ease, transform 140ms ease',
++        }}
++        onMouseEnter={(event) => {
++          (event.currentTarget as HTMLButtonElement).style.opacity = '0.9';
++          (event.currentTarget as HTMLButtonElement).style.transform = 'translateY(-0.5px)';
++        }}
++        onMouseLeave={(event) => {
++          (event.currentTarget as HTMLButtonElement).style.opacity = '1';
++          (event.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
++        }}
++      >
++        <Icon name="external-link" size={13} />
++        Continue in Clyra Code
++      </button>
++    );
++  }
++
++  return (
++    <button
++      type="button"
++      onClick={send}
++      title="Open this project in Clyra Code"
++      aria-label="Open this project in Clyra Code"
++      style={{
++        position: 'fixed',
++        bottom: 18,
++        right: 18,
++        zIndex: 60,
++        display: 'inline-flex',
++        alignItems: 'center',
++        gap: 8,
++        height: 36,
++        padding: '0 15px',
++        borderRadius: 10,
++        border: '1px solid rgba(255, 255, 255, 0.18)',
++        background: '#3977F6',
++        color: '#ffffff',
++        fontSize: 12.5,
++        fontWeight: 600,
++        letterSpacing: '-0.01em',
++        cursor: 'pointer',
++        boxShadow: '0 8px 24px rgba(57, 119, 246, 0.32), 0 1px 3px rgba(31, 32, 36, 0.12)',
++        fontFamily: 'inherit',
++        transition: 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms ease, background 160ms ease',
++      }}
++      onMouseEnter={(event) => {
++        const el = event.currentTarget as HTMLButtonElement;
++        el.style.transform = 'translateY(-2px)';
++        el.style.boxShadow = '0 12px 28px rgba(57, 119, 246, 0.4), 0 2px 4px rgba(31, 32, 36, 0.14)';
++        el.style.background = '#2F68E6';
++      }}
++      onMouseLeave={(event) => {
++        const el = event.currentTarget as HTMLButtonElement;
++        el.style.transform = 'translateY(0)';
++        el.style.boxShadow = '0 8px 24px rgba(57, 119, 246, 0.32), 0 1px 3px rgba(31, 32, 36, 0.12)';
++        el.style.background = '#3977F6';
++      }}
++    >
++      <Icon name="external-link" size={14} />
++      Open in Clyra Code
++    </button>
++  );
++}
+
+diff --git a/apps/web/src/components/ClyraDesignRecents.tsx b/apps/web/src/components/ClyraDesignRecents.tsx
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/web/src/components/ClyraDesignRecents.tsx
++import { useEffect, useMemo, useState } from 'react';
++import { projectFileUrl } from '../providers/registry';
++import { isClyraEmbed } from '../clyra-embed';
++import { Icon } from './Icon';
++import type { Project, ProjectFile } from '../types';
++
++type Entry = { name: string };
++
++function entryOf(files: ProjectFile[] | undefined): Entry | null {
++  if (!files?.length) return null;
++  const html =
++    files.find((f) => f.path === 'index.html' || f.name === 'index.html') ??
++    files
++      .filter((f) => f.kind === 'html')
++      .sort((a, b) => Number(b.mtime) - Number(a.mtime))[0];
++  if (html) return { name: html.path ?? html.name };
++  const image = files.find((f) => f.kind === 'image');
++  return image ? { name: image.path ?? image.name } : null;
++}
++
++/**
++ * Recent projects for the embedded Design welcome: three cards, each with a
++ * live preview of the project's page, plus a Show more action. Replaces the
++ * template showcase under the composer.
++ */
++export function ClyraDesignRecents({
++  projects,
++  onOpen,
++  onViewAll,
++}: {
++  projects: Project[];
++  onOpen: (id: string) => void;
++  onViewAll?: () => void;
++}) {
++  const recent = useMemo(
++    () =>
++      [...projects]
++        .sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt))
++        .slice(0, 3),
++    [projects],
++  );
++  const [entries, setEntries] = useState<Record<string, Entry | null>>({});
++
++  useEffect(() => {
++    let cancelled = false;
++    for (const project of recent) {
++      void fetch(`/api/projects/${encodeURIComponent(project.id)}/files`)
++        .then((response) => (response.ok ? response.json() : { files: [] }))
++        .then((body: { files?: ProjectFile[] }) => {
++          if (cancelled) return;
++          setEntries((prev) => ({ ...prev, [project.id]: entryOf(body.files ?? []) }));
++        })
++        .catch(() => {
++          if (!cancelled) setEntries((prev) => ({ ...prev, [project.id]: null }));
++        });
++    }
++    return () => { cancelled = true; };
++  }, [recent]);
++
++  if (!isClyraEmbed() || recent.length === 0) return null;
++
++  return (
++    <section className="clyra-recents" aria-label="Recent projects">
++      <header className="clyra-recents__head">
++        <h2>Recent projects</h2>
++        {onViewAll ? (
++          <button type="button" onClick={onViewAll}>
++            <span>Show more</span>
++            <Icon name="chevron-right" size={12} />
++          </button>
++        ) : null}
++      </header>
++      <div className="clyra-recents__grid">
++        {recent.map((project) => {
++          const entry = entries[project.id];
++          return (
++            <button
++              key={project.id}
++              type="button"
++              className="clyra-recents__card"
++              onClick={() => onOpen(project.id)}
++              title={project.name}
++            >
++              <span className="clyra-recents__preview" aria-hidden>
++                {entry ? (
++                  <iframe
++                    title={project.name}
++                    src={projectFileUrl(project.id, entry.name)}
++                    loading="lazy"
++                    tabIndex={-1}
++                    sandbox=""
++                    style={{ pointerEvents: 'none' }}
++                  />
++                ) : (
++                  <span className="clyra-recents__glyph">
++                    {(project.name.trim()[0] ?? '?').toUpperCase()}
++                  </span>
++                )}
++              </span>
++              <span className="clyra-recents__name">{project.name}</span>
++            </button>
++          );
++        })}
++      </div>
++      <style>{`
++        .clyra-recents { width: 100%; max-width: 860px; margin: 22px auto 28px; padding: 0 20px; box-sizing: border-box; }
++        .clyra-recents__head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; padding: 0 2px; }
++        .clyra-recents__head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; color: #1F2024; }
++        .clyra-recents__head button { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 0; font: inherit; font-size: 12px; font-weight: 500; color: #3977F6; cursor: pointer; }
++        .clyra-recents__head button:hover { text-decoration: underline; }
++        .clyra-recents__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
++        .clyra-recents__card { display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(0, 0, 0, 0.07); border-radius: 12px; background: #ffffff; padding: 0; overflow: hidden; text-align: left; cursor: pointer; box-shadow: 0 1px 2px rgba(31, 32, 36, 0.04); transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, border-color 180ms ease; }
++        .clyra-recents__card:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(31, 32, 36, 0.1); border-color: rgba(57, 119, 246, 0.35); }
++        .clyra-recents__preview { display: block; aspect-ratio: 16 / 9.5; width: 100%; background: #F7F7F5; border-bottom: 1px solid rgba(0, 0, 0, 0.05); overflow: hidden; }
++        .clyra-recents__preview iframe { width: 100%; height: 100%; border: 0; transform: scale(0.62); transform-origin: top left; }
++        .clyra-recents__glyph { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 26px; font-weight: 600; color: #3977F6; background: linear-gradient(135deg, rgba(57,119,246,0.08), rgba(57,119,246,0.02)); }
++        .clyra-recents__name { padding: 0 12px 11px; font-size: 12.5px; font-weight: 500; color: #45474C; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++        @media (max-width: 700px) { .clyra-recents__grid { grid-template-columns: 1fr; } }
++      `}</style>
++    </section>
++  );
++}
+diff --git a/apps/web/public/clyra-design.css b/apps/web/public/clyra-design.css
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/apps/web/public/clyra-design.css
++/* Clyra Design — embed theme layer for the OpenDesign frontend.
++   Injected by the daemon (apps/daemon/src/clyra-bootstrap.ts) into the
++   served shell. Everything is scoped to html[data-clyra-embed] so the stock
++   product stays untouched outside the embed. */
++
++/* ------------------------------------------------------------------ */
++/* Base: light, quiet, Clyra-blue                                     */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] {
++  /* Kill the product's saturated green accents; Clyra Code's blue is the
++     only accent in the embed. */
++  --green: #3977F6;
++  --green-bg: rgba(57, 119, 246, 0.08);
++  --green-border: rgba(57, 119, 246, 0.25);
++  --beam-color: #3977F6;
++  --beam-color-2: #7CA6F8;
++  /* The composer send mark: blue disc, white glyph (was black/green). */
++  --send-ink: #3977F6;
++  --send-ground: #ffffff;
++  /* Any remaining semantic greens fold into the blue accent. */
++  --success: #3977F6;
++  --success-bg: rgba(57, 119, 246, 0.08);
++  --success-border: rgba(57, 119, 246, 0.25);
++}
++
++/* Promo / cloud surfaces have no place in the embed. */
++html[data-clyra-embed] .entry-deepseek-campaign-badge,
++html[data-clyra-embed] [class*="campaign-badge"],
++html[data-clyra-embed] [class*="credits-pill"],
++html[data-clyra-embed] [class*="free-credits"],
++html[data-clyra-embed] [data-testid="entry-nav-community"],
++html[data-clyra-embed] [data-testid="entry-settings-button"],
++html[data-clyra-embed] [class*="upgrade-pill"],
++html[data-clyra-embed] [class*="upgradePill"] {
++  display: none !important;
++}
++
++/* ------------------------------------------------------------------ */
++/* Sidebar: docked open, labels visible, toggles hidden                */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] .entry-shell--no-header .entry.entry--rail-open {
++  grid-template-columns: 236px minmax(0, 1fr) !important;
++}
++html[data-clyra-embed] .entry--rail-open .entry-nav-rail {
++  overflow: visible !important;
++  pointer-events: auto !important;
++}
++/* The top-bar rail toggle and the rail's collapse button are removed in the
++   embed: the sidebar simply stays open. */
++html[data-clyra-embed] .workspace-tab__rail-toggle,
++html[data-clyra-embed] .entry-nav-rail__collapse {
++  display: none !important;
++}
++
++/* ------------------------------------------------------------------ */
++/* Chat bubbles — exactly the Clyra Code surface                      */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] .msg.user .user-text {
++  color: #172033 !important;
++  background: #F3F3F2 !important;
++  border: none !important;
++  border-radius: 11px !important;
++  padding: 9px 13px !important;
++  font-weight: 500 !important;
++  box-shadow: none !important;
++}
++html[data-clyra-embed] .msg.user .user-text-more,
++html[data-clyra-embed] .msg.user .user-text.is-cut .user-text-more {
++  color: #172033 !important;
++  background: linear-gradient(to right, transparent 0, #F3F3F2 26px) !important;
++}
++
++/* ------------------------------------------------------------------ */
++/* Action / timeline rows: normal font, colour, shimmer               */
++/* (The row colours themselves live in record.module.css — CSS-module
++   class names are hashed, so the module file owns them.)             */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] {
++  --chat-font-mono: -apple-system, BlinkMacSystemFont, "SF Pro Text",
++    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
++}
++
++/* ------------------------------------------------------------------ */
++/* Welcome: quiet, centered, Clyra-Code-like                           */
++/* ------------------------------------------------------------------ */
++/* ------------------------------------------------------------------ */
++/* Welcome: the product's own hero, untouched by the embed theme.      */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] .home-hero__composer-beam {
++  display: none !important;
++}
++/* Recent projects: light rows like the Clyra sidebar. */
++html[data-clyra-embed] [class*="recent"] [class*="row"],
++html[data-clyra-embed] [class*="recent-item"] {
++  border-radius: 9px;
++}
++html[data-clyra-embed] [class*="recent-item"]:hover {
++  background: rgba(0, 0, 0, 0.04);
++}
++
++/* ------------------------------------------------------------------ */
++/* Preview loading: Apple-style skeleton + scanning bar               */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] .viewer-loading {
++  position: relative;
++  overflow: hidden;
++  background: #FAFAF8;
++}
++html[data-clyra-embed] .viewer-loading-card,
++html[data-clyra-embed] .viewer-loading-card span {
++  background: #EFEFED !important;
++  border-radius: 8px;
++  animation: clyra-skeleton-breathe 1.5s ease-in-out infinite;
++}
++html[data-clyra-embed] .viewer-loading-card-back {
++  animation-delay: 0.15s;
++}
++html[data-clyra-embed] .viewer-loading-card-main {
++  animation-delay: 0.3s;
++}
++@keyframes clyra-skeleton-breathe {
++  0%, 100% { opacity: 0.55; transform: scale(0.995); }
++  50% { opacity: 1; transform: scale(1); }
++}
++/* A soft scanning bar travels the whole preview while the agent designs. */
++html[data-clyra-embed] .viewer-loading::before {
++  content: "";
++  position: absolute;
++  left: 0;
++  right: 0;
++  height: 2px;
++  top: -2px;
++  background: linear-gradient(90deg, transparent, rgba(57, 119, 246, 0.75), transparent);
++  animation: clyra-scan-bar 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
++  z-index: 2;
++}
++@keyframes clyra-scan-bar {
++  0% { top: -2px; }
++  100% { top: calc(100% + 2px); }
++}
++
++/* Generic shimmer for any loading/working surface the embed shows. */
++html[data-clyra-embed] [class*="skeleton"],
++html[data-clyra-embed] [class*="Skeleton"] {
++  position: relative;
++  overflow: hidden;
++}
++html[data-clyra-embed] [class*="skeleton"]::after,
++html[data-clyra-embed] [class*="Skeleton"]::after {
++  content: "";
++  position: absolute;
++  inset: 0;
++  background: linear-gradient(
++    100deg,
++    transparent 30%,
++    rgba(255, 255, 255, 0.6) 50%,
++    transparent 70%
++  );
++  background-size: 200% 100%;
++  animation: clyra-skeleton-shimmer 1.4s ease-in-out infinite;
++  pointer-events: none;
++}
++@keyframes clyra-skeleton-shimmer {
++  0% { background-position: 180% 0; }
++  100% { background-position: -80% 0; }
++}
++@keyframes clyra-spin {
++  to { transform: rotate(360deg); }
++}
++
++/* ------------------------------------------------------------------ */
++/* Browser surfaces: light, quiet chrome like the rest of the embed    */
++/* ------------------------------------------------------------------ */
++html[data-clyra-embed] [class*="browser"],
++html[data-clyra-embed] [class*="Browser"] {
++  background: #FFFFFF;
++  border-color: rgba(0, 0, 0, 0.06);
++  border-radius: 10px;
++}
++html[data-clyra-embed] [class*="browser"] [class*="tab"],
++html[data-clyra-embed] [class*="browser-tab"] {
++  background: #F7F7F5;
++  border: 1px solid rgba(0, 0, 0, 0.05);
++  border-radius: 8px;
++  font-family: inherit;
++}
++html[data-clyra-embed] [class*="browser"] [class*="address"],
++html[data-clyra-embed] [class*="browser"] input {
++  background: #F2F2F0;
++  border: 1px solid rgba(0, 0, 0, 0.05);
++  border-radius: 8px;
++  font-family: inherit;
++}
++html[data-clyra-embed] [class*="browser"] [class*="active"] {
++  background: #FFFFFF;
++  color: #1F2024;
++}
++
++/* ------------------------------------------------------------------ */
++/* Motions are spatial, not decorative                                */
++/* ------------------------------------------------------------------ */
++@media (prefers-reduced-motion: reduce) {
++  html[data-clyra-embed] .tool.pending::after,
++  html[data-clyra-embed] .viewer-loading::before,
++  html[data-clyra-embed] .viewer-loading-card,
++  html[data-clyra-embed] [class*="skeleton"]::after {
++    animation: none !important;
++  }
++}
+

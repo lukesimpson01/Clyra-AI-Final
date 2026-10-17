@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Code2,
   Download,
+  Grid3X3,
   Headphones,
   MessageCircle,
   Monitor,
@@ -58,17 +59,19 @@ type SettingsModalProps = {
   voiceTestMode: boolean;
   setVoiceTestMode: (value: boolean) => void;
   chats: unknown[];
+  onCustomizeWorkspaceSwitcher?: () => void;
 };
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as [number, number, number, number];
 
 const sections = [
-  { id: "look", label: "Appearance", icon: Palette },
-  { id: "chat", label: "Conversation", icon: MessageCircle },
-  { id: "voice", label: "Voice", icon: Bot },
-  { id: "advanced", label: "Model", icon: Monitor },
-  { id: "usage", label: "Usage", icon: ChartNoAxesCombined },
-  { id: "data", label: "Privacy", icon: Shield },
+  { id: "workspace", label: "Workspace", detail: "Make the controls around Chat feel like your own.", icon: Grid3X3 },
+  { id: "look", label: "Appearance", detail: "Adjust the reading environment without changing the work.", icon: Palette },
+  { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle },
+  { id: "voice", label: "Voice", detail: "Tune the sound and pace of spoken conversations.", icon: Bot },
+  { id: "advanced", label: "Model", detail: "Set the response character for your everyday chat.", icon: Monitor },
+  { id: "usage", label: "Usage", detail: "See the current status of your connected Clyra services.", icon: ChartNoAxesCombined },
+  { id: "data", label: "Privacy", detail: "Control the information Clyra keeps on this device.", icon: Shield },
 ] as const;
 
 const bubbleColors = [
@@ -143,7 +146,7 @@ function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 py-4">
+    <div className="clyra-settings-row flex items-center justify-between gap-6 py-4">
       <div className="min-w-0">
         <p className="text-[14px] font-medium text-slate-800">{title}</p>
         {detail ? <p className="mt-0.5 text-[12px] leading-snug text-slate-500">{detail}</p> : null}
@@ -260,9 +263,13 @@ export function SettingsModal({
   voiceTestMode,
   setVoiceTestMode,
   chats,
+  onCustomizeWorkspaceSwitcher,
 }: SettingsModalProps) {
   const [activeSection, setActiveSection] = useState<(typeof sections)[number]["id"]>("look");
   const [voicePreviewState, setVoicePreviewState] = useState<"idle" | "loading" | "error">("idle");
+  const [whisperProfile, setWhisperProfile] = useState<"auto" | "tiny" | "base" | "small">(() => {
+    try { const value = localStorage.getItem("clyra-whisper-profile"); return value === "tiny" || value === "base" || value === "small" ? value : "auto"; } catch { return "auto"; }
+  });
   const [usage, setUsage] = useState<any>(null);
   const [usageState, setUsageState] = useState<"idle" | "loading" | "error">("idle");
   const voicePreviewRef = useRef<{ audio: HTMLAudioElement; url: string } | null>(null);
@@ -368,7 +375,7 @@ export function SettingsModal({
           <motion.button
             type="button"
             aria-label="Close settings"
-            className="absolute inset-0 bg-black/30 backdrop-blur-xl"
+            className="clyra-settings-backdrop absolute inset-0 bg-black/30 backdrop-blur-xl"
             onClick={closeSettings}
             tabIndex={-1}
           />
@@ -380,11 +387,13 @@ export function SettingsModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.3, ease: EASE_OUT }}
-            className="relative grid h-[min(620px,90vh)] w-full max-w-[800px] overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_2px_24px_rgba(0,0,0,.08)] sm:grid-cols-[220px_1fr]"
+            className="clyra-settings-panel relative grid h-[min(740px,90vh)] w-full max-w-[1012px] overflow-hidden rounded-[22px] border border-slate-200/80 bg-white shadow-[0_2px_24px_rgba(0,0,0,.08)] sm:grid-cols-[228px_1fr]"
           >
-            <aside className="hidden border-r border-slate-100 bg-slate-50/60 p-3 sm:flex sm:flex-col">
-              <div className="px-3 pb-6 pt-4">
-                <p className="text-[18px] font-semibold tracking-[-0.02em] text-slate-900">Settings</p>
+            <aside className="clyra-settings-sidebar hidden border-r border-slate-100 bg-slate-50/60 p-3 sm:flex sm:flex-col">
+              <div className="px-3 pb-7 pt-5">
+                <span className="text-[10px] font-bold uppercase tracking-[.13em] text-blue-600">Clyra</span>
+                <p className="mt-1 text-[20px] font-semibold tracking-[-0.035em] text-slate-900">Preferences</p>
+                <p className="mt-1 text-[11.5px] leading-snug text-slate-500">Tune your private workspace.</p>
               </div>
               <nav className="space-y-0.5" aria-label="Settings sections">
                 {sections.map((section) => {
@@ -396,7 +405,7 @@ export function SettingsModal({
                       type="button"
                       onClick={() => setActiveSection(section.id)}
                       className={cn(
-                        "group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-all duration-150",
+                        "clyra-settings-nav-item group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-all duration-150",
                         active
                           ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
                           : "text-slate-500 hover:bg-white/80 hover:text-slate-800",
@@ -412,8 +421,8 @@ export function SettingsModal({
             </aside>
 
             <div className="flex min-h-0 flex-col bg-white">
-              <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-100 px-6">
-                <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-slate-900">{activeMeta.label}</h2>
+              <header className="clyra-settings-header flex h-[68px] shrink-0 items-center justify-between border-b border-slate-100 px-7">
+                <div><span className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Clyra Chat</span><h2 className="mt-0.5 text-[17px] font-semibold tracking-[-0.025em] text-slate-900">Settings</h2></div>
                 <button
                   type="button"
                   onClick={closeSettings}
@@ -442,7 +451,7 @@ export function SettingsModal({
                 ))}
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-2">
+              <div className="clyra-settings-content min-h-0 flex-1 overflow-y-auto px-6 py-3 sm:px-8">
                 <motion.div
                   key={activeSection}
                   initial={{ opacity: 0, y: 8 }}
@@ -450,6 +459,10 @@ export function SettingsModal({
                   transition={{ duration: 0.2, ease: EASE_OUT }}
                   className="mx-auto max-w-[480px] pb-8"
                 >
+                  <div className="clyra-settings-section-lead">
+                    <p>{activeMeta.label}</p>
+                    <span>{activeMeta.detail}</span>
+                  </div>
                   {activeSection === "look" ? (
                     <>
                       <SettingRow title="Theme">
@@ -544,6 +557,25 @@ export function SettingsModal({
                     </>
                   ) : null}
 
+                  {activeSection === "workspace" ? (
+                    <div className="clyra-settings-workspace py-5">
+                      <div className="clyra-settings-switcher-entry">
+                        <div>
+                          <p className="text-[15px] font-semibold tracking-[-.02em] text-slate-900">Workspace switcher</p>
+                          <p className="mt-1 max-w-[440px] text-[12.5px] leading-relaxed text-slate-500">Personalize the real switcher on Chat home. Drag an app into the strip, rearrange it, or pull it away to remove it.</p>
+                        </div>
+                        <button type="button" className="clyra-settings-switcher-entry__action" onClick={onCustomizeWorkspaceSwitcher}>
+                          Edit switcher
+                          <ChevronRight className="h-4 w-4" aria-hidden />
+                        </button>
+                      </div>
+                      <div className="clyra-settings-callout" role="note">
+                        <span className="clyra-settings-callout__dot" aria-hidden />
+                        <p><strong>Chat stays put.</strong> Choose up to two companion apps, then drag them directly in the live control strip.</p>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {activeSection === "chat" ? (
                     <div className="divide-y divide-slate-100">
                       <SettingRow title="Send on Enter" detail="Shift + Enter for a new line.">
@@ -627,6 +659,11 @@ export function SettingsModal({
 
                   {activeSection === "advanced" ? (
                     <>
+                      <SettingRow title="Local transcription model" detail="Auto keeps Clyra light. Choose a model only when you need a fixed performance/accuracy trade-off.">
+                        <select aria-label="Local transcription model" value={whisperProfile} onChange={(event) => { const value = event.target.value as typeof whisperProfile; setWhisperProfile(value); try { if (value === "auto") localStorage.removeItem("clyra-whisper-profile"); else localStorage.setItem("clyra-whisper-profile", value); } catch {} }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-400">
+                          <option value="auto">Automatic</option><option value="tiny">Tiny · fastest</option><option value="base">Base · balanced</option><option value="small">Small · best quality</option>
+                        </select>
+                      </SettingRow>
                       <div className="grid gap-2 py-4 sm:grid-cols-3">
                         {modelPresets.map((preset) => {
                           const active = Math.abs(temperature - preset.temperature) < 0.01;

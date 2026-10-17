@@ -41,3 +41,23 @@ export function setAnywhereEnabled(value) {
   }
   return cache.enabled;
 }
+
+/**
+ * Clyra Flow background mode: keep the dictation hotkey alive (tray + login
+ * item) even when Clyra's window is closed. Independent of "Clyra Anywhere" and
+ * on unless the user turns it off.
+ */
+export function isFlowBackgroundEnabled() {
+  return cache?.flowBackground !== false;
+}
+
+export function setFlowBackgroundEnabled(value) {
+  cache = { ...cache, flowBackground: Boolean(value) };
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(cache, null, 2), "utf8");
+  } catch (error) {
+    console.warn("[flow] could not persist setting:", error);
+  }
+  return cache.flowBackground;
+}

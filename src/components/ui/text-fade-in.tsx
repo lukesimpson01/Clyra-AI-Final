@@ -1,57 +1,62 @@
-import { motion, type HTMLMotionProps } from "motion/react";
+import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-export interface TextFadeInProps extends Omit<HTMLMotionProps<"p">, "children"> {
+export interface TextFadeInProps extends Omit<HTMLAttributes<HTMLParagraphElement>, "children"> {
   children: string;
-  duration?: number;
+  className?: string;
+  /** Seconds before the first chunk starts fading in. */
   delay?: number;
-  by?: "character" | "word";
+  /** Seconds each chunk takes to fade and un-blur. */
+  duration?: number;
+  /** Seconds between consecutive chunks. */
   staggerDelay?: number;
+  by?: "word" | "character";
 }
 
-/** Lightweight progressive reveal for completed plain-text assistant replies. */
+/**
+ * Reveals finished prose in chunks, mirroring the reference reply animation:
+ * each chunk fades up from a soft blur, staggered in order.
+ *
+ * Chunks are plain inline spans (no inline-block, no per-chunk transform) and
+ * the container keeps `white-space: pre-wrap`, so line breaks, paragraph gaps
+ * and wrapping stay exactly as the text was written. The previous per-word
+ * `inline-block` version split on spaces and reflowed multi-paragraph replies
+ * into jumbled lines. Motion is CSS-only; `.clyra-chunk` in index.css turns it
+ * off under `prefers-reduced-motion`.
+ */
 export function TextFadeIn({
   children,
   className,
-  duration = 0.35,
-  delay = 0.05,
-  by = "character",
-  staggerDelay = 0.02,
+  duration = 0.42,
+  delay = 0.04,
+  by = "word",
+  staggerDelay = 0.028,
+  style,
   ...props
 }: TextFadeInProps) {
-  const units = by === "word" ? children.split(" ") : children.split("");
+  const units = by === "word" ? splitWordChunks(children) : Array.from(children);
 
   return (
-    <motion.p
-      initial="hidden"
-      animate="show"
-      variants={{
-        hidden: { opacity: 0 },
-        show: { opacity: 1, transition: { staggerChildren: staggerDelay, delayChildren: delay } },
-      }}
-      className={cn("whitespace-pre-wrap", className)}
-      style={{ contain: "content" }}
-      {...props}
-    >
+    <p className={cn("whitespace-pre-wrap", className)} style={style} {...props}>
       {units.map((unit, index) => (
-        <motion.span
-          key={`${index}-${unit}`}
-          variants={{
-            hidden: { opacity: 0, filter: "blur(6px)", y: 6 },
-            show: { opacity: 1, filter: "blur(0px)", y: 0 },
+        <span
+          key={index}
+          className="clyra-chunk"
+          style={{
+            animationDuration: `${duration}s`,
+            animationDelay: `${(delay + index * staggerDelay).toFixed(3)}s`,
           }}
-          transition={{
-            duration,
-            ease: [0.25, 0.1, 0.25, 1],
-          }}
-          style={{ display: "inline-block", whiteSpace: "pre", backfaceVisibility: "hidden", transform: "translateZ(0)" }}
         >
           {unit}
-          {by === "word" && index < units.length - 1 ? "\u00A0" : null}
-        </motion.span>
+        </span>
       ))}
-    </motion.p>
+    </p>
   );
+}
+
+/** Splits text into word-plus-trailing-whitespace units, so newlines are kept verbatim. */
+function splitWordChunks(text: string): string[] {
+  return text.match(/\S+\s*|\s+/g) ?? [];
 }
 
 export default TextFadeIn;

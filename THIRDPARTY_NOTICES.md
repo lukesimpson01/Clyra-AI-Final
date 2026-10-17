@@ -4,6 +4,39 @@ This project incorporates components from the open-source software listed below.
 
 ---
 
+## OpenBot (CopilotKit/OpenBot)
+
+- **Source**: [https://github.com/CopilotKit/OpenBot.git](https://github.com/CopilotKit/OpenBot.git)
+- **Integrated reference revision**: `ca8d51c3bf993e47e4d98a3c914a1958f1dafef0`
+- **License**: MIT License
+- **Use in Clyra**: Product structure and governed computer/host-access model adapted to Clyra's existing local runtime. The reproducible, ignored reference checkout is managed by `scripts/clone-openbot.sh`.
+
+```text
+MIT License
+
+Copyright (c) OpenBot contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
 ## cdesktop (cdesktop-ai/cdesktop)
 
 - **Source**: [https://github.com/cdesktop-ai/cdesktop.git](https://github.com/cdesktop-ai/cdesktop.git)

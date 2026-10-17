@@ -1,0 +1,14 @@
+{
+  "id": "spotify",
+  "name": "Spotify",
+  "category": "Media & Consumer",
+  "description": "Music streaming. Vibrant green on dark, bold type, album-art-driven.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

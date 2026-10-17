@@ -7,6 +7,7 @@ import type {
   PreviewSession,
   PreviewStatus,
 } from "../../../types/vibe-preview";
+import { createProcessEnvironment, sanitizeToolOutputForModel } from "../../clyra-code/security/environment";
 import { detectPackageManager } from "../terminal/package-manager";
 import { detectDevScript } from "../terminal/script-detector";
 import { checkPreviewHealth } from "./preview-health";
@@ -122,7 +123,22 @@ export async function startDevServer({
   }
 
   const hasPackageJson = existsSync(path.join(projectPath, "package.json"));
-  const hasHtmlEntry = existsSync(path.join(projectPath, "index.html"));
+  const hasIndexHtml = existsSync(path.join(projectPath, "index.html"));
+  // OpenDesign-style prototypes land as a single named .html file (e.g.
+  // lumen-landing.html). Any HTML file is a valid static entry: vite serves
+  // it at its path, and the preview URL below points straight at it.
+  let entryFile = hasIndexHtml ? "index.html" : "";
+  if (!entryFile) {
+    try {
+      const names = await fs.readdir(projectPath);
+      entryFile = names
+        .filter((name) => name.toLowerCase().endsWith(".html"))
+        .sort((a, b) => a.localeCompare(b))[0] ?? "";
+    } catch {
+      entryFile = "";
+    }
+  }
+  const hasHtmlEntry = entryFile !== "";
   if (!hasHtmlEntry) {
     // Preserve prior log lines when we re-probe during an agent run so the
     // terminal panel does not flash empty between missing-entry checks.
@@ -148,7 +164,7 @@ export async function startDevServer({
   const packageManager = hasPackageJson ? detectPackageManager(projectPath) : "npm";
   const script = hasPackageJson ? await detectDevScript(projectPath) : null;
   // A package.json without a recognized dev/start/preview script is only a
-  // hard failure when there is no index.html to fall back to serving
+  // hard failure when there is no HTML entry to fall back to serving
   // statically (vite handles plain HTML + relative-path ES modules with no
   // config and no node_modules install). That fallback already exists below
   // — it was previously unreachable for exactly this case, which is common
@@ -163,7 +179,7 @@ export async function startDevServer({
     packageManager,
     devCommand: script ? `${script.scriptName}: ${script.command}` : "static HTML: vite",
     port,
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${port}${entryFile === "index.html" ? "" : `/${entryFile}`}`,
     status: "starting",
     startedAt: Date.now(),
   };
@@ -185,7 +201,9 @@ export async function startDevServer({
       : ["-m", "http.server", String(port), "--bind", "127.0.0.1"],
     {
       cwd: projectPath,
-      env: { ...process.env, BROWSER: "none", FORCE_COLOR: "0" },
+      // A preview process receives no credentials or harness facts. A project
+      // that needs its own key reads it from its own .env file.
+      env: { ...createProcessEnvironment(), BROWSER: "none", FORCE_COLOR: "0" },
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
@@ -194,7 +212,9 @@ export async function startDevServer({
   updateStatus(state, "compiling");
 
   const handleOutput = (level: PreviewLogLine["level"], text: string) => {
-    for (const line of text.split(/\r?\n/)) {
+    for (const raw of text.split(/\r?\n/)) {
+      // Preview logs reach the UI and the agent, so they are redacted first.
+      const line = sanitizeToolOutputForModel(raw);
       addLog(state, level, line);
       const url = parsePreviewUrl(line);
       if (url) {
@@ -284,6 +304,119 @@ export async function refreshPreview(projectId: string) {
       health.ok ? "Preview refresh passed health check." : health.error?.message ?? "Preview refresh failed.",
     );
   }
+  return serialise(state);
+}
+
+/**
+ * Launches the project's real Electron app. The native process runs on the host, so
+ * the window and its main-process errors are the source of truth, not a web page.
+ * It reuses this runner's session map, logs and stop path. Nothing is written to the
+ * project. A missing local Electron install is reported, not replaced.
+ */
+export async function startElectronApp({
+  projectId,
+  projectPath,
+  projectName,
+}: {
+  projectId: string;
+  projectPath: string;
+  projectName: string;
+}) {
+  const existing = sessions.get(projectId);
+  if (existing?.process && existing.process.exitCode == null) existing.process.kill();
+
+  const session: PreviewSession = {
+    projectId,
+    projectPath,
+    packageManager: "npm",
+    devCommand: "electron .",
+    status: "starting",
+    startedAt: Date.now(),
+  };
+  const state: RunnerState = { session, logs: existing?.logs ?? [] };
+  sessions.set(projectId, state);
+
+  const binary = path.join(projectPath, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
+  if (!existsSync(binary)) {
+    state.session = {
+      ...state.session,
+      status: "build_failed",
+      lastError: {
+        title: "Electron is not installed in this project",
+        message: `${projectName} has no local Electron. Install its dependencies with npm install, then start the preview again.`,
+      },
+    };
+    addLog(state, "error", state.session.lastError!.message);
+    return serialise(state);
+  }
+
+  addLog(state, "info", "Launching the Electron app from the project's local Electron install.");
+  const child = spawn(binary, ["."], {
+    cwd: projectPath,
+    env: { ...createProcessEnvironment(), ELECTRON_ENABLE_LOGGING: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  state.process = child;
+  state.session.processId = String(child.pid ?? "");
+
+  const handleOutput = (level: PreviewLogLine["level"], text: string) => {
+    for (const raw of text.split(/\r?\n/)) {
+      if (!raw.trim()) continue;
+      addLog(state, level, sanitizeToolOutputForModel(raw));
+    }
+  };
+  child.stdout.on("data", (chunk) => handleOutput("info", chunk.toString()));
+  child.stderr.on("data", (chunk) => handleOutput("error", chunk.toString()));
+  child.on("error", (error) => {
+    state.session = {
+      ...state.session,
+      status: "build_failed",
+      lastError: { title: "Electron could not start", message: error.message },
+    };
+    addLog(state, "error", error.message);
+  });
+  child.on("close", (code) => {
+    if (state.session.status === "stopped") return;
+    state.session = {
+      ...state.session,
+      status: code === 0 ? "stopped" : "server_crashed",
+      lastError: code === 0 ? undefined : { title: "Electron app exited", message: `The app exited with code ${code ?? "unknown"}.` },
+    };
+    addLog(state, code === 0 ? "info" : "error", `Electron app exited with code ${code ?? "unknown"}.`);
+  });
+
+  updateStatus(state, "running");
+  return serialise(state);
+}
+
+/**
+ * Records an honest preview state for a project whose runtime is not available here.
+ * It starts no process and writes no file, so an iOS project never gains an HTML page.
+ */
+export function setUnavailablePreview({
+  projectId,
+  projectPath,
+  title,
+  message,
+}: {
+  projectId: string;
+  projectPath: string;
+  title: string;
+  message: string;
+}) {
+  const existing = sessions.get(projectId);
+  if (existing?.process && existing.process.exitCode == null) existing.process.kill();
+  const session: PreviewSession = {
+    projectId,
+    projectPath,
+    packageManager: "npm",
+    devCommand: "none",
+    status: "build_failed",
+    lastError: { title, message },
+  };
+  const state: RunnerState = { session, logs: existing?.logs ?? [] };
+  addLog(state, "info", message);
+  sessions.set(projectId, state);
   return serialise(state);
 }
 

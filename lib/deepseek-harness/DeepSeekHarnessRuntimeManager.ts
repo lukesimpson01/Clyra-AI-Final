@@ -26,6 +26,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
+import { classifyCommand } from "../clyra-code/security/command-risk";
+import {
+  createProcessEnvironment,
+  sanitizeToolOutputForModel,
+  sanitizeToolPayloadForModel,
+} from "../clyra-code/security/environment";
 import { createVibePreflight, normalizeEffort, type VibeEffort, type VibePreflight } from "../vibe-agent-v3/preflight";
 import { recordVibeUsage, type ModelUsageEvent } from "../vibe-agent-v3/usage-analytics";
 import { CodingTaskController } from "../vibe-runtime/task-controller";
@@ -294,8 +300,14 @@ export class DeepSeekHarnessRuntimeManager {
     }
 
     const diffs: Array<{ file: string; before: string; after: string; additions: number; deletions: number }> = [];
+    // A task opens on its own, so the change list is bounded: a time budget and a
+    // file cap keep a project with many changed files from holding the request open.
+    const deadline = Date.now() + 8_000;
+    let scanned = 0;
     for (const [file, count] of counts) {
       if (file.startsWith(".clyra")) continue;
+      if (Date.now() > deadline || scanned >= 200) break;
+      scanned += 1;
       const before = await git("show", `${baseline}:${file}`).then((r) => r.stdout).catch(() => "");
       const after = await fs.promises.readFile(path.join(project.projectPath, file), "utf8").catch(() => "");
       let { additions, deletions } = count;
@@ -574,6 +586,11 @@ export class DeepSeekHarnessRuntimeManager {
         profile: "sdk",
         processCwd: project.projectPath,
         dshHome: clyraDataPath("projects", project.projectId, "dsh-home"),
+        // The runtime and every shell it starts receive only the model key,
+        // by name. DSH_* facts and other credentials are not inherited, so an
+        // environment listing returns no secret or runtime fact. The SDK
+        // replaces the parent environment with this object at spawn.
+        env: createProcessEnvironment({ forward: ["DEEPSEEK_API_KEY"] }),
         initializeTimeoutMs: 30_000,
         // A single agent turn can legitimately run for many minutes; the SDK
         // has no wire cancel, so an unbounded request timeout is correct here
@@ -775,10 +792,35 @@ export class DeepSeekHarnessRuntimeManager {
     }
   }
 
+  /**
+   * Records an environment-inspection or credential-access command without its text.
+   * The audit line holds the category and tool name only, so the log itself cannot
+   * become a copy of a secret.
+   */
+  private auditCommandRisk(project: ProjectRuntime, sessionId: string, tool: string, input: Record<string, unknown>) {
+    const command = typeof input.command === "string" ? input.command : "";
+    if (!command) return;
+    const classification = classifyCommand(command);
+    if (classification.risk !== "environment-inspection" && classification.risk !== "credential-access") return;
+    const line = JSON.stringify({
+      at: new Date().toISOString(),
+      projectId: project.projectId,
+      sessionId,
+      tool,
+      risk: classification.risk,
+      reason: classification.reason,
+    });
+    void fs.promises
+      .mkdir(clyraDataPath("security"), { recursive: true })
+      .then(() => fs.promises.appendFile(clyraDataPath("security", "command-audit.jsonl"), `${line}\n`))
+      .catch(() => undefined);
+  }
+
   private handleToolCall(project: ProjectRuntime, sessionId: string, data: Record<string, unknown>) {
     const stream = this.stream(project, sessionId, data.turn);
     const callId = String(data.callId || "");
     if (!callId) return;
+    const input = sanitizeToolPayloadForModel(parseArguments(data.arguments));
     const part: StoredPart = {
       id: `tool-${callId}`,
       sessionID: sessionId,
@@ -788,10 +830,11 @@ export class DeepSeekHarnessRuntimeManager {
       callID: callId,
       state: {
         status: "running",
-        input: parseArguments(data.arguments),
+        input,
         time: { start: Date.now() },
       },
     };
+    this.auditCommandRisk(project, sessionId, part.tool ?? "tool", input);
     stream.tools.set(callId, part);
     project.runs.get(sessionId)?.toolCallIds.add(callId);
     void this.controller(project, sessionId).recordTool(part.tool ?? "tool", JSON.stringify(part.state.input ?? {}).slice(0, 800), "started");
@@ -810,7 +853,9 @@ export class DeepSeekHarnessRuntimeManager {
     const existing = stream.tools.get(callId);
     const failure = data.error as { name?: string; code?: string } | undefined;
     const isError = Boolean(block?.isError || failure);
-    const output = textOfBlocks(block?.content);
+    // Tool output is stored, published and shown in the activity timeline, so it
+    // is redacted here at the same boundary as the input.
+    const output = sanitizeToolOutputForModel(textOfBlocks(block?.content));
     const part: StoredPart = {
       id: `tool-${callId}`,
       sessionID: sessionId,

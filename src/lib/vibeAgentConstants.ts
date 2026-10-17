@@ -122,6 +122,8 @@ There is no hard-coded number of tool calls, files, edits, thinking steps, or it
 - Tool loop: choose tools dynamically. There is no required sequence besides read-before-edit for existing files and verify-before-summary.
 - Follow-up edits: preserve the existing product identity, read relevant current files first, then edit surgically.
 - New projects: no files exist yet, so do not read/analyze first. Start with the source files the product needs.
+- A short first prompt still deserves a complete, working v1. Infer the conventional scope for that product type and ship useful interactions, responsive states, and real completion criteria instead of treating brevity as permission for a thin mockup.
+- Before declaring an initial build complete, review it as a real product: the main workflow must work end-to-end, every promised interaction must be wired, and the live preview must be a credible complete v1. Keep implementing and validating if that bar is not met.
 - Do not pad the stream with theatrical steps. Every visible analyze/code/run card must correspond to a real file read, file write, or verification action that would matter to the generated project.
 - Keep reasoning short and implementation-heavy. The user should feel the product becoming real, not watch a staged workflow.
 - After edits, run the most relevant tests/typechecks/builds/lint when useful and fix failures before claiming done.

@@ -20,6 +20,7 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
+  Cpu,
   ListChecks,
   Maximize2,
   Minimize2,
@@ -32,10 +33,13 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { isElectronRuntime } from "../../lib/electron-runtime";
+import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
+import { PlatformView } from "./PlatformView";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { stripFilePrefix } from "./format";
 import type { ComposerContext } from "./Composer";
@@ -46,7 +50,17 @@ import {
   type InspectPayload,
 } from "./VisualInspector";
 
-export type RightTab = "browser" | "plan" | "changes" | "files";
+export type RightTab = "browser" | "plan" | "changes" | "files" | "platform";
+
+/** Match Clyra Browser: anything that is not a URL is a Google search. */
+export function normalizePreviewNavigation(input: string) {
+  const value = input.trim();
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(value)) return `http://${value}`;
+  if (/^(?:[\w-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(value)) return `https://${value}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Preview controller                                                  */
@@ -174,12 +188,16 @@ function BrowserView({
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
+  const projectPreviewSrc = `/api/vibe/projects/${encodeURIComponent(projectId ?? "")}/preview/`;
   const [historyIndex, setHistoryIndex] = useState(0);
   const [history, setHistory] = useState<string[]>([]);
+  const [address, setAddress] = useState("");
+  const [navigatedSrc, setNavigatedSrc] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   const url = session?.url ?? "";
-  const host = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const activeSrc = navigatedSrc ?? projectPreviewSrc;
+  const displayAddress = address || (navigatedSrc ?? url).replace(/^https?:\/\//, "").replace(/\/$/, "");
   const ready = Boolean(url) && (session?.status === "ready" || session?.status === "running");
   const starting =
     session?.status === "starting" ||
@@ -215,14 +233,38 @@ function BrowserView({
   }, [agentRunning, onReload]);
 
   useEffect(() => {
-    if (!url) return;
-    setHistory((prev) => {
-      if (prev[prev.length - 1] === url) return prev;
-      const next = [...prev, url];
+    // Selecting a different Vibe project always returns its panel to that
+    // project's live preview rather than carrying a prior Google tab across.
+    setNavigatedSrc(null);
+    setAddress("");
+    setHistory([]);
+    setHistoryIndex(0);
+  }, [projectId]);
+
+  const navigate = useCallback((raw: string) => {
+    const target = normalizePreviewNavigation(raw);
+    if (!target) return;
+    setNavigatedSrc(target);
+    setAddress(target);
+    setHistory((previous) => {
+      const next = [...previous.slice(0, historyIndex + 1), target];
       setHistoryIndex(next.length - 1);
       return next;
     });
-  }, [url]);
+  }, [historyIndex]);
+
+  const navigateHistory = useCallback((index: number) => {
+    const target = history[index];
+    if (!target) return;
+    setHistoryIndex(index);
+    setNavigatedSrc(target);
+    setAddress(target);
+  }, [history]);
+
+  const returnToPreview = useCallback(() => {
+    setNavigatedSrc(null);
+    setAddress("");
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -231,7 +273,7 @@ function BrowserView({
           type="button"
           aria-label="Back"
           disabled={historyIndex <= 0}
-          onClick={() => setHistoryIndex((i) => Math.max(0, i - 1))}
+          onClick={() => navigateHistory(historyIndex - 1)}
           className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
         >
           <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={1.8} />
@@ -240,7 +282,7 @@ function BrowserView({
           type="button"
           aria-label="Forward"
           disabled={historyIndex >= history.length - 1}
-          onClick={() => setHistoryIndex((i) => Math.min(history.length - 1, i + 1))}
+          onClick={() => navigateHistory(historyIndex + 1)}
           className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
         >
           <ArrowRight className="h-[13px] w-[13px]" strokeWidth={1.8} />
@@ -253,22 +295,48 @@ function BrowserView({
         >
           <RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} />
         </button>
-        <div className="mx-2 flex h-[28px] min-w-0 flex-1 items-center justify-center rounded-[8px] bg-black/[0.025] px-3">
-          {host ? (
-            <span className="cc-mono truncate text-[11.5px] text-[color:var(--text-secondary)]">
-              {host}
-            </span>
-          ) : starting ? (
-            <ShiningText text="Starting development server…" play className="text-[11.5px]" />
-          ) : (
-            <span className="text-[11.5px] text-[color:var(--text-tertiary)]">Preview</span>
-          )}
-        </div>
-        {url ? (
+        <form
+          className="mx-2 flex h-[28px] min-w-0 flex-1 items-center rounded-[8px] bg-black/[0.025] px-3 focus-within:bg-white focus-within:ring-1 focus-within:ring-[#3977F6]/25"
+          onSubmit={(event) => { event.preventDefault(); navigate(address || displayAddress); }}
+        >
+          <input
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            placeholder={starting ? "Starting development server…" : displayAddress || "Search Google or enter an address"}
+            aria-label="Preview address or Google search"
+            spellCheck={false}
+            autoComplete="off"
+            className="cc-mono h-full min-w-0 flex-1 bg-transparent text-[11.5px] text-[color:var(--text-secondary)] outline-none placeholder:text-[color:var(--text-tertiary)]"
+          />
+        </form>
+        {navigatedSrc ? (
+          <button
+            type="button"
+            aria-label="Return to live preview"
+            title="Return to live preview"
+            onClick={returnToPreview}
+            className="rounded-[7px] px-2 py-1 text-[10.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
+          >
+            Preview
+          </button>
+        ) : null}
+        {ready ? (
+          <button
+            type="button"
+            aria-label="Open project on development server"
+            title="Open project on development server"
+            onClick={() => window.open(url, "_blank", "noopener")}
+            className="flex h-7 items-center gap-1 rounded-[7px] px-2 text-[10.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
+          >
+            <ExternalLink className="h-[12px] w-[12px]" strokeWidth={1.8} />
+            Dev server
+          </button>
+        ) : null}
+        {activeSrc ? (
           <button
             type="button"
             aria-label="Open externally"
-            onClick={() => window.open(url, "_blank", "noopener")}
+            onClick={() => window.open(activeSrc, "_blank", "noopener")}
             className="rounded-[7px] p-1.5 text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
           >
             <ExternalLink className="h-[14px] w-[14px]" strokeWidth={1.8} />
@@ -298,22 +366,33 @@ function BrowserView({
       </div>
 
       <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-white">
-        {ready && !agentRunning ? (
-          <iframe
-            key={`${projectId}:${frameVersion}`}
-            // Keep the trailing slash so the preview behaves as a directory:
-            // relative JS/CSS assets and the injected inspect bridge resolve
-            // inside this project's proxied namespace.
-            src={`/api/vibe/projects/${encodeURIComponent(projectId ?? "")}/preview/`}
-            title="Live preview"
-            className="h-full w-full border-0 bg-white"
-            sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-            onLoad={(event) => {
-              const win = event.currentTarget.contentWindow;
-              onFrameReady(win);
-              win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
-            }}
-          />
+        {(ready || navigatedSrc) && !agentRunning ? (
+          isElectronRuntime() ? (
+            <ElectronWebContentsSurface
+              key={`${projectId}:${frameVersion}:${activeSrc}`}
+              source={activeSrc}
+              title={navigatedSrc ? "Vibe browser" : "Live preview"}
+              surfaceId="clyra-code-live-preview"
+              kind="preview"
+              className="h-full w-full"
+            />
+          ) : (
+            <iframe
+              key={`${projectId}:${frameVersion}:${activeSrc}`}
+              // Keep the trailing slash so the preview behaves as a directory:
+              // relative JS/CSS assets and the injected inspect bridge resolve
+              // inside this project's proxied namespace.
+              src={activeSrc}
+              title={navigatedSrc ? "Vibe browser" : "Live preview"}
+              className="h-full w-full border-0 bg-white"
+              sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+              onLoad={(event) => {
+                const win = event.currentTarget.contentWindow;
+                onFrameReady(win);
+                if (!navigatedSrc) win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
+              }}
+            />
+          )
         ) : failed ? (
           <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
             <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
@@ -761,9 +840,10 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
 /* Panel shell with tabs                                               */
 /* ------------------------------------------------------------------ */
 
-const EXTRA_TABS: Array<{ id: RightTab; label: string }> = [
+const EXTRA_TABS: Array<{ id: RightTab; label: string; icon?: typeof Globe }> = [
   { id: "changes", label: "Changes" },
   { id: "files", label: "Files" },
+  { id: "platform", label: "Platform", icon: Cpu },
 ];
 
 export function RightPanel({
@@ -1001,6 +1081,8 @@ export function RightPanel({
         <PlanView plan={plan} />
       ) : tab === "changes" ? (
         <ChangesView diffs={state.diffs} actions={actionList} focusFile={focusFile} />
+      ) : tab === "platform" ? (
+        <PlatformView projectId={state.activeProjectId} />
       ) : (
         <FilesView projectId={state.activeProjectId} diffs={state.diffs} />
       )}

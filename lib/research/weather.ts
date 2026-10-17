@@ -7,6 +7,13 @@ export type WeatherDay = {
   condition: string;
 };
 
+export type WeatherHour = {
+  time: string;
+  tempC: number;
+  precipProb: number;
+  weatherCode: number;
+};
+
 export type WeatherResult = {
   ok: true;
   location: string;
@@ -15,15 +22,21 @@ export type WeatherResult = {
   timezone?: string;
   observedAt?: string;
   matchedFrom?: string;
+  isCurrentLocation?: boolean;
   current: {
     tempC: number;
+    feelsLikeC: number;
     weatherCode: number;
     isDay: boolean;
     highC: number;
     lowC: number;
     precipProb: number;
+    humidity: number;
+    windKph: number;
+    windDirection: number;
     condition: string;
   };
+  hourly: WeatherHour[];
   daily: WeatherDay[];
 };
 
@@ -241,13 +254,50 @@ function scorePlace(query: string, place: GeoPlace): number {
   return score;
 }
 
+const FETCH_TIMEOUT_MS = 6000;
+
+async function fetchWithTimeout(url: string | URL, init?: RequestInit, retries = 1): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (attempt >= retries) throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+const WEATHER_CACHE_TTL_MS = 10 * 60 * 1000;
+const weatherCache = new Map<string, { at: number; result: WeatherResult | WeatherFailure }>();
+
+function readCache(key: string): WeatherResult | WeatherFailure | null {
+  const hit = weatherCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > WEATHER_CACHE_TTL_MS) {
+    weatherCache.delete(key);
+    return null;
+  }
+  return hit.result;
+}
+
+function writeCache(key: string, result: WeatherResult | WeatherFailure) {
+  weatherCache.set(key, { at: Date.now(), result });
+  if (weatherCache.size > 200) {
+    const oldestKey = weatherCache.keys().next().value;
+    if (oldestKey) weatherCache.delete(oldestKey);
+  }
+}
+
 async function searchOpenMeteo(candidate: string): Promise<GeoPlace[]> {
   const geoUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
   geoUrl.searchParams.set("name", candidate);
   geoUrl.searchParams.set("count", "10");
   geoUrl.searchParams.set("language", "en");
   geoUrl.searchParams.set("format", "json");
-  const geoRes = await fetch(geoUrl);
+  const geoRes = await fetchWithTimeout(geoUrl);
   if (!geoRes.ok) return [];
     const geoJson = (await geoRes.json()) as {
     results?: Array<{
@@ -283,7 +333,7 @@ async function searchNominatim(candidate: string): Promise<GeoPlace[]> {
   url.searchParams.set("format", "jsonv2");
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("limit", "8");
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       Accept: "application/json",
       "User-Agent": "ClyraAI/1.0 (weather lookup)",
@@ -329,7 +379,7 @@ async function searchNominatim(candidate: string): Promise<GeoPlace[]> {
   return places.filter((place): place is GeoPlace => place !== null);
 }
 
-async function geocodeLocation(locationQuery: string): Promise<{
+export async function geocodeLocation(locationQuery: string): Promise<{
   place: GeoPlace | null;
   suggestions: string[];
 }> {
@@ -386,35 +436,99 @@ async function geocodeLocation(locationQuery: string): Promise<{
   return { place: null, suggestions };
 }
 
-export async function fetchLiveWeather(
-  locationQuery: string,
-): Promise<WeatherResult | WeatherFailure> {
-  const query = locationQuery.trim();
-  if (!query) {
-    return { ok: false, error: "Location required" };
-  }
+/**
+ * General place lookup for the maps widget — landmarks, POIs, addresses,
+ * not just cities. `geocodeLocation` above is tuned for weather (city-name
+ * typo-correction via candidate splitting/scoring), which mangles a query
+ * like "the Eiffel Tower" into weak single-word fragments ("the", "eiffel")
+ * and can match nonsense. Nominatim's own full-text search already ranks
+ * landmarks/addresses well when queried directly with the whole phrase, so
+ * try that first and only fall back to the city-tuned geocoder for plain
+ * place names it doesn't recognize.
+ */
+export async function geocodePlace(query: string): Promise<{
+  place: GeoPlace | null;
+  suggestions: string[];
+}> {
+  const q = query.trim();
+  if (!q) return { place: null, suggestions: [] };
 
-  const { place, suggestions } = await geocodeLocation(query);
-  if (!place) {
-    const hint = suggestions.length
-      ? ` Did you mean ${suggestions
-          .slice(0, 3)
-          .map((s) => `“${s}”`)
-          .join(", ")}?`
-      : " Try a nearby city or suburb name.";
+  const nominatimResults = await searchNominatim(q);
+  if (nominatimResults.length) {
     return {
-      ok: false,
-      error: `I couldn't find a location matching “${query}”.${hint}`,
-      suggestions,
+      place: nominatimResults[0]!,
+      suggestions: nominatimResults.slice(0, 5).map((p) => placeLabel(p)).filter(Boolean),
     };
   }
 
+  return geocodeLocation(q);
+}
+
+export async function reverseGeocode(lat: number, lon: number): Promise<{
+  name: string;
+  admin1?: string;
+  country?: string;
+} | null> {
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/reverse");
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lon));
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("zoom", "10");
+    const res = await fetchWithTimeout(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "ClyraAI/1.0 (weather lookup)",
+      },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      address?: {
+        city?: string;
+        town?: string;
+        village?: string;
+        suburb?: string;
+        state?: string;
+        country?: string;
+      };
+    };
+    const name =
+      data.address?.city ||
+      data.address?.town ||
+      data.address?.village ||
+      data.address?.suburb ||
+      "";
+    if (!name) return null;
+    return { name, admin1: data.address?.state, country: data.address?.country };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchForecast(
+  latitude: number,
+  longitude: number,
+): Promise<
+  | {
+      ok: true;
+      timezone?: string;
+      current: WeatherResult["current"];
+      hourly: WeatherHour[];
+      daily: WeatherDay[];
+      observedAt?: string;
+    }
+  | { ok: false; error: string }
+> {
   const forecastUrl = new URL("https://api.open-meteo.com/v1/forecast");
-  forecastUrl.searchParams.set("latitude", String(place.latitude));
-  forecastUrl.searchParams.set("longitude", String(place.longitude));
+  forecastUrl.searchParams.set("latitude", String(latitude));
+  forecastUrl.searchParams.set("longitude", String(longitude));
   forecastUrl.searchParams.set(
     "current",
-    "temperature_2m,weather_code,is_day,relative_humidity_2m,wind_speed_10m",
+    "temperature_2m,apparent_temperature,weather_code,is_day,relative_humidity_2m,wind_speed_10m,wind_direction_10m",
+  );
+  forecastUrl.searchParams.set(
+    "hourly",
+    "temperature_2m,precipitation_probability,weather_code",
   );
   forecastUrl.searchParams.set(
     "daily",
@@ -422,8 +536,14 @@ export async function fetchLiveWeather(
   );
   forecastUrl.searchParams.set("timezone", "auto");
   forecastUrl.searchParams.set("forecast_days", "7");
+  forecastUrl.searchParams.set("forecast_hours", "24");
 
-  const forecastRes = await fetch(forecastUrl);
+  let forecastRes: Response;
+  try {
+    forecastRes = await fetchWithTimeout(forecastUrl);
+  } catch {
+    return { ok: false, error: "Weather service is temporarily unavailable." };
+  }
   if (!forecastRes.ok) {
     return { ok: false, error: "Weather service is temporarily unavailable." };
   }
@@ -432,8 +552,18 @@ export async function fetchLiveWeather(
     current?: {
       time?: string;
       temperature_2m?: number;
+      apparent_temperature?: number;
       weather_code?: number;
       is_day?: number;
+      relative_humidity_2m?: number;
+      wind_speed_10m?: number;
+      wind_direction_10m?: number;
+    };
+    hourly?: {
+      time?: string[];
+      temperature_2m?: number[];
+      precipitation_probability?: number[];
+      weather_code?: number[];
     };
     daily?: {
       time?: string[];
@@ -468,28 +598,123 @@ export async function fetchLiveWeather(
     };
   });
 
-  const matchedFrom =
-    normalizePlace(query) === normalizePlace(place.name)
-      ? undefined
-      : query;
+  const hourlyTimes = data.hourly?.time || [];
+  const hourly: WeatherHour[] = hourlyTimes.slice(0, 24).map((time, index) => ({
+    time,
+    tempC: Number(data.hourly?.temperature_2m?.[index] ?? currentTemp),
+    precipProb: Number(data.hourly?.precipitation_probability?.[index] ?? 0),
+    weatherCode: Number(data.hourly?.weather_code?.[index] ?? currentCode),
+  }));
 
   return {
     ok: true,
-    location: place.name,
-    region: place.admin1,
-    country: place.country,
-    timezone: data.timezone || place.timezone,
+    timezone: data.timezone,
     observedAt: data.current?.time,
-    matchedFrom,
     current: {
       tempC: currentTemp,
+      feelsLikeC: Number(data.current?.apparent_temperature ?? currentTemp),
       weatherCode: currentCode,
       isDay: currentIsDay,
       highC,
       lowC,
       precipProb,
+      humidity: Number(data.current?.relative_humidity_2m ?? 0),
+      windKph: Number(data.current?.wind_speed_10m ?? 0),
+      windDirection: Number(data.current?.wind_direction_10m ?? 0),
       condition: weatherCondition(currentCode),
     },
+    hourly,
     daily,
   };
+}
+
+export async function fetchLiveWeather(
+  locationQuery: string,
+): Promise<WeatherResult | WeatherFailure> {
+  const query = locationQuery.trim();
+  if (!query) {
+    return { ok: false, error: "Location required" };
+  }
+
+  const cacheKey = `q:${normalizePlace(query)}`;
+  const cached = readCache(cacheKey);
+  if (cached) return cached;
+
+  const { place, suggestions } = await geocodeLocation(query);
+  if (!place) {
+    const hint = suggestions.length
+      ? ` Did you mean ${suggestions
+          .slice(0, 3)
+          .map((s) => `“${s}”`)
+          .join(", ")}?`
+      : " Try a nearby city or suburb name.";
+    const failure: WeatherFailure = {
+      ok: false,
+      error: `I couldn't find a location matching “${query}”.${hint}`,
+      suggestions,
+    };
+    return failure;
+  }
+
+  const forecast = await fetchForecast(place.latitude, place.longitude);
+  if (!forecast.ok) {
+    return { ok: false, error: forecast.error };
+  }
+
+  const matchedFrom =
+    normalizePlace(query) === normalizePlace(place.name)
+      ? undefined
+      : query;
+
+  const result: WeatherResult = {
+    ok: true,
+    location: place.name,
+    region: place.admin1,
+    country: place.country,
+    timezone: forecast.timezone || place.timezone,
+    observedAt: forecast.observedAt,
+    matchedFrom,
+    current: forecast.current,
+    hourly: forecast.hourly,
+    daily: forecast.daily,
+  };
+  writeCache(cacheKey, result);
+  return result;
+}
+
+export async function fetchLiveWeatherByCoords(
+  lat: number,
+  lon: number,
+): Promise<WeatherResult | WeatherFailure> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { ok: false, error: "Location required" };
+  }
+
+  const cacheKey = `c:${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const cached = readCache(cacheKey);
+  if (cached) return cached;
+
+  const [place, forecast] = await Promise.all([
+    reverseGeocode(lat, lon),
+    fetchForecast(lat, lon),
+  ]);
+
+  if (!forecast.ok) {
+    return { ok: false, error: forecast.error };
+  }
+
+  const result: WeatherResult = {
+    ok: true,
+    location: place?.name || "Current location",
+    region: place?.admin1,
+    country: place?.country,
+    timezone: forecast.timezone,
+    observedAt: forecast.observedAt,
+    isCurrentLocation: true,
+    current: forecast.current,
+    hourly: forecast.hourly,
+    daily: forecast.daily,
+  };
+  writeCache(cacheKey, result);
+  return result;
 }

@@ -93,18 +93,18 @@ MIN_AVG_CONFIDENCE = 0.72
 MIN_FACE_WIDTH = 0.03
 MAX_MISSING_MS = 1500
 MAX_IDENTITY_SWITCH_MS = 300
-# V10 deliberately invalidates the older cache.  That path used one-way LK
-# flow and could slowly inherit background/camera movement between landmark
-# refreshes.  The current path validates flow in both directions and records a
-# crop state for every decoded output frame.
-TRAJECTORY_VERSION = "offline-cinematic-v10-face-body-fbflow-per-frame"
-PREDICTIVE_LEAD_S = {"smooth": 0.060, "responsive": 0.100}
-COMFORT_ZONE_X = 0.10
-COMFORT_ZONE_Y = 0.075
-COMFORT_STOP_RATIO = 0.80
+# Versioned into the cache key so tracker safety changes cannot reuse an older
+# crop plan. V12 distinguishes verified face/body tracks from motion saliency;
+# cutaways therefore retain their full composition instead of following a
+# cursor, game object, title card, or other moving non-person region.
+TRAJECTORY_VERSION = "offline-cinematic-v12-verified-subjects"
+PREDICTIVE_LEAD_S = {"smooth": 0.0, "responsive": 0.040}
+COMFORT_ZONE_X = 0.12
+COMFORT_ZONE_Y = 0.10
+COMFORT_STOP_RATIO = 0.65
 MAX_OCCLUSION_S = 0.40
-ACTIVE_SPEAKER_SWITCH_HOLD_MS = 650
-ACTIVE_SPEAKER_SWITCH_MARGIN = 0.12
+ACTIVE_SPEAKER_SWITCH_HOLD_MS = 1100
+ACTIVE_SPEAKER_SWITCH_MARGIN = 0.18
 TRACKING_FPS_BY_QUALITY = {
     # Eco analysis deliberately samples a proxy at 12 fps; forward/backward
     # optical flow and the crop interpolator fill the trajectory between
@@ -115,8 +115,8 @@ TRACKING_FPS_BY_QUALITY = {
     "high_quality": 60.0,
     "gpu": 60.0,
 }
-MAX_DYNAMIC_ZOOM = 1.35
-ZOOM_CHANGE_THRESHOLD = 0.06
+MAX_DYNAMIC_ZOOM = 1.20
+ZOOM_CHANGE_THRESHOLD = 0.10
 FLOW_MIN_VALID_RATIO = 0.60
 FLOW_MAX_FB_ERROR_PX = 1.75
 
@@ -746,6 +746,7 @@ class SimpleIoUTracker:
                 "bodyBox": track.get("bodyBox"),
                 "bodyAnchor": track.get("bodyAnchor"),
                 "detector": track.get("detector", "face"),
+                "sourceDetector": track.get("detector", "face"),
             }
             for track_id, track in matched
             if int(track.get("missing", 0)) == 0
@@ -815,6 +816,7 @@ class SimpleIoUTracker:
                     "bodyBox": track.get("bodyBox"),
                     "bodyAnchor": track.get("bodyAnchor"),
                     "detector": "optical-flow",
+                    "sourceDetector": track.get("detector", "face"),
                     "flowConfidence": round(float(confidence), 4),
                 }
             )
@@ -1886,6 +1888,18 @@ def choose_active_speaker(
     return top_face, next_state
 
 
+def is_verified_subject(face: Dict[str, Any]) -> bool:
+    """Return whether a tracked region is safe to use as a human crop target.
+
+    Motion saliency keeps lightweight search useful, but it must not turn a
+    moving cursor, title card, game object, or website panel into a "person".
+    Optical-flow samples inherit the detector that created their track so a
+    real face/body can bridge detector frames without legitimising saliency.
+    """
+    detector = str(face.get("sourceDetector") or face.get("detector") or "").lower()
+    return any(token in detector for token in ("face", "profile", "pose", "body"))
+
+
 def classify_tracking_scene(faces: Sequence[Dict[str, Any]]) -> str:
     """Return a conservative framing classification from local observations."""
     count = len(faces)
@@ -2309,10 +2323,21 @@ def _limit_cinematic_motion(
 
 
 def _scene_ranges(samples: Sequence[Dict[str, Any]], scenes: Sequence[Dict[str, Any]]) -> List[Tuple[int, int]]:
-    """Partition samples at hard cuts so no crop path crosses a scene cut."""
+    """Partition samples at hard cuts or composition-mode changes.
+
+    A face crop must not be smoothed through a transition to a screen, title
+    card, gameplay shot, or other no-person content. Those frames use the
+    content-preserving contain composition and start a fresh camera segment.
+    """
     if not samples:
         return []
     cuts = {0, len(samples)}
+    previous_fit = str(samples[0].get("fitMode") or "cover")
+    for index, sample in enumerate(samples[1:], start=1):
+        fit_mode = str(sample.get("fitMode") or "cover")
+        if fit_mode != previous_fit:
+            cuts.add(index)
+        previous_fit = fit_mode
     for scene in scenes or []:
         end = int(scene.get("endMs") or round(float(scene.get("end") or 0.0) * 1000))
         if end <= 0:
@@ -2417,19 +2442,22 @@ def _optimise_crop_trajectory(
             if abs(predictive_y[index] - comfort_y[index]) < stop_y:
                 comfort_y[index] = comfort_y[index]
 
-        smooth_x = _centred_smooth(comfort_x, radius=2)
-        smooth_y = _centred_smooth(comfort_y, radius=2)
+        # A wider symmetric window removes the visible left/right rocking of
+        # per-frame face boxes without introducing lag: this is an offline
+        # path and therefore has future samples available on both sides.
+        smooth_x = _centred_smooth(comfort_x, radius=8)
+        smooth_y = _centred_smooth(comfort_y, radius=8)
         # When a target exits the comfort zone, favour the immediate target so
         # fast movement never looks like the crop is chasing the speaker.
         moved_x = np.abs(predictive_x - np.r_[comfort_x[0], comfort_x[:-1]]) > start_x
         moved_y = np.abs(predictive_y - np.r_[comfort_y[0], comfort_y[:-1]]) > start_y
-        smooth_x = np.where(moved_x, predictive_x * 0.72 + smooth_x * 0.28, smooth_x)
-        smooth_y = np.where(moved_y, predictive_y * 0.72 + smooth_y * 0.28, smooth_y)
+        smooth_x = np.where(moved_x, predictive_x * 0.28 + smooth_x * 0.72, smooth_x)
+        smooth_y = np.where(moved_y, predictive_y * 0.28 + smooth_y * 0.72, smooth_y)
         # These limits are generous enough to respond within one source frame
         # once a subject leaves the comfort zone, while rejecting isolated
         # detector spikes that would look like a crop snap.
-        smooth_x = _limit_cinematic_motion(smooth_x, times, max_velocity=out_w * 1.45, max_acceleration=out_w * 9.0)
-        smooth_y = _limit_cinematic_motion(smooth_y, times, max_velocity=out_h * 1.10, max_acceleration=out_h * 7.5)
+        smooth_x = _limit_cinematic_motion(smooth_x, times, max_velocity=out_w * 0.55, max_acceleration=out_w * 2.5)
+        smooth_y = _limit_cinematic_motion(smooth_y, times, max_velocity=out_h * 0.45, max_acceleration=out_h * 2.0)
 
         for index, row in enumerate(rows):
             max_x = max(0, int(row["scaledWidth"]) - int(row["width"]))
@@ -2716,6 +2744,7 @@ def _analyse_proxy_stream(
                     "bodyBox": item.get("bodyBox"),
                     "bodyAnchor": item.get("bodyAnchor"),
                     "detector": item.get("detector", frame_source),
+                    "sourceDetector": item.get("sourceDetector") or item.get("detector", frame_source),
                     "flowConfidence": round(float(item.get("flowConfidence", flow_confidence)), 4),
                     "flowPoints": int(flow_points),
                     "flowValidRatio": float(flow_meta.get("validRatio", 0.0)),
@@ -2765,6 +2794,7 @@ def _analyse_proxy_stream(
                         "bodyBox": sample.get("bodyBox"),
                         "bodyAnchor": sample.get("bodyAnchor"),
                         "detector": sample.get("detector"),
+                        "sourceDetector": sample.get("sourceDetector"),
                         "flowConfidence": sample.get("flowConfidence", 0.0),
                         "flowPoints": sample.get("flowPoints", 0),
                         "flowValidRatio": sample.get("flowValidRatio", 0.0),
@@ -3084,8 +3114,7 @@ def track_faces_and_build_crops(
         face
         for row in face_tracks
         for face in (row.get("faces") or [])
-        if "face" in str(face.get("detector") or "").lower()
-        or "profile" in str(face.get("detector") or "").lower()
+        if is_verified_subject(face)
     ]
 
     # Manual selection is a hard identity lock.  Automatic mode deliberately
@@ -3154,6 +3183,13 @@ def track_faces_and_build_crops(
                     # face_tracks already stripped hist; use track map only.
                     item["personId"] = track_to_person.get(item["trackId"])
 
+            # Automatic framing is human-subject framing. Motion saliency is
+            # deliberately excluded here so non-person cutaways use the
+            # content-preserving composition after the brief occlusion hold.
+            # An explicit person/track lock can still retain its exact target.
+            if not manual_lock:
+                tracked = [item for item in tracked if is_verified_subject(item)]
+
             chosen = None
             active_speaker_score = None
             scene_type = classify_tracking_scene(tracked)
@@ -3216,6 +3252,7 @@ def track_faces_and_build_crops(
                         if previous_active and current_active != previous_active and auto_state.get("lastSwitchMs") == t_ms:
                             active_switches.append({"timeMs": t_ms, "from": previous_active, "to": current_active})
 
+            preserve_source_frame = False
             if chosen is not None:
                 sample_source = "optical_flow" if chosen.get("detector") == "optical-flow" else "face"
                 last_face_bbox = list(chosen["bbox"])
@@ -3251,7 +3288,8 @@ def track_faces_and_build_crops(
                     and prev_x is not None
                 )
                 long_hold = (
-                    active_person_id is not None
+                    manual_lock
+                    and active_person_id is not None
                     and last_face_bbox is not None
                     and prev_x is not None
                 )
@@ -3270,19 +3308,19 @@ def track_faces_and_build_crops(
                     track_id = selected_track_id or primary_auto_track
                     person_id = active_person_id
                 else:
-                    sample_source = "fallback"
-                    x, y, scaled_w, scaled_h, prev_x, prev_y = _crop_from_face(
-                        last_face_bbox or [0.35, 0.15, 0.65, 0.55],
-                        frame_w,
-                        frame_h,
-                        out_w,
-                        out_h,
-                        effective_allow_zoom,
-                        prev_x,
-                        prev_y,
-                        alpha,
-                    )
-                    confidence = 0.15
+                    # In automatic modes, losing the subject after the short
+                    # occlusion window usually means the edit has cut to a
+                    # website, title card, gameplay, or archival image. Holding
+                    # the old face crop here discarded the important scene.
+                    # Mark it for a full-content composition instead.
+                    preserve_source_frame = not manual_lock
+                    sample_source = "content-preserve" if preserve_source_frame else "fallback"
+                    fixed = _fixed_crop_keyframe(t_ms, frame_w, frame_h, out_w, out_h, crop_focus)
+                    x = int(fixed["x"])
+                    y = int(fixed["y"])
+                    scaled_w = int(fixed["scaledWidth"])
+                    scaled_h = int(fixed["scaledHeight"])
+                    confidence = 0.0 if preserve_source_frame else 0.15
                     fallback_box = last_face_bbox or [0.35, 0.15, 0.65, 0.55]
                     face_box = _bbox_obj(fallback_box)
                     face_center = {"x": _face_center(fallback_box)[0], "y": _face_center(fallback_box)[1]}
@@ -3335,6 +3373,8 @@ def track_faces_and_build_crops(
                         "cameraMotion": chosen.get("cameraMotion") if chosen is not None else None,
                     },
                     "holding": holding,
+                    "fitMode": "contain" if preserve_source_frame else "cover",
+                    "contentPreserved": preserve_source_frame,
                     "source": sample_source,
                 }
             )
@@ -3479,6 +3519,7 @@ def track_faces_and_build_crops(
             "pathSampleCount": len(keyframes),
             "predictiveLeadMs": 0 if composition_locked else int(round(PREDICTIVE_LEAD_S.get(mode, 0.0) * 1000)),
             "comfortZone": {"x": COMFORT_ZONE_X, "y": COMFORT_ZONE_Y},
+            "contentPreservation": "contain-on-sustained-subject-loss",
         },
         "cropKeyframes": keyframes,
         "availableFaces": available,

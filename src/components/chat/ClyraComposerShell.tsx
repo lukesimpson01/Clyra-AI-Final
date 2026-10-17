@@ -11,15 +11,29 @@
 import React, {
   type CSSProperties,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ArrowUp } from "lucide-react";
+import { VoiceWaveIcon } from "../voice/VoiceWaveIcon";
+import { ClyraFace } from "../../voice/ClyraFace";
+import { setOrbAnchor } from "../../voice/orbAnchor";
+import {
+  canStartDictation,
+  formatDictationElapsed,
+  isDictationHold,
+  isDictationSessionOpen,
+  type ComposerDictationPhase,
+} from "../../lib/composerDictation";
 
-export type ChatEffortLevel = "light" | "medium" | "high";
+export type ChatEffortLevel = "light" | "medium" | "high" | "max";
 
 export interface ComposerEffortOption {
   value: ChatEffortLevel;
@@ -55,11 +69,32 @@ export interface ComposerPaletteItem {
   onPick: () => void;
 }
 
+/** A command or agent that has been placed in the composer for this turn. */
+export interface ComposerSelection {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  onRemove: () => void;
+}
+
+/** A clickable quick-start on the welcome screen — fills the composer, doesn't send. */
+export interface ComposerSuggestion {
+  id: string;
+  label: string;
+  /** A concrete outcome makes the welcome surface useful before a
+   * conversation exists. The action still only fills the composer. */
+  description?: string;
+  icon: ReactNode;
+  onPick: () => void;
+}
+
 export interface ComposerChatRow {
   id: string;
   group: "Today" | "Previous 7 days" | "Earlier";
   title: string;
   when: string;
+  /** Last message in the conversation, trimmed for a one-line preview. */
+  preview?: string;
 }
 
 export interface ComposerConnectionScope {
@@ -88,11 +123,17 @@ export interface ComposerConnectionsState {
 }
 
 export interface ComposerDictationState {
-  phase: "idle" | "listening" | "error";
-  level: number; // 0..1
-  elapsedSeconds: number;
+  phase: ComposerDictationPhase;
+  level: number; // 0..1, real microphone level
+  elapsedSeconds: number; // real recording clock, supplied by the capture session
+  /** Latest real status or error message from the capture session. */
+  detail?: string;
+  /** Starts recording (tap, or press-and-hold). */
   onStart: () => void;
+  /** Ends recording and transcribes it; the transcript fills the composer. */
   onStop: () => void;
+  /** Discards the audio and any partial text; the existing draft is kept. */
+  onCancel?: () => void;
 }
 
 export interface ClyraComposerShellProps {
@@ -103,6 +144,15 @@ export interface ClyraComposerShellProps {
   onTextChange: (value: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
+  /** Controls pinned over the visible transcript, outside its scroll content. */
+  transcriptOverlay?: ReactNode;
+  /** True while a reply streams; the send control then becomes Stop. */
+  isResponding?: boolean;
+  /** Cancels the reply in progress (the Stop control and Escape). */
+  onStop?: () => void;
+  /** Enters the full Clyra Voice Call using the same conversation context. */
+  onStartVoiceCall?: () => void;
+  canSend?: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   placeholder?: string;
 
@@ -125,18 +175,25 @@ export interface ClyraComposerShellProps {
   paletteActiveIndex?: number;
   onPaletteHoverIndex?: (index: number) => void;
 
+  /** Persistent selections live above the input, so multiple agents remain
+   * visible, ordered, and individually removable before send. */
+  selections?: ComposerSelection[];
+
+  /** Welcome-screen quick-starts, shown under the composer bar until a
+   * conversation starts. Each click fills the draft; it never sends. */
+  suggestions?: ComposerSuggestion[];
+
   files: ComposerFileItem[];
   onPickFiles: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onFilesSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
 
   dictation: ComposerDictationState;
-  /** Starts the full duplex Clyra call. Dictation remains a separate
-   * composer-only speech-to-text action. */
-  onStartVoiceCall?: () => void;
 
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  /** Opens the app-wide settings sheet from the persistent sidebar footer. */
+  onOpenSettings: () => void;
   chats: ComposerChatRow[];
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
@@ -149,12 +206,7 @@ export interface ClyraComposerShellProps {
 
   connections: ComposerConnectionsState;
 
-  /** Imports a public GitHub repository into a Clyra-owned Vibe workspace.
-   * It is optional so this shell can stay usable in embedded/offline builds. */
-  onImportGitHubRepo?: (url: string) => Promise<void>;
-
   transcript: ReactNode;
-  welcomeSubtitle?: ReactNode;
   /** Applied to the transcript scroll container so existing
    *  `document.getElementById("chat-container")` scroll-tracking code keeps working unchanged. */
   transcriptContainerId?: string;
@@ -208,6 +260,8 @@ export const userBubbleInnerStyle: CSSProperties = {
   fontSize: 14.5,
   lineHeight: 1.5,
   letterSpacing: "-0.01em",
+  // Matches the reference artboard's bubbleStyle exactly (`text-wrap:pretty`).
+  textWrap: "pretty" as CSSProperties["textWrap"],
 };
 
 export const assistantBubbleInnerStyle: CSSProperties = {
@@ -219,6 +273,80 @@ export const assistantBubbleInnerStyle: CSSProperties = {
   color: "#15171C",
 };
 
+/**
+ * The small, transportable centre of the Clyra Chat composer.  Surfaces such
+ * as Cowork use this rather than redrawing a message input: it keeps the same
+ * resize behaviour, motion curve, keyboard contract and focus treatment as
+ * the full Clyra Chat shell without importing the shell's own sidebar.
+ */
+export interface ClyraChatComposerBarProps {
+  text: string;
+  onTextChange: (text: string) => void;
+  onSubmit: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>;
+  leading?: ReactNode;
+  popover?: ReactNode;
+}
+
+export function ClyraChatComposerBar({
+  text,
+  onTextChange,
+  onSubmit,
+  onKeyDown,
+  placeholder = "Message Clyra",
+  disabled = false,
+  textareaRef,
+  leading,
+  popover,
+}: ClyraChatComposerBarProps) {
+  const internalRef = useRef<HTMLTextAreaElement | null>(null);
+  const ref = textareaRef || internalRef;
+  const reduceMotion = useReducedMotion();
+  useLayoutEffect(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(136, Math.max(24, textarea.scrollHeight))}px`;
+  }, [ref, text]);
+  return (
+    <div className="cc-shared-composer-wrap">
+      {popover}
+      <motion.div
+        className="cc-shared-composer"
+        layout
+        transition={
+          reduceMotion
+            ? { duration: 0 }
+            : { duration: 0.2, ease: [0.2, 0.8, 0.3, 1] }
+        }
+      >
+        {leading}
+        <textarea
+          ref={ref}
+          rows={1}
+          value={text}
+          disabled={disabled}
+          placeholder={placeholder}
+          onChange={(event) => onTextChange(event.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        <button
+          type="button"
+          className="cc-shared-composer-send"
+          aria-label="Send message"
+          disabled={disabled || !text.trim()}
+          onClick={onSubmit}
+        >
+          <ArrowUp size={15} strokeWidth={2.2} />
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const {
     userName,
@@ -227,6 +355,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onTextChange,
     onKeyDown,
     onSend,
+    transcriptOverlay,
+    isResponding = false,
+    onStop,
+    onStartVoiceCall,
+    canSend = Boolean(text.trim()),
     textareaRef,
     placeholder = "Message Clyra",
     sent,
@@ -242,14 +375,16 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     paletteQuery,
     paletteActiveIndex = -1,
     onPaletteHoverIndex,
+    selections = [],
+    suggestions = [],
     files,
     onPickFiles,
     fileInputRef,
     onFilesSelected,
     dictation,
-    onStartVoiceCall,
     sidebarOpen,
     onToggleSidebar,
+    onOpenSettings,
     chats,
     onNewChat,
     onOpenChat,
@@ -259,12 +394,79 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onSideQueryChange,
     usage,
     connections,
-    onImportGitHubRepo,
     transcript,
-    welcomeSubtitle,
     transcriptContainerId,
     transcriptContainerRef,
   } = props;
+  const reduceMotion = useReducedMotion();
+
+  // Plays once, the first time the shell ever paints: the welcome heading,
+  // composer bar and source dock rise/fade in with a short stagger instead of
+  // snapping straight to their resting state. Stays true for the life of the
+  // component afterward, so it never replays when `sent`/`mg` later toggle
+  // the welcome block back into view — that transition already has its own
+  // choreography (see `backDelay` below).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const entrance = (delay: number, distance = 10): CSSProperties =>
+    reduceMotion
+      ? {}
+      : {
+          opacity: mounted ? 1 : 0,
+          transform: `translateY(${mounted ? 0 : distance}px)`,
+          transition: `opacity .6s ${SHELL_EASE} ${delay}s, transform .6s ${SHELL_EASE} ${delay}s`,
+        };
+
+  // Microphone intent: a tap toggles recording, a press-and-hold records until release.
+  // A press that starts recording sets micIgnoreClickRef so its own click cannot stop it.
+  const micPressRef = useRef<{ downAt: number; startedHere: boolean } | null>(null);
+  const micIgnoreClickRef = useRef(false);
+  const dictationPhase = dictation.phase;
+  const dictationBusy = dictationPhase === "starting" || dictationPhase === "listening" || dictationPhase === "transcribing";
+
+  useEffect(() => {
+    if (!isDictationSessionOpen(dictationPhase)) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") dictation.onCancel?.();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // dictation.onCancel is recreated each render; the phase alone scopes the listener.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dictationPhase]);
+
+  const onMicPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const startsRecording = canStartDictation(dictationPhase);
+    micPressRef.current = { downAt: performance.now(), startedHere: startsRecording };
+    micIgnoreClickRef.current = startsRecording;
+    if (startsRecording) dictation.onStart();
+  };
+
+  const endMicPress = (fromPointerLeave: boolean) => {
+    const press = micPressRef.current;
+    micPressRef.current = null;
+    if (!press?.startedHere) return;
+    if (isDictationHold(press.downAt, performance.now())) {
+      dictation.onStop();
+      // Leaving the button means no click follows, so the guard must not linger.
+      if (fromPointerLeave) micIgnoreClickRef.current = false;
+    }
+  };
+
+  const onMicClick = () => {
+    if (micIgnoreClickRef.current) {
+      micIgnoreClickRef.current = false;
+      return;
+    }
+    // Keyboard activation (Enter/Space) and the second tap of a tap-to-toggle.
+    if (dictationPhase === "listening") dictation.onStop();
+    else if (dictationPhase === "starting") dictation.onCancel?.();
+    else if (canStartDictation(dictationPhase)) dictation.onStart();
+  };
 
   const [effortMenuOpen, setEffortMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -282,10 +484,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const [editChatId, setEditChatId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [tempNote, setTempNote] = useState(false);
-  const [repoImportOpen, setRepoImportOpen] = useState(false);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [repoImporting, setRepoImporting] = useState(false);
-  const [repoImportError, setRepoImportError] = useState<string | null>(null);
+  // Keep the home pill mounted just long enough to play its reference exit,
+  // but never leave a visually hidden control in the keyboard tab order.
+  const [tempPillMounted, setTempPillMounted] = useState(temp);
   const hasMountedTempToggleRef = useRef(false);
   const [headroom, setHeadroom] = useState(260);
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -294,7 +495,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const effortMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (effortMenuOpen && effortMenuRef.current && !effortMenuRef.current.contains(e.target as Node)) {
+      if (
+        effortMenuOpen &&
+        effortMenuRef.current &&
+        !effortMenuRef.current.contains(e.target as Node)
+      ) {
         setEffortMenuOpen(false);
       }
     };
@@ -331,6 +536,15 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     return () => window.clearTimeout(t);
   }, [temp]);
 
+  useEffect(() => {
+    if (temp) {
+      setTempPillMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setTempPillMounted(false), 500);
+    return () => window.clearTimeout(timer);
+  }, [temp]);
+
   const chosenSources = useMemo(
     () => sources.filter((s) => activeSourceIds.includes(s.id)),
     [sources, activeSourceIds],
@@ -338,29 +552,38 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const shownPills = chosenSources.slice(0, 3);
   const overflowCount = chosenSources.length - shownPills.length;
 
-  const currentEffortOption = efforts.find((e) => e.value === currentEffort) ?? efforts[0];
+  const currentEffortOption =
+    efforts.find((e) => e.value === currentEffort) ?? efforts[0];
   const mg = manageOpen;
   const dt = connectionsStep === "detail";
   const webOff = !connections.webSearchEnabled;
   // Matches the artboard's step==="connected" height (384) exactly — the
   // real detail view (email + scope rows) is the same shape as that step.
+  const selectionRows = selections.length;
   const barHeight = dt
     ? 384
     : mg
-    ? (webOff ? 292 : 226)
-    : 118 + Math.ceil(files.length / 2) * 48;
+      ? webOff
+        ? 292
+        : 226
+      : 118 + Math.ceil(files.length / 2) * 48 + selectionRows * 36;
   const backDelay = !mg && collapsing ? ".7s" : "0s";
 
   const closeManage = () => {
     setManageOpen(false);
     setConnectionsStep(null);
     setCollapsing(true);
-    if (collapseTimerRef.current != null) window.clearTimeout(collapseTimerRef.current);
-    collapseTimerRef.current = window.setTimeout(() => setCollapsing(false), 1750);
+    if (collapseTimerRef.current != null)
+      window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(
+      () => setCollapsing(false),
+      1750,
+    );
   };
   useEffect(() => {
     return () => {
-      if (collapseTimerRef.current != null) window.clearTimeout(collapseTimerRef.current);
+      if (collapseTimerRef.current != null)
+        window.clearTimeout(collapseTimerRef.current);
     };
   }, []);
 
@@ -387,7 +610,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const [exitingPanel, setExitingPanel] = useState<PanelKind>(null);
   const panelTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    if (panelTimerRef.current != null) window.clearTimeout(panelTimerRef.current);
+    if (panelTimerRef.current != null)
+      window.clearTimeout(panelTimerRef.current);
     if (targetPanel === mountedPanel) {
       setExitingPanel(null);
       return;
@@ -406,7 +630,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       }, 200);
     }
     return () => {
-      if (panelTimerRef.current != null) window.clearTimeout(panelTimerRef.current);
+      if (panelTimerRef.current != null)
+        window.clearTimeout(panelTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetPanel]);
@@ -423,7 +648,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // the rows out of view. That's fixed at the call sites below, so the
   // original artboard timing is restored here unaltered.)
   const faceDelay = mg ? ".95s" : ".7s";
-  const faceStyle = (on: boolean, y: number, hidden?: boolean): CSSProperties => ({
+  const faceStyle = (
+    on: boolean,
+    y: number,
+    hidden?: boolean,
+  ): CSSProperties => ({
     position: "absolute",
     left: 0,
     right: 0,
@@ -468,7 +697,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       const kids = dockEl.querySelectorAll<HTMLElement>("[data-dock]");
       kids.forEach((kid) => {
         const r = kid.getBoundingClientRect();
-        const t = Math.max(0, 1 - Math.abs(clientX - (r.left + r.width / 2)) / 118);
+        const t = Math.max(
+          0,
+          1 - Math.abs(clientX - (r.left + r.width / 2)) / 118,
+        );
         const eased = t * t * (3 - 2 * t);
         kid.style.transform = `translateY(${(-7 * eased).toFixed(2)}px) scale(${(1 + 0.46 * eased).toFixed(3)})`;
       });
@@ -500,28 +732,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     setEditChatId(null);
   };
 
-  const openRepositoryImport = () => {
-    if (!onImportGitHubRepo) return;
-    setRepoImportError(null);
-    setRepoImportOpen(true);
-  };
-
-  const submitRepositoryImport = async () => {
-    if (!onImportGitHubRepo || !repoUrl.trim() || repoImporting) return;
-    setRepoImporting(true);
-    setRepoImportError(null);
-    try {
-      await onImportGitHubRepo(repoUrl.trim());
-      setRepoImportOpen(false);
-      setRepoUrl("");
-    } catch (error) {
-      setRepoImportError(error instanceof Error ? error.message : "Clyra could not import that repository.");
-    } finally {
-      setRepoImporting(false);
-    }
-  };
-
-  const groupLabels: ComposerChatRow["group"][] = ["Today", "Previous 7 days", "Earlier"];
+  const groupLabels: ComposerChatRow["group"][] = [
+    "Today",
+    "Previous 7 days",
+    "Earlier",
+  ];
   const filteredChats = useMemo(() => {
     const q = sideQuery.trim().toLowerCase();
     return chats.filter((c) => !q || c.title.toLowerCase().includes(q));
@@ -530,6 +745,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   return (
     <div
       ref={composerRootRef}
+      className="clyra-composer-shell"
       style={{
         position: "relative",
         height: "100%",
@@ -537,60 +753,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         display: "flex",
         alignItems: "stretch",
         justifyContent: "center",
-        background: "#FFFFFF",
-        fontFamily: "'Instrument Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
+        background:
+          "radial-gradient(120% 90% at 50% 0%, #FCFCFD 0%, #F5F6F8 58%, #EEF0F3 100%)",
+        fontFamily:
+          "'Instrument Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
         WebkitFontSmoothing: "antialiased",
         overflow: "hidden",
       }}
     >
-      {repoImportOpen ? (
-        <div
-          role="presentation"
-          onMouseDown={() => !repoImporting && setRepoImportOpen(false)}
-          style={{ position: "absolute", inset: 0, zIndex: 80, display: "grid", placeItems: "center", padding: 20, background: "rgba(18,20,24,0.18)" }}
-        >
-          <form
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="clyra-import-repository-title"
-            onMouseDown={(event) => event.stopPropagation()}
-            onSubmit={(event) => { event.preventDefault(); void submitRepositoryImport(); }}
-            style={{ width: "min(100%, 440px)", borderRadius: 18, border: "1px solid rgba(16,18,24,0.10)", background: "#FFFFFF", padding: 20, boxShadow: "0 24px 72px rgba(16,18,24,0.22)" }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <span style={{ display: "grid", width: 34, height: 34, placeItems: "center", borderRadius: 10, background: "rgba(16,18,24,0.055)", color: "#15171C" }} aria-hidden>
-                <GitHubIcon size={18} />
-              </span>
-              <span style={{ flex: 1 }}>
-                <strong id="clyra-import-repository-title" style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#15171C" }}>Bring in a GitHub repository</strong>
-                <span style={{ display: "block", marginTop: 3, fontSize: 12, lineHeight: 1.45, color: "#63676F" }}>Clyra makes a separate local workspace from a public repository, then opens it in Vibe.</span>
-              </span>
-              <button type="button" onClick={() => setRepoImportOpen(false)} disabled={repoImporting} aria-label="Close repository import" style={iconGhostButtonStyle(28)}>
-                <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
-              </button>
-            </div>
-            <label style={{ display: "block", marginTop: 18, fontSize: 11.5, fontWeight: 600, color: "#41444B" }}>
-              Repository URL
-              <input
-                autoFocus
-                value={repoUrl}
-                onChange={(event) => setRepoUrl(event.target.value)}
-                placeholder="https://github.com/owner/repository"
-                disabled={repoImporting}
-                style={{ display: "block", width: "100%", height: 40, marginTop: 7, boxSizing: "border-box", border: "1px solid rgba(16,18,24,0.13)", borderRadius: 10, background: "#FFFFFF", padding: "0 11px", outline: "none", color: "#15171C", fontFamily: "inherit", fontSize: 13 }}
-              />
-            </label>
-            {repoImportError ? <p role="alert" style={{ margin: "9px 0 0", color: "#B33A2B", fontSize: 12, lineHeight: 1.45 }}>{repoImportError}</p> : null}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
-              <button type="button" onClick={() => setRepoImportOpen(false)} disabled={repoImporting} style={{ height: 34, padding: "0 12px", border: "none", borderRadius: 9, background: "transparent", color: "#5C6069", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}>Cancel</button>
-              <button type="submit" disabled={!repoUrl.trim() || repoImporting} style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 13px", border: "none", borderRadius: 9, background: "#15171C", color: "#FFFFFF", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, cursor: repoImporting ? "wait" : "pointer", opacity: !repoUrl.trim() || repoImporting ? 0.55 : 1 }}>
-                {repoImporting ? <span className="clyra-repository-import-spinner" aria-hidden /> : <GitHubIcon size={14} />}
-                {repoImporting ? "Importing…" : "Import repository"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
       {/* Sidebar toggle */}
       <button
         type="button"
@@ -598,7 +768,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         title="Chat history"
         style={{
           position: "absolute",
-          top: 4,
+          top: 18,
           left: 18,
           zIndex: 48,
           display: "flex",
@@ -617,8 +787,27 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           transition: `background .24s ${EASE}, color .24s ease, opacity .3s ease, transform .5s ${SHELL_EASE}`,
         }}
       >
-        <svg key={sidebarOpen ? "open" : "closed"} style={{ animation: "clyraTempTick .46s cubic-bezier(.32,.72,0,1) both" }} width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-          <path d={sidebarOpen ? "M15 6l-6 6 6 6" : "M3.5 6.5h17M3.5 12h17M3.5 17.5h11"} />
+        <svg
+          key={sidebarOpen ? "open" : "closed"}
+          style={{
+            animation: "clyraTempTick .46s cubic-bezier(.32,.72,0,1) both",
+          }}
+          width={17}
+          height={17}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path
+            d={
+              sidebarOpen
+                ? "M15 6l-6 6 6 6"
+                : "M3.5 6.5h17M3.5 12h17M3.5 17.5h11"
+            }
+          />
         </svg>
       </button>
 
@@ -626,12 +815,13 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       <button
         type="button"
         onClick={onToggleTemp}
-        aria-pressed={temp}
         title={temp ? "Temporary chat on" : "Start a temporary chat"}
         className="clyra-composer-temp-toggle"
         style={{
-          position: "absolute",
-          top: 4,
+          // This is deliberately viewport-anchored, like the Composer
+          // reference: it never rides with the transcript or the composer.
+          position: "fixed",
+          top: 18,
           right: 18,
           zIndex: 48,
           display: "flex",
@@ -643,12 +833,15 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           border: "none",
           cursor: "pointer",
           color: temp ? "#15171C" : "#5C6069",
-          transition: "background .28s ease, color .28s ease",
+          background: "transparent",
+          transition: `background .28s ${EASE}, color .28s ease`,
         }}
       >
         <svg
           key={temp ? "temporary-on" : "temporary-off"}
-          style={{ animation: "clyraTempTick .5s cubic-bezier(.32,.72,0,1) both" }}
+          style={{
+            animation: "clyraTempTick .5s cubic-bezier(.32,.72,0,1) both",
+          }}
           width={17}
           height={17}
           viewBox="0 0 24 24"
@@ -666,7 +859,13 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
 
       <div
         onClick={onToggleSidebar}
-        style={{ position: "absolute", inset: 0, zIndex: 44, background: "transparent", pointerEvents: sidebarOpen ? "auto" : "none" }}
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 44,
+          background: "transparent",
+          pointerEvents: sidebarOpen ? "auto" : "none",
+        }}
       />
 
       {/* Sidebar panel */}
@@ -683,51 +882,192 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           borderRadius: 24,
           background: "#FFFFFF",
           overflow: "hidden",
-          boxShadow: "0 24px 60px -26px rgba(16,18,24,0.22), inset 0 0 0 1px rgba(16,18,24,0.05)",
+          boxShadow:
+            "0 24px 60px -26px rgba(16,18,24,0.22), inset 0 0 0 1px rgba(16,18,24,0.05)",
           visibility: sidebarOpen ? "visible" : "hidden",
           transform: `translateX(${sidebarOpen ? 0 : -322}px)`,
           pointerEvents: sidebarOpen ? "auto" : "none",
           transition: `visibility 0s linear ${sidebarOpen ? "0s" : ".72s"}, transform .72s cubic-bezier(.14,.96,.18,1)`,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 14px 10px 18px" }}>
-          <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.011em", color: "#15171C" }}>Chats</span>
-          <button type="button" onClick={onToggleSidebar} title="Hide" style={iconGhostButtonStyle(30)}>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "18px 14px 10px 18px",
+          }}
+        >
+          <span
+            style={{
+              flex: 1,
+              fontSize: 13.5,
+              fontWeight: 600,
+              letterSpacing: "-0.011em",
+              color: "#15171C",
+            }}
+          >
+            Chats
+          </span>
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title="Hide"
+            style={iconGhostButtonStyle(30)}
+          >
+            <svg
+              width={14}
+              height={14}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.1}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
           </button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 1, padding: "0 10px 10px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            padding: "0 10px 10px",
+          }}
+        >
           <button
             type="button"
             onClick={onNewChat}
-            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", height: 36, padding: "0 11px", borderRadius: 12, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 500, letterSpacing: "-0.008em", color: "#15171C" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(16,18,24,0.035)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              width: "100%",
+              height: 36,
+              padding: "0 11px",
+              borderRadius: 12,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 500,
+              letterSpacing: "-0.008em",
+              color: "#15171C",
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "rgba(16,18,24,0.035)")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "transparent")
+            }
           >
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            <svg
+              width={15}
+              height={15}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
             New chat
           </button>
-          <label style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 11px", borderRadius: 12, background: "transparent", cursor: "text" }}>
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" style={{ color: "#7A7E87", flexShrink: 0 }}><circle cx={11} cy={11} r={6.6} /><path d="M16 16l4 4" /></svg>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              height: 36,
+              padding: "0 11px",
+              borderRadius: 12,
+              background: "transparent",
+              cursor: "text",
+            }}
+          >
+            <svg
+              width={15}
+              height={15}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              style={{ color: "#7A7E87", flexShrink: 0 }}
+            >
+              <circle cx={11} cy={11} r={6.6} />
+              <path d="M16 16l4 4" />
+            </svg>
             <input
               type="text"
               placeholder="Search chats"
               value={sideQuery}
               onChange={(e) => onSideQueryChange(e.target.value)}
-              style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none", fontFamily: "inherit", fontSize: 13, letterSpacing: "-0.008em", color: "#15171C" }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: "none",
+                background: "transparent",
+                outline: "none",
+                fontFamily: "inherit",
+                fontSize: 13,
+                letterSpacing: "-0.008em",
+                color: "#15171C",
+              }}
             />
           </label>
         </div>
-        <div className="clyra-composer-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "0 6px 12px 8px" }}>
+        <div
+          className="clyra-composer-scroll"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overscrollBehavior: "contain",
+            padding: "0 6px 12px 8px",
+          }}
+        >
           {sideQuery.trim() && filteredChats.length === 0 ? (
-            <span style={{ display: "block", padding: "14px 10px", fontSize: 12.5, color: "#63676F" }}>No chats match that search.</span>
+            <span
+              style={{
+                display: "block",
+                padding: "14px 10px",
+                fontSize: 12.5,
+                color: "#63676F",
+              }}
+            >
+              No chats match that search.
+            </span>
           ) : null}
           {groupLabels.map((label) => {
             const items = filteredChats.filter((c) => c.group === label);
             if (!items.length) return null;
             return (
-              <div key={label} style={{ display: "flex", flexDirection: "column", marginBottom: 4 }}>
-                <span style={{ display: "block", padding: "10px 10px 5px", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "#5F636B" }}>{label}</span>
+              <div
+                key={label}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  marginBottom: 4,
+                }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    padding: "10px 10px 5px",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "#5F636B",
+                  }}
+                >
+                  {label}
+                </span>
                 {items.map((c) => {
                   const hov = hoverChatId === c.id;
                   const editing = editChatId === c.id;
@@ -735,9 +1075,25 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                     <div
                       key={c.id}
                       onMouseEnter={() => setHoverChatId(c.id)}
-                      onMouseLeave={() => setHoverChatId((v) => (v === c.id ? null : v))}
+                      onMouseLeave={() =>
+                        setHoverChatId((v) => (v === c.id ? null : v))
+                      }
                       onClick={() => !editing && onOpenChat(c.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", boxSizing: "border-box", minWidth: 0, padding: "9px 6px 9px 10px", borderRadius: 13, background: hov ? "rgba(16,18,24,0.035)" : "transparent", cursor: "pointer", transition: `background .26s ${EASE}` }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        boxSizing: "border-box",
+                        minWidth: 0,
+                        padding: "9px 6px 9px 10px",
+                        borderRadius: 13,
+                        background: hov
+                          ? "rgba(16,18,24,0.035)"
+                          : "transparent",
+                        cursor: "pointer",
+                        transition: `background .26s ${EASE}`,
+                      }}
                     >
                       {editing ? (
                         <input
@@ -746,23 +1102,117 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                           value={editDraft}
                           onChange={(e) => setEditDraft(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); commitRename(c.id); }
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitRename(c.id);
+                            }
                             if (e.key === "Escape") setEditChatId(null);
                           }}
                           onBlur={() => commitRename(c.id)}
                           onClick={(e) => e.stopPropagation()}
-                          style={{ flex: 1, minWidth: 0, height: 26, padding: "0 8px", border: "none", borderRadius: 8, background: "#FFFFFF", outline: "none", boxShadow: "inset 0 0 0 1.5px rgba(30,111,255,0.55)", fontFamily: "inherit", fontSize: 13, fontWeight: 500, color: "#15171C" }}
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            height: 26,
+                            padding: "0 8px",
+                            border: "none",
+                            borderRadius: 8,
+                            background: "#FFFFFF",
+                            outline: "none",
+                            boxShadow:
+                              "inset 0 0 0 1.5px rgba(30,111,255,0.55)",
+                            fontFamily: "inherit",
+                            fontSize: 13,
+                            fontWeight: 500,
+                            color: "#15171C",
+                          }}
                         />
                       ) : (
-                        <span style={{ flex: 1, minWidth: 0, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 13, fontWeight: 500, letterSpacing: "-0.008em", color: "#15171C" }}>{c.title}</span>
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            textAlign: "left",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            fontSize: 13,
+                            fontWeight: 500,
+                            letterSpacing: "-0.008em",
+                            color: "#15171C",
+                          }}
+                        >
+                          {c.title}
+                        </span>
                       )}
-                      <span style={{ fontSize: 10.5, color: "#63676F", flexShrink: 0, opacity: hov || editing ? 0 : 1, transition: "opacity .2s ease" }}>{c.when}</span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, overflow: "hidden", width: hov && !editing ? 58 : 0, opacity: hov && !editing ? 1 : 0, transition: "width .34s ease, opacity .26s ease" }}>
-                        <button type="button" title="Rename" onClick={(e) => { e.stopPropagation(); setEditChatId(c.id); setEditDraft(c.title); }} style={iconGhostButtonStyle(26)}>
-                          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.55} strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4.2L20 8.2a2.1 2.1 0 0 0 0-3l-1.2-1.2a2.1 2.1 0 0 0-3 0L4 15.8z" /></svg>
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          color: "#63676F",
+                          flexShrink: 0,
+                          opacity: hov || editing ? 0 : 1,
+                          transition: "opacity .2s ease",
+                        }}
+                      >
+                        {c.when}
+                      </span>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                          flexShrink: 0,
+                          overflow: "hidden",
+                          width: hov && !editing ? 58 : 0,
+                          opacity: hov && !editing ? 1 : 0,
+                          transition: "width .34s ease, opacity .26s ease",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          title="Rename"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditChatId(c.id);
+                            setEditDraft(c.title);
+                          }}
+                          style={iconGhostButtonStyle(26)}
+                        >
+                          <svg
+                            width={13}
+                            height={13}
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.55}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M4 20h4.2L20 8.2a2.1 2.1 0 0 0 0-3l-1.2-1.2a2.1 2.1 0 0 0-3 0L4 15.8z" />
+                          </svg>
                         </button>
-                        <button type="button" title="Delete" onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }} style={iconGhostButtonStyle(26)}>
-                          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.55} strokeLinecap="round" strokeLinejoin="round"><path d="M4.6 7.2h14.8M9.8 4.4h4.4a1 1 0 0 1 1 1v1.8H8.8V5.4a1 1 0 0 1 1-1z" /><path d="M6.9 7.2l.8 11.5a1.6 1.6 0 0 0 1.6 1.5h5.4a1.6 1.6 0 0 0 1.6-1.5l.8-11.5" /></svg>
+                        <button
+                          type="button"
+                          title="Delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteChat(c.id);
+                          }}
+                          style={iconGhostButtonStyle(26)}
+                        >
+                          <svg
+                            width={13}
+                            height={13}
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.55}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M4.6 7.2h14.8M9.8 4.4h4.4a1 1 0 0 1 1 1v1.8H8.8V5.4a1 1 0 0 1 1-1z" />
+                            <path d="M6.9 7.2l.8 11.5a1.6 1.6 0 0 0 1.6 1.5h5.4a1.6 1.6 0 0 0 1.6-1.5l.8-11.5" />
+                          </svg>
                         </button>
                       </span>
                     </div>
@@ -773,22 +1223,130 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           })}
         </div>
         {usage ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px 16px 12px", margin: "0 4px", borderTop: "1px solid rgba(16,18,24,0.05)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
-              <span style={{ fontSize: 11.5, fontWeight: 500, color: "#15171C" }}>{usage.count}</span>
-              <span style={{ fontSize: 11, color: "#63676F" }}>{usage.label}</span>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              padding: "14px 16px 12px",
+              margin: "0 4px",
+              borderTop: "1px solid rgba(16,18,24,0.05)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <span
+                style={{ fontSize: 11.5, fontWeight: 500, color: "#15171C" }}
+              >
+                {usage.count}
+              </span>
+              <span style={{ fontSize: 11, color: "#63676F" }}>
+                {usage.label}
+              </span>
             </div>
-            <span style={{ display: "block", width: "100%", height: 3, borderRadius: 999, background: "rgba(16,18,24,0.07)", overflow: "hidden" }}>
-              <span style={{ display: "block", height: "100%", width: `${Math.round(usage.pct * 100)}%`, borderRadius: 999, background: "rgba(16,18,24,0.42)", transition: "width 1s cubic-bezier(.32,.72,0,1) .16s" }} />
+            <span
+              style={{
+                display: "block",
+                width: "100%",
+                height: 3,
+                borderRadius: 999,
+                background: "rgba(16,18,24,0.07)",
+                overflow: "hidden",
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  height: "100%",
+                  width: `${Math.round(usage.pct * 100)}%`,
+                  borderRadius: 999,
+                  background: "rgba(16,18,24,0.42)",
+                  transition: "width 1s cubic-bezier(.32,.72,0,1) .16s",
+                }}
+              />
             </span>
           </div>
         ) : null}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px 12px" }}>
-          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 999, background: accentColor, color: "#FFFFFF", fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
+        <button
+          type="button"
+          className="clyra-composer-settings-button"
+          onClick={onOpenSettings}
+          title="Open settings"
+        >
+          <span className="clyra-composer-settings-button__icon" aria-hidden>
+            <svg
+              width={15}
+              height={15}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.75}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx={12} cy={12} r={3.1} />
+              <path d="M19.3 13.5a1.7 1.7 0 0 0 .34 1.88l.06.06-2.2 2.2-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55V19h-3.1v-.09a1.7 1.7 0 0 0-1.03-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.2-2.2.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.55-1.03H5v-3.1h.09a1.7 1.7 0 0 0 1.55-1.03 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.2-2.2.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.55V5h3.1v.09a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.2 2.2-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.03H19v3.1h-.09a1.7 1.7 0 0 0-1.55 1.03Z" />
+            </svg>
+          </span>
+          <span>Settings</span>
+          <svg
+            className="clyra-composer-settings-button__arrow"
+            width={13}
+            height={13}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+        </button>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 12px 12px",
+          }}
+        >
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 30,
+              height: 30,
+              borderRadius: 999,
+              background: accentColor,
+              color: "#FFFFFF",
+              fontSize: 12,
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
             {userName.charAt(0).toUpperCase()}
           </span>
-          <span style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1, minWidth: 0 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 500, color: "#15171C" }}>{userName}</span>
+          <span
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            <span style={{ fontSize: 12.5, fontWeight: 500, color: "#15171C" }}>
+              {userName}
+            </span>
             <span style={{ fontSize: 11, color: "#63676F" }}>Clyra</span>
           </span>
         </div>
@@ -806,58 +1364,154 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           pointerEvents: "none",
           transform: `translate(-50%, ${sent && !mg && tempNote ? 0 : -10}px)`,
           opacity: sent && !mg && tempNote ? 1 : 0,
-          transition: "opacity .45s ease, transform .55s cubic-bezier(.32,.72,0,1)",
+          transition:
+            "opacity .45s ease, transform .55s cubic-bezier(.32,.72,0,1)",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 15px 8px 13px", borderRadius: 999, background: "rgba(255,255,255,0.82)", backdropFilter: "blur(20px) saturate(180%)", boxShadow: "0 8px 24px -12px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.06)", fontSize: 12, fontWeight: 500, color: "#15171C", whiteSpace: "nowrap" }}>
-          {temp ? "Temporary — this chat won't be saved" : "Saved to your history"}
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            padding: "8px 15px 8px 13px",
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.82)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            boxShadow:
+              "0 8px 24px -12px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.06)",
+            fontSize: 12,
+            fontWeight: 500,
+            color: "#15171C",
+            whiteSpace: "nowrap",
+            transition: `width .42s ${SHELL_EASE}`,
+          }}
+        >
+          <span
+            key={temp ? "temporary-status" : "saved-status"}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              animation: "clyraSwap .42s ease both",
+            }}
+          >
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#63676F",
+                flexShrink: 0,
+              }}
+            >
+              {temp ? (
+                <svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20.6 11.2a8.7 8.7 0 1 1-7.9-8.6" />
+                  <path d="M12 7.6V12l3.1 1.9" opacity={0.55} />
+                  <path d="M18.4 3.6 21.8 7" />
+                </svg>
+              ) : (
+                <svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20 6.5 9.4 17.1l-5.4-5.4" />
+                </svg>
+              )}
+            </span>
+            {temp
+              ? "Temporary — this chat won't be saved"
+              : "Saved to your history"}
+          </span>
         </span>
       </div>
 
       {/* Stage */}
       <div
+        className="clyra-composer-shell__stage"
         style={{
           width: "100%",
-          maxWidth: 640,
+          // The home composition is a centred 640px column. Once a
+          // conversation starts, the stage widens to a comfortable reading
+          // column instead of stretching edge-to-edge on wide windows.
+          maxWidth: sent && !mg ? 820 : 640,
           margin: "0 auto",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           gap: sent && !mg ? 0 : 12,
           height: "100%",
-          padding: sent && !mg ? (tempNote ? "76px 32px 14px" : "40px 32px 14px") : "0 32px",
+          padding:
+            sent && !mg
+              ? tempNote
+                ? "76px 32px 14px"
+                : "40px 32px 14px"
+              : "0 32px",
           boxSizing: "border-box",
           justifyContent: sent && !mg ? "flex-end" : "center",
           transition: `padding 1.15s ${SHELL_EASE} ${backDelay}, gap 1.15s ${SHELL_EASE} ${backDelay}`,
         }}
       >
+        {/* The frame owns the transcript's layout box and is the containing
+            block for overlays, so overlays stay pinned to the visible area
+            instead of scrolling with the messages. */}
         <div
-          id={transcriptContainerId}
-          ref={transcriptContainerRef}
-          className="clyra-composer-scroll"
+          className="clyra-composer-scroll-frame"
           style={{
+            position: "relative",
             display: "flex",
             flexDirection: "column",
-            gap: 12,
             width: "100%",
-            padding: "0 2px",
-            overflowY: "auto",
-            overflowX: "hidden",
-            overscrollBehavior: "contain",
             flex: sent && !mg ? "1 1 auto" : "0 0 auto",
             minHeight: 0,
             maxHeight: sent && !mg ? "none" : 0,
             marginBottom: sent && !mg ? 18 : 0,
             opacity: sent && !mg ? 1 : 0,
-            position: "relative",
             transition: `margin-bottom 1.15s ${SHELL_EASE} ${backDelay}, flex-grow 1.15s ${SHELL_EASE} ${backDelay}, opacity .6s ease ${mg ? "0s" : ".5s"}`,
           }}
         >
-          {transcript}
+          <div
+            id={transcriptContainerId}
+            ref={transcriptContainerRef}
+            className="clyra-composer-scroll"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              width: "100%",
+              padding: "0 2px",
+              overflowY: "auto",
+              overflowX: "hidden",
+              overscrollBehavior: "contain",
+              flex: "1 1 auto",
+              minHeight: 0,
+              position: "relative",
+            }}
+          >
+            {transcript}
+          </div>
+          {transcriptOverlay}
         </div>
 
         {!sent ? (
           <div
+            className="clyra-composer-shell__welcome"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -866,48 +1520,153 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               width: "100%",
               overflow: "hidden",
               padding: "0 8px",
-              maxHeight: mg ? 0 : 260,
-              marginBottom: mg ? 0 : 30,
+              maxHeight: mg ? 0 : 380,
+              marginBottom: mg ? 0 : 26,
               opacity: mg ? 0 : 1,
               transform: `translateY(${mg ? -12 : 0}px)`,
               pointerEvents: mg ? "none" : "auto",
               transition: `max-height .95s ${SHELL_EASE} ${backDelay}, margin-bottom .95s ${SHELL_EASE} ${backDelay}, opacity .6s ease ${backDelay}, transform .95s ${SHELL_EASE} ${backDelay}`,
             }}
           >
-            <span style={{ display: "block", fontSize: 38, fontWeight: 600, letterSpacing: "-0.034em", lineHeight: 1.08, color: "#15171C" }}>
-              Where should we start, <span style={{ color: accentColor }}>{userName}</span>?
-            </span>
-            <span style={{ display: "block", marginTop: 11, maxWidth: 420, fontSize: 14.5, lineHeight: 1.55, letterSpacing: "-0.008em", color: "#63676F" }}>
-              {welcomeSubtitle ?? (
-                <>
-                  Type <span style={{ color: "#0B54D6", fontWeight: 600 }}>/</span> to bring in Drive, Gmail or the live web — or just ask.
-                </>
-              )}
-            </span>
-            {onImportGitHubRepo ? (
+            {/* Clyra's orb: the same living face the voice call uses. It is the
+                shared element the call flies out of / back into (see orbAnchor). */}
+            <div
+              id="clyra-bloub-home-target"
+              ref={setOrbAnchor}
+              className="clyra-composer-shell__orb"
+              style={{
+                position: "relative",
+                width: 104,
+                height: 104,
+                marginBottom: 22,
+                flexShrink: 0,
+                opacity: reduceMotion ? 1 : mounted ? 1 : 0,
+                transform: reduceMotion ? "none" : `scale(${mounted ? 1 : 0.55})`,
+                transition: `opacity .7s ${SHELL_EASE} .05s, transform 1.05s ${SHELL_EASE} .05s`,
+                pointerEvents: "none",
+              }}
+            >
+              <ClyraFace state="ready" muted={false} />
+            </div>
+            {tempPillMounted ? (
               <button
                 type="button"
-                onClick={openRepositoryImport}
-                style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 30, marginTop: 18, padding: "0 10px", border: "1px solid rgba(16,18,24,0.10)", borderRadius: 8, background: "#FFFFFF", color: "#41444B", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 550 }}
+                onClick={onToggleTemp}
+                title="Turn off temporary chat"
+                className="clyra-composer-temp-pill"
+                aria-hidden={!temp}
+                tabIndex={temp ? 0 : -1}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  overflow: "hidden",
+                  whiteSpace: "nowrap",
+                  borderRadius: 999,
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  letterSpacing: "-0.004em",
+                  color: "#63676F",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  maxHeight: temp ? 28 : 0,
+                  padding: temp ? "5px 11px 5px 9px" : "0 11px 0 9px",
+                  marginBottom: temp ? 20 : 0,
+                  opacity: temp ? 1 : 0,
+                  transform: `translateY(${temp ? 0 : -5}px)`,
+                  pointerEvents: temp ? "auto" : "none",
+                  transition: `max-height .48s ${SHELL_EASE}, padding .48s ${SHELL_EASE}, margin-bottom .48s ${SHELL_EASE}, opacity .3s ease, transform .48s ${SHELL_EASE}, background .24s ${EASE}`,
+                }}
               >
-                <GitHubIcon size={14} />
-                Start with a GitHub repository
+                <svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ flexShrink: 0, opacity: 0.75 }}
+                >
+                  <path d="M20.6 11.2a8.7 8.7 0 1 1-7.9-8.6" />
+                  <path d="M12 7.6V12l3.1 1.9" opacity={0.55} />
+                  <path d="M18.4 3.6 21.8 7" />
+                </svg>
+                Temporary chat
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginLeft: 2,
+                    marginRight: -2,
+                    opacity: 0.6,
+                  }}
+                >
+                  <svg
+                    width={10}
+                    height={10}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.6}
+                    strokeLinecap="round"
+                  >
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </span>
               </button>
             ) : null}
+            <span
+              className="clyra-composer-shell__heading"
+              style={{
+                display: "block",
+                marginTop: 0,
+                fontSize: 38,
+                fontWeight: 600,
+                letterSpacing: "-0.034em",
+                lineHeight: 1.08,
+                color: "#15171C",
+                ...entrance(0.18),
+              }}
+            >
+              Where should we start, <span style={{ color: accentColor }}>{userName}</span>?
+            </span>
+            <span
+              className="clyra-composer-shell__subtitle"
+              style={{
+                display: "block",
+                marginTop: 11,
+                maxWidth: 420,
+                fontSize: 14.5,
+                lineHeight: 1.55,
+                letterSpacing: "-0.008em",
+                color: "#63676F",
+                ...entrance(0.26),
+              }}
+            >
+              Type <span style={{ color: "#0B54D6", fontWeight: 600 }}>/</span>{" "}
+              to bring in Drive, Gmail or the live web — or just ask.
+            </span>
           </div>
         ) : null}
 
         {/* Composer bar */}
         <div
           ref={barRef}
+          className="clyra-composer-shell__bar"
           style={{
             position: "relative",
-            width: "100%",
+            width: "min(640px, 100%)",
             borderRadius: 32,
             background: "#FFFFFF",
             overflow: mg || dt ? "hidden" : "visible",
             height: barHeight,
-            boxShadow: "0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.10), 0 30px 60px -28px rgba(16,18,24,0.20), inset 0 0 0 1px rgba(16,18,24,0.055)",
+            boxShadow:
+              "0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.10), 0 30px 60px -28px rgba(16,18,24,0.20), inset 0 0 0 1px rgba(16,18,24,0.055)",
             // The artboard's own barStyle carries a delay on this transition
             // too — height .7s ${shell} + (mg ? ".7s" : "0s") — meaning the
             // bar visibly PAUSES for .7s before it starts growing whenever
@@ -916,18 +1675,38 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             // this the bar used to start growing at the same instant the
             // compose face began fading out, which read as abrupt/too fast
             // next to the fade — this was missing from the port entirely.
-            transition: `height .7s ${SHELL_EASE} ${mg ? ".7s" : "0s"}, max-width .5s ${SHELL_EASE}`,
+            // The opacity/transform clauses only ever animate once, for the
+            // shell's first-mount entrance (see `mounted` above); once that
+            // finishes they're static no-ops that don't touch the height
+            // choreography above.
+            transition: reduceMotion
+              ? `height .7s ${SHELL_EASE} ${mg ? ".7s" : "0s"}, max-width .5s ${SHELL_EASE}`
+              : `height .7s ${SHELL_EASE} ${mg ? ".7s" : "0s"}, max-width .5s ${SHELL_EASE}, opacity .6s ${SHELL_EASE} .1s, transform .6s ${SHELL_EASE} .1s`,
+            opacity: reduceMotion ? 1 : mounted ? 1 : 0,
             // Forces a stable compositing layer for this rounded, clipped,
             // height-animating box — mitigates a known Chromium paint glitch
             // where rounded-corner overflow:hidden clipping fails to
             // recomposite newly-mounted absolutely-positioned children.
-            transform: "translateZ(0)",
+            transform:
+              !reduceMotion && !mounted
+                ? "translateZ(0) translateY(14px)"
+                : "translateZ(0)",
             WebkitTransform: "translateZ(0)",
             isolation: "isolate",
           }}
         >
           {/* Compose face */}
-          <div style={{ ...faceStyle(!mg && !dt, -14, mg || dt), flexDirection: "column", gap: 8, padding: "16px 14px 12px 18px", zIndex: 5, overflow: mg || dt ? "hidden" : "visible" }}>
+          <div
+            className="clyra-composer-shell__face"
+            style={{
+              ...faceStyle(!mg && !dt, -14, mg || dt),
+              flexDirection: "column",
+              gap: 8,
+              padding: "16px 14px 12px 18px",
+              zIndex: 5,
+              overflow: mg || dt ? "hidden" : "visible",
+            }}
+          >
             {/* "/" palette */}
             <div
               style={{
@@ -939,7 +1718,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 borderRadius: 22,
                 background: "#FFFFFF",
                 zIndex: 22,
-                boxShadow: "0 1px 1px rgba(16,18,24,0.04), 0 24px 56px -16px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)",
+                boxShadow:
+                  "0 1px 1px rgba(16,18,24,0.04), 0 24px 56px -16px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)",
                 opacity: paletteOpen ? 1 : 0,
                 transform: `translateY(${paletteOpen ? 0 : 14}px) scale(${paletteOpen ? 1 : 0.97})`,
                 pointerEvents: paletteOpen ? "auto" : "none",
@@ -949,10 +1729,25 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 transition: `opacity .22s ease, transform .3s ${SHELL_EASE}`,
               }}
             >
-              <span style={{ display: "block", padding: "9px 12px 6px", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "#5F636B" }}>
-                {paletteQuery ? `Matching “${paletteQuery}”` : "Sources and modes"}
+              <span
+                style={{
+                  display: "block",
+                  padding: "9px 12px 6px",
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  color: "#5F636B",
+                }}
+              >
+                {paletteQuery
+                  ? `Matching “${paletteQuery}”`
+                  : "Sources and modes"}
               </span>
-              <div style={{ display: "flex", flexDirection: "column" }} className="clyra-composer-scroll">
+              <div
+                style={{ display: "flex", flexDirection: "column" }}
+                className="clyra-composer-scroll"
+              >
                 {paletteItems.map((it, index) => (
                   <button
                     key={it.id}
@@ -970,47 +1765,337 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       cursor: "pointer",
                       fontFamily: "inherit",
                       textAlign: "left",
-                      background: index === paletteActiveIndex ? "rgba(16,18,24,0.055)" : "transparent",
+                      background:
+                        index === paletteActiveIndex
+                          ? "rgba(16,18,24,0.055)"
+                          : "transparent",
                       transition: "background .12s ease",
                     }}
                   >
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, flexShrink: 0 }}>{it.icon}</span>
-                    <span style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1, textAlign: "left", minWidth: 0 }}>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: "#15171C", letterSpacing: "-0.008em" }}>{it.label}</span>
-                      <span style={{ fontSize: 11, color: "#63676F", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.desc}</span>
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 20,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {it.icon}
                     </span>
-                    {it.added ? <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 500, color: "#0B54D6" }}>Added</span> : null}
+                    <span
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 1,
+                        flex: 1,
+                        textAlign: "left",
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: "#15171C",
+                          letterSpacing: "-0.008em",
+                        }}
+                      >
+                        {it.label}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: "#63676F",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {it.desc}
+                      </span>
+                    </span>
+                    {it.added ? (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: 11,
+                          fontWeight: 500,
+                          color: "#0B54D6",
+                        }}
+                      >
+                        Added
+                      </span>
+                    ) : null}
                   </button>
                 ))}
                 {!paletteItems.length ? (
-                  <span style={{ display: "block", padding: "14px 10px", fontSize: 12.5, color: "#63676F" }}>No matches.</span>
+                  <span
+                    style={{
+                      display: "block",
+                      padding: "14px 10px",
+                      fontSize: 12.5,
+                      color: "#63676F",
+                    }}
+                  >
+                    No matches.
+                  </span>
                 ) : null}
               </div>
             </div>
 
+            <AnimatePresence initial={false}>
+              {selections.length ? (
+                <motion.div
+                  layout
+                  initial={
+                    reduceMotion
+                      ? { opacity: 0 }
+                      : { opacity: 0, height: 0, y: -5 }
+                  }
+                  animate={
+                    reduceMotion
+                      ? { opacity: 1 }
+                      : { opacity: 1, height: "auto", y: 0 }
+                  }
+                  exit={
+                    reduceMotion
+                      ? { opacity: 0 }
+                      : { opacity: 0, height: 0, y: -5 }
+                  }
+                  transition={{ type: "spring", duration: 0.34, bounce: 0 }}
+                  aria-label="Selected commands"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 6,
+                    overflow: "hidden",
+                    padding: "0 2px 2px",
+                  }}
+                >
+                  <AnimatePresence initial={false}>
+                    {selections.map((selection) => (
+                      <motion.span
+                        layout
+                        key={selection.id}
+                        initial={
+                          reduceMotion
+                            ? { opacity: 0 }
+                            : { opacity: 0, scale: 0.9, y: -6 }
+                        }
+                        animate={
+                          reduceMotion
+                            ? { opacity: 1 }
+                            : { opacity: 1, scale: 1, y: 0 }
+                        }
+                        exit={
+                          reduceMotion
+                            ? { opacity: 0 }
+                            : { opacity: 0, scale: 0.9, y: -6 }
+                        }
+                        transition={{
+                          type: "spring",
+                          duration: 0.3,
+                          bounce: 0,
+                        }}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          height: 29,
+                          maxWidth: "100%",
+                          padding: "0 5px 0 9px",
+                          borderRadius: 999,
+                          color: "#174ea6",
+                          background: "rgba(11,84,214,0.09)",
+                          boxShadow: "inset 0 0 0 1px rgba(11,84,214,0.13)",
+                        }}
+                      >
+                        <span
+                          style={{
+                            display: "flex",
+                            flexShrink: 0,
+                            alignItems: "center",
+                          }}
+                        >
+                          {selection.icon}
+                        </span>
+                        <span
+                          style={{
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            letterSpacing: "-0.005em",
+                          }}
+                        >
+                          {selection.label}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={selection.onRemove}
+                          aria-label={`Remove ${selection.label}`}
+                          title={`Remove ${selection.label}`}
+                          style={{
+                            display: "grid",
+                            width: 19,
+                            height: 19,
+                            flexShrink: 0,
+                            placeItems: "center",
+                            border: "none",
+                            borderRadius: 999,
+                            color: "#2867bd",
+                            background: "transparent",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <svg
+                            width={10}
+                            height={10}
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={2.5}
+                            strokeLinecap="round"
+                          >
+                            <path d="M6 6l12 12M18 6 6 18" />
+                          </svg>
+                        </button>
+                      </motion.span>
+                    ))}
+                  </AnimatePresence>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+
             {files.length > 0 ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "0 2px 2px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  padding: "0 2px 2px",
+                }}
+              >
                 {files.map((fl) => (
-                  <span key={fl.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "5px 9px 5px 5px", borderRadius: 15, background: "rgba(16,18,24,0.045)", maxWidth: 236, animation: "clyraRise .3s cubic-bezier(.16,1,.3,1) both" }}>
+                  <span
+                    key={fl.id}
+                    style={{
+                      position: "relative",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "5px 9px 5px 5px",
+                      borderRadius: 15,
+                      background: "rgba(16,18,24,0.045)",
+                      maxWidth: 236,
+                      animation: "clyraRise .3s cubic-bezier(.16,1,.3,1) both",
+                    }}
+                  >
                     {fl.onOpen ? (
-                      <button type="button" onClick={fl.onOpen} title="Preview" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none", background: "transparent", cursor: "pointer", padding: 0 }} />
+                      <button
+                        type="button"
+                        onClick={fl.onOpen}
+                        title="Preview"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          border: "none",
+                          background: "transparent",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
                     ) : null}
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 11, overflow: "hidden", flexShrink: 0, fontSize: 10, fontWeight: 600, letterSpacing: "0.02em", color: "#5F636B", background: "#FFFFFF", boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)" }}>
-                      {fl.thumb ?? fl.name.split(".").pop()?.toUpperCase().slice(0, 4)}
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 34,
+                        height: 34,
+                        borderRadius: 11,
+                        overflow: "hidden",
+                        flexShrink: 0,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        letterSpacing: "0.02em",
+                        color: "#5F636B",
+                        background: "#FFFFFF",
+                        boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)",
+                      }}
+                    >
+                      {fl.thumb ??
+                        fl.name.split(".").pop()?.toUpperCase().slice(0, 4)}
                     </span>
-                    <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 12, fontWeight: 500, color: "#15171C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 118 }}>{fl.name}</span>
-                      <span style={{ fontSize: 10.5, color: "#63676F" }}>{fl.meta}</span>
+                    <span
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 500,
+                          color: "#15171C",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          maxWidth: 118,
+                        }}
+                      >
+                        {fl.name}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: "#63676F" }}>
+                        {fl.meta}
+                      </span>
                     </span>
-                    <button type="button" onClick={fl.onRemove} title="Remove" style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 2, width: 17, height: 17, borderRadius: 999, border: "none", background: "rgba(16,18,24,0.07)", cursor: "pointer", color: "#5F636B", flexShrink: 0 }}>
-                      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                    <button
+                      type="button"
+                      onClick={fl.onRemove}
+                      title="Remove"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        position: "relative",
+                        zIndex: 2,
+                        width: 17,
+                        height: 17,
+                        borderRadius: 999,
+                        border: "none",
+                        background: "rgba(16,18,24,0.07)",
+                        cursor: "pointer",
+                        color: "#5F636B",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg
+                        width={9}
+                        height={9}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2.6}
+                        strokeLinecap="round"
+                      >
+                        <path d="M6 6l12 12M18 6L6 18" />
+                      </svg>
                     </button>
                   </span>
                 ))}
               </div>
             ) : null}
 
-            {dictation.phase !== "listening" ? (
+            {!dictationBusy ? (
               <textarea
                 ref={textareaRef}
                 rows={2}
@@ -1018,20 +2103,106 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 value={text}
                 onChange={(e) => onTextChange(e.target.value)}
                 onKeyDown={onKeyDown}
-                style={{ width: "100%", border: "none", outline: "none", boxShadow: "none", background: "transparent", resize: "none", fontFamily: "inherit", fontSize: 15.5, lineHeight: "24px", height: 48, color: "#15171C", letterSpacing: "-0.011em", padding: "0 4px", boxSizing: "border-box" }}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  background: "transparent",
+                  resize: "none",
+                  fontFamily: "inherit",
+                  fontSize: 15.5,
+                  lineHeight: "24px",
+                  height: 48,
+                  color: "#15171C",
+                  letterSpacing: "-0.011em",
+                  padding: "0 4px",
+                  boxSizing: "border-box",
+                }}
               />
             ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 16, height: 48, padding: "0 4px", animation: "clyraVoiceIn .42s cubic-bezier(.16,1,.3,1) both" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 500, color: "#5F636B", flexShrink: 0 }}>
-                  <span style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 8, height: 8 }}>
-                    <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#E0483A", opacity: 0.35, animation: "clyraPulse 1.9s cubic-bezier(.2,.8,.3,1) infinite" }} />
-                    <span style={{ position: "relative", display: "block", width: 7, height: 7, borderRadius: "50%", background: "#E0483A" }} />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  height: 48,
+                  padding: "0 4px",
+                  animation: "clyraVoiceIn .42s cubic-bezier(.16,1,.3,1) both",
+                }}
+              >
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 12.5,
+                    fontWeight: 500,
+                    color: "#5F636B",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "relative",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 8,
+                      height: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: "50%",
+                        background: dictationPhase === "listening" ? "#E0483A" : accentColor,
+                        opacity: 0.35,
+                        animation:
+                          dictationPhase === "listening" ? "clyraPulse 1.9s cubic-bezier(.2,.8,.3,1) infinite" : "none",
+                      }}
+                    />
+                    <span
+                      style={{
+                        position: "relative",
+                        display: "block",
+                        width: 7,
+                        height: 7,
+                        borderRadius: "50%",
+                        background: dictationPhase === "listening" ? "#E0483A" : accentColor,
+                      }}
+                    />
                   </span>
-                  Listening
+                  {dictationPhase === "transcribing"
+                    ? "Transcribing…"
+                    : dictationPhase === "starting"
+                      ? "Starting microphone…"
+                      : "Listening…"}
                 </span>
-                <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", justifyContent: "center", height: 36 }}>
-                  <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 3, width: "100%", height: 36, overflow: "hidden" }}>
-                    {wave.map((b, i) => (
+                <div
+                  style={{
+                    position: "relative",
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    height: 36,
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "relative",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 3,
+                      width: "100%",
+                      height: 36,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {dictationPhase === "listening" && wave.map((b, i) => (
                       <span
                         key={i}
                         style={{
@@ -1048,28 +2219,141 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                     ))}
                   </div>
                 </div>
-                <span style={{ fontSize: 12.5, fontWeight: 500, color: "#5F636B", flexShrink: 0, minWidth: 30, textAlign: "right" }}>
-                  {Math.floor(dictation.elapsedSeconds / 60)}:{String(dictation.elapsedSeconds % 60).padStart(2, "0")}
+                <span
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 500,
+                    color: "#5F636B",
+                    flexShrink: 0,
+                    minWidth: 30,
+                    textAlign: "right",
+                  }}
+                >
+                  {dictationPhase === "listening" ? formatDictationElapsed(dictation.elapsedSeconds) : ""}
                 </span>
+                {isDictationSessionOpen(dictationPhase) && dictation.onCancel ? (
+                  <button
+                    type="button"
+                    onClick={dictation.onCancel}
+                    title="Cancel dictation (Esc)"
+                    aria-label="Cancel dictation"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      height: 28,
+                      padding: "0 10px",
+                      borderRadius: 999,
+                      border: "none",
+                      background: "rgba(16,18,24,0.06)",
+                      color: "#3B3F47",
+                      fontSize: 12.5,
+                      fontWeight: 500,
+                      fontFamily: "inherit",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <svg width={9} height={9} viewBox="0 0 10 10" aria-hidden="true">
+                      <rect width={10} height={10} rx={2} fill="currentColor" />
+                    </svg>
+                    Cancel
+                  </button>
+                ) : null}
               </div>
             )}
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            {dictation.phase === "error" && dictation.detail ? (
+              <div
+                role="alert"
+                style={{ fontSize: 12.5, color: "#B42318", padding: "0 4px 6px", lineHeight: 1.4 }}
+              >
+                {dictation.detail}
+              </div>
+            ) : null}
+
+            <div
+              className="clyra-composer-shell__controls"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <input type="file" multiple ref={fileInputRef} onChange={onFilesSelected} style={{ display: "none" }} />
-                <button type="button" title="Add files" onClick={onPickFiles} style={roundIconButtonStyle(34, "#5C6069")}>
-                  <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                <input
+                  type="file"
+                  multiple
+                  ref={fileInputRef}
+                  onChange={onFilesSelected}
+                  style={{ display: "none" }}
+                />
+                <button
+                  type="button"
+                  title="Add files"
+                  onClick={onPickFiles}
+                  style={roundIconButtonStyle(34, "#5C6069")}
+                >
+                  <svg
+                    width={17}
+                    height={17}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.7}
+                    strokeLinecap="round"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
                 </button>
 
                 <div ref={effortMenuRef} style={{ position: "relative" }}>
                   <button
                     type="button"
                     onClick={() => setEffortMenuOpen((v) => !v)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, height: 34, padding: "0 11px", borderRadius: 999, border: "none", fontFamily: "inherit", fontSize: 13, fontWeight: 500, letterSpacing: "-0.006em", cursor: "pointer", color: "#15171C", background: effortMenuOpen ? "#F1F2F4" : "transparent" }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      height: 34,
+                      padding: "0 11px",
+                      borderRadius: 999,
+                      border: "none",
+                      fontFamily: "inherit",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      letterSpacing: "-0.006em",
+                      cursor: "pointer",
+                      color: "#15171C",
+                      background: effortMenuOpen ? "#F1F2F4" : "transparent",
+                    }}
                   >
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18 }}>{currentEffortOption?.icon}</span>
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 18,
+                        height: 18,
+                      }}
+                    >
+                      {currentEffortOption?.icon}
+                    </span>
                     {currentEffortOption?.label}
-                    <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.45, marginLeft: 1 }}><path d="M6 9l6 6 6-6" /></svg>
+                    <svg
+                      width={11}
+                      height={11}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ opacity: 0.45, marginLeft: 1 }}
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
                   </button>
                   <div
                     style={{
@@ -1081,7 +2365,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       borderRadius: 20,
                       background: "#FFFFFF",
                       zIndex: 20,
-                      boxShadow: "0 1px 1px rgba(16,18,24,0.04), 0 20px 48px -14px rgba(16,18,24,0.26), inset 0 0 0 1px rgba(16,18,24,0.07)",
+                      boxShadow:
+                        "0 1px 1px rgba(16,18,24,0.04), 0 20px 48px -14px rgba(16,18,24,0.26), inset 0 0 0 1px rgba(16,18,24,0.07)",
                       opacity: effortMenuOpen ? 1 : 0,
                       transform: `translateY(${effortMenuOpen ? 0 : 8}px) scale(${effortMenuOpen ? 1 : 0.94})`,
                       pointerEvents: effortMenuOpen ? "auto" : "none",
@@ -1089,7 +2374,18 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       transition: `opacity .22s ease, transform .3s ${SHELL_EASE}`,
                     }}
                   >
-                    <div style={{ padding: "9px 12px 6px", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "#5F636B" }}>Reasoning effort</div>
+                    <div
+                      style={{
+                        padding: "9px 12px 6px",
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        letterSpacing: "0.05em",
+                        textTransform: "uppercase",
+                        color: "#5F636B",
+                      }}
+                    >
+                      Reasoning effort
+                    </div>
                     {efforts.map((e) => {
                       const on = e.value === currentEffort;
                       return (
@@ -1100,15 +2396,86 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                             e.onPick();
                             setEffortMenuOpen(false);
                           }}
-                          style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", padding: "8px 11px", borderRadius: 14, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", background: on ? "rgba(16,18,24,0.05)" : "transparent" }}
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 10,
+                            width: "100%",
+                            padding: "8px 11px",
+                            borderRadius: 14,
+                            border: "none",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            textAlign: "left",
+                            background: on
+                              ? "rgba(16,18,24,0.05)"
+                              : "transparent",
+                          }}
                         >
-                          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, flexShrink: 0, marginTop: 2 }}>{e.icon}</span>
-                          <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left", flex: 1 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: "#15171C", letterSpacing: "-0.009em" }}>{e.label}</span>
-                            <span style={{ fontSize: 11, color: "#63676F", lineHeight: 1.35 }}>{e.hint}</span>
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 18,
+                              height: 18,
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                          >
+                            {e.icon}
                           </span>
-                          <span style={{ display: "flex", alignItems: "center", marginTop: 2, color: accentColor, transform: `scale(${on ? 1 : 0.6})`, opacity: on ? 1 : 0 }}>
-                            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                          <span
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 2,
+                              textAlign: "left",
+                              flex: 1,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 500,
+                                color: "#15171C",
+                                letterSpacing: "-0.009em",
+                              }}
+                            >
+                              {e.label}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: "#63676F",
+                                lineHeight: 1.35,
+                              }}
+                            >
+                              {e.hint}
+                            </span>
+                          </span>
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              marginTop: 2,
+                              color: accentColor,
+                              transform: `scale(${on ? 1 : 0.6})`,
+                              opacity: on ? 1 : 0,
+                            }}
+                          >
+                            <svg
+                              width={14}
+                              height={14}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={2.5}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M20 6L9 17l-5-5" />
+                            </svg>
                           </span>
                         </button>
                       );
@@ -1123,71 +2490,157 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       key={s.id}
                       onMouseEnter={() => setHoverPill(s.id)}
                       onMouseLeave={() => setHoverPill(null)}
-                      style={{ display: "flex", alignItems: "center", gap: 6, height: 30, borderRadius: 999, fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, letterSpacing: "-0.005em", color: "#15171C", whiteSpace: "nowrap", background: hov ? "rgba(16,18,24,0.06)" : "transparent", padding: "0 4px 0 8px" }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        height: 30,
+                        borderRadius: 999,
+                        fontFamily: "inherit",
+                        fontSize: 12.5,
+                        fontWeight: 500,
+                        letterSpacing: "-0.005em",
+                        color: "#15171C",
+                        whiteSpace: "nowrap",
+                        background: hov ? "rgba(16,18,24,0.06)" : "transparent",
+                        padding: "0 4px 0 8px",
+                      }}
                     >
-                      <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{s.icon}</span>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.icon}
+                      </span>
                       {s.short}
                       <button
                         type="button"
                         onClick={() => onToggleSource(s.id)}
                         title="Remove"
-                        style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 18, borderRadius: 999, border: "none", cursor: "pointer", flexShrink: 0, color: "#5F636B", overflow: "hidden", padding: 0, background: hov ? "rgba(16,18,24,0.07)" : "transparent", width: hov ? 18 : 0, opacity: hov ? 1 : 0 }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          height: 18,
+                          borderRadius: 999,
+                          border: "none",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          color: "#5F636B",
+                          overflow: "hidden",
+                          padding: 0,
+                          background: hov
+                            ? "rgba(16,18,24,0.07)"
+                            : "transparent",
+                          width: hov ? 18 : 0,
+                          opacity: hov ? 1 : 0,
+                        }}
                       >
-                        <svg width={9.5} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                        <svg
+                          width={9.5}
+                          height={9}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2.6}
+                          strokeLinecap="round"
+                        >
+                          <path d="M6 6l12 12M18 6L6 18" />
+                        </svg>
                       </button>
                     </span>
                   );
                 })}
                 {overflowCount > 0 ? (
-                  <span style={{ display: "flex", alignItems: "center", height: 30, padding: "0 10px", borderRadius: 999, background: "rgba(16,18,24,0.05)", fontSize: 12.5, fontWeight: 500, color: "#5F636B" }}>+{overflowCount}</span>
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      height: 30,
+                      padding: "0 10px",
+                      borderRadius: 999,
+                      background: "rgba(16,18,24,0.05)",
+                      fontSize: 12.5,
+                      fontWeight: 500,
+                      color: "#5F636B",
+                    }}
+                  >
+                    +{overflowCount}
+                  </span>
                 ) : null}
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <button
                   type="button"
-                  title="Dictate"
-                  onClick={() => (dictation.phase === "listening" ? dictation.onStop() : dictation.onStart())}
-                  style={{ width: 34, height: 34, borderRadius: 999, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: dictation.phase === "listening" ? "rgba(224,72,58,0.12)" : "transparent", color: dictation.phase === "listening" ? "#C4372B" : "#5C6069" }}
-                >
-                  {dictation.phase === "listening" ? (
-                    <svg width={13} height={13} viewBox="0 0 24 24"><rect x={4} y={4} width={16} height={16} rx={4.5} fill="currentColor" /></svg>
-                  ) : (
-                    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round"><rect x={9} y={3} width={6} height={11} rx={3} /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-                  )}
-                </button>
-                {onStartVoiceCall ? (
-                  <button
-                    type="button"
-                    aria-label="Start voice call"
-                    title="Start voice call"
-                    onClick={onStartVoiceCall}
-                    style={{ width: 34, height: 34, borderRadius: 999, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "transparent", color: "#5C6069" }}
-                  >
-                    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v2a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 3.18 2 2 0 0 1 4.11 1h2a2 2 0 0 1 2 1.72c.12.9.34 1.78.65 2.63a2 2 0 0 1-.45 2.11L7.46 8.31a16 16 0 0 0 6 6l.85-.85a2 2 0 0 1 2.11-.45c.85.31 1.73.53 2.63.65A2 2 0 0 1 22 16.92Z" /></svg>
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  title="Send"
-                  onClick={onSend}
+                  className="clyra-dictation-btn"
+                  aria-label={
+                    dictationPhase === "listening"
+                      ? "Stop dictation"
+                      : dictationPhase === "starting"
+                        ? "Cancel starting dictation"
+                        : "Dictate"
+                  }
+                  aria-pressed={dictationPhase === "listening"}
+                  aria-busy={dictationPhase === "transcribing"}
+                  title={
+                    dictationPhase === "listening"
+                      ? "Tap to stop and transcribe"
+                      : dictationPhase === "transcribing"
+                        ? "Transcribing…"
+                        : "Dictate: tap to start, or hold to talk"
+                  }
+                  onPointerDown={onMicPointerDown}
+                  onPointerUp={() => endMicPress(false)}
+                  onPointerLeave={() => endMicPress(true)}
+                  onPointerCancel={() => endMicPress(true)}
+                  onClick={onMicClick}
                   style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 999,
-                    border: "none",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    cursor: "pointer",
-                    marginLeft: 2,
-                    background: text.trim().length > 0 ? accentColor : "#EDEEF1",
-                    color: text.trim().length > 0 ? "#FFFFFF" : "#AFB3BB",
-                    boxShadow: text.trim().length > 0 ? "0 2px 10px -2px rgba(30,111,255,0.55)" : "none",
+                    width: 34,
+                    height: 34,
+                    padding: 0,
+                    borderRadius: 999,
+                    border: "none",
+                    background: dictationPhase === "listening" ? accentColor : "transparent",
+                    color: dictationPhase === "listening" ? "#FFFFFF" : "#5F636B",
+                    cursor: dictationPhase === "transcribing" ? "progress" : "pointer",
+                    fontFamily: "inherit",
+                    transform: dictationPhase === "listening" ? "scale(1.06)" : "scale(1)",
+                    transition: "transform .16s ease, background .16s ease, color .16s ease",
+                    touchAction: "none",
+                    userSelect: "none",
                   }}
                 >
-                  <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V6M6 12l6-6 6 6" /></svg>
+                  <svg
+                    width={17}
+                    height={17}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    style={{ opacity: dictationPhase === "transcribing" ? 0.45 : 1 }}
+                  >
+                    <rect x={9} y={3} width={6} height={12} rx={3} />
+                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                  </svg>
                 </button>
+                <ComposerVoiceSendSlot
+                  canSend={canSend}
+                  accentColor={accentColor}
+                  onSend={onSend}
+                  onStartVoiceCall={onStartVoiceCall}
+                  isResponding={isResponding}
+                  onStop={onStop}
+                />
               </div>
             </div>
           </div>
@@ -1199,7 +2652,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               adding it again here was the earlier "blank panel" bug,
               doubling the inset and clipping the rows out of the bar. */}
           {mountedPanel === "manage" || exitingPanel === "manage" ? (
-            <div style={{ animation: exitingPanel === "manage" ? "clyraFade .2s ease reverse both" : `clyraFade .28s ${SHELL_EASE} both` }}>
+            <div
+              style={{
+                animation:
+                  exitingPanel === "manage"
+                    ? "clyraFade .2s ease reverse both"
+                    : `clyraFade .28s ${SHELL_EASE} both`,
+              }}
+            >
               <ConnectionsPanel
                 connections={connections}
                 webOff={webOff}
@@ -1211,8 +2671,18 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
 
           {/* Connection detail face */}
           {mountedPanel === "detail" || exitingPanel === "detail" ? (
-            <div style={{ animation: exitingPanel === "detail" ? "clyraFade .2s ease reverse both" : `clyraFade .28s ${SHELL_EASE} both` }}>
-              <ConnectionsDetail connections={connections} onBack={() => setConnectionsStep(null)} />
+            <div
+              style={{
+                animation:
+                  exitingPanel === "detail"
+                    ? "clyraFade .2s ease reverse both"
+                    : `clyraFade .28s ${SHELL_EASE} both`,
+              }}
+            >
+              <ConnectionsDetail
+                connections={connections}
+                onBack={() => setConnectionsStep(null)}
+              />
             </div>
           ) : null}
         </div>
@@ -1223,6 +2693,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             translateY to collapse the dock when Manage opens rather than
             yanking it out of the DOM with no transition. */}
         <div
+          className="clyra-composer-shell__source-dock"
           style={{
             display: "flex",
             alignItems: "center",
@@ -1238,9 +2709,18 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         >
           <div
             ref={dockRef}
+            className="clyra-composer-shell__source-dock-items"
             onMouseMove={handleDockMove}
             onMouseLeave={handleDockLeave}
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 999, background: "transparent" }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "12px 14px",
+              borderRadius: 999,
+              background: "transparent",
+              ...entrance(0.12),
+            }}
           >
             {sources.map((s) => {
               const on = activeSourceIds.includes(s.id);
@@ -1251,89 +2731,74 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                   data-dock="1"
                   title={s.name}
                   onClick={() => onToggleSource(s.id)}
-                  style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, border: "none", borderRadius: 999, background: "transparent", cursor: "pointer", opacity: on ? 1 : activeSourceIds.length ? 0.6 : 0.82, willChange: "transform", transition: "opacity .28s ease, background .26s ease" }}
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 32,
+                    height: 32,
+                    border: "none",
+                    borderRadius: 999,
+                    background: "transparent",
+                    cursor: "pointer",
+                    opacity: on ? 1 : activeSourceIds.length ? 0.6 : 0.82,
+                    willChange: "transform",
+                    transition: "opacity .28s ease, background .26s ease",
+                  }}
                 >
                   {s.icon}
-                  <span style={{ position: "absolute", left: "50%", bottom: -1, width: 4, height: 4, marginLeft: -2, borderRadius: "50%", background: accentColor, opacity: on ? 1 : 0, transform: `scale(${on ? 1 : 0.2})`, transition: "opacity .24s ease, transform .34s cubic-bezier(.16,1,.3,1)" }} />
+                  <span
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      bottom: -1,
+                      width: 4,
+                      height: 4,
+                      marginLeft: -2,
+                      borderRadius: "50%",
+                      background: accentColor,
+                      opacity: on ? 1 : 0,
+                      transform: `scale(${on ? 1 : 0.2})`,
+                      transition:
+                        "opacity .24s ease, transform .34s cubic-bezier(.16,1,.3,1)",
+                    }}
+                  />
                 </button>
               );
             })}
-            {onImportGitHubRepo ? (
-              <button
-                type="button"
-                data-dock="1"
-                title="Import GitHub repository"
-                onClick={openRepositoryImport}
-                style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, border: "none", borderRadius: 999, background: "transparent", color: "#4E525A", cursor: "pointer", willChange: "transform", transition: "opacity .28s ease, background .26s ease" }}
-              >
-                <GitHubIcon size={17} />
-              </button>
-            ) : null}
-            <div style={{ width: 1, height: 16, background: "rgba(16,18,24,0.09)", margin: "0 5px" }} />
+            <div
+              style={{
+                width: 1,
+                height: 16,
+                background: "rgba(16,18,24,0.09)",
+                margin: "0 5px",
+              }}
+            />
             <button
               type="button"
               onClick={() => setManageOpen(true)}
-              style={{ height: 30, padding: "0 12px", borderRadius: 999, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, letterSpacing: "-0.005em", color: "#5F636B" }}
+              style={{
+                height: 30,
+                padding: "0 12px",
+                borderRadius: 999,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 12.5,
+                fontWeight: 500,
+                letterSpacing: "-0.005em",
+                color: "#5F636B",
+              }}
             >
               Manage
             </button>
           </div>
         </div>
 
-        {/* Recent conversations — welcome screen only, up to 3 most recent.
-            Always mounted while any chats exist; matches the artboard's
-            recentsStyle collapse (max-height/opacity/translateY) instead of
-            conditionally unmounting on Manage open/close. */}
-        {chats.length > 0 ? (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 1,
-              width: "100%",
-              overflow: "hidden",
-              marginTop: mg || sent ? 0 : 8,
-              maxHeight: mg || sent ? 0 : 260,
-              opacity: mg || sent ? 0 : 1,
-              transform: `translateY(${mg || sent ? -10 : 0}px)`,
-              pointerEvents: mg || sent ? "none" : "auto",
-              transition: `opacity ${mg ? ".22s ease" : ".34s ease .1s"}, transform .46s ${SHELL_EASE}`,
-            }}
-          >
-            <span style={{ display: "block", padding: "0 14px 2px", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "#5F636B" }}>Recent</span>
-            {chats.slice(0, 3).map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onOpenChat(c.id)}
-                style={{ display: "flex", alignItems: "center", width: "100%", padding: "9px 14px", borderRadius: 16, border: "none", cursor: "pointer", fontFamily: "inherit", background: "transparent", textAlign: "left", transition: `background .2s ${SHELL_EASE}, transform .16s ${SHELL_EASE}` }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(16,18,24,0.045)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <span style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                    <span style={{ flex: 1, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 13, fontWeight: 500, letterSpacing: "-0.008em", color: "#15171C" }}>{c.title}</span>
-                    <span style={{ fontSize: 11, color: "#63676F", flexShrink: 0 }}>{c.when}</span>
-                  </span>
-                  <span style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, WebkitMaskImage: "linear-gradient(90deg, #000 78%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 78%, transparent 100%)" }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 500, color: "#9DA1A9", flexShrink: 0 }}>Clyra</span>
-                    <span style={{ textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", fontSize: 11.5, lineHeight: 1.4, color: "#63676F" }}>Clyra replied in this chat.</span>
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
     </div>
-  );
-}
-
-function GitHubIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 2.3a9.7 9.7 0 0 0-3.06 18.9c.48.09.66-.2.66-.46v-1.7c-2.68.58-3.24-1.14-3.24-1.14-.44-1.12-1.07-1.42-1.07-1.42-.88-.6.06-.58.06-.58.97.07 1.48.99 1.48.99.86 1.47 2.26 1.05 2.81.8.09-.63.34-1.06.61-1.3-2.14-.24-4.4-1.07-4.4-4.76 0-1.05.37-1.9.99-2.57-.1-.24-.43-1.22.09-2.54 0 0 .8-.26 2.64.98A9.2 9.2 0 0 1 12 7.16c.82 0 1.64.11 2.42.33 1.84-1.24 2.64-.98 2.64-.98.52 1.32.19 2.3.09 2.54.62.67.99 1.52.99 2.57 0 3.7-2.27 4.51-4.42 4.75.35.3.66.88.66 1.78v2.64c0 .26.17.56.67.46A9.7 9.7 0 0 0 12 2.3Z" />
-    </svg>
   );
 }
 
@@ -1350,6 +2815,94 @@ function iconGhostButtonStyle(size: number): CSSProperties {
     cursor: "pointer",
     color: "#5F636B",
   };
+}
+
+/**
+ * One control, two states. Empty composer: the voice-call wave. Typed text:
+ * the same slot morphs into the send arrow. Both icons stay mounted and
+ * cross-fade (opacity + scale + slight rotation), so the change reads as one
+ * control transforming rather than a button being swapped out.
+ */
+function ComposerVoiceSendSlot({
+  canSend,
+  accentColor,
+  onSend,
+  onStartVoiceCall,
+  isResponding = false,
+  onStop,
+}: {
+  canSend: boolean;
+  accentColor: string;
+  onSend: () => void;
+  onStartVoiceCall?: () => void;
+  isResponding?: boolean;
+  onStop?: () => void;
+}) {
+  const canCall = Boolean(onStartVoiceCall);
+  // While a reply streams the same control becomes Stop, so cancelling is one
+  // press away. With no voice handler and no text there is nothing to call, so
+  // the disabled send arrow stays.
+  const mode: "stop" | "send" | "voice" = isResponding ? "stop" : canSend || !canCall ? "send" : "voice";
+  const disabled = mode === "send" && !canSend;
+  const label = mode === "stop" ? "Stop response" : mode === "send" ? "Send message" : "Start a voice call with Clyra";
+  const layer = (on: boolean): CSSProperties => ({
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: on ? 1 : 0,
+    transform: `scale(${on ? 1 : 0.6}) rotate(${on ? 0 : -35}deg)`,
+    transition: "opacity 220ms ease, transform 320ms cubic-bezier(.16,1,.3,1)",
+  });
+  const background =
+    mode === "stop" ? "#15171C" : mode === "send" ? (canSend ? accentColor : "#EDEEF1") : "transparent";
+  const color = mode === "stop" ? "#FFFFFF" : mode === "send" ? (canSend ? "#FFFFFF" : "#AFB3BB") : "#5F636B";
+
+  return (
+    <button
+      type="button"
+      className="clyra-voice-send-slot"
+      data-mode={mode}
+      title={mode === "stop" ? "Stop response (Esc)" : label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => {
+        if (mode === "stop") onStop?.();
+        else if (mode === "send") onSend();
+        else onStartVoiceCall?.();
+      }}
+      style={{
+        position: "relative",
+        width: 34,
+        height: 34,
+        padding: 0,
+        marginLeft: 2,
+        borderRadius: 999,
+        border: "none",
+        flexShrink: 0,
+        cursor: disabled ? "not-allowed" : "pointer",
+        background,
+        color,
+        boxShadow: mode === "send" && canSend ? "0 2px 10px -2px rgba(30,111,255,0.55)" : "none",
+        transition: "background 240ms cubic-bezier(.2,.8,.3,1), color 240ms ease, box-shadow 240ms ease",
+      }}
+    >
+      <span aria-hidden="true" style={layer(mode === "voice")}>
+        <VoiceWaveIcon />
+      </span>
+      <span aria-hidden="true" style={layer(mode === "send")}>
+        <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 19V6M6 12l6-6 6 6" />
+        </svg>
+      </span>
+      <span aria-hidden="true" style={layer(mode === "stop")}>
+        <svg width={13} height={13} viewBox="0 0 24 24" fill="currentColor">
+          <rect x={5} y={5} width={14} height={14} rx={3} />
+        </svg>
+      </span>
+    </button>
+  );
 }
 
 function roundIconButtonStyle(size: number, color: string): CSSProperties {
@@ -1379,111 +2932,484 @@ function ConnectionsPanel({
   onOpenDetail: () => void;
 }) {
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: 0, padding: "18px 16px 16px 18px", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 2px 14px 6px" }}>
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top: 0,
+        padding: "18px 16px 16px 18px",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "2px 2px 14px 6px",
+        }}
+      >
         <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.012em", color: "#15171C" }}>Connections</span>
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              letterSpacing: "-0.012em",
+              color: "#15171C",
+            }}
+          >
+            Connections
+          </span>
           <span style={{ fontSize: 11.5, color: "#63676F" }}>
-            {connections.connected ? "Google Workspace connected" : "No apps connected"}
+            {connections.connected
+              ? "Google Workspace connected"
+              : "No apps connected"}
             {webOff ? " · web search off" : ""}
           </span>
         </span>
-        <button type="button" onClick={onClose} title="Collapse" style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 11px", borderRadius: 999, border: "none", background: "rgba(16,18,24,0.05)", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, color: "#15171C" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Collapse"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            height: 30,
+            padding: "0 11px",
+            borderRadius: 999,
+            border: "none",
+            background: "rgba(16,18,24,0.05)",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: "#15171C",
+          }}
+        >
           Done
-          <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}><path d="M6 15l6-6 6 6" /></svg>
+          <svg
+            width={11}
+            height={11}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ opacity: 0.5 }}
+          >
+            <path d="M6 15l6-6 6 6" />
+          </svg>
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 12px 11px 11px", borderRadius: 18 }}>
-        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 11, background: "#FFFFFF", boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)" }}>
-          <img src="https://www.gstatic.com/images/branding/product/2x/drive_48dp.png" alt="" style={{ width: 18, height: 18, objectFit: "contain" }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 13,
+          padding: "11px 12px 11px 11px",
+          borderRadius: 18,
+        }}
+      >
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 32,
+            height: 32,
+            borderRadius: 11,
+            background: "#FFFFFF",
+            boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)",
+          }}
+        >
+          <img
+            src="https://www.gstatic.com/images/branding/product/2x/drive_48dp.png"
+            alt=""
+            style={{ width: 18, height: 18, objectFit: "contain" }}
+          />
         </span>
-        <span style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 500, color: "#15171C" }}>Google Workspace</span>
-          <span style={{ fontSize: 11.5, color: "#63676F", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 500, color: "#15171C" }}>
+            Google Workspace
+          </span>
+          <span
+            style={{
+              fontSize: 11.5,
+              color: "#63676F",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
             {connections.connecting
               ? connections.connectNote || "Connecting…"
               : !connections.signInAvailable
-              ? "Google sign-in isn't configured"
-              : connections.connected
-              ? `${connections.email ?? ""}`
-              : "Sign in with Google to use Drive, Gmail, Docs and more"}
+                ? "Google sign-in isn't configured"
+                : connections.connected
+                  ? `${connections.email ?? ""}`
+                  : "Sign in with Google to use Drive, Gmail, Docs and more"}
           </span>
         </span>
         <button
           type="button"
           onClick={() => {
-            if (connections.connected) { onOpenDetail(); return; }
+            if (connections.connected) {
+              onOpenDetail();
+              return;
+            }
             connections.onConnect();
           }}
           disabled={!connections.signInAvailable || connections.connecting}
-          style={{ display: "flex", alignItems: "center", gap: 2, height: 29, padding: "0 12px", borderRadius: 999, border: "none", cursor: connections.signInAvailable ? "pointer" : "not-allowed", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, flexShrink: 0, background: connections.connected ? "rgba(16,18,24,0.06)" : "rgba(30,111,255,0.10)", color: connections.connected ? "#15171C" : "#0B54D6", opacity: connections.signInAvailable ? 1 : 0.55 }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            height: 29,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: "none",
+            cursor: connections.signInAvailable ? "pointer" : "not-allowed",
+            fontFamily: "inherit",
+            fontSize: 12.5,
+            fontWeight: 500,
+            flexShrink: 0,
+            background: connections.connected
+              ? "rgba(16,18,24,0.06)"
+              : "rgba(30,111,255,0.10)",
+            color: connections.connected ? "#15171C" : "#0B54D6",
+            opacity: connections.signInAvailable ? 1 : 0.55,
+          }}
         >
-          {connections.connecting ? "Connecting…" : connections.connected ? "Configure" : "Sign in"}
+          {connections.connecting
+            ? "Connecting…"
+            : connections.connected
+              ? "Configure"
+              : "Sign in"}
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 13, marginTop: 2, padding: "11px 12px 11px 11px", borderRadius: 18 }}>
-        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 11, background: "#FFFFFF", boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)" }}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#5F636B" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"><circle cx={12} cy={12} r={8.5} /><path d="M3.5 12h17M12 3.5c2.4 2.5 3.7 5.3 3.7 8.5S14.4 18 12 20.5c-2.4-2.5-3.7-5.3-3.7-8.5S9.6 6 12 3.5z" /></svg>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 13,
+          marginTop: 2,
+          padding: "11px 12px 11px 11px",
+          borderRadius: 18,
+        }}
+      >
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 32,
+            height: 32,
+            borderRadius: 11,
+            background: "#FFFFFF",
+            boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)",
+          }}
+        >
+          <svg
+            width={16}
+            height={16}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#5F636B"
+            strokeWidth={1.7}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx={12} cy={12} r={8.5} />
+            <path d="M3.5 12h17M12 3.5c2.4 2.5 3.7 5.3 3.7 8.5S14.4 18 12 20.5c-2.4-2.5-3.7-5.3-3.7-8.5S9.6 6 12 3.5z" />
+          </svg>
         </span>
-        <span style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 500, color: "#15171C" }}>Web search</span>
-          <span style={{ fontSize: 11.5, color: "#63676F" }}>{webOff ? "Disabled" : "Live results from the web"}</span>
+        <span
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 500, color: "#15171C" }}>
+            Web search
+          </span>
+          <span style={{ fontSize: 11.5, color: "#63676F" }}>
+            {webOff ? "Disabled" : "Live results from the web"}
+          </span>
         </span>
         <button
           type="button"
           onClick={connections.onToggleWebSearch}
           title="Toggle web search"
-          style={{ display: "flex", alignItems: "center", width: 38, height: 23, borderRadius: 999, padding: 2, flexShrink: 0, boxSizing: "border-box", border: "none", cursor: "pointer", background: webOff ? "rgba(16,18,24,0.16)" : "#1E6FFF", justifyContent: webOff ? "flex-start" : "flex-end" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            width: 38,
+            height: 23,
+            borderRadius: 999,
+            padding: 2,
+            flexShrink: 0,
+            boxSizing: "border-box",
+            border: "none",
+            cursor: "pointer",
+            background: webOff ? "rgba(16,18,24,0.16)" : "#1E6FFF",
+            justifyContent: webOff ? "flex-start" : "flex-end",
+          }}
         >
-          <span style={{ display: "block", width: 19, height: 19, borderRadius: 999, background: "#FFFFFF", boxShadow: "0 1px 3px rgba(16,18,24,0.30)" }} />
+          <span
+            style={{
+              display: "block",
+              width: 19,
+              height: 19,
+              borderRadius: 999,
+              background: "#FFFFFF",
+              boxShadow: "0 1px 3px rgba(16,18,24,0.30)",
+            }}
+          />
         </button>
       </div>
 
       {webOff ? (
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 10, borderRadius: 14, background: "rgba(214,158,32,0.10)", padding: "11px 12px" }}>
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#9A6B12" strokeWidth={1.8} strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><path d="M12 8.5v5M12 16.8v.2" /><circle cx={12} cy={12} r={9} /></svg>
-          <span style={{ fontSize: 11.5, lineHeight: 1.45, color: "#7A5A12" }}>Web search is off. Clyra's information will be very limited and may be out of date.</span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            marginTop: 10,
+            borderRadius: 14,
+            background: "rgba(214,158,32,0.10)",
+            padding: "11px 12px",
+          }}
+        >
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#9A6B12"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            style={{ flexShrink: 0, marginTop: 1 }}
+          >
+            <path d="M12 8.5v5M12 16.8v.2" />
+            <circle cx={12} cy={12} r={9} />
+          </svg>
+          <span style={{ fontSize: 11.5, lineHeight: 1.45, color: "#7A5A12" }}>
+            Web search is off. Clyra's information will be very limited and may
+            be out of date.
+          </span>
         </div>
       ) : null}
     </div>
   );
 }
 
-function ConnectionsDetail({ connections, onBack }: { connections: ComposerConnectionsState; onBack: () => void }) {
+function ConnectionsDetail({
+  connections,
+  onBack,
+}: {
+  connections: ComposerConnectionsState;
+  onBack: () => void;
+}) {
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: 0, padding: "18px 16px 16px 18px", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 2px 12px 2px" }}>
-        <button type="button" onClick={onBack} title="Back" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 999, border: "none", background: "rgba(16,18,24,0.05)", cursor: "pointer", color: "#15171C" }}>
-          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top: 0,
+        padding: "18px 16px 16px 18px",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "0 2px 12px 2px",
+        }}
+      >
+        <button
+          type="button"
+          onClick={onBack}
+          title="Back"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 30,
+            height: 30,
+            borderRadius: 999,
+            border: "none",
+            background: "rgba(16,18,24,0.05)",
+            cursor: "pointer",
+            color: "#15171C",
+          }}
+        >
+          <svg
+            width={13}
+            height={13}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
         </button>
-        <span style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.012em", color: "#15171C" }}>Google Workspace</span>
-          <span style={{ fontSize: 11.5, color: "#63676F", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{connections.email ?? ""}</span>
+        <span
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              letterSpacing: "-0.012em",
+              color: "#15171C",
+            }}
+          >
+            Google Workspace
+          </span>
+          <span
+            style={{
+              fontSize: 11.5,
+              color: "#63676F",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {connections.email ?? ""}
+          </span>
         </span>
         <button
           type="button"
-          onClick={() => { connections.onDisconnect(); onBack(); }}
-          style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, color: "#A03A2C" }}
+          onClick={() => {
+            connections.onDisconnect();
+            onBack();
+          }}
+          style={{
+            height: 28,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: "#A03A2C",
+          }}
         >
           Disconnect
         </button>
       </div>
-      <span style={{ display: "block", padding: "0 6px 6px", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "#5F636B" }}>Clyra can access</span>
+      <span
+        style={{
+          display: "block",
+          padding: "0 6px 6px",
+          fontSize: 10.5,
+          fontWeight: 600,
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+          color: "#5F636B",
+        }}
+      >
+        Clyra can access
+      </span>
       <div style={{ display: "flex", flexDirection: "column" }}>
         {connections.scopes.map((sc) => (
-          <div key={sc.id} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", height: 36, padding: "0 8px 0 6px", borderRadius: 12, opacity: sc.enabled ? 1 : 0.62 }}>
-            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, flexShrink: 0 }}>{sc.icon}</span>
-            <span style={{ flex: 1, textAlign: "left", fontSize: 13, fontWeight: 500, color: "#15171C" }}>{sc.name}</span>
-            <span style={{ fontSize: 11.5, color: "#63676F", marginRight: 4 }}>{sc.enabled ? "Read" : "No access"}</span>
+          <div
+            key={sc.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              width: "100%",
+              height: 36,
+              padding: "0 8px 0 6px",
+              borderRadius: 12,
+              opacity: sc.enabled ? 1 : 0.62,
+            }}
+          >
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 20,
+                flexShrink: 0,
+              }}
+            >
+              {sc.icon}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                textAlign: "left",
+                fontSize: 13,
+                fontWeight: 500,
+                color: "#15171C",
+              }}
+            >
+              {sc.name}
+            </span>
+            <span style={{ fontSize: 11.5, color: "#63676F", marginRight: 4 }}>
+              {sc.enabled ? "Read" : "No access"}
+            </span>
             <button
               type="button"
               onClick={sc.onToggle}
               title="Toggle"
-              style={{ display: "flex", alignItems: "center", width: 38, height: 23, borderRadius: 999, padding: 2, flexShrink: 0, boxSizing: "border-box", border: "none", cursor: "pointer", background: sc.enabled ? "#1E6FFF" : "rgba(16,18,24,0.16)", justifyContent: sc.enabled ? "flex-end" : "flex-start" }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                width: 38,
+                height: 23,
+                borderRadius: 999,
+                padding: 2,
+                flexShrink: 0,
+                boxSizing: "border-box",
+                border: "none",
+                cursor: "pointer",
+                background: sc.enabled ? "#1E6FFF" : "rgba(16,18,24,0.16)",
+                justifyContent: sc.enabled ? "flex-end" : "flex-start",
+              }}
             >
-              <span style={{ display: "block", width: 19, height: 19, borderRadius: 999, background: "#FFFFFF", boxShadow: "0 1px 3px rgba(16,18,24,0.30)" }} />
+              <span
+                style={{
+                  display: "block",
+                  width: 19,
+                  height: 19,
+                  borderRadius: 999,
+                  background: "#FFFFFF",
+                  boxShadow: "0 1px 3px rgba(16,18,24,0.30)",
+                }}
+              />
             </button>
           </div>
         ))}

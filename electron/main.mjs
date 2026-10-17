@@ -7,10 +7,16 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
-import { initAnywhereSettings, isAnywhereEnabled, setAnywhereEnabled } from "./anywhere-settings.mjs";
+import { initAnywhereSettings, isAnywhereEnabled, isFlowBackgroundEnabled, setAnywhereEnabled, setFlowBackgroundEnabled } from "./anywhere-settings.mjs";
+
+/** Stay alive in the tray (window closed / quit from the Dock) — Anywhere OR Flow background. */
+const keepRunningInBackground = () => isAnywhereEnabled() || isFlowBackgroundEnabled();
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
+import { EyeView } from "./eye-view.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
+import { FlowEngine } from "./flow-engine.mjs";
+import { FlowNative } from "./flow-native.mjs";
 import { SmartToolbarManager } from "./smart-toolbar-manager.mjs";
 import { GoogleWorkspaceManager } from "./google-workspace-manager.mjs";
 import { SpotifyManager } from "./spotify-manager.mjs";
@@ -19,6 +25,7 @@ import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
 import { DesktopControlService } from "./desktop-control.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
+import { collectCareSnapshot } from "./care-manager.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,8 +64,27 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 let mainWindow = null;
 let uiView = null;
 let browserManager = null;
+let eyeView = null;
+
+/** Reachability of the Clyra Eye server, for the workspace's offline message. */
+function probeEyeUrl(url) {
+  return new Promise((resolve) => {
+    const request = http.get(url, { timeout: 1500 }, (response) => {
+      response.resume();
+      resolve(response.statusCode < 500);
+    });
+    request.on("timeout", () => { request.destroy(); resolve(false); });
+    request.on("error", () => resolve(false));
+  });
+}
 let surfaceManager = null;
 let dictationManager = null;
+let flowEngine = null;
+let flowNative = null;
+let forceQuit = false;
+let fullBootPromise = null;
+// Opened by the login item (or --background): bring up only Clyra Flow, no window, no service.
+const backgroundLaunch = process.argv.includes("--background") || Boolean(app.getLoginItemSettings?.().wasOpenedAtLogin);
 let smartToolbarManager = null;
 let googleWorkspaceManager = null;
 let spotifyManager = null;
@@ -91,7 +117,11 @@ let nativeManagersDestroyed = false;
  * a leak.
  */
 function syncAnywhereTray() {
-  const enabled = isAnywhereEnabled();
+  const enabled = keepRunningInBackground();
+  // Start hidden at login so the dictation hotkey is ready the moment you sit down.
+  if (app.isPackaged) {
+    try { app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true, args: enabled ? ["--background"] : [] }); } catch { /* unsupported platform */ }
+  }
   if (!enabled) {
     anywhereTray?.destroy();
     anywhereTray = null;
@@ -106,7 +136,17 @@ function syncAnywhereTray() {
     const rebuildMenu = () => {
       anywhereTray?.setContextMenu(Menu.buildFromTemplate([
         { label: "Open Clyra", click: () => void showOrCreateWindow() },
+        { label: `Dictation: ${dictationManager ? dictationManager.hotkeyInfo().hotkey : "starting…"}`, enabled: false },
         { type: "separator" },
+        {
+          label: "Keep dictation running in the background",
+          type: "checkbox",
+          checked: isFlowBackgroundEnabled(),
+          click: (item) => {
+            setFlowBackgroundEnabled(item.checked);
+            syncAnywhereTray();
+          },
+        },
         {
           label: "Clyra Anywhere",
           type: "checkbox",
@@ -120,7 +160,7 @@ function syncAnywhereTray() {
           },
         },
         { type: "separator" },
-        { label: "Quit Clyra", click: () => { quitting = true; app.quit(); } },
+        { label: "Quit Clyra Completely", click: () => { forceQuit = true; app.quit(); } },
       ]));
     };
     rebuildMenu();
@@ -136,8 +176,11 @@ async function showOrCreateWindow() {
     mainWindow.focus();
     return;
   }
+  await ensureFullBoot();
   await createWindow();
+  app.dock?.show?.();
   mainWindow?.show();
+  mainWindow?.focus();
 }
 
 /**
@@ -152,6 +195,21 @@ async function activateClyraShortcut(channel) {
   if (!contents || contents.isDestroyed()) return;
   mainWindow?.show();
   mainWindow?.focus();
+  // Notes is a dedicated document loaded in the same UI WebContents. It does
+  // not mount the React IPC listeners, so route global app chords back to the
+  // shell directly instead of sending an event that no page can receive.
+  try {
+    const current = new URL(contents.getURL());
+    if (current.pathname === "/notes" || current.pathname.startsWith("/notes/")) {
+      current.pathname = "/";
+      current.search = channel === "taskview:toggle" ? "?taskview=1" : "?launcher=1";
+      current.hash = "";
+      await contents.loadURL(current.toString());
+      return;
+    }
+  } catch {
+    // A malformed transient URL is not a reason to suppress a global chord.
+  }
   contents.focus();
   contents.send(channel);
 }
@@ -161,7 +219,7 @@ function destroyNativeManagers() {
   nativeManagersDestroyed = true;
   try { browserManager?.destroy(); } catch (error) { console.warn("[browser] teardown failed:", error); }
   try { surfaceManager?.destroy(); } catch (error) { console.warn("[surface] teardown failed:", error); }
-  try { dictationManager?.destroy(); } catch (error) { console.warn("[dictation] teardown failed:", error); }
+  try { dictationManager?.destroy(); flowNative?.destroy(); flowEngine?.stop(); } catch (error) { console.warn("[dictation] teardown failed:", error); }
   try { smartToolbarManager?.destroy(); } catch (error) { console.warn("[smart-toolbar] teardown failed:", error); }
   try { companionManager?.destroy(); } catch (error) { console.warn("[companion] teardown failed:", error); }
   dictationManager = null;
@@ -273,6 +331,11 @@ function serviceEnvironment() {
     ...process.env,
     NODE_ENV: isDevelopment ? "development" : "production",
     PORT: String(appPort),
+    // The Vite dev middleware proxies /api by default (vite.config.ts). This
+    // desktop service owns the real API routes itself, so tell Vite to bypass
+    // the proxy and let /api fall through to Express — `desktop:dev` must
+    // work without the separate web dev server on port 3000.
+    CLYRA_API_SELF: process.env.CLYRA_API_ORIGIN ? "" : "1",
     CLYRA_RESOURCE_ROOT: resourceRoot,
     CLYRA_DATA_ROOT: app.getPath("userData"),
     CLYRA_ELECTRON_BROWSER_BRIDGE: `http://127.0.0.1:${bridgePort}`,
@@ -778,7 +841,6 @@ async function analyseCompanionVision(imagePath, question = "") {
   if (!needsVlm && rapid?.ok) return rapid;
 
   try {
-    const { analyseVisionFrame } = await import("../tools/vision-frame.mjs");
     const buffer = await fs.readFile(imagePath);
     let visionBuffer = buffer;
     let ext = path.extname(imagePath).toLowerCase() === ".png" ? "png" : "jpeg";
@@ -804,18 +866,24 @@ async function analyseCompanionVision(imagePath, question = "") {
       /* use raw buffer */
     }
     const dataUrl = `data:image/${ext};base64,${visionBuffer.toString("base64")}`;
-    const gemini = await Promise.race([
-      analyseVisionFrame(dataUrl, String(question || "")),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("gemini vision timed out")), 20_000)),
+    const visionResponse = await Promise.race([
+      fetch(`http://127.0.0.1:${appPort}/api/companion/vision-frame`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: dataUrl, question: String(question || "") }),
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("screen vision timed out")), 30_000)),
     ]);
-    if (gemini && (gemini.ok !== false) && (gemini.summary || gemini.text)) {
+    const vision = await visionResponse.json().catch(() => ({}));
+    if (!visionResponse.ok) throw new Error(String(vision?.error || `screen vision failed (${visionResponse.status})`));
+    if (vision && vision.ok !== false && (vision.summary || vision.text)) {
       return {
         ...rapid,
-        ...gemini,
+        ...vision,
         ok: true,
-        summary: String(gemini.summary || gemini.text || rapid?.summary || "").trim(),
-        model: gemini.model || "gemini",
-        ocr: gemini.ocr || rapid?.ocr,
+        summary: String(vision.summary || vision.text || rapid?.summary || "").trim(),
+        model: vision.model || "deepseek-flash",
+        ocr: vision.ocr || rapid?.ocr,
       };
     }
   } catch {
@@ -910,6 +978,21 @@ function registerIpc() {
     syncAnywhereTray();
     return { ok: true, enabled: value };
   });
+  ipcMain.handle("care:scan", async (event) => {
+    authorize(event);
+    try {
+      return { ok: true, snapshot: await collectCareSnapshot() };
+    } catch (error) {
+      console.warn("[care] local scan failed:", error?.message || error);
+      return { ok: false, error: "Clyra couldn't read local system status. Try again." };
+    }
+  });
+  ipcMain.handle("eye:status", async (event) => {
+    authorize(event);
+    return { ok: true, url: eyeView.url, reachable: await probeEyeUrl(eyeView.url) };
+  });
+  ipcMain.handle("eye:set-location", (event, payload) => { authorize(event); eyeView.setLocation(payload); return { ok: true }; });
+  ipcMain.handle("eye:set-surface", (event, payload) => { authorize(event); eyeView.setSurface(payload || { visible: false }); return { ok: true }; });
   ipcMain.handle("browser:get-state", (event) => { authorize(event); return { ok: true, state: browserManager.getState() }; });
   ipcMain.handle("browser:set-surface", async (event, payload) => { authorize(event); await browserManager.setSurface(payload || {}); return { ok: true }; });
   ipcMain.handle("browser:navigate", async (event, { target }) => { authorize(event); return { ok: true, state: await browserManager.navigate(target) }; });
@@ -917,7 +1000,7 @@ function registerIpc() {
   ipcMain.handle("browser:find", async (event, { text }) => { authorize(event); return { ok: true, ...(await browserManager.find(text)) }; });
   ipcMain.handle("browser:zoom", (event, { delta }) => { authorize(event); return { ok: true, state: browserManager.zoom(delta) }; });
   ipcMain.handle("browser:update-settings", (event, { patch }) => { authorize(event); return { ok: true, state: browserManager.updateSettings(patch) }; });
-  ipcMain.handle("browser:add-bookmark", (event) => { authorize(event); return { ok: true, state: browserManager.addBookmark() }; });
+  ipcMain.handle("browser:add-bookmark", (event, input) => { authorize(event); return { ok: true, state: browserManager.addBookmark(input || {}) }; });
   ipcMain.handle("browser:remove-bookmark", (event, { id }) => { authorize(event); return { ok: true, state: browserManager.removeBookmark(id) }; });
   ipcMain.handle("browser:clear-history", (event, { ids }) => { authorize(event); return { ok: true, state: browserManager.clearHistory(ids) }; });
   ipcMain.handle("browser:inspect", async (event) => { authorize(event); return { ok: true, snapshot: await browserManager.inspect() }; });
@@ -1014,7 +1097,7 @@ function registerIpc() {
   ipcMain.handle("surface:hide", (event, { id }) => { authorize(event); surfaceManager.hide(id); return { ok: true }; });
   ipcMain.handle("dictation:set-state", (event, payload) => { authorize(event); dictationManager?.setState(payload || { phase: "idle" }); return { ok: true }; });
   ipcMain.handle("dictation:toggle", (event) => { authorize(event); void dictationManager?.toggle(); return { ok: true }; });
-  ipcMain.handle("dictation:shortcut-status", (event) => { authorize(event); return { registered: Boolean(dictationManager?.shortcutRegistered) }; });
+  ipcMain.handle("dictation:shortcut-status", (event) => { authorize(event); return { registered: Boolean(dictationManager?.shortcutRegistered || dictationManager?.hotkeyMode === "hold"), ...dictationManager?.hotkeyInfo() }; });
   ipcMain.handle("dictation:service-url", (event) => {
     authorize(event);
     return `http://127.0.0.1:${appPort}`;
@@ -1044,7 +1127,8 @@ function registerIpc() {
     await dictationManager?.openCameraSettings();
     return { ok: true };
   });
-  ipcMain.on("dictation:pill-action", (event, action) => { authorizeDictation(event); void dictationManager?.action(String(action || "cancel")); });
+  ipcMain.handle("dictation:renderer-ready", (event, ready) => { authorize(event); dictationManager?.setRendererReady(Boolean(ready)); return { ok: true }; });
+  ipcMain.handle("dictation:sync-settings", (event, settings) => { authorize(event); dictationManager?.writeFlowSettings(settings || {}); return { ok: true }; });
   ipcMain.handle("companion:get-state", (event) => {
     authorizeCompanion(event);
     return companionManager?.getState() || { phase: "idle" };
@@ -1164,7 +1248,28 @@ function registerIpc() {
   ipcMain.handle("spotify:devices", async (event) => { authorize(event); try { return { ok:true, devices: await spotifyManager?.getDevices() }; } catch (error) { return { ok:false, error: error?.message || "Spotify devices are unavailable.", code: error?.code }; } });
   ipcMain.handle("spotify:playback-state", async (event) => { authorize(event); try { return { ok:true, state: await spotifyManager?.getPlaybackState() }; } catch (error) { return { ok:false, error: error?.message || "Spotify playback state is unavailable.", code: error?.code }; } });
   ipcMain.handle("spotify:queue", async (event) => { authorize(event); try { return { ok:true, queue: await spotifyManager?.getQueue() }; } catch (error) { return { ok:false, error: error?.message || "Spotify queue is unavailable.", code: error?.code }; } });
-  ipcMain.handle("spotify:recently-played", async (event) => { authorize(event); try { return { ok:true, tracks: await spotifyManager?.getRecentlyPlayed() }; } catch (error) { return { ok:false, error: error?.message || "Spotify recently played items are unavailable.", code: error?.code }; } });
+  ipcMain.handle("spotify:recently-played", async (event) => { authorize(event); try { const history = await spotifyManager?.getRecentlyPlayed(); return { ok:true, tracks: history?.tracks || [], contexts: history?.contexts || [] }; } catch (error) { return { ok:false, error: error?.message || "Spotify recently played items are unavailable.", code: error?.httpStatus === 403 ? "SPOTIFY_SCOPE_REQUIRED" : error?.code }; } });
+  ipcMain.handle("spotify:prepare-device", async (event, payload) => {
+    authorize(event);
+    const preferId = payload && typeof payload === "object" && typeof payload.preferId === "string" ? payload.preferId.slice(0, 128) : "";
+    try {
+      return { ok:true, device: await spotifyManager?.prepareDevice({ preferId }) };
+    } catch (error) {
+      return { ok:false, error: error?.message || "No Spotify device is available.", code: error?.code };
+    }
+  });
+  ipcMain.handle("spotify:lyrics", async (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid Spotify lyrics IPC payload.");
+    const keys = Object.keys(payload);
+    if (keys.some((key) => !["trackName", "artistName", "albumName", "durationMs"].includes(key))) throw new Error("Unsupported Spotify lyrics IPC field.");
+    if (typeof payload.trackName !== "string" || typeof payload.artistName !== "string") throw new Error("Invalid Spotify lyrics track details.");
+    try {
+      return { ok:true, lyrics: await spotifyManager?.getLyrics(payload) };
+    } catch (error) {
+      return { ok:false, error: error?.message || "Lyrics are unavailable for this track.", code: error?.code };
+    }
+  });
   ipcMain.handle("spotify:saved-tracks", async (event) => { authorize(event); try { return { ok:true, tracks: await spotifyManager?.getSavedTracks() }; } catch (error) { return { ok:false, error: error?.message || "Spotify saved tracks are unavailable.", code: error?.code }; } });
   for (const [channel, method] of [["spotify:library-contains", "libraryContains"], ["spotify:library-save", "saveLibrary"], ["spotify:library-remove", "removeLibrary"]]) {
     ipcMain.handle(channel, async (event, payload) => {
@@ -1189,11 +1294,28 @@ function registerIpc() {
       return { ok:false, error: error?.message || "Spotify search failed.", code: error?.code };
     }
   });
+  const SPOTIFY_BROWSE_KINDS = new Set(["artist", "artist-top-tracks", "artist-albums", "album", "search-all", "followed-artists", "saved-albums", "top-artists", "top-tracks", "is-following", "follow-artist", "unfollow-artist", "create-playlist", "add-to-playlist"]);
+  ipcMain.handle("spotify:browse", async (event, payload) => {
+    authorize(event);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.kind !== "string" || !SPOTIFY_BROWSE_KINDS.has(payload.kind)) throw new Error("Invalid Spotify browse IPC payload.");
+    const args = payload.args && typeof payload.args === "object" && !Array.isArray(payload.args) ? payload.args : {};
+    try {
+      return { ok:true, ...(await spotifyManager?.browse(payload.kind, args)) };
+    } catch (error) {
+      const scopeMissing = error?.httpStatus === 401 || error?.httpStatus === 403;
+      const writing = ["follow-artist", "unfollow-artist", "create-playlist", "add-to-playlist"].includes(payload.kind);
+      return {
+        ok:false,
+        error: scopeMissing && writing ? "Reconnect Spotify (profile menu → Log out, then Connect) to allow editing playlists and following artists." : error?.message || "Spotify request failed.",
+        code: error?.errorCode || error?.code,
+      };
+    }
+  });
   ipcMain.handle("spotify:control", async (event, payload) => {
     authorize(event);
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.action !== "string") throw new Error("Invalid Spotify control IPC payload.");
     const keys = Object.keys(payload);
-    if (keys.some((key) => !["action", "deviceId", "positionMs", "volumePercent", "contextUri", "uris", "play", "state", "uri"].includes(key))) throw new Error("Unsupported Spotify control IPC field.");
+    if (keys.some((key) => !["action", "deviceId", "positionMs", "volumePercent", "contextUri", "uris", "play", "state", "uri", "offsetUri", "offsetPosition"].includes(key))) throw new Error("Unsupported Spotify control IPC field.");
     try {
       await spotifyManager?.control(payload.action, payload);
       return { ok:true };
@@ -1232,30 +1354,47 @@ function registerIpc() {
   function spawnTerminalShell(cwd) {
     const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
     if (nodePty) {
-      const pty = nodePty.spawn(shell, [], {
-        name: "xterm-256color",
-        cols: 100,
-        rows: 30,
-        cwd,
-        env: { ...process.env, TERM: "xterm-256color" },
-      });
-      return {
-        write: (data) => { try { pty.write(data); } catch { /* closed */ } },
-        resize: (cols, rows) => { try { pty.resize(cols, rows); } catch { /* closed */ } },
-        kill: () => { try { pty.kill(); } catch { /* closed */ } },
-        onData: (cb) => pty.onData(cb),
-        onExit: (cb) => pty.onExit(({ exitCode }) => cb(exitCode)),
-      };
+      try {
+        const pty = nodePty.spawn(shell, [], {
+          name: "xterm-256color",
+          cols: 100,
+          rows: 30,
+          cwd,
+          env: { ...process.env, TERM: "xterm-256color" },
+        });
+        return {
+          write: (data) => { try { pty.write(data); } catch { /* closed */ } },
+          resize: (cols, rows) => { try { pty.resize(cols, rows); } catch { /* closed */ } },
+          kill: () => { try { pty.kill(); } catch { /* closed */ } },
+          onData: (cb) => pty.onData(cb),
+          onExit: (cb) => pty.onExit(({ exitCode }) => cb(exitCode)),
+        };
+      } catch (error) {
+        // A package can be installed for Node while its Electron ABI binary is
+        // unavailable. Do not reject terminal:open in that case — use the
+        // interactive fallback below instead.
+        console.warn("[terminal] node-pty spawn failed; using expect fallback:", error?.message || error);
+      }
     }
-    const child = spawn(shell, [], { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    // Keep the desktop fallback interactive too. A piped zsh does not emit a
+    // prompt and can leave line editing unusable, which made the Vibe terminal
+    // look like it failed even though a process existed. `expect` provides a
+    // small local pseudo-terminal when node-pty's native module is unavailable.
+    const expectScript = "set timeout -1; spawn -noecho $env(CLYRA_TERMINAL_SHELL) -i; interact";
+    const child = process.platform === "win32"
+      ? spawn(shell, ["-NoLogo", "-NoExit"], { cwd, env: { ...process.env, TERM: "xterm-256color" }, stdio: ["pipe", "pipe", "pipe"] })
+      : spawn("/usr/bin/expect", ["-c", expectScript], {
+          cwd,
+          env: { ...process.env, TERM: "xterm-256color", CLYRA_TERMINAL_SHELL: shell },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
     const listeners = [];
     const exitListeners = [];
     child.stdout.on("data", (chunk) => { const data = chunk.toString("utf8"); for (const cb of listeners) cb(data); });
     child.stderr.on("data", (chunk) => { const data = chunk.toString("utf8"); for (const cb of listeners) cb(data); });
     child.on("exit", (code) => { for (const cb of exitListeners) cb(code ?? 0); });
     return {
-      // Enter arrives as \r from xterm; the piped shell reads lines on \n.
-      write: (data) => { try { child.stdin.write(String(data).replace(/\r/g, "\n")); } catch { /* closed */ } },
+      write: (data) => { try { child.stdin.write(String(data)); } catch { /* closed */ } },
       resize: () => undefined,
       kill: () => { try { child.kill(); } catch { /* closed */ } },
       onData: (cb) => listeners.push(cb),
@@ -1342,7 +1481,9 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
-    minWidth: 960,
+    // The workspace collapses to one column below 720px, so the window can
+    // narrow to a phone-sized content width as well.
+    minWidth: 360,
     minHeight: 680,
     show: false,
     backgroundColor: "#ffffff",
@@ -1366,6 +1507,11 @@ async function createWindow() {
   });
   mainWindow.contentView.addChildView(uiView);
   resizeUi();
+  // Clyra's renderer takes over dictation only while it is loaded and has said
+  // so; a reload or crash hands the hotkey straight back to the standalone path.
+  uiView.webContents.on("did-start-loading", () => dictationManager?.setRendererReady(false));
+  uiView.webContents.on("render-process-gone", () => dictationManager?.setRendererReady(false));
+  uiView.webContents.on("destroyed", () => dictationManager?.setRendererReady(false));
 
   browserManager = new ChromiumBrowserManager({
     window: mainWindow,
@@ -1373,12 +1519,8 @@ async function createWindow() {
     userDataPath: path.join(app.getPath("userData"), "browser"),
     downloadsPath: app.getPath("downloads"),
   });
+  eyeView = new EyeView({ window: mainWindow, url: process.env.CLYRA_EYE_URL || "http://localhost:5179/" });
   surfaceManager = new ChromiumSurfaceManager({ window: mainWindow });
-  dictationManager = new DictationManager({
-    uiContents: () => uiView?.webContents ?? null,
-    preloadPath: path.join(here, "dictation-preload.cjs"),
-    pillPath: path.join(here, "dictation-pill.html"),
-  });
   smartToolbarManager = new SmartToolbarManager({
     uiContents: () => uiView?.webContents ?? null,
     preloadPath: path.join(here, "smart-toolbar-preload.cjs"),
@@ -1422,7 +1564,6 @@ async function createWindow() {
     askModel: askCompanionModel,
   });
   await browserManager.initialize();
-  await dictationManager.initialize();
   await smartToolbarManager.initialize();
   registerIpc();
 
@@ -1451,17 +1592,8 @@ async function createWindow() {
     console.warn("[launcher] global shortcut unavailable:", error);
   }
 
-  // ⌘/ — Clyra Dictation replaces the retired OpenCluely overlay.
-  try {
-    const registered = globalShortcut.register("CommandOrControl+/", () => {
-      void dictationManager?.toggle();
-    });
-    if (!registered) {
-      console.warn("[dictation] Cmd+/ is already owned by another app.");
-    }
-  } catch (error) {
-    console.warn("[dictation] Cmd+/ shortcut unavailable:", error);
-  }
+  // Clyra Flow’s Cmd/Ctrl+L shortcut is registered by DictationManager during
+  // startup, before the chat renderer mounts, so it is genuinely system-wide.
 
   if (process.env.CLYRA_COMPANION_SMOKE === "1") {
     setTimeout(() => {
@@ -1483,7 +1615,7 @@ async function createWindow() {
   // behaviour: destroy the native managers, quit.
   mainWindow.on("close", (event) => {
     if (quitting) return;
-    if (isAnywhereEnabled()) {
+    if (keepRunningInBackground()) {
       event.preventDefault();
       mainWindow?.hide();
       return;
@@ -1534,7 +1666,10 @@ async function createWindow() {
   });
   await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`);
   // Pre-warm OpenCluely in the background so ⌘/ toggles instantly.
-  setTimeout(() => {
+  // OpenCluely is an optional companion cloned on demand; with no install there
+  // is nothing to warm, so stay quiet instead of logging a misleading warning.
+  const openCluelyInstalled = existsSync(path.join(projectRoot, "apps", "opencluely", "node_modules", ".bin", "electron"));
+  if (openCluelyInstalled) setTimeout(() => {
     void spawnOpenCluelyApp().then((result) => {
       if (result?.ok) console.log("[opencluely] pre-warmed (control API ready for ⌘/)");
       else console.warn("[opencluely] pre-warm skipped:", result?.error || "unknown");
@@ -1568,16 +1703,84 @@ async function primeMacOsMediaAccess() {
   }
 }
 
+/**
+ * Clyra Flow comes up FIRST and on its own: hotkey, hidden mic window and the
+ * speech engine are live within a fraction of a second of launch, long before
+ * (or entirely without) Clyra's window and local service.
+ */
+function initFlowEarly() {
+  if (dictationManager) return;
+  flowEngine = new FlowEngine({ projectRoot });
+  flowNative = new FlowNative({
+    preloadPath: path.join(here, "flow-capture-preload.cjs"),
+    capturePath: path.join(here, "flow-capture.html"),
+  });
+  dictationManager = new DictationManager({
+    uiContents: () => uiView?.webContents ?? null,
+    preloadPath: path.join(here, "dictation-preload.cjs"),
+    pillPath: path.join(here, "dictation-pill.html"),
+    native: flowNative,
+    engine: flowEngine,
+    settingsPath: path.join(app.getPath("userData"), "flow-settings.json"),
+    // Optional language-model polish, available only while Clyra's service is up.
+    cleanupViaService: async (body) => {
+      if (!appPort || !fullBootPromise) return "";
+      const response = await fetch(`http://127.0.0.1:${appPort}/api/dictation/cleanup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: `clyra_token=${serviceToken}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(6_500),
+      });
+      const payload = await response.json().catch(() => null);
+      return response.ok && payload?.ok ? String(payload.text || "") : "";
+    },
+  });
+  void dictationManager.initialize();
+  // Test hook (off unless CLYRA_FLOW_TEST_PORT is set): lets automated checks drive the
+  // exact same hold/tap gesture the Right Option key produces, on loopback only.
+  if (process.env.CLYRA_FLOW_TEST_PORT) {
+    http.createServer((req, res) => {
+      const route = String(req.url || "").split("?")[0];
+      if (route === "/press") dictationManager?.machine.press();
+      else if (route === "/release") dictationManager?.machine.release();
+      else if (route === "/open") void showOrCreateWindow();
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ phase: dictationManager?.phase, nativeActive: Boolean(dictationManager?.nativeActive), detail: dictationManager?.payload?.detail, rendererReady: Boolean(dictationManager?.rendererReady), window: Boolean(mainWindow), service: Boolean(fullBootPromise) }));
+    }).listen(Number(process.env.CLYRA_FLOW_TEST_PORT), "127.0.0.1");
+  }
+  void flowNative.ensureWindow();
+  // Load the speech model now so the very first dictation is already warm.
+  flowEngine.warm().catch((error) => console.warn("[flow] speech engine not ready:", error?.message || error));
+}
+
+/** The heavy half of Clyra (browser bridge + local service); started lazily in background mode. */
+function ensureFullBoot() {
+  if (!fullBootPromise) {
+    fullBootPromise = (async () => {
+      app.dock?.show?.();
+      configureUiSession();
+      reportDesktopLifecycle("booting browser bridge");
+      await startBrowserBridge();
+      reportDesktopLifecycle("browser bridge resolved; starting service");
+      startLocalService();
+      await waitForService();
+    })();
+  }
+  return fullBootPromise;
+}
+
 async function boot() {
   initAnywhereSettings(app.getPath("userData"));
+  initFlowEarly();
   syncAnywhereTray();
   Menu.setApplicationMenu(null);
-  configureUiSession();
-  reportDesktopLifecycle("booting browser bridge");
-  await startBrowserBridge();
-  reportDesktopLifecycle("browser bridge resolved; starting service");
-  startLocalService();
-  await waitForService();
+  if (backgroundLaunch && keepRunningInBackground()) {
+    // Login-item start: Flow only. The window and service wait until Clyra is opened.
+    app.dock?.hide?.();
+    console.log("[flow] background start — Clyra opens on demand");
+    return;
+  }
+  await ensureFullBoot();
   await createWindow();
 }
 
@@ -1598,11 +1801,7 @@ app.on("activate", () => {
   // macOS can emit `activate` during initial boot. Wait for the boot service
   // before creating a window so we never race `loadURL` or register IPC twice.
   if (bootPromise) {
-    void bootPromise.then(() => {
-      if (!mainWindow) return createWindow();
-      mainWindow.show();
-      return mainWindow;
-    }).catch(() => undefined);
+    void bootPromise.then(() => showOrCreateWindow()).catch(() => undefined);
   }
 });
 
@@ -1612,15 +1811,23 @@ app.on("window-all-closed", () => {
   // this feature existed. Clyra Anywhere is the one case that keeps the
   // process — and with it dictation, the selection overlay and the tray —
   // alive with no windows open at all.
-  if (isAnywhereEnabled()) return;
+  if (keepRunningInBackground()) return;
   app.quit();
 });
 
-process.once("SIGINT", () => app.quit());
-process.once("SIGTERM", () => app.quit());
+process.once("SIGINT", () => { forceQuit = true; app.quit(); });
+process.once("SIGTERM", () => { forceQuit = true; app.quit(); });
 
 app.on("before-quit", (event) => {
   if (quitting) return;
+  // Packaged Clyra keeps Flow alive in the tray when it is quit from the Dock /
+  // Cmd+Q, so the dictation hotkey keeps working. "Quit Clyra" in the tray quits for real.
+  if (!forceQuit && app.isPackaged && keepRunningInBackground()) {
+    event.preventDefault();
+    mainWindow?.hide();
+    app.dock?.hide?.();
+    return;
+  }
   event.preventDefault();
   quitting = true;
   bridgeServer?.close();

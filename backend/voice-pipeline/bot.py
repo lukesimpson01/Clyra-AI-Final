@@ -1,6 +1,6 @@
 """Builds and runs one Clyra voice call as a Pipecat pipeline.
 
-    transport.input() -> Silero VAD/turn detection -> Fish STT
+    transport.input() -> Silero VAD/turn detection -> local whisper.cpp STT
     -> user context aggregator -> LLM (DeepSeek, or the Test Mode echo route)
     -> Fish TTS -> transport.output() -> assistant context aggregator
 
@@ -27,7 +27,7 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
 from config import VoiceConfig
-from fish_stt import FishASRSTTService
+from whisper_cpp_stt import WhisperCppSTTService
 
 ECHO_MODEL = "echo-1"
 
@@ -66,18 +66,24 @@ async def run_bot(
         ),
     )
 
-    stt = FishASRSTTService(
-        api_key=config.fish_api_key,
-        sample_rate=config.sample_rate,
-    )
+    stt = WhisperCppSTTService(sample_rate=config.sample_rate)
 
     llm = _build_llm(config, test_mode, llm_model)
 
+    # Fish is the only TTS provider wired up right now, and it's optional: no
+    # key configured (or no credits at Fish's end) shouldn't block a call --
+    # the response still reaches the client as text via onBotLlmText/RTVI
+    # transcript events, which don't depend on the TTS stage running at all.
+    # Skipping the stage entirely when there's no key avoids ever opening a
+    # doomed websocket; a *runtime* Fish failure (bad key, no credits) still
+    # can't take the call down because pipecat's own error frames default to
+    # non-fatal (see FishAudioTTSService.run_tts / push_error), and the RTVI
+    # bridge forwards that `fatal` flag to the client for it to respect.
     tts = FishAudioTTSService(
         api_key=config.fish_api_key,
         reference_id=config.fish_reference_id,
         model_id=config.fish_tts_model,
-    )
+    ) if config.fish_api_key else None
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     for turn in history[-24:]:
@@ -89,17 +95,11 @@ async def run_bot(
     context = OpenAILLMContext(messages)
     context_aggregator = llm.create_context_aggregator(context)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            context_aggregator.user(),
-            llm,
-            tts,
-            transport.output(),
-            context_aggregator.assistant(),
-        ]
-    )
+    stages = [transport.input(), stt, context_aggregator.user(), llm]
+    if tts is not None:
+        stages.append(tts)
+    stages += [transport.output(), context_aggregator.assistant()]
+    pipeline = Pipeline(stages)
 
     task = PipelineTask(
         pipeline,

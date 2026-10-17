@@ -241,7 +241,6 @@ export function Hero({ onOpenAuth }: { onOpenAuth: (mode: "login" | "signup") =>
         <div className="rounded-[1.5rem] bg-slate-950 p-4 text-white">
           <div className="mb-6 flex items-center justify-between">
             <span className="text-sm font-semibold">Live dashboard</span>
-            <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-xs text-emerald-200">Online</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             {metrics.map((metric) => (

@@ -67,15 +67,15 @@
 .cc-agent-status--warning { color: var(--warning-amber); }
 .cc-agent-status--error { color: var(--deletion-red); }
 
-.cc-quick-actions { padding: 3px; border: 1px solid var(--cc-hairline); border-radius: 11px; background: color-mix(in srgb, #fff 78%, transparent); box-shadow: var(--cc-shadow-soft); }
+.cc-quick-actions { background: transparent; }
 .cc-quick-action { transition: color 150ms ease, background-color 150ms ease, transform 150ms ease; }
-.cc-quick-action:hover { background: rgba(15, 23, 42, 0.045); color: #303236; }
+.cc-quick-action:hover, .cc-quick-action:focus-visible { background: rgba(15, 23, 42, 0.075); color: #4f5156; }
 .cc-quick-action:active { transform: scale(0.98); }
 
 @media (max-width: 760px) {
   .cc-project-context { display: none; }
   .cc-agent-status { padding: 0 7px; font-size: 10px; }
-  .cc-welcome { padding-top: 4vh; }
+  .cc-welcome { padding-top: 7vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -687,3 +687,36 @@ button.dsh-leading { cursor: pointer; }
 /* A streaming summary follows its own tail, so clipping beats an ellipsis
    that would sit permanently at the end of moving text. */
 .dsh-summary[data-follow-end="true"] { text-overflow: clip; }
+
+/* Sidebar activity marker: one small, gently pulsing dot. Never a whole-row animation. */
+.cc-running-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: #3977f6;
+  animation: cc-running-pulse 1.6s ease-in-out infinite;
+}
+
+.cc-running-dot--inline {
+  width: 5px;
+  height: 5px;
+  vertical-align: middle;
+}
+
+@keyframes cc-running-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-running-dot {
+    animation: none;
+  }
+}

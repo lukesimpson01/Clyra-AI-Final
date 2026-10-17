@@ -39,9 +39,9 @@ export function voiceConfigPublic(config: VoiceConfig) {
   return {
     enabled: config.enabled,
     sampleRate: config.sampleRate,
-    sttProvider: "fish-audio",
+    sttProvider: "local-whisper.cpp",
     ttsProvider: "fish-audio",
     transport: "webrtc",
-    fishConfigured: Boolean(config.fishApiKey),
+    ttsConfigured: Boolean(config.fishApiKey),
   };
 }

@@ -1,0 +1,14 @@
+{
+  "id": "airbnb",
+  "name": "Airbnb",
+  "category": "E-Commerce & Retail",
+  "description": "Travel marketplace. Warm coral accent, photography-driven, rounded UI.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

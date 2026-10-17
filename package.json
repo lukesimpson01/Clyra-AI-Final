@@ -17,45 +17,51 @@
     "desktop:build:win:arm64": "npm run desktop:prepare:win:arm64 && electron-builder --win --arm64",
     "dev:openpencil": "node tools/openpencil-dev.mjs",
     "setup:openpencil": "node tools/openpencil-setup.mjs",
+    "setup:open-design": "node tools/open-design-setup.mjs",
+    "dev:open-design": "node tools/open-design-daemon.mjs",
+    "setup:hermes": "node tools/install-hermes-runtime.mjs",
+    "setup:speech": "node tools/setup-speech-engine.mjs",
     "check:openpencil": "node tools/openpencil-check.mjs",
     "vibe-server": "tsx vibe-server.ts",
     "start": "node dist/server.js",
     "build:server": "esbuild server.ts --platform=node --target=node18 --bundle --format=esm --outfile=dist/server.js --banner:js=\"import { createRequire as __clyraCreateRequire } from 'node:module'; import { fileURLToPath as __clyraFileURLToPath } from 'node:url'; import { dirname as __clyraDirname } from 'node:path'; const require = __clyraCreateRequire(import.meta.url); var __filename = __clyraFileURLToPath(import.meta.url); var __dirname = __clyraDirname(__filename);\" --external:electron --external:vite --external:dotenv --external:better-sqlite3 --external:playwright --external:playwright-core --external:chromium-bidi/*",
     "build": "vite build && npm run build:server",
     "preview": "vite preview",
-<<<<<<< ours
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prebuild": "node tools/copy-maplibre-worker.mjs",
     "lint": "tsc --noEmit",
     "notes:template-shots": "node tools/notes-template-shots.mjs",
     "sqlite:node": "node tools/sqlite-abi.mjs node",
     "sqlite:electron": "node tools/sqlite-abi.mjs electron",
     "test:voice": "tsx tools/voice-unit-tests.ts",
+    "test:speech-flow": "tsx tools/speech-flow-unit-tests.ts",
+    "test:dictation-cleanup": "tsx tools/dictation-cleanup-tests.ts",
+    "test:dictation-hotkey": "node tools/dictation-hotkey-tests.mjs",
+    "test:flow-native": "node tools/flow-native-contract-tests.mjs",
     "test:voice-e2e:dictation": "node tools/voice-call-e2e.mjs --dictation",
     "test:voice-call-e2e": "node tools/voice-call-webrtc-e2e.mjs",
     "test:browser": "tsx tools/openbrowser-e2e.ts",
+    "test:deepseek-vision": "tsx tools/deepseek-vision-contract-tests.ts",
     "test:research": "tsx tools/research-grounding-unit-tests.ts",
+    "test:agent-events": "tsx tools/agent-events-unit-tests.ts",
     "test:browser-complex": "node tools/browser-complex-task-e2e.mjs",
-    "test:creator": "tsx tools/creator-unit-tests.ts",
-    "test:fake-text:timeline": "tsx tools/fake-text-timeline-unit-tests.ts",
-    "test:fake-text:visual": "playwright test --config=playwright.fake-text.config.ts",
-    "test:fake-text:render": "playwright test --config=playwright.fake-text.render.config.ts",
     "test:clipper": "tsx tools/clipper-unit-tests.ts",
-    "test:clip-zoom": "tsx tools/clip-zoom-effect-unit-tests.ts",
     "test:clipper-publishing": "tsx tools/clipper-publishing-unit-tests.ts",
     "test:clipper-brand-kits": "tsx tools/clipper-brand-kit-unit-tests.ts",
     "test:usage-pricing": "node tools/usage-pricing-unit-tests.mjs",
-    "test:bots": "tsx tools/bots-unit-tests.ts",
-    "test:bots-workspace": "tsx tools/bots-workspace-unit-tests.ts",
-    "test:cowork-tasks": "tsx tools/cowork-task-unit-tests.ts",
+    "test:cowork": "tsx tools/cowork-tools-unit-tests.ts",
     "test:face-tracking": "python3 tools/face-tracking-quality-tests.py",
     "test:smart-camera": "tsx tools/smart-camera-unit-tests.ts",
     "test:agent-controller": "tsx tools/agent-controller-unit-tests.ts",
     "test:tools": "node tools/sqlite-abi.mjs node && tsx tools/clyra-agent-system-tests.ts",
     "test:agent": "node tools/sqlite-abi.mjs node && tsx tools/clyra-agent-system-tests.ts",
     "test:missions": "node tools/sqlite-abi.mjs node && tsx tools/clyra-agent-system-tests.ts",
+    "test:automations": "node tools/sqlite-abi.mjs node && tsx tools/automation-engine-unit-tests.ts",
+    "test:agent-zero-runtime": "tsx tools/agent-zero-runtime-unit-tests.ts",
+    "test:care": "node tools/care-manager-unit-tests.mjs",
+    "eye:install": "npm --prefix apps/clyra-eye ci",
+    "eye:dev": "npm --prefix apps/clyra-eye run dev -- --port 5179 --strictPort",
     "test:security": "node tools/sqlite-abi.mjs node && tsx tools/clyra-agent-system-tests.ts",
-    "test:clyra": "npm run test:tools && npm run test:agent-controller && npm run test:computer-agent && npm run test:browser && npm run test:browser-complex && npm run test:research && npm run test:notes && npm run test:vibe-runtime && npm run test:vibe-agent-v3",
+    "test:clyra": "npm run test:tools && npm run test:automations && npm run test:care && npm run test:agent-controller && npm run test:computer-agent && npm run test:browser && npm run test:browser-complex && npm run test:research && npm run test:notes && npm run test:vibe-runtime && npm run test:vibe-agent-v3",
     "clyra:test-agent-system": "npm run test:clyra",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
     "test:computer": "npm run test:computer-agent",
@@ -73,15 +79,13 @@
     "test:browser-companion-visual": "node tools/browser-companion-visual-smoke.mjs",
     "test:study-brain": "tsx tools/study-brain-unit-tests.ts",
     "test:notes": "node tools/sqlite-abi.mjs node && tsx tools/notes-workspace-unit-tests.ts",
+    "test:clyra-code-platform": "tsx tools/clyra-code-platform-unit-tests.ts",
+    "test:clyra-code-library": "tsx tools/clyra-code-library-unit-tests.ts",
     "notes:vendor": "node -e \"const f=require('fs');f.mkdirSync('public/notes/vendor',{recursive:true});f.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js','public/notes/vendor/xterm.js');f.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js','public/notes/vendor/addon-fit.js');f.copyFileSync('node_modules/@xterm/xterm/css/xterm.css','public/notes/vendor/xterm.css');console.log('notes vendor refreshed')\"",
-    "test:map:visual": "tsx tools/clyra-standard-map-visual.ts",
-    "test:map": "tsx tools/clyra-maps-e2e.ts",
-    "test:map:app": "tsx tools/clyra-maps-app-e2e.ts"
-=======
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit",
-    "test:computer-use": "tsx --test lib/computer-use/*.test.ts"
->>>>>>> theirs
+    "test:composer-dictation": "tsx tools/composer-dictation-unit-tests.ts",
+    "test:shorts": "tsx tools/shorts-unit-tests.ts",
+    "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
+    "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
@@ -94,6 +98,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.21",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.14.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/ws": "^8.18.1",
@@ -152,7 +157,12 @@
     "files": [
       "electron/**/*",
       "package.json",
-      "!node_modules/**/*"
+      "!node_modules/**/*",
+      "node_modules/uiohook-napi/**/*",
+      "node_modules/node-gyp-build/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**/*"
     ],
     "extraResources": [
       {
@@ -169,6 +179,18 @@
       {
         "from": "backend/voice-pipeline",
         "to": "backend/voice-pipeline"
+      },
+      {
+        "from": "vendor/whisper.cpp/build",
+        "to": "speech-runtime/build"
+      },
+      {
+        "from": "vendor/whisper.cpp/models",
+        "to": "speech-runtime/models",
+        "filter": [
+          "ggml-*-q5_1.bin",
+          "ggml-parakeet-tdt-0.6b-v3-q4_k.bin"
+        ]
       },
       {
         "from": "tools",
@@ -217,7 +239,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Clyra needs microphone access for Cmd+Shift+K dictation and Voice Call.",
+        "NSMicrophoneUsageDescription": "Clyra needs microphone access for Clyra Flow (Cmd+L) and Voice Call.",
         "NSCameraUsageDescription": "Clyra needs camera access for Voice Call camera vision.",
         "NSScreenCaptureUsageDescription": "Clyra needs screen recording access to share your screen in Voice Call.",
         "NSAppleEventsUsageDescription": "Clyra needs Accessibility / Apple Events access to paste dictation into other apps."
@@ -257,10 +279,10 @@
     "helmet": "^8.3.0",
     "isomorphic-git": "^1.41.4",
     "liquid-glass-react": "^1.1.1",
-    "maplibre-gl": "^6.10.0",
+    "maplibre-gl": "^4.7.1",
     "node-pty": "^1.1.0",
     "pixi.js": "^8.19.0",
-    "supercluster": "^8.0.1",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "uiohook-napi": "^1.5.5"
   }
 }

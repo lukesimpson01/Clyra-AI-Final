@@ -3,6 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { chatReplyFailureText } from "./lib/chatReplyErrors";
+import {
+  extractLocationQuery,
+  extractWeatherLocation,
+  isAskingForCurrentLocation,
+  isVibeBuildRequest,
+  looksLikeLocationQuery,
+  looksLikeWeatherQuery,
+} from "./lib/chatIntent";
 import React, {
   lazy,
   Suspense,
@@ -27,8 +36,8 @@ import {
   Archive,
   Bell,
   Brain,
-  ChevronDown,
   CircleAlert,
+  Clock3,
   Code2,
   Gift,
   Scissors,
@@ -45,6 +54,7 @@ import {
   MessageCircle,
   MessageCircleDashed,
   MessagesSquare,
+  Music2,
   Mic,
   MoreHorizontal,
   MousePointer2,
@@ -70,6 +80,7 @@ import {
 } from "lucide-react";
 import { cn, formatApiError } from "./lib/utils";
 import { SettingsModal } from "./components/SettingsModal";
+import { useMacOSPageTransition } from "./components/MacOSPageTransition";
 import { ChatSearchModal } from "./components/ChatSearchModal";
 import { ShiningBrainIcon, ShiningText, ThinkingDots } from "./components/ShiningText";
 import {
@@ -82,8 +93,9 @@ import {
   WeatherDiagramCard,
   type WeatherPayload,
 } from "./components/WeatherDiagramCard";
-import { LocationMapCard, type LocationMapPlace } from "./components/LocationMapCard";
+import { LocationMapCard, type MapLocationPayload } from "./components/LocationMapCard";
 import { MissionStatusCard, type MissionStatus } from "./components/MissionStatusCard";
+import { AutomationStatusCard, type AutomationStatus } from "./components/AutomationStatusCard";
 import {
   CLYRA_CHAT_SYSTEM_PROMPT,
   CLYRA_ENGLISH_LANGUAGE_CONTRACT,
@@ -118,6 +130,7 @@ import ClyraComposerShell, {
   type ComposerFileItem,
   type ComposerPaletteItem,
   type ComposerSource,
+  type ComposerSuggestion,
 } from "./components/chat/ClyraComposerShell";
 import {
   GmailEmailResults,
@@ -132,16 +145,23 @@ import {
   type DocumentRewriteRequest,
 } from "./components/ui/document-card";
 import { AppLauncher } from "./components/AppLauncher";
-import { ShortsStudioWelcome, type ShortsMode } from "./components/ShortsStudioWelcome";
 import { AgentControlledPreview } from "./components/AgentControlledPreview";
-import type { CreatorMode } from "./components/CreatorStudioWorkspace";
-import { isGroundedWebResearchAnswer } from "../lib/research/research-grounding";
+type CreatorMode = "fake-text" | "would-rather" | "reddit-story";
+import { isGroundedWebResearchAnswer, type WebCitationView } from "../lib/research/research-grounding";
+import { ClyraSearchCitations } from "./shared/clyra/ClyraSearchActivity";
+import { ClyraAgentActivity } from "./shared/clyra/ClyraAgentActivity";
+import { deriveAgentEvents, type AgentEvent, type RunSnapshot } from "../lib/agent-events/agent-event";
 import { VoiceCallScreen } from "./components/voice/VoiceCallScreen";
 import { DictationController } from "./components/DictationController";
+import { ConnectivityIndicator } from "./components/ConnectivityIndicator";
+import { useConnectivity } from "./hooks/useConnectivity";
+import { resolveDeviceLocation } from "./hooks/useDeviceLocation";
 import { VoiceWaveIcon } from "./components/voice/VoiceWaveIcon";
 import { VoiceWaveform } from "./components/voice/VoiceWaveform";
 import { VoicePcmCapturer } from "./lib/voicePcmCapture";
+import { applyDictionary, inferContext, localDictationCleanup, routeSpeechIntent } from "./speech";
 import { useVoiceCall } from "./hooks/useVoiceCall";
+import { appendDictatedText, canStartDictation, type ComposerDictationPhase } from "./lib/composerDictation";
 import { type OrbColorTheme } from "./components/AiOrb";
 import { Bloub, type BloubExpression, type BloubHandle, type BloubState } from "./components/bloub/Bloub";
 import { BloubBootAvatar } from "./components/bloub/BloubBootAvatar";
@@ -163,7 +183,7 @@ import { VibeAgentMessageBody } from "./components/vibe/VibeAgentMessageBody";
 import { VibeLivePreviewPanel } from "./components/vibe/VibeLivePreviewPanel";
 import { WorkspaceTaskView, type TaskViewHandle, type TaskViewPreview, type TaskViewTab } from "./components/WorkspaceTaskView";
 import { buildLocalVibeFallbackResponse } from "./lib/buildLocalVibeFallback";
-import { extractYoutubeUrl, looksLikeWebSearchQuery, wantsYoutubeAndWebSearch } from "./lib/chatRouting";
+import { extractYoutubeUrl, looksLikeWebSearchQuery, wantsYoutubeAndWebSearch, webSearchProgressLabel } from "./lib/chatRouting";
 import { VIBE_CURSOR_AGENT_SYSTEM_PROMPT } from "./lib/vibeAgentConstants";
 import { extractVibeFilesFromContent } from "./lib/parseVibeAgentContent";
 import {
@@ -175,18 +195,11 @@ import {
 } from "./lib/agentController";
 import { collectClyraAppContext, formatClyraAppContext } from "./agent/tool-registry";
 
-const loadAIClipper = () =>
-  import("./components/AIClipper").catch(() => ({
-    default: () => (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-slate-400" />
-          <p className="text-sm text-slate-600">Loading AI Clipper...</p>
-        </div>
-      </div>
-    )
+const loadShortsWorkspace = () =>
+  import("./shorts/ShortsApp").then((module) => ({ default: module.ShortsApp })).catch(() => ({
+    default: () => <WorkspaceImportFailure name="Shorts" />,
   }));
-const AIClipper = lazy(loadAIClipper);
+const ShortsWorkspaceApp = lazy(loadShortsWorkspace);
 type VibeCoderWorkspaceProps = {
   initialProjectId?: string;
   onInitialProjectOpened?: (projectId: string) => void;
@@ -308,25 +321,19 @@ const loadScreenCompanionWorkspace = () =>
   }));
 const ScreenCompanionWorkspace = lazy(loadScreenCompanionWorkspace);
 
-const loadCreatorStudioWorkspace = () =>
-  import("./components/CreatorStudioWorkspace").catch(() => ({
-    default: () => <WorkspaceImportFailure name="Creator Studio" />,
-  }));
-const CreatorStudioWorkspace = lazy(loadCreatorStudioWorkspace);
+
 
 const loadStudyPalWorkspace = () =>
   import("./components/StudyPalWorkspace").catch(() => ({
     default: () => <WorkspaceImportFailure name="Study Pal" />,
   }));
 const StudyPalWorkspace = lazy(loadStudyPalWorkspace);
-// Cowork is lazy for the same reason as the other workspaces: an idle team
-// should cost nothing until the user actually opens it.
+// Cowork is the cloned Rakazo application. It remains lazy because its
+// browser host should not be created until the user opens Cowork.
 const CoworkWorkspace = lazy(() => import("./components/cowork/CoworkWorkspace").then((m) => ({ default: m.CoworkWorkspace })));
-// Clyra Maps is the MapLibre + OpenFreeMap surface. Its map worker prewarms on
-// first open, so the workspace stays out of the initial bundle.
-const ClyraMapsWorkspace = lazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsWorkspace })));
-const ClyraMapsPrewarm = lazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsPrewarm })));
 const ClyraCareWorkspace = lazy(() => import("./components/care/ClyraCareWorkspace").then((m) => ({ default: m.ClyraCareWorkspace })));
+const ClyraMapsWorkspace = lazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsWorkspace })));
+const ClyraEyeWorkspace = lazy(() => import("./components/eye/ClyraEyeWorkspace").then((m) => ({ default: m.ClyraEyeWorkspace })));
 
 function prepareVibeForBoot(
   onProgress?: (update: VibeBootProgressUpdate) => void,
@@ -391,7 +398,10 @@ function prepareVibeForBoot(
   return vibeBootPreparation;
 }
 
-type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | "cowork" | "spotify" | "maps" | "care" | CreatorMode;
+type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | "cowork" | "spotify" | "care" | "maps" | "eye" | CreatorMode;
+type SidebarAppId = "vibe" | "clip" | "browser" | "study" | "cowork" | "spotify" | "care";
+type WorkspaceRailAppId = SidebarAppId;
+type WorkspaceRailTabId = "chat" | WorkspaceRailAppId;
 type AppAgentId = "vibe" | "browse" | "clip" | "notes" | "fake-text" | "would-rather";
 type GoogleToolId = "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
 type AppAgentStatus = "queued" | "running" | "ready" | "needs_input" | "failed";
@@ -407,6 +417,24 @@ type AttachedAppAgent = {
   paused?: boolean;
   action?: string;
 };
+
+type AppAgentPlanStep = {
+  id: string;
+  label: string;
+  state: "queued" | "running" | "completed" | "failed" | "needs_input";
+  agentId?: AppAgentId;
+};
+
+type WorkspaceSwitcherDrag = {
+  id: WorkspaceRailAppId;
+  source: "rail" | "library";
+  pointerId: number;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  active: boolean;
+};
 const WORKSPACE_TAB_ORDER: WorkspaceTabId[] = [
   "chat",
   "vibe",
@@ -416,10 +444,26 @@ const WORKSPACE_TAB_ORDER: WorkspaceTabId[] = [
   "fake-text",
   "would-rather",
 ];
-/** Only the main swipe-rail tabs — used for magnetic hover geometry. */
-const WORKSPACE_RAIL_TABS: WorkspaceTabId[] = ["chat", "vibe", "clip"];
+const DEFAULT_WORKSPACE_RAIL_TABS: WorkspaceRailTabId[] = ["chat", "vibe", "clip"];
+const WORKSPACE_RAIL_MAX_APPS = 2;
+const SIDEBAR_APP_IDS: SidebarAppId[] = ["vibe", "clip", "browser", "study", "cowork", "spotify", "care"];
+function readWorkspaceRailTabs(): WorkspaceRailTabId[] {
+  if (typeof window === "undefined") return DEFAULT_WORKSPACE_RAIL_TABS;
+  try {
+    const saved = JSON.parse(localStorage.getItem("clyra-workspace-rail-tabs") || "[]");
+    const apps = Array.isArray(saved)
+      ? saved.filter((id): id is WorkspaceRailAppId => id !== "chat" && SIDEBAR_APP_IDS.includes(id as SidebarAppId))
+      : [];
+    const uniqueApps = [...new Set(apps)].slice(0, WORKSPACE_RAIL_MAX_APPS);
+    return uniqueApps.length ? ["chat", ...uniqueApps] : DEFAULT_WORKSPACE_RAIL_TABS;
+  } catch {
+    return DEFAULT_WORKSPACE_RAIL_TABS;
+  }
+}
 
-function workspaceTabIndex(tabId: WorkspaceTabId) {
+function workspaceTabIndex(tabId: WorkspaceTabId, railTabs?: WorkspaceRailTabId[]) {
+  const railIndex = railTabs?.indexOf(tabId as WorkspaceRailTabId) ?? -1;
+  if (railIndex >= 0) return railIndex;
   const index = WORKSPACE_TAB_ORDER.indexOf(tabId);
   return index >= 0 ? index : 0;
 }
@@ -429,8 +473,6 @@ function readEmbeddedWorkspace(): WorkspaceTabId {
   const params = new URLSearchParams(window.location.search);
   // Visual-QA shortcut for the desktop clip editor fixture.
   if (params.get("clipDemo") === "1") return "clip";
-  const workspace = params.get("workspace");
-  if (workspace === "maps" || workspace === "earth") return "maps";
   const tool = params.get("embedTool");
   if (tool === "browse" || tool === "browser") return "browser";
   if (tool === "cowork") return "cowork";
@@ -613,26 +655,53 @@ function formatRecentUpdate(updatedAt: number) {
  *              multi-step tool-use harness (that only exists for Vibe Coder
  *              today); this is deliberately the "basic" version of that.
  */
-type ChatEffort = "light" | "medium" | "high";
+type ChatEffort = "light" | "medium" | "high" | "max";
+const CHAT_EFFORTS: ChatEffort[] = ["light", "medium", "high", "max"];
 const CHAT_EFFORT_MODEL: Record<ChatEffort, string> = {
   light: "deepseek-v4-flash",
   medium: "deepseek-v4-pro",
   high: "deepseek-v4-pro",
+  max: "deepseek-v4-pro",
 };
 const CHAT_EFFORT_THINKING: Record<ChatEffort, boolean> = {
   light: false,
   medium: false,
   high: true,
+  max: true,
 };
+/** DeepSeek V4 `reasoning_effort`: "high" or "max" (it maps low/medium to high). */
+const CHAT_EFFORT_REASONING: Record<ChatEffort, "high" | "max" | undefined> = {
+  light: undefined,
+  medium: undefined,
+  high: "high",
+  max: "max",
+};
+/** Reasoning takes real time: a fixed 75s stream budget cut deeper levels off mid-thought. */
+const CHAT_EFFORT_TIMEOUT_MS: Record<ChatEffort, number> = {
+  light: 60_000,
+  medium: 90_000,
+  high: 180_000,
+  max: 420_000,
+};
+const CHAT_EFFORT_MAX_TOKENS: Record<ChatEffort, number> = {
+  light: 8000,
+  medium: 8000,
+  high: 16_000,
+  max: 32_000,
+};
+// Named after the levels people already know from ChatGPT's thinking-time
+// picker (Light / Standard / Extended / Heavy); Instant-style speed is Light.
 const CHAT_EFFORT_LABEL: Record<ChatEffort, string> = {
   light: "Light",
-  medium: "Medium",
-  high: "High",
+  medium: "Standard",
+  high: "Extended",
+  max: "Heavy",
 };
 const CHAT_EFFORT_HINT: Record<ChatEffort, string> = {
   light: "Fastest replies",
   medium: "Balanced quality",
-  high: "Deeper reasoning",
+  high: "Thinks it through",
+  max: "Longest, most thorough",
 };
 
 /** "Just now" / "12 min" / "Yesterday" / "25 Aug" — used by the Recent
@@ -1077,26 +1146,38 @@ function BootIntroOverlay({
   );
 }
 
-type ComposerVoicePhase = "idle" | "listening" | "transcribing" | "error";
-
 function useComposerVoiceCapture(onComplete: (text: string) => void) {
-  const [phase, setPhase] = useState<ComposerVoicePhase>("idle");
+  const [phase, setPhase] = useState<ComposerDictationPhase>("idle");
   const [level, setLevel] = useState(0);
   const [detail, setDetail] = useState("");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef("");
   const silenceTimerRef = useRef<number | null>(null);
+  const transcribeTimeoutRef = useRef<number | null>(null);
   const heardSpeechRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
-  const phaseRef = useRef<ComposerVoicePhase>("idle");
+  const startedAtRef = useRef(0);
+  const phaseRef = useRef<ComposerDictationPhase>("idle");
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
+  // Recording clock is derived from the moment capture began, not a placeholder.
+  useEffect(() => {
+    if (phase !== "listening") return;
+    const tick = () => setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [phase]);
+
   const release = useCallback(() => {
     if (silenceTimerRef.current != null) window.clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
+    if (transcribeTimeoutRef.current != null) window.clearTimeout(transcribeTimeoutRef.current);
+    transcribeTimeoutRef.current = null;
     captureRef.current?.stop();
     captureRef.current = null;
     try { socketRef.current?.close(); } catch { /* already closed */ }
@@ -1113,22 +1194,51 @@ function useComposerVoiceCapture(onComplete: (text: string) => void) {
     setDetail("");
   }, [release]);
 
+  /** Ends capture and asks the local engine for the final transcript (stop keeps the audio). */
   const flush = useCallback(() => {
+    if (phaseRef.current !== "listening") return;
+    phaseRef.current = "transcribing";
     setPhase("transcribing");
     setDetail("Transcribing");
     captureRef.current?.stop();
     captureRef.current = null;
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: "flush", sessionId: sessionIdRef.current }));
+    if (socketRef.current?.readyState !== WebSocket.OPEN) {
+      release();
+      setPhase("error");
+      setDetail("The voice service disconnected. Try again.");
+      return;
     }
+    socketRef.current.send(JSON.stringify({ type: "flush", sessionId: sessionIdRef.current }));
+    // Watchdog: a stalled engine must not leave the mic stuck on "Transcribing".
+    transcribeTimeoutRef.current = window.setTimeout(() => {
+      transcribeTimeoutRef.current = null;
+      if (phaseRef.current !== "transcribing") return;
+      release();
+      setPhase("error");
+      setDetail("Transcription timed out. Try again.");
+    }, 25_000);
+  }, [release]);
+
+  /** Enters "listening" only when capture has really started for this socket. */
+  const markListening = useCallback((socket: WebSocket) => {
+    if (phaseRef.current !== "starting" || socketRef.current !== socket) return;
+    if (transcribeTimeoutRef.current != null) window.clearTimeout(transcribeTimeoutRef.current);
+    transcribeTimeoutRef.current = null;
+    startedAtRef.current = Date.now();
+    setElapsedSeconds(0);
+    phaseRef.current = "listening";
+    setPhase("listening");
+    setDetail("Listening");
   }, []);
 
   const start = useCallback(async () => {
-    if (phaseRef.current !== "idle") return;
+    // Error is a recoverable state: a failed attempt must not block the next tap.
+    if (!canStartDictation(phaseRef.current)) return;
     heardSpeechRef.current = false;
     lastSpeechAtRef.current = 0;
-    setPhase("listening");
-    setDetail("Listening");
+    phaseRef.current = "starting";
+    setPhase("starting");
+    setDetail("Starting microphone");
     try {
       const desktop = getElectronDesktop();
       const permissions = await desktop?.dictation.ensurePermissions?.().catch(() => null);
@@ -1144,10 +1254,18 @@ function useComposerVoiceCapture(onComplete: (text: string) => void) {
       const socket = new WebSocket(String(session.websocketUrl));
       socketRef.current = socket;
       sessionIdRef.current = String(session.sessionId || "");
+      // If the engine never confirms capture, fail visibly instead of sitting on "Starting".
+      transcribeTimeoutRef.current = window.setTimeout(() => {
+        transcribeTimeoutRef.current = null;
+        if (phaseRef.current !== "starting") return;
+        release();
+        setPhase("error");
+        setDetail("Clyra's voice service didn't respond. Try again.");
+      }, 12_000);
       socket.onmessage = (event) => {
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)); } catch { return; }
-        if (message.type === "pipeline_mode" && message.mode === "pipeline" && !captureRef.current) {
+        if (message.type === "pipeline_mode" && (message.mode === "pipeline" || message.mode === "local") && !captureRef.current) {
           const capture = new VoicePcmCapturer((data, seq) => {
             if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "audio", sessionId: session.sessionId, codec: "pcm16", data, seq }));
           }, Number(message.sampleRate) || 16_000, (nextLevel) => {
@@ -1161,13 +1279,15 @@ function useComposerVoiceCapture(onComplete: (text: string) => void) {
               return;
             }
             if (!heardSpeechRef.current || silenceTimerRef.current != null || now - lastSpeechAtRef.current < 1_100) return;
+            // Recording is ended by the user (tap or release). This is only a
+            // safety net for a forgotten mic, so it waits for a long silence.
             silenceTimerRef.current = window.setTimeout(() => {
               silenceTimerRef.current = null;
-              if (performance.now() - lastSpeechAtRef.current >= 1_100) flush();
-            }, 140);
+              if (performance.now() - lastSpeechAtRef.current >= 4_000) flush();
+            }, 4_000);
           });
           captureRef.current = capture;
-          void capture.start().catch((error) => {
+          void capture.start().then(() => markListening(socket)).catch((error) => {
             release();
             setPhase("error");
             setDetail(error instanceof Error ? error.message : "Microphone access was denied.");
@@ -1193,6 +1313,7 @@ function useComposerVoiceCapture(onComplete: (text: string) => void) {
             if (finalText.trim() && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "utterance", sessionId: session.sessionId, text: finalText.trim() }));
           };
           recognition.onerror = () => { if (phaseRef.current === "listening") { release(); setPhase("error"); setDetail("Speech recognition could not hear the microphone."); } };
+          recognition.onstart = () => markListening(socket);
           try { recognition.start(); } catch { /* Chromium can reject a duplicate start; current session remains live. */ }
         } else if (message.type === "dictation_final") {
           const transcript = String(message.text || "").trim();
@@ -1241,7 +1362,7 @@ function useComposerVoiceCapture(onComplete: (text: string) => void) {
   }, [cancel, flush, onComplete, release]);
 
   useEffect(() => () => release(), [release]);
-  return { phase, level, detail, start, cancel };
+  return { phase, level, detail, elapsedSeconds, start, stop: flush, cancel };
 }
 
 /** Soft ease-out used by composer expand and chat status reveals.
@@ -1293,11 +1414,13 @@ function SoftStreamText({
         }
         if (current.length >= target.length) return;
         // Catch up faster when the network is ahead of the paint cursor.
-        let steps = target.length - current.length > 64 ? 4 : 2;
+        // Smaller, more frequent chunks than a flat word-per-step reveal
+        // read as a smoother continuous stream rather than jumps.
+        let steps = target.length - current.length > 64 ? 3 : 1;
         while (steps-- > 0 && current.length < target.length) {
           const rem = target.slice(current.length);
-          const match = rem.match(/^(?:\s*\S{1,18}|\s+|[\s\S]{1,12})/);
-          current += match?.[0] ?? rem.slice(0, 8);
+          const match = rem.match(/^(?:\s*\S{1,10}|\s+|[\s\S]{1,6})/);
+          current += match?.[0] ?? rem.slice(0, 4);
         }
         shownRef.current = current;
         setShown(current);
@@ -1366,6 +1489,44 @@ function GoogleAgentActionStack({ steps, completed = false }: { steps?: GoogleAg
   );
 }
 
+/** The execution transcript intentionally uses the same calm, centered
+ * divider language as the provided reference. It describes the current
+ * action, rather than a generic "working" state. */
+function AppAgentPlanTimeline({ steps }: { steps?: AppAgentPlanStep[] }) {
+  if (!steps?.length) return null;
+  return (
+    <section className="mt-4 space-y-3" aria-label="Agent execution plan">
+      <AnimatePresence initial={false}>
+        {steps.map((step, index) => {
+          const active = step.state === "running";
+          const finished = step.state === "completed";
+          const failed = step.state === "failed" || step.state === "needs_input";
+          return (
+            <motion.div
+              layout
+              key={step.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", duration: 0.34, bounce: 0, delay: Math.min(index * 0.04, 0.16) }}
+              className="flex items-center gap-3"
+            >
+              <span className="h-px min-w-0 flex-1 bg-slate-200/90" />
+              <span className={cn(
+                "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-2 text-[11px] font-medium tracking-[-.005em]",
+                active ? "text-slate-700" : finished ? "text-emerald-700" : failed ? "text-amber-700" : "text-slate-400",
+              )}>
+                {active ? <Loader2 className="h-3 w-3 animate-spin" /> : finished ? <Check className="h-3 w-3" strokeWidth={2.3} /> : failed ? <CircleAlert className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
+                {step.label}
+              </span>
+              <span className="h-px min-w-0 flex-1 bg-slate-200/90" />
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </section>
+  );
+}
+
 /** Standard chat: shimmer until the model emits answer text (`content`), then hide so stagger can print it. */
 function ChatThinkingLabel({
   thinkingMode = "thinking",
@@ -1376,7 +1537,7 @@ function ChatThinkingLabel({
   googleSteps,
   spotifyAction,
 }: {
-  thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "google" | "research" | "spotify";
+  thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
   searchSources?: string[];
   searchQuery?: string;
   googleAction?: string;
@@ -1395,6 +1556,8 @@ function ChatThinkingLabel({
         ? "Searching the web"
         : thinkingMode === "weather"
           ? "Checking weather"
+          : thinkingMode === "maps"
+            ? "Finding location"
           : thinkingMode === "spotify"
             ? spotifyAction || "Working with Clyra Music"
           : googleIsResearching
@@ -1439,6 +1602,21 @@ function ChatThinkingLabel({
             <img src="/icons/clyra-music.svg" alt="" style={{ width: 14, height: 14, borderRadius: 4 }} />
           </span>
         ) : null}
+        {thinkingMode === "maps" ? (
+          <span style={{ display: "flex", alignItems: "center", color: "#9DA1A9", flexShrink: 0 }} aria-hidden>
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 21s-6.5-6.14-6.5-11A6.5 6.5 0 0 1 18.5 10c0 4.86-6.5 11-6.5 11z" />
+              <circle cx={12} cy={10} r={2.4} />
+            </svg>
+          </span>
+        ) : null}
+        {thinkingMode !== "coding" &&
+        thinkingMode !== "search" &&
+        !googleIsResearching &&
+        thinkingMode !== "spotify" &&
+        thinkingMode !== "maps" ? (
+          <ShiningBrainIcon className="h-3.5 w-3.5 shrink-0" />
+        ) : null}
         <span className="clyra-thinking-wave clyra-thinking-wave--shimmer min-w-0 truncate">{label}</span>
       </div>
       {thinkingMode === "search" && (sources.length > 0 || searchQuery?.trim()) ? (
@@ -1451,7 +1629,7 @@ function ChatThinkingLabel({
                   <path d="M3.4 12h17.2M12 3.4c2.4 2.5 3.7 5.4 3.7 8.6S14.4 18.1 12 20.6c-2.4-2.5-3.7-5.4-3.7-8.6S9.6 5.9 12 3.4z" />
                 </svg>
               </span>
-              <span className="clyra-search-step__label" title={searchQuery}>{searchQuery.trim()}</span>
+              <span className="clyra-search-step__label">{searchQuery.trim()}</span>
             </div>
           ) : null}
           {sources.length > 0 ? (
@@ -1466,9 +1644,7 @@ function ChatThinkingLabel({
                   className="clyra-search-step clyra-search-step--site"
                   style={{ animationDelay: `${120 + Math.min(index * 90, 360)}ms` }}
                 >
-                  <span className="clyra-search-step__icon" aria-hidden>
-                    <img src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`} alt="" />
-                  </span>
+                  <span className="clyra-search-step__icon" aria-hidden><SiteMark host={host} /></span>
                   <span className="clyra-search-step__label">{host.replace(/^www\./i, "")}</span>
                 </a>
               ))}
@@ -1478,6 +1654,18 @@ function ChatThinkingLabel({
       ) : null}
     </div>
   );
+}
+
+/** Site favicons are useful but optional. The fallback gives every source a
+ * stable, readable mark even when the site's icon cannot be fetched. */
+function SiteMark({ host }: { host: string }) {
+  const [failed, setFailed] = useState(false);
+  const label = host.replace(/^www\./i, "");
+  if (failed) return <span className="clyra-site-mark__fallback" aria-hidden>{label.slice(0, 1).toUpperCase()}</span>;
+  // Google's favicon endpoint returns the publisher's coloured site mark more
+  // reliably than a generic browser icon, including for nested documentation
+  // subdomains. The readable initial remains as a graceful offline fallback.
+  return <img src={`https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(`https://${host}`)}&sz=64`} alt="" onError={() => setFailed(true)} />;
 }
 
 /** Source favicons sit to the right of message actions; hover expands the site name. */
@@ -1495,8 +1683,6 @@ function isSoftFailureMessage(content: string): boolean {
 }
 
 function SourceFaviconChips({ urls }: { urls?: string[] }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const items = useMemo(
     () =>
       [...new Map((urls ?? []).map((url) => [hostnameFromUrl(url), url])).entries()].filter(
@@ -1505,157 +1691,135 @@ function SourceFaviconChips({ urls }: { urls?: string[] }) {
     [urls],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   if (!items.length) return null;
 
   return (
-    <div className="clyra-message-source-control" ref={rootRef}>
-      <button
-        type="button"
-        className="clyra-message-source-summary"
-        aria-label={`${items.length} source${items.length === 1 ? "" : "s"} used`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <Globe className="h-3 w-3" strokeWidth={1.8} />
-        Sources · {items.length}
-        <ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} />
-      </button>
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            className="clyra-message-source-popover absolute left-0 top-full z-20"
-            initial={{ opacity: 0, y: -4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98 }}
-            transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+    <div className="clyra-message-source-chips" aria-label={`${items.length} source${items.length === 1 ? "" : "s"} used`}>
+      {items.map(([host, url]) => {
+        const label = host.replace(/^www\./i, "");
+        return (
+          <a
+            key={url}
+            className="clyra-message-source-chip"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open ${label}`}
+            aria-label={`Open source: ${label}`}
           >
-            {items.map(([host, url]) => {
-              const label = host.replace(/^www\./i, "");
-              return (
-                <a key={url} href={url} target="_blank" rel="noopener noreferrer" title={url}>
-                  <img
-                    src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
-                    alt=""
-                  />
-                  <span>{label}</span>
-                </a>
-              );
-            })}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+            <span className="clyra-message-source-chip__icon" aria-hidden><SiteMark host={host} /></span>
+            <span className="clyra-message-source-chip__bullet">
+              <span className="clyra-message-source-chip__label">{label}</span>
+            </span>
+          </a>
+        );
+      })}
     </div>
   );
 }
 
 function AssistantMessageActions({
-  content,
-  sources,
   onCopy,
   onRegenerate,
+  onReadAloud,
   onBranch,
   onExport,
   copied,
+  isReading,
 }: {
-  content: string;
-  sources?: string[];
   onCopy: () => void;
   onRegenerate: () => void;
+  onReadAloud: () => void;
   onBranch: () => void;
   onExport: () => void;
   copied: boolean;
+  isReading: boolean;
 }) {
-  const [speaking, setSpeaking] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!menuOpen) return;
-    const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent) {
-        if (event.key === "Escape") setMenuOpen(false);
-        return;
-      }
+    const close = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
     document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", close);
+      document.removeEventListener("keydown", onKeyDown);
     };
   }, [menuOpen]);
-
-  const toggleSpeech = () => {
-    if (!("speechSynthesis" in window)) return;
-    if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(content);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    setSpeaking(true);
-  };
 
   return (
     <div className="clyra-message-actions" aria-label="Response actions" ref={rootRef}>
       <button type="button" onClick={onCopy} title="Copy response" aria-label="Copy response">
-        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        <AnimatePresence mode="wait" initial={false}>
+          {copied ? (
+            <motion.span
+              key="check"
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.7 }}
+              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              className="inline-flex"
+            >
+              <Check className="h-3.5 w-3.5" />
+            </motion.span>
+          ) : (
+            <motion.span
+              key="copy"
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.7 }}
+              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              className="inline-flex"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </motion.span>
+          )}
+        </AnimatePresence>
       </button>
-      <button type="button" onClick={onRegenerate} title="Regenerate response" aria-label="Regenerate response">
+      <button type="button" onClick={onRegenerate} title="Retry response" aria-label="Retry response">
         <RotateCcw className="h-3.5 w-3.5" />
       </button>
-      {"speechSynthesis" in window ? (
-        <button type="button" onClick={toggleSpeech} title={speaking ? "Stop reading" : "Read aloud"} aria-label={speaking ? "Stop reading" : "Read aloud"}>
-          <Volume2 className={cn("h-3.5 w-3.5", speaking && "text-[var(--accent-600)]")} />
-        </button>
-      ) : null}
-      <SourceFaviconChips urls={sources} />
-      <div className="clyra-message-actions__more">
+      <button
+        type="button"
+        onClick={onReadAloud}
+        title={isReading ? "Stop reading" : "Read aloud"}
+        aria-label={isReading ? "Stop reading response" : "Read response aloud"}
+        aria-pressed={isReading}
+        className={isReading ? "is-active" : undefined}
+      >
+        {isReading ? <Square className="h-3 w-3 fill-current" /> : <Volume2 className="h-3.5 w-3.5" />}
+      </button>
+      <span className="clyra-message-actions__more">
         <button
           type="button"
           onClick={() => setMenuOpen((open) => !open)}
-          title="More response options"
-          aria-label="More response options"
+          title="More response actions"
+          aria-label="More response actions"
           aria-expanded={menuOpen}
+          aria-haspopup="menu"
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>
         {menuOpen ? (
-          <div className="clyra-message-actions__menu" role="menu">
-            <button type="button" role="menuitem" onClick={() => { onBranch(); setMenuOpen(false); }}>
-              <Copy className="h-3.5 w-3.5" />
-              Start a branch here
+          <span className="clyra-message-actions__menu" role="menu" aria-label="More response actions">
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onBranch(); }}>
+              <MessageCircleDashed className="h-3.5 w-3.5" />
+              Continue in a new chat
             </button>
-            <button type="button" role="menuitem" onClick={() => { onExport(); setMenuOpen(false); }}>
-              <FileUp className="h-3.5 w-3.5" />
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onExport(); }}>
+              <Archive className="h-3.5 w-3.5" />
               Export conversation
             </button>
-          </div>
+          </span>
         ) : null}
-      </div>
+      </span>
     </div>
   );
 }
@@ -1935,38 +2099,6 @@ function AppAgentFlowPanel({
   );
 }
 
-function looksLikeWeatherQuery(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  return (
-    /\b(?:weather|forecast|temperature|humidity|precip(?:itation)?|how\s+(?:hot|cold|warm)|is it\s+(?:raining|snowing)|will it\s+rain)\b/i.test(
-      t,
-    ) || /^(?:what(?:'| i)?s|how(?:'| i)?s)\s+the\s+weather\b/i.test(t)
-  );
-}
-
-function extractWeatherLocation(text: string): string | null {
-  const cleaned = text
-    .trim()
-    .replace(/^\/(?:weather|forecast)\s*/i, "")
-    .trim();
-  const patterns = [
-    /\b(?:weather|forecast|temperature)\s+(?:in|for|at|near)\s+(.+?)(?:\?|$)/i,
-    /\b(?:in|for|at|near)\s+([A-Za-z][A-Za-z0-9 .,'-]{1,80})(?:\?|$)/i,
-    /^([A-Za-z][A-Za-z0-9 .,'-]{1,80})$/,
-  ];
-  for (const pattern of patterns) {
-    const match = cleaned.match(pattern);
-    const loc = match?.[1]?.trim().replace(/[?.!]+$/, "").trim();
-    if (!loc) continue;
-    if (/^(?:the weather|weather|forecast|today|now|please)$/i.test(loc)) {
-      continue;
-    }
-    if (loc.length < 2) continue;
-    return loc;
-  }
-  return null;
-}
 
 export function UserMessageText({ text }: { text: string }) {
   return <div className="clyra-chat-user-text">{text}</div>;
@@ -1992,7 +2124,7 @@ export const AnimatedMessage = ({
   searchSources,
   searchQuery,
   weather,
-  locationPlaces,
+  mapLocation,
   googleAction,
   googleDetail,
   googleSteps,
@@ -2000,6 +2132,7 @@ export const AnimatedMessage = ({
   gmailResults,
   workspaceResult,
   mission,
+  automation,
   isLastAssistant,
   onVibePreviewReady,
   onDocumentRewriteRequest,
@@ -2014,8 +2147,13 @@ export const AnimatedMessage = ({
   onGmailFollowUp,
   onGmailCancelFollowUp,
   documentMode,
-  onOpenMaps,
   onMissionResume,
+  onMissionPause,
+  onMissionStop,
+  onMissionApproval,
+  onAutomationPause,
+  onAutomationResume,
+  onAutomationRun,
 }: {
   messageId?: string;
   content: string;
@@ -2027,12 +2165,12 @@ export const AnimatedMessage = ({
   codeHighlighting?: boolean;
   codeTheme?: "light" | "dark";
   assistantKind?: "chat" | "vibe";
-  thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "google" | "research" | "spotify";
+  thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
   youtubeVideoId?: string;
   searchSources?: string[];
   searchQuery?: string;
   weather?: WeatherPayload;
-  locationPlaces?: LocationMapPlace[];
+  mapLocation?: MapLocationPayload;
   googleAction?: string;
   googleDetail?: string;
   googleSteps?: GoogleAgentStep[];
@@ -2040,6 +2178,7 @@ export const AnimatedMessage = ({
   gmailResults?: GmailResultsPayload;
   workspaceResult?: WorkspaceResult;
   mission?: MissionStatus;
+  automation?: AutomationStatus;
   isLastAssistant?: boolean;
   onVibePreviewReady?: (
     messageId: string,
@@ -2057,8 +2196,13 @@ export const AnimatedMessage = ({
   onGmailFollowUp?: (email: GmailEmail, when: string, note: string) => Promise<{ id:string; dueAt:string }>;
   onGmailCancelFollowUp?: (id: string) => Promise<void>;
   documentMode?: "notes";
-  onOpenMaps?: (place: LocationMapPlace) => void;
   onMissionResume?: (mission: MissionStatus) => Promise<void>;
+  onMissionPause?: (mission: MissionStatus) => Promise<void>;
+  onMissionStop?: (mission: MissionStatus) => Promise<void>;
+  onMissionApproval?: (mission: MissionStatus) => Promise<void>;
+  onAutomationPause?: (automation: AutomationStatus) => Promise<void>;
+  onAutomationResume?: (automation: AutomationStatus) => Promise<void>;
+  onAutomationRun?: (automation: AutomationStatus) => Promise<void>;
 }) => {
   const isVibe = assistantKind === "vibe";
   const [holdingThinking, setHoldingThinking] = useState(false);
@@ -2264,7 +2408,7 @@ export const AnimatedMessage = ({
       className={cn("text-inherit", fontSizeClass)}
     />
   );
-  const hasInlineStatusCard = Boolean(youtubeVideoId || weather || locationPlaces?.length);
+  const hasInlineStatusCard = Boolean(youtubeVideoId || weather || mapLocation);
   return (
     <div
       className={cn(
@@ -2303,8 +2447,9 @@ export const AnimatedMessage = ({
         <YoutubeScanEmbed videoId={youtubeVideoId} active={showYoutubeScan} />
       ) : null}
       {weather ? <WeatherDiagramCard weather={weather} /> : null}
-      {locationPlaces?.length ? <LocationMapCard places={locationPlaces} onOpenMaps={onOpenMaps} /> : null}
-      {mission ? <MissionStatusCard mission={mission} onResume={onMissionResume} /> : null}
+      {mapLocation ? <LocationMapCard location={mapLocation} /> : null}
+      {mission ? <MissionStatusCard mission={mission} onResume={onMissionResume} onPause={onMissionPause} onStop={onMissionStop} onApprove={onMissionApproval} /> : null}
+      {automation ? <AutomationStatusCard automation={automation} onPause={onAutomationPause} onResume={onAutomationResume} onRun={onAutomationRun} /> : null}
       {showAnswer && hasInlineStatusCard ? (
         <div
           className={cn("markdown-body", isVibe && "markdown-body--vibe")}
@@ -2565,10 +2710,13 @@ type WorkspaceIntent = {
   label: string;
 };
 
+/** Distance from the newest output, in px, that still counts as following it. */
+const CHAT_NEAR_BOTTOM_PX = 120;
+
 function instantWorkspaceIntent(prompt: string): WorkspaceIntent | null {
   const text = prompt.trim().toLowerCase();
-  if (/^(?:open|switch to|show) (?:clyra )?(?:maps|earth)\b/.test(text)) return { workspace: "maps", label: "Clyra Maps" };
   if (/^(?:open|switch to|show) (?:clyra )?notes?\b/.test(text)) return { workspace: "notes", label: "Clyra Notes" };
+  if (/^(?:open|switch to|show) (?:clyra )?maps?\b|^(?:take me to|navigate to|directions? to|route to)\b/.test(text)) return { workspace: "maps", label: "Clyra Maps" };
   if (/^(?:open|switch to|show) (?:clyra )?(?:vibe|vibe coder)\b|\bopen (?:the )?terminal in (?:this|the) project\b/.test(text)) return { workspace: "vibe", label: "Vibe Coder" };
   if (/^(?:open|show) (?:spotify|clyra music)\b/.test(text)) return { workspace: "spotify", label: "Clyra Music" };
   if (/^(?:open|show) (?:the )?(?:browser|youtube)\b/.test(text)) {
@@ -2583,10 +2731,7 @@ function instantWorkspaceIntent(prompt: string): WorkspaceIntent | null {
   if (/\b(?:fill (?:out )?(?:this )?form|download (?:all |the )?(?:relevant )?(?:pdf|file)|track (?:this )?(?:package|order)|compare (?:pricing|these|products?) across|read (?:these|\d+) (?:pages|websites)|search (?:\d+|many) websites|find (?:the )?(?:latest )?(?:release notes|documentation)|only show listings|verify (?:every|each) specification)\b/.test(text)) {
     return { workspace: "browser", browserTask: prompt.trim(), autoRunBrowserTask: true, label: "Clyra Browser" };
   }
-  if (
-    (/\b(?:fix|debug|build|refactor|test|lint|compile|typescript|dependency|dependencies|production-ready)\b/.test(text) && /\b(?:app|project|code|bug|feature|build|test|typescript|dependency|dependencies)\b/.test(text)) ||
-    /\b(?:make|create|design)\s+(?:me\s+)?(?:a\s+)?(?:web\s+app|website|landing\s+page|dashboard|prototype)\b/.test(text)
-  ) {
+  if (isVibeBuildRequest(prompt)) {
     return { workspace: "vibe", label: "Vibe Coder" };
   }
   if (/\b(?:flashcards?|revision notes?|study guide|quiz me|practice test)\b/.test(text)) return { workspace: "study", label: "Study Pal" };
@@ -2637,11 +2782,13 @@ export default function App() {
     createdAt?: number;
     isThinking?: boolean;
     isStreaming?: boolean;
+    /** The person cancelled this reply before it finished. */
+    stopped?: boolean;
     /** `vibe` keeps the expandable thought UI; normal chat uses the “Thinking:” line only. */
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
     vibeUserPrompt?: string;
-    thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "google" | "research" | "spotify";
+    thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
     googleAction?: string;
     googleDetail?: string;
     googleRunId?: string;
@@ -2650,6 +2797,10 @@ export default function App() {
     gmailResults?: GmailResultsPayload;
     workspaceResult?: WorkspaceResult;
     mission?: MissionStatus;
+    /** Clyra keeps the stable UI mission shape above; this small receipt tells
+     * controls and follow-up messages that the execution loop is Hermes. */
+    agentRuntime?: { kind: "hermes"; runId: string; sessionId: string };
+    automation?: AutomationStatus;
     researchRunId?: string;
     researchCheckpointId?: string;
     documentMode?: "notes";
@@ -2659,11 +2810,14 @@ export default function App() {
       analysisPrompt: string;
     };
     searchSources?: string[];
+    /** Fetched sources the final answer cites as [S#]. Only set once the answer is grounded. */
+    searchCitations?: WebCitationView[];
     /** The exact query Clyra is researching, shown during the live search stage. */
     searchQuery?: string;
     weather?: WeatherPayload;
-    locationPlaces?: LocationMapPlace[];
+    mapLocation?: MapLocationPayload;
     appAgents?: AttachedAppAgent[];
+    agentSteps?: AppAgentPlanStep[];
   }
 
   interface ChatSession {
@@ -2683,26 +2837,26 @@ export default function App() {
   const [showSpotifyNotch, setShowSpotifyNotch] = useState(false);
   const [notchOpen, setNotchOpen] = useState(false);
   const [pillHovered, setPillHovered] = useState(false);
-  // Read inside the delayed auto-connect below without a stale closure —
-  // the user may dismiss the notch, or already finish connecting by hand,
-  // during the 3s the browser-open is held off.
-  const showSpotifyNotchRef = useRef(showSpotifyNotch);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] =
+    useState<WorkspaceTabId>(() => readEmbeddedWorkspace());
+  const [workspaceRailTabs, setWorkspaceRailTabs] =
+    useState<WorkspaceRailTabId[]>(readWorkspaceRailTabs);
+  const [isWorkspaceSwitcherCustomizing, setIsWorkspaceSwitcherCustomizing] =
+    useState(false);
+  const [workspaceSwitcherDrag, setWorkspaceSwitcherDrag] =
+    useState<WorkspaceSwitcherDrag | null>(null);
+  const workspaceSwitcherDragRef = useRef<WorkspaceSwitcherDrag | null>(null);
+  const workspaceSwitcherDragFrameRef = useRef<number | null>(null);
+  const [workspaceSwitcherDropTarget, setWorkspaceSwitcherDropTarget] =
+    useState<"rail" | "remove" | WorkspaceRailTabId | null>(null);
   useEffect(() => {
-    showSpotifyNotchRef.current = showSpotifyNotch;
-  }, [showSpotifyNotch]);
-  const spotifyAutoConnectTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    return () => {
-      if (spotifyAutoConnectTimerRef.current != null) window.clearTimeout(spotifyAutoConnectTimerRef.current);
-    };
+    localStorage.setItem("clyra-workspace-rail-tabs", JSON.stringify(workspaceRailTabs));
+  }, [workspaceRailTabs]);
+  useEffect(() => () => {
+    if (workspaceSwitcherDragFrameRef.current != null) {
+      window.cancelAnimationFrame(workspaceSwitcherDragFrameRef.current);
+    }
   }, []);
-  // Picking "Spotify" from the palette rarely leaves the cursor already over
-  // the pill (it's typically still down in the composer), so the very next
-  // mousemove/mouseleave the browser fires can immediately collapse the
-  // panel again before anyone actually sees it — reading as "nothing
-  // happened". This grace window makes the panel ignore mouse-leave for a
-  // moment right after opening so it's guaranteed to actually show.
-  const notchOpenGraceUntilRef = useRef(0);
   const [tabsNaturalSize, setTabsNaturalSize] = useState({ width: 402, height: 44 });
   const tabsResizeObserverRef = useRef<ResizeObserver | null>(null);
   // A callback ref (not a plain ref + one-shot effect) so the observer is
@@ -2738,9 +2892,6 @@ export default function App() {
   const [pendingDeepResearch, setPendingDeepResearch] = useState<{ checkpointId: string; prompt: string } | null>(null);
   const [selectedAppAgents, setSelectedAppAgents] = useState<AppSuggestion[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<{ messageId: string; agentId: AppAgentId } | null>(null);
-  const [activeWorkspaceTab, setActiveWorkspaceTab] =
-    useState<WorkspaceTabId>(() => readEmbeddedWorkspace());
-  const [mapChatCommand, setMapChatCommand] = useState("");
   const [browserTaskDraft, setBrowserTaskDraft] = useState("");
   const [browserLaunchRequestId, setBrowserLaunchRequestId] = useState(0);
   const [browserAutoRunTask, setBrowserAutoRunTask] = useState(false);
@@ -2750,41 +2901,12 @@ export default function App() {
   // committed, avoiding a second, divergent voice-only intent router.
   const [pendingVoiceWorkspaceIntent, setPendingVoiceWorkspaceIntent] =
     useState<WorkspaceIntent | null>(null);
-  // Poll Spotify while the ambient notch is showing OR the full Spotify
-  // workspace is open — either one needs live playback state.
-  const spotifyPlayback = useSpotifyPlayback(showSpotifyNotch || activeWorkspaceTab === "spotify");
-  const spotifyConnectedRef = useRef(spotifyPlayback.connected);
-  useEffect(() => {
-    spotifyConnectedRef.current = spotifyPlayback.connected;
-  }, [spotifyPlayback.connected]);
-  // Shared by the "/" palette entry, the composer's source dock icon, and its
-  // active-source pill's remove button — every entry point into the Spotify
-  // notch goes through the exact same open/close + auto-connect logic.
-  const toggleSpotifyNotch = useCallback(() => {
-    const opening = !showSpotifyNotch;
-    setShowSpotifyNotch(opening);
-    if (spotifyAutoConnectTimerRef.current != null) {
-      window.clearTimeout(spotifyAutoConnectTimerRef.current);
-      spotifyAutoConnectTimerRef.current = null;
-    }
-    if (opening) {
-      // Let the notch smoothly appear and expand into the "Connect Spotify"
-      // panel first. Only pop the system browser open a beat later so
-      // picking the command doesn't yank focus away from Clyra instantly.
-      setNotchOpen(true);
-      notchOpenGraceUntilRef.current = Date.now() + 1500;
-      if (spotifyPlayback.available && !spotifyPlayback.connected) {
-        spotifyAutoConnectTimerRef.current = window.setTimeout(() => {
-          spotifyAutoConnectTimerRef.current = null;
-          if (showSpotifyNotchRef.current && !spotifyConnectedRef.current) {
-            spotifyPlayback.connect();
-          }
-        }, 3000);
-      }
-    } else {
-      setNotchOpen(false);
-    }
-  }, [showSpotifyNotch, spotifyPlayback]);
+  // A small playback read keeps Chat in sync with Clyra Music, including
+  // music started from the full player while the user has returned to Chat.
+  const spotifyPlayback = useSpotifyPlayback(
+    true,
+    showSpotifyNotch || activeWorkspaceTab === "spotify",
+  );
   const [isEmbeddedToolPreview] = useState(
     () => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("embedTool"),
   );
@@ -2939,6 +3061,17 @@ export default function App() {
   const [taskViewPreviews, setTaskViewPreviews] = useState<Record<string, TaskViewPreview>>({});
   const taskViewSelectionRef = useRef(false);
   const appLauncherChordRef = useRef(false);
+  // Electron global shortcuts and DOM keydown can both observe one physical
+  // chord. Treat them as one activation so the second delivery never undoes
+  // the first (the old source of intermittent Cmd/Ctrl+J and Cmd/Ctrl+K).
+  const globalShortcutGateRef = useRef<Partial<Record<"taskview" | "launcher", number>>>({});
+  const claimGlobalShortcut = useCallback((shortcut: "taskview" | "launcher") => {
+    const now = performance.now();
+    const previous = globalShortcutGateRef.current[shortcut] ?? -Infinity;
+    if (now - previous < 180) return false;
+    globalShortcutGateRef.current[shortcut] = now;
+    return true;
+  }, []);
   const taskViewRef = useRef<TaskViewHandle>(null);
   const workspaceSceneRef = useRef<HTMLDivElement>(null);
   const captureWorkspacePreview = useCallback(async (tabId: WorkspaceTabId, options?: { nativeOnly?: boolean }) => {
@@ -3182,21 +3315,32 @@ export default function App() {
     );
     setIsTaskViewOpen(true);
   }, [activeWorkspaceTab]);
+  const toggleAppLauncher = useCallback(() => {
+    // Keep the ref in lockstep with the visual state. A launcher opened over
+    // Task View must not leave a stale "open" value for the next Cmd/Ctrl+J.
+    taskViewOpenRef.current = false;
+    setIsTaskViewOpen(false);
+    setShowCommandPalette(false);
+    setIsAppLauncherOpen((open) => !open);
+    appLauncherChordRef.current = false;
+  }, []);
   useEffect(() => {
     const desktop = getElectronDesktop();
-    return desktop?.taskView.onToggle(() => void openTaskView());
-  }, [openTaskView]);
+    return desktop?.taskView.onToggle(() => {
+      if (!claimGlobalShortcut("taskview")) return;
+      void openTaskView();
+    });
+  }, [claimGlobalShortcut, openTaskView]);
   /* The launcher chord arrives from the main process as well as from this
      window's own keydown, because a native browser view often owns the
      keyboard and this listener would never see the key at all. */
   useEffect(() => {
     const desktop = getElectronDesktop();
     return desktop?.launcher?.onToggle(() => {
-      setIsTaskViewOpen(false);
-      setShowCommandPalette(false);
-      setIsAppLauncherOpen((open) => !open);
+      if (!claimGlobalShortcut("launcher")) return;
+      toggleAppLauncher();
     });
-  }, []);
+  }, [claimGlobalShortcut, toggleAppLauncher]);
   /* Arriving back from Notes with ?taskview=1: open the overview once, then
      clean the parameter out of the URL so a reload does not reopen it. */
   useEffect(() => {
@@ -3218,6 +3362,14 @@ export default function App() {
       }),
     );
   }, [isAppLauncherOpen, isTaskViewOpen]);
+  // A Chromium browser surface is a native sibling of the React tree, not a
+  // child of the outgoing page. Hide it synchronously whenever Browser is no
+  // longer current so it can never paint above the incoming workspace frame.
+  useLayoutEffect(() => {
+    if (activeWorkspaceTab !== "browser") {
+      void getElectronDesktop()?.browser.setSurface({ visible: false });
+    }
+  }, [activeWorkspaceTab]);
   const [workspaceChromeEngaged, setWorkspaceChromeEngaged] = useState(isEmbeddedToolPreview);
   const m1WorkspaceFrameRef = useRef<HTMLIFrameElement>(null);
   const [m1WorkspacePath, setM1WorkspacePath] = useState("/");
@@ -3289,7 +3441,7 @@ export default function App() {
     const rawIndex = (mouseX - padding) / offsetStep;
     const closestIndex = Math.max(
       0,
-      Math.min(WORKSPACE_RAIL_TABS.length - 1, Math.round(rawIndex)),
+      Math.min(workspaceRailTabs.length - 1, Math.round(rawIndex)),
     );
     const closestCenter = padding + closestIndex * offsetStep + WORKSPACE_TAB_WIDTH / 2;
 
@@ -3329,22 +3481,88 @@ export default function App() {
     const pillX = springContainerX.get() - 50.5;
     const maxX =
       WORKSPACE_TAB_PADDING +
-      (WORKSPACE_RAIL_TABS.length - 1) *
+        (workspaceRailTabs.length - 1) *
         (WORKSPACE_TAB_WIDTH + WORKSPACE_TAB_GAP) +
       2;
     return Math.min(maxX, Math.max(7, pillX));
   });
   const [isWorkspaceSwitching, setIsWorkspaceSwitching] = useState(false);
   const workspaceSwitchTimeoutRef = useRef<number | null>(null);
+  const workspaceTransition = useMacOSPageTransition(
+    activeWorkspaceTab,
+    setWorkspaceTransitionDirection,
+    setIsWorkspaceSwitching,
+  );
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === "undefined" ? 1200 : window.innerWidth,
   );
   const [hoveredWorkspaceTab, setHoveredWorkspaceTab] =
     useState<WorkspaceTabId | null>(null);
-  const [workflowTabsHidden, setWorkflowTabsHidden] = useState(false);
+  // Tool workspaces own their full canvas from their first frame. This avoids
+  // the Chat/Vibe/Shorts rail momentarily overlapping a map, browser, or
+  // other task surface opened directly through a workspace URL.
+  const [workflowTabsHidden, setWorkflowTabsHidden] = useState(
+    () => readEmbeddedWorkspace() !== "chat",
+  );
+  // Playback refreshes are intentionally optimistic and may complete just
+  // before the command's chat response. Keep that state change from
+  // revealing the notch early; the command explicitly reveals it on finish.
+  const spotifyCommandInFlightRef = useRef(false);
+  // The notch is a completion affordance: reveal its existing morph only
+  // after a music command has settled, or after playback is confirmed. It
+  // deliberately belongs to the shared top layer, rather than Chat alone,
+  // so playback stays within reach while moving between workspaces.
+  // Once the user hides the music notch it must stay hidden: playback that is
+  // already running may not resurrect it. Only an explicit music command does.
+  const [spotifyNotchDismissed, setSpotifyNotchDismissed] = useState(false);
+  const dismissSpotifyNotch = useCallback(() => {
+    setSpotifyNotchDismissed(true);
+    setNotchOpen(false);
+    setShowSpotifyNotch(false);
+  }, []);
+  const revealSpotifyNotch = useCallback(() => {
+    setSpotifyNotchDismissed(false);
+    setWorkflowTabsHidden(false);
+    setNotchOpen(false);
+    setShowSpotifyNotch(true);
+  }, []);
+  useEffect(() => {
+    if (
+      activeWorkspaceTab === "chat" &&
+      spotifyPlayback.isPlaying &&
+      !showSpotifyNotch &&
+      !spotifyNotchDismissed &&
+      !spotifyCommandInFlightRef.current
+    ) {
+      revealSpotifyNotch();
+    }
+  }, [activeWorkspaceTab, revealSpotifyNotch, showSpotifyNotch, spotifyNotchDismissed, spotifyPlayback.isPlaying]);
   const workflowTabsRevealTimerRef = useRef<number | null>(null);
   const [clipInitialUrl, setClipInitialUrl] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  // Typed run events per assistant message, derived from each real mission
+  // snapshot as it arrives. Kept outside the message objects so the stream
+  // stays a bounded log rather than growing the persisted transcript.
+  const [agentEventsByMessage, setAgentEventsByMessage] = useState<Record<string, AgentEvent[]>>({});
+  const observedMissionsRef = useRef(new Map<string, RunSnapshot>());
+  useEffect(() => {
+    const observed = observedMissionsRef.current;
+    const fresh: Array<[string, AgentEvent[]]> = [];
+    for (const message of messages) {
+      const mission = message.mission;
+      if (!mission || observed.get(message.id) === mission) continue;
+      const previous = observed.get(message.id) ?? null;
+      observed.set(message.id, mission);
+      const events = deriveAgentEvents(previous, mission);
+      if (events.length) fresh.push([message.id, events]);
+    }
+    if (!fresh.length) return;
+    setAgentEventsByMessage((current) => {
+      const next = { ...current };
+      for (const [id, events] of fresh) next[id] = [...(next[id] ?? []), ...events].slice(-60);
+      return next;
+    });
+  }, [messages]);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const isTemporaryChatRef = useRef(isTemporaryChat);
   useEffect(() => {
@@ -3557,36 +3775,6 @@ export default function App() {
     }, pick.ms);
   }, []);
 
-  // The composer gets the same cursor-follow treatment as the header
-  // buttons (see `handleHomeGaze*` above), plus — while actively typing —
-  // it looks toward the live caret position instead of the mouse. Caret
-  // position is measured with a hidden mirror element (matching font/
-  // padding/width) rather than the Selection API, since a plain
-  // `<textarea>` has no way to query a caret's on-screen pixel position.
-  const composerCaretMirrorRef = useRef<HTMLDivElement | null>(null);
-  const updateComposerCaretGaze = useCallback(() => {
-    const ta = textareaRef.current;
-    const mirror = composerCaretMirrorRef.current;
-    if (!ta || !mirror) return;
-    const caret = ta.selectionStart ?? ta.value.length;
-    const cs = window.getComputedStyle(ta);
-    mirror.style.font = cs.font;
-    mirror.style.letterSpacing = cs.letterSpacing;
-    mirror.style.padding = cs.padding;
-    mirror.style.border = cs.border;
-    mirror.style.width = `${ta.clientWidth}px`;
-    mirror.textContent = ta.value.slice(0, caret);
-    const marker = document.createElement("span");
-    marker.textContent = "​";
-    mirror.appendChild(marker);
-    const taRect = ta.getBoundingClientRect();
-    const mirrorRect = mirror.getBoundingClientRect();
-    const markerRect = marker.getBoundingClientRect();
-    const x = taRect.left + (markerRect.left - mirrorRect.left) - ta.scrollLeft;
-    const y = taRect.top + (markerRect.top - mirrorRect.top) - ta.scrollTop;
-    updateHomeGaze(x, y);
-  }, [updateHomeGaze]);
-
   // The static document-level cover remains until this first layout commit,
   // where the React-owned boot surface is already in place beneath it.
   useLayoutEffect(() => {
@@ -3671,7 +3859,7 @@ export default function App() {
   const [value, setValue] = useState("");
   const [chatEffort, setChatEffort] = useState<ChatEffort>(() => {
     const stored = readStoredString("clyra-chat-effort");
-    return stored === "light" || stored === "medium" || stored === "high" ? stored : "medium";
+    return (CHAT_EFFORTS as string[]).includes(stored || "") ? (stored as ChatEffort) : "medium";
   });
   useEffect(() => {
     try {
@@ -3688,7 +3876,10 @@ export default function App() {
     }
   });
   const skipDraftPersistRef = useRef(false);
-  const canSendMessage = Boolean(value.trim() || selectedCommand || selectedAppAgents.length);
+  const { status: connectivityStatus } = useConnectivity();
+  const isOffline = connectivityStatus === "offline";
+  const canSendMessage =
+    Boolean(value.trim() || selectedCommand || selectedAppAgents.length) && !isOffline;
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
@@ -3701,10 +3892,23 @@ export default function App() {
   const effortTriggerRef = useRef<HTMLButtonElement>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const composerDictation = useComposerVoiceCapture((text) => {
-    setValue(text);
+    // Dictation fills the composer and never sends; it appends to any existing draft.
+    setValue((draft) => appendDictatedText(draft, text));
     setIsInputExpanded(true);
   });
+  // One state object for every composer surface, so the mic always reflects the real capture session.
+  const composerDictationState = {
+    phase: composerDictation.phase,
+    level: composerDictation.level,
+    elapsedSeconds: composerDictation.elapsedSeconds,
+    detail: composerDictation.detail,
+    onStart: () => { void composerDictation.start(); },
+    onStop: () => { composerDictation.stop(); },
+    onCancel: () => { composerDictation.cancel(); },
+  };
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [readingMessageId, setReadingMessageId] = useState<string | null>(null);
+  const speechRequestRef = useRef(0);
   const [resumingChatId, setResumingChatId] = useState<string | null>(null);
   const sendMessageRef = useRef<(() => Promise<void>) | null>(null);
   const regenerationRef = useRef<{ messageId: string; userMessageId: string } | null>(null);
@@ -3822,6 +4026,17 @@ export default function App() {
   const [shellSideQuery, setShellSideQuery] = useState("");
   const [shellSidebarOpen, setShellSidebarOpen] = useState(false);
   const [vibeProjectToOpen, setVibeProjectToOpen] = useState<string | null>(null);
+  const buildChatRowPreview = (messages: { role: "user" | "assistant"; content: string }[]) => {
+    const last = messages[messages.length - 1];
+    if (!last) return "";
+    const text = last.content
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return "";
+    const snippet = text.length > 72 ? `${text.slice(0, 72).trimEnd()}…` : text;
+    return last.role === "user" ? `You: ${snippet}` : snippet;
+  };
   const shellChatRows: ComposerChatRow[] = useMemo(() => {
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
@@ -3834,16 +4049,30 @@ export default function App() {
         const when = ageDays < 1
           ? new Date(c.updatedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
           : new Date(c.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-        return { id: c.id, group, title: c.title, when };
+        return { id: c.id, group, title: c.title, when, preview: buildChatRowPreview(c.messages) };
       });
   }, [chats]);
   const shellEfforts: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (kind: "light" | "medium" | "high") => (
+    const iconFor = (kind: ChatEffort) => (
       <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#2A2D34" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
-        {kind === "light" ? <path d="M13 2.5 5 13.6h6L10.6 21.5 19 10.4h-6z" /> : <circle cx={12} cy={12} r={8.5} />}
+        {kind === "light" ? <path d="M13 2.5 5 13.6h6L10.6 21.5 19 10.4h-6z" /> : null}
+        {kind === "medium" ? <>
+          <path d="M12 3.2l2 5.6 5.6 2-5.6 2-2 5.6-2-5.6-5.6-2 5.6-2z" />
+          <path d="M19 3.6v3M17.5 5.1h3" opacity={0.6} />
+        </> : null}
+        {kind === "high" || kind === "max" ? <>
+          <path d="M12 5.1a3 3 0 0 0-5.7-1.2A2.9 2.9 0 0 0 4 6.5a3 3 0 0 0-.6 4.2 3.1 3.1 0 0 0 .6 4.8 2.9 2.9 0 0 0 2.6 3.2A3 3 0 0 0 12 18z" />
+          <path d="M12 5.1a3 3 0 0 1 5.7-1.2A2.9 2.9 0 0 1 20 6.5a3 3 0 0 1 .6 4.2 3.1 3.1 0 0 1-.6 4.8 2.9 2.9 0 0 1-2.6 3.2A3 3 0 0 1 12 18z" />
+          <path d="M12 5.1V20" opacity={0.3} />
+          <path d="M9.4 4.9c-1 .5-1.3 1.6-.8 2.5M6.4 9.3c1.2-.2 2.3.5 2.6 1.6M6.9 15.4c1-.6 2.3-.3 2.9.6M14.6 4.9c1 .5 1.3 1.6.8 2.5M17.6 9.3c-1.2-.2-2.3.5-2.6 1.6M17.1 15.4c-1-.6-2.3-.3-2.9.6" opacity={0.55} />
+        </> : null}
+        {kind === "max" ? <>
+          <path d="M19.4 2.6v4.8M17 5h4.8" />
+          <path d="M5.2 20.3v2.2M4.1 21.4h2.2" opacity={0.7} />
+        </> : null}
       </svg>
     );
-    return (["light", "medium", "high"] as ChatEffort[]).map((v) => ({
+    return CHAT_EFFORTS.map((v) => ({
       value: v,
       label: CHAT_EFFORT_LABEL[v],
       hint: CHAT_EFFORT_HINT[v],
@@ -3865,21 +4094,22 @@ export default function App() {
   );
   const shellSources: ComposerSource[] = useMemo(
     () => [
-      ...shellSourceDefs.map((d) => ({ id: d.id, name: d.name, short: d.short, icon: <GoogleGlyph product={d.product} className="h-4 w-4" /> })),
-      // Spotify joins the same source dock as Gmail/Drive/etc — picking it
-      // (here, or from the "/" palette, or the notch's own toggle) all go
-      // through the same `toggleSpotifyNotch`, so it shows up "Added" and
-      // removable exactly like every other source.
-      { id: "spotify", name: "Clyra Music", short: "Music", icon: <img src="/icons/clyra-music.svg" alt="" className="h-4 w-4 rounded-[4px] object-contain" /> },
+      ...shellSourceDefs.map((d) => ({ id: d.id, name: d.name, short: d.short, icon: d.id === "search" ? <Search className="h-4 w-4" strokeWidth={1.8} /> : <GoogleGlyph product={d.product} className="h-4 w-4" /> })),
+      // Clyra Music is a real command selection, just like the other sources.
+      // Choosing it must not reveal the player until that message is sent.
+      { id: "spotify", name: "Clyra Music", short: "Music", icon: <Music2 className="h-4 w-4" strokeWidth={1.8} /> },
     ],
     [shellSourceDefs],
   );
   const shellActiveSourceIds = useMemo(
     () => [
       ...(selectedCommand && shellSourceDefs.some((d) => d.id === selectedCommand.id) ? [selectedCommand.id] : []),
-      ...(showSpotifyNotch ? ["spotify"] : []),
+      // Music is only a *selected source* while the user has picked it. The
+      // notch being visible (music already playing) used to keep it "selected"
+      // forever, so the chip could never be removed from the composer.
+      ...(selectedCommand?.id === "spotify" ? ["spotify"] : []),
     ],
-    [selectedCommand, shellSourceDefs, showSpotifyNotch],
+    [selectedCommand, shellSourceDefs],
   );
   const shellConnectionScopes: ComposerConnectionScope[] = useMemo(
     () => ([
@@ -4146,15 +4376,9 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [currentChatId]);
 
-  /**
-   * A temporary chat is always a fresh, private branch.  In particular, do
-   * not turn an existing saved conversation into a temporary one by removing
-   * it from history: that made the button destructive and could also cause a
-   * later toggle-off to write private turns back into the original chat.
-   *
-   * Turning Temporary Chat off is the explicit "save this thread" action;
-   * the in-progress private thread is then promoted to a new conversation.
-   */
+  /** Mirrors the Composer control: Temporary transforms the current thread
+   * into a private, unsaved thread in place; toggling it off promotes that
+   * thread back to history. */
   const toggleTemporaryChat = useCallback(() => {
     if (isTemporaryChat) {
       setIsTemporaryChat(false);
@@ -4164,42 +4388,23 @@ export default function App() {
       return;
     }
 
-    // Snapshot the active saved chat before leaving it. The usual persistence
-    // effect may be skipped by this same render because Temporary Chat becomes
-    // true, so this avoids losing a just-finished response when the user
-    // switches modes quickly.
+    // The standalone Composer immediately removes the active conversation
+    // from history without clearing the live transcript. That continuity is
+    // intentional: the toggle changes privacy, not the user's place in chat.
+    // ClyraComposerShell's own top-center "Saved to your history" /
+    // "Temporary — this chat won't be saved" pill already gives on-brand
+    // feedback for this toggle, so no extra toast is needed here.
     if (currentChatId && messages.length > 0) {
-      const snapshot = messages;
-      setChats((current) => {
-        const index = current.findIndex((chat) => chat.id === currentChatId);
-        if (index >= 0) {
-          const next = [...current];
-          next[index] = { ...next[index], messages: snapshot, updatedAt: Date.now() };
-          return next.sort((a, b) => b.updatedAt - a.updatedAt);
-        }
-        return [
-          {
-            id: currentChatId,
-            title: `${snapshot[0]?.content.slice(0, 30) || "New conversation"}${(snapshot[0]?.content.length || 0) > 30 ? "..." : ""}`,
-            messages: snapshot,
-            updatedAt: Date.now(),
-            kind: snapshot.some((message) => message.assistantKind === "vibe") ? "vibe" : "chat",
-          },
-          ...current,
-        ];
+      setChats((current) => current.filter((chat) => chat.id !== currentChatId));
+      setChatDrafts((current) => {
+        const { [currentChatId]: _discardedDraft, ...remaining } = current;
+        return remaining;
       });
     }
-
-    const draftKey = currentChatId || "new";
-    setChatDrafts((current) => {
-      return { ...current, [draftKey]: value };
-    });
     skipDraftPersistRef.current = true;
-    setMessages([]);
-    setValue("");
     setCurrentChatId(null);
     setIsTemporaryChat(true);
-  }, [currentChatId, isTemporaryChat, messages, value]);
+  }, [currentChatId, isTemporaryChat, messages]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [googleConnectRequest, setGoogleConnectRequest] = useState<{ tool: GoogleToolId; prompt: string } | null>(null);
@@ -4520,6 +4725,370 @@ export default function App() {
     else setMessages(update);
   }, [patchMessagesForChat]);
 
+  const controlChatMission = useCallback(async (messageId: string, mission: MissionStatus, command: "pause" | "stop") => {
+    const response = await fetch(`/api/agent/missions/${encodeURIComponent(mission.id)}/${command}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const payload = await response.json().catch(() => null) as { mission?: MissionStatus; error?: string } | null;
+    const updatedMission = payload?.mission;
+    if (!response.ok || !updatedMission) {
+      throw new Error(payload?.error || `Clyra could not ${command} this task.`);
+    }
+    const content = command === "pause"
+      ? "Paused at a safe checkpoint. Clyra will re-observe before it resumes."
+      : "Stopped. Any verified artifacts and completed steps have been kept.";
+    const update = (previous: Message[]) => previous.map((message) => message.id === messageId ? {
+      ...message,
+      content,
+      mission: updatedMission,
+      isThinking: false,
+      isStreaming: false,
+    } : message);
+    const chatId = currentChatIdRef.current;
+    if (chatId) patchMessagesForChat(chatId, update);
+    else setMessages(update);
+  }, [patchMessagesForChat]);
+
+  const updateHermesMissionEvent = useCallback((messageId: string, event: {
+    type?: string; app?: string; label?: string; agentId?: string; timestamp?: number;
+  }) => {
+    const update = (previous: Message[]) => previous.map((message) => {
+      if (message.id !== messageId || message.agentRuntime?.kind !== "hermes" || !message.mission) return message;
+      const prior = message.mission;
+      const description = String(event.label || event.app || "Clyra is working").slice(0, 280);
+      const rawTimestamp = Number(event.timestamp);
+      const trace = {
+        at: Number.isFinite(rawTimestamp) && rawTimestamp > 0
+          ? (rawTimestamp < 100_000_000_000 ? rawTimestamp * 1_000 : rawTimestamp)
+          : Date.now(),
+        state: prior.state,
+        event: description,
+        toolId: event.app,
+      };
+      const steps = [...prior.plan.steps];
+      const agents = [...(prior.agents || [])];
+      const running = [...steps].reverse().find((step) => step.status === "running");
+      if (event.type === "tool_start" || event.type === "agent_start") {
+        // A live transport may emit several `progress` frames for one tool;
+        // preserve the single row and avoid re-rendering a fake history.
+        if (running?.description !== description) {
+          if (running) running.status = "completed";
+          steps.push({
+            id: `live-${event.type}-${event.timestamp || Date.now()}`,
+            description,
+            status: "running",
+          });
+        }
+      } else if (event.type === "tool_complete" || event.type === "agent_complete") {
+        if (running) running.status = "completed";
+      } else if (event.type === "error") {
+        if (running) running.status = "failed";
+      } else if (event.type === "complete") {
+        if (running) running.status = "completed";
+      } else if (running) {
+        running.description = description;
+      }
+      if ((event.type === "agent_start" || event.type === "agent_complete") && event.agentId) {
+        const existing = agents.find((agent) => agent.id === event.agentId);
+        const status = event.type === "agent_complete" ? "completed" : "working";
+        if (existing) {
+          existing.status = status;
+          existing.label = description || existing.label;
+          existing.app = event.app || existing.app;
+        } else {
+          agents.push({
+            id: event.agentId,
+            label: description || `Agent ${agents.length + 1}`,
+            status,
+            app: event.app,
+            startedAt: trace.at,
+          });
+        }
+      }
+      // A failed or interrupted Hermes event is terminal just as a completed
+      // one is. Leaving it in EXECUTING made a closed SSE stream look like a
+      // task that was still running.
+      const terminal = event.type === "complete" || event.type === "error";
+      const cancelled = /cancel(?:led|ed)|stopp?ed/i.test(description);
+      const failed = event.type === "error" || /\b(?:failed|error|interrupted)\b/i.test(description);
+      const state = terminal ? (cancelled ? "CANCELLED" : failed ? "FAILED" : "COMPLETED") : event.type === "approval" ? "WAITING_FOR_APPROVAL" : prior.state === "PLANNING" ? "EXECUTING" : prior.state;
+      return {
+        ...message,
+        mission: {
+          ...prior,
+          state,
+          plan: { ...prior.plan, steps: steps.slice(-12) },
+          agents: agents.slice(-8),
+          traces: [...(prior.traces || []), trace].slice(-20),
+          ...(state === "FAILED" ? { error: { message: description } } : {}),
+        },
+        content: state === "COMPLETED"
+          ? "Done — Clyra completed the agent run. Open **View activity** for the verified work trail."
+          : state === "CANCELLED"
+            ? "Stopped. Clyra kept the work that completed before the stop."
+            : state === "FAILED"
+              ? `Clyra needs attention: ${description}`
+              : state === "WAITING_FOR_APPROVAL"
+                ? "Clyra needs your approval for the exact action it paused before."
+                : "Clyra is working through the task.",
+        isThinking: !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(state),
+        isStreaming: !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(state),
+      };
+    });
+    const chatId = currentChatIdRef.current;
+    if (chatId) patchMessagesForChat(chatId, update);
+    else setMessages(update);
+  }, [patchMessagesForChat]);
+
+  /**
+   * SSE is intentionally best-effort: after an app reload or a proxy/network
+   * reconnect, Hermes may have already closed its event stream. Its run
+   * receipt is durable, so reconcile terminal state from there rather than
+   * manufacturing a success (or leaving the workspace indefinitely active).
+   */
+  const syncHermesRunStatus = useCallback(async (messageId: string, runId: string) => {
+    try {
+      const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(runId)}`);
+      const payload = await response.json().catch(() => null) as {
+        run?: { status?: unknown; output?: unknown; error?: unknown; interrupted?: unknown; updated_at?: unknown };
+      } | null;
+      if (!response.ok || !payload?.run) return false;
+      const run = payload.run;
+      const status = String(run.status || "").toLowerCase();
+      const output = typeof run.output === "string" ? run.output.trim().slice(0, 12_000) : "";
+      const error = typeof run.error === "string" ? run.error.trim().slice(0, 800) : "";
+      const cancelled = /cancel|stopp?ed/.test(status) || Boolean(run.interrupted);
+      const failed = /fail|error|interrupt/.test(status) || Boolean(error);
+      const completed = /complete|finish|success/.test(status);
+      if (!cancelled && !failed && !completed) return false;
+
+      const label = cancelled
+        ? "Run stopped"
+        : failed
+          ? (error || "The local agent run ended before it could complete.")
+          : "Run completed";
+      updateHermesMissionEvent(messageId, {
+        type: failed ? "error" : "complete",
+        label,
+        timestamp: typeof run.updated_at === "number"
+          ? (run.updated_at < 100_000_000_000 ? run.updated_at * 1_000 : run.updated_at)
+          : Date.now(),
+      });
+
+      // Preserve the agent's concise final answer, while operational details
+      // remain available in the compact activity disclosure.
+      if (completed && output) {
+        const update = (previous: Message[]) => previous.map((message) => message.id === messageId ? {
+          ...message,
+          content: output,
+        } : message);
+        const chatId = currentChatIdRef.current;
+        if (chatId) patchMessagesForChat(chatId, update);
+        else setMessages(update);
+      }
+      return true;
+    } catch {
+      // A transient status read must not change the last confirmed task UI.
+      return false;
+    }
+  }, [patchMessagesForChat, updateHermesMissionEvent]);
+
+  const stopHermesRun = useCallback(async (messageId: string, runId: string) => {
+    const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    if (!response.ok) throw new Error(payload?.error || "Clyra could not stop this agent run.");
+    updateHermesMissionEvent(messageId, { type: "complete", label: "Run stopped", timestamp: Date.now() });
+  }, [updateHermesMissionEvent]);
+
+  const approveHermesRun = useCallback(async (messageId: string, runId: string) => {
+    const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(runId)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice: "once" }),
+    });
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    if (!response.ok) throw new Error(payload?.error || "Clyra could not approve this exact action.");
+    updateHermesMissionEvent(messageId, { type: "planning", label: "Approval granted — continuing safely", timestamp: Date.now() });
+  }, [updateHermesMissionEvent]);
+
+  // Hermes can legitimately emit token-adjacent progress frames faster than a
+  // browser should reconcile Chat. Keep only the newest state per assistant
+  // turn for one animation frame-sized window; terminal events flush promptly.
+  const pendingHermesEventsRef = useRef(new Map<string, {
+    type?: string; app?: string; label?: string; agentId?: string; timestamp?: number;
+  }>());
+  const hermesEventFlushRef = useRef<number | null>(null);
+  // A pause is implemented as a safe stop plus a resumable Hermes session.
+  // Ignore the old run's terminal frames after that stop so they cannot race
+  // a deliberately paused Clyra workspace back to CANCELLED.
+  const ignoredHermesRunsRef = useRef(new Set<string>());
+  const queueHermesMissionEvent = useCallback((messageId: string, event: {
+    type?: string; app?: string; label?: string; agentId?: string; timestamp?: number;
+  }) => {
+    pendingHermesEventsRef.current.set(messageId, event);
+    const flush = () => {
+      hermesEventFlushRef.current = null;
+      const events = [...pendingHermesEventsRef.current.entries()];
+      pendingHermesEventsRef.current.clear();
+      events.forEach(([id, next]) => updateHermesMissionEvent(id, next));
+    };
+    if (event.type === "complete" || event.type === "approval") {
+      if (hermesEventFlushRef.current !== null) window.clearTimeout(hermesEventFlushRef.current);
+      flush();
+      return;
+    }
+    if (hermesEventFlushRef.current === null) hermesEventFlushRef.current = window.setTimeout(flush, 90);
+  }, [updateHermesMissionEvent]);
+
+  const openHermesEventStream = useCallback((messageId: string, runId: string, signal?: AbortSignal) => {
+    const source = new EventSource(`/api/agent/hermes/runs/${encodeURIComponent(runId)}/events`);
+    const close = () => source.close();
+    source.onmessage = (message) => {
+      if (ignoredHermesRunsRef.current.has(runId)) {
+        close();
+        return;
+      }
+      try {
+        const event = JSON.parse(message.data) as { type?: string; label?: string; app?: string; agentId?: string; timestamp?: number };
+        queueHermesMissionEvent(messageId, event);
+        if (event.type === "complete" || event.type === "error") {
+          // The final answer and terminal reason live on the durable receipt.
+          void syncHermesRunStatus(messageId, runId).finally(close);
+        }
+      } catch {
+        // Malformed progress frames do not alter durable Clyra mission state.
+      }
+    };
+    source.onerror = () => {
+      if (ignoredHermesRunsRef.current.has(runId)) {
+        close();
+        return;
+      }
+      void syncHermesRunStatus(messageId, runId).then((terminal) => {
+        if (terminal) close();
+      });
+    };
+    signal?.addEventListener("abort", close, { once: true });
+    return close;
+  }, [queueHermesMissionEvent, syncHermesRunStatus]);
+
+  const pauseHermesRun = useCallback(async (messageId: string, runId: string) => {
+    // Hermes exposes a stop endpoint, not a misleading pseudo-pause endpoint.
+    // Stop at the current safe boundary, retain its session, then create a
+    // fresh re-observing run when the user selects Resume.
+    ignoredHermesRunsRef.current.add(runId);
+    const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    if (!response.ok) {
+      ignoredHermesRunsRef.current.delete(runId);
+      throw new Error(payload?.error || "Clyra could not pause this agent run.");
+    }
+    const update = (previous: Message[]) => previous.map((message) => message.id === messageId && message.mission ? {
+      ...message,
+      mission: {
+        ...message.mission,
+        state: "PAUSED",
+        traces: [...(message.mission.traces || []), { at: Date.now(), state: "PAUSED", event: "Paused at a safe checkpoint" }].slice(-20),
+      },
+      content: "Paused at a safe checkpoint. Clyra will re-observe the current state before it resumes.",
+      isThinking: false,
+      isStreaming: false,
+    } : message);
+    const chatId = currentChatIdRef.current;
+    if (chatId) patchMessagesForChat(chatId, update);
+    else setMessages(update);
+  }, [patchMessagesForChat]);
+
+  const resumeHermesRun = useCallback(async (
+    messageId: string,
+    runtime: { kind: "hermes"; runId: string; sessionId: string },
+    mission: MissionStatus,
+  ) => {
+    const response = await fetch("/api/agent/hermes/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: `Resume this Clyra task. Re-observe the live state before acting, then continue and validate the result: ${mission.plan.objective}`,
+        sessionId: runtime.sessionId,
+        model: CHAT_EFFORT_MODEL[chatEffort],
+        idempotencyKey: `resume-${messageId}-${Date.now()}`,
+      }),
+    });
+    const payload = await response.json().catch(() => null) as { run?: Record<string, unknown>; error?: string } | null;
+    const runId = String(payload?.run?.run_id || payload?.run?.id || "");
+    if (!response.ok || !runId) throw new Error(payload?.error || "Clyra could not resume this agent run.");
+    const update = (previous: Message[]) => previous.map((message) => message.id === messageId && message.mission ? {
+      ...message,
+      agentRuntime: { ...runtime, runId },
+      mission: {
+        ...message.mission,
+        id: runId,
+        state: "PLANNING",
+        plan: {
+          ...message.mission.plan,
+          steps: [...message.mission.plan.steps.map((step) => step.status === "running" ? { ...step, status: "pending" as const } : step), {
+            id: `resume-${Date.now()}`,
+            description: "Re-observing the task before resuming",
+            status: "running" as const,
+          }].slice(-12),
+        },
+        traces: [...(message.mission.traces || []), { at: Date.now(), state: "PLANNING", event: "Resuming from the safe checkpoint" }].slice(-20),
+      },
+      content: "Clyra is re-observing the task and continuing from the safe checkpoint.",
+      isThinking: true,
+      isStreaming: true,
+    } : message);
+    const chatId = currentChatIdRef.current;
+    if (chatId) patchMessagesForChat(chatId, update);
+    else setMessages(update);
+    openHermesEventStream(messageId, runId);
+  }, [chatEffort, openHermesEventStream, patchMessagesForChat]);
+
+  // Automation controls are confirmed by the durable scheduler before the
+  // chat card changes. A schedule pause only affects future launches; an
+  // already-dispatched mission retains its own independently verified state.
+  const controlChatAutomation = useCallback(async (
+    messageId: string,
+    automation: AutomationStatus,
+    command: "pause" | "resume" | "run",
+  ) => {
+    const response = await fetch(`/api/agent/automations/${encodeURIComponent(automation.id)}/${command}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const payload = await response.json().catch(() => null) as { automation?: AutomationStatus; error?: string } | null;
+    const updatedAutomation = payload?.automation;
+    if (!response.ok || !updatedAutomation) {
+      throw new Error(payload?.error || `Clyra could not ${command} this automation.`);
+    }
+    const content = command === "pause"
+      ? "The schedule is paused. Any task already running will keep its own verified result."
+      : command === "resume"
+        ? "The schedule is active again. Clyra saved the next concrete run time below."
+        : updatedAutomation.lastResult?.state === "COMPLETED"
+          ? "Clyra ran this task now and verified the result."
+          : updatedAutomation.lastResult?.message || "Clyra attempted this scheduled task; see the verified result below.";
+    const update = (previous: Message[]) => previous.map((message) => message.id === messageId ? {
+      ...message,
+      content,
+      automation: updatedAutomation,
+      isThinking: false,
+      isStreaming: false,
+    } : message);
+    const chatId = currentChatIdRef.current;
+    if (chatId) patchMessagesForChat(chatId, update);
+    else setMessages(update);
+  }, [patchMessagesForChat]);
+
   const isVibeChat = useCallback((chat: ChatSession) => {
     return (
       chat.kind === "vibe" ||
@@ -4661,10 +5230,17 @@ export default function App() {
 
     const markNearBottom = () => {
       const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const nearBottom = gap < 160;
+      const nearBottom = gap < CHAT_NEAR_BOTTOM_PX;
       chatNearBottomRef.current = nearBottom;
       if (nearBottom) userPinnedAwayRef.current = false;
       setShowScrollToLatest(!nearBottom && messages.length > 0);
+    };
+
+    const pinAwayFromLatest = (node: HTMLElement) => {
+      const gap = node.scrollHeight - node.scrollTop - node.clientHeight;
+      userPinnedAwayRef.current = true;
+      chatNearBottomRef.current = false;
+      setShowScrollToLatest(gap > CHAT_NEAR_BOTTOM_PX);
     };
 
     const onScroll = () => {
@@ -4674,23 +5250,24 @@ export default function App() {
       }
       const scrollingUp = el.scrollTop + 2 < lastScrollTopRef.current;
       lastScrollTopRef.current = el.scrollTop;
-      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (scrollingUp && gap > 140) {
-        userPinnedAwayRef.current = true;
-        chatNearBottomRef.current = false;
-        setShowScrollToLatest(true);
+      if (scrollingUp) {
+        // Any upward movement by the reader hands control back at once, even
+        // a few pixels short of the bottom. Following resumes only when they
+        // return to the bottom themselves.
+        pinAwayFromLatest(el);
         return;
       }
       markNearBottom();
     };
 
-    const onUserIntent = () => {
-      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (gap > 140) {
-        userPinnedAwayRef.current = true;
-        chatNearBottomRef.current = false;
-        setShowScrollToLatest(true);
+    const onUserIntent = (event: Event) => {
+      const wheel = event as WheelEvent;
+      if (wheel.deltaY < 0) {
+        pinAwayFromLatest(el);
+        return;
       }
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (gap > CHAT_NEAR_BOTTOM_PX) pinAwayFromLatest(el);
     };
 
     lastScrollTopRef.current = el.scrollTop;
@@ -4706,6 +5283,11 @@ export default function App() {
   }, [messages.length]);
 
   useLayoutEffect(() => {
+    const pinnedEl = document.getElementById("chat-container");
+    if (pinnedEl && userPinnedAwayRef.current && messages.length > 0) {
+      const gap = pinnedEl.scrollHeight - pinnedEl.scrollTop - pinnedEl.clientHeight;
+      setShowScrollToLatest(gap > CHAT_NEAR_BOTTOM_PX);
+    }
     if (!autoScroll) return;
     const el = document.getElementById("chat-container");
     if (!el || messages.length === 0) return;
@@ -4789,6 +5371,8 @@ export default function App() {
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === "j") {
         e.preventDefault();
+        e.stopPropagation();
+        if (e.repeat || !claimGlobalShortcut("taskview")) return;
         // Task View is a direct spatial overview, not a two-key launcher
         // chord. The live workspace itself moves into the overview, so Ctrl/J
         // is responsive even while a tool owns focus.
@@ -4797,11 +5381,9 @@ export default function App() {
         setShowCommandPalette(false);
       } else if ((e.ctrlKey || e.metaKey) && key === "k") {
         e.preventDefault();
-        setIsTaskViewOpen(false);
-        setIsAppLauncherOpen((open) => !open);
-        setShowCommandPalette(false);
-        appLauncherChordRef.current = false;
-        requestAnimationFrame(() => textareaRef.current?.focus());
+        e.stopPropagation();
+        if (e.repeat || !claimGlobalShortcut("launcher")) return;
+        toggleAppLauncher();
       } else if (key === "k" && !e.ctrlKey && !e.metaKey && !e.altKey && isAppLauncherOpen) {
         e.preventDefault();
         void openTaskView();
@@ -4840,7 +5422,7 @@ export default function App() {
       document.removeEventListener("keydown", handleGlobalKeyDown, true);
       window.removeEventListener("message", handleWorkspaceMessage);
     };
-  }, [isAppLauncherOpen, isTaskViewOpen, openTaskView]);
+  }, [claimGlobalShortcut, isAppLauncherOpen, isTaskViewOpen, openTaskView, toggleAppLauncher]);
 
   const isVibeComposerMode =
     activeWorkspaceTab === "vibe" &&
@@ -4904,6 +5486,15 @@ export default function App() {
 
   const commandSuggestions: CommandSuggestion[] = useMemo(() => ([
     {
+      id: "mission",
+      kind: "command",
+      icon: () => <Users className="h-4 w-4" />,
+      label: "Mission",
+      description: "Plan and run a multi-step task with Clyra agents",
+      prefix: "/mission",
+      workspace: "chat",
+    },
+    {
       id: "youtube",
       kind: "command",
       icon: () => <Youtube className="h-4 w-4" />,
@@ -4929,6 +5520,15 @@ export default function App() {
       description: "Investigate a topic across trusted sources and produce a verified report",
       prefix: "/deep-research",
       workspace: "vibe",
+    },
+    {
+      id: "automate",
+      kind: "command",
+      icon: () => <Clock3 className="h-4 w-4" />,
+      label: "Automate",
+      description: "Schedule a verified Clyra task to run later",
+      prefix: "/automate",
+      workspace: "chat",
     },
     { id:"google-gmail", kind:"command", icon:()=> <GoogleGlyph product="gmail" />, label:"Google Gmail", description:"Read email or prepare a message without leaving Clyra", prefix:"/gmail", workspace:"chat" },
     { id:"google-calendar", kind:"command", icon:()=> <GoogleGlyph product="calendar" />, label:"Google Calendar", description:"Check upcoming events or prepare a calendar action", prefix:"/calendar", workspace:"chat" },
@@ -5030,7 +5630,10 @@ export default function App() {
       ),
       label: "Web Browser",
       description: "Research and act across live websites",
-      prefix: "/browse",
+      // `/browser` is the public command documented by Clyra.  Keep the
+      // older `/browse` spelling as an input alias below so existing chats
+      // and muscle memory continue to work.
+      prefix: "/browser",
       workspace: "browser",
     },
     {
@@ -5100,7 +5703,7 @@ export default function App() {
       prefix: "/clip",
       workspace: "clip",
     },
-  ] as CommandSuggestion[]).filter((suggestion) => suggestion.id !== "browse"), []);
+  ] as CommandSuggestion[]), []);
 
   const commandPaletteEnabled = true;
   const isCommandMode =
@@ -5126,10 +5729,9 @@ export default function App() {
     [filteredChats, isVibeChat],
   );
 
-  // The composer is deliberately focused on first-party actions. App previews
-  // and game/workbench shortcuts belong to their own workspaces, not this
-  // compact command surface.
-  const composerCommands = commandSuggestions.filter((cmd) => cmd.kind === "command");
+  // Commands set a single mode; app agents are additive and remain visible in
+  // the composer, where they can be ordered into one coordinated run.
+  const composerCommands = commandSuggestions;
   const filteredSuggestions = isCommandMode
     ? composerCommands.filter((cmd) => cmd.label.toLowerCase().includes(commandQuery))
     : isCommandPalettePinned
@@ -5251,6 +5853,10 @@ export default function App() {
           handleSendMessage();
         }
       }
+    } else if (e.key === "Escape" && isAiResponding && !value.trim() && !selectedCommand && selectedAppAgents.length === 0) {
+      // Esc cancels a streaming reply when there is no draft to discard.
+      e.preventDefault();
+      stopGeneration();
     } else if (e.key === "Escape") {
       if (value || selectedCommand || selectedAppAgents.length) {
         e.preventDefault();
@@ -6042,6 +6648,99 @@ Please analyze the code you just wrote and fix this error.`;
     }
   }, [executeAttachedAppAgent]);
 
+  /**
+   * A multi-agent request is a small, durable execution loop: make the plan
+   * visible, run one workspace at a time so later work can build on earlier
+   * results, then record an explicit verification checkpoint. This replaces
+   * the previous fire-and-forget `for` loop, which made multiple selections
+   * look concurrent without any shared progress or completion state.
+   */
+  const runAttachedAppAgentPlan = useCallback(async (
+    messageId: string,
+    agents: Array<Pick<AttachedAppAgent, "id" | "label">>,
+    instruction: string,
+    conversationContext = "",
+  ) => {
+    const update = (stepId: string, state: AppAgentPlanStep["state"]) => {
+      setMessages((current) => current.map((message) => message.id === messageId ? {
+        ...message,
+        agentSteps: message.agentSteps?.map((step) => step.id === stepId ? { ...step, state } : step),
+      } : message));
+    };
+    const updateAgent = (
+      agentId: AppAgentId,
+      patch: Partial<AttachedAppAgent>,
+    ) => {
+      setMessages((current) => current.map((message) => message.id === messageId ? {
+        ...message,
+        appAgents: message.appAgents?.map((agent) => agent.id === agentId ? { ...agent, ...patch } : agent),
+      } : message));
+    };
+
+    update("plan", "running");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    update("plan", "completed");
+
+    let awaitingInput = false;
+    let failed = false;
+    for (const agent of agents) {
+      const stepId = `agent-${agent.id}`;
+      update(stepId, "running");
+      updateAgent(agent.id, {
+        status: "running",
+        control: "ai",
+        action: `Running ${agent.label}`,
+        summary: `Working on: ${instruction}`,
+      });
+      try {
+        const result = await executeAttachedAppAgent(agent.id, instruction, conversationContext);
+        const stepState: AppAgentPlanStep["state"] = result.status === "ready"
+          ? "completed"
+          : result.status === "failed"
+            ? "failed"
+            : "needs_input";
+        update(stepId, stepState);
+        updateAgent(agent.id, {
+          ...result,
+          ...(result.status === "ready" ? {
+            control: "user",
+            paused: true,
+            action: "Task complete — you have control",
+          } : {}),
+        });
+        awaitingInput ||= stepState === "needs_input";
+        failed ||= stepState === "failed";
+      } catch (error) {
+        failed = true;
+        update(stepId, "failed");
+        updateAgent(agent.id, {
+          status: "failed",
+          action: "Could not complete this step",
+          summary: error instanceof Error ? error.message : "This app agent stopped unexpectedly.",
+        });
+      }
+    }
+
+    update("verify", "running");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const verificationState: AppAgentPlanStep["state"] = failed
+      ? "failed"
+      : awaitingInput
+        ? "needs_input"
+        : "completed";
+    update("verify", verificationState);
+    setMessages((current) => current.map((message) => message.id === messageId ? {
+      ...message,
+      content: failed
+        ? "Some steps need attention. The completed work is ready in its live workspace."
+        : awaitingInput
+          ? "The plan reached a handoff point. Open the marked workspace to provide the remaining input and continue."
+          : `Completed and verified ${agents.map((agent) => agent.label).join(", ")}. Review any live workspace to continue from the finished state.`,
+      isThinking: false,
+      isStreaming: false,
+    } : message));
+  }, [executeAttachedAppAgent]);
+
   const openAttachedAppAgent = useCallback((agentId: AppAgentId) => {
     const workspace: WorkspaceTabId = agentId === "browse" ? "browser" : agentId;
     setSelectedCommand(null);
@@ -6049,56 +6748,81 @@ Please analyze the code you just wrote and fix this error.`;
     setWorkspaceChromeEngaged(true);
   }, []);
 
-  const controlAttachedAppAgent = useCallback((messageId: string, agentId: AppAgentId, control: "ai" | "user") => {
-    setMessages((current) => current.map((message) => message.id === messageId ? { ...message, appAgents: message.appAgents?.map((item) => item.id === agentId ? { ...item, control, paused: control === "user" ? true : item.paused, action: control === "user" ? "User has control" : "Agent resumed" } : item) } : message));
+  const controlAttachedAppAgent = useCallback(async (messageId: string, agentId: AppAgentId, control: "ai" | "user") => {
+    // Browser control is not an optimistic decoration.  The managed browser
+    // owns the authoritative state and must acknowledge the command before
+    // Chat says the user has taken control or the agent has resumed.
     if (agentId === "browse") {
-      void fetch("/api/openbrowser/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: control === "user" ? "take_control" : "return_control" }),
-      }).catch(() => undefined);
+      try {
+        const response = await fetch("/api/openbrowser/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: control === "user" ? "take_control" : "return_control" }),
+        });
+        const payload = await response.json().catch(() => null) as { ok?: boolean; error?: { message?: string } } | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error?.message || "Clyra Browser could not update control.");
+        }
+      } catch (error) {
+        setToastMessage(error instanceof Error ? error.message : "Clyra Browser could not update control.");
+        return;
+      }
     }
+    setMessages((current) => current.map((message) => message.id === messageId ? { ...message, appAgents: message.appAgents?.map((item) => item.id === agentId ? { ...item, control, paused: control === "user" ? true : item.paused, action: control === "user" ? "User has control" : "Agent resumed" } : item) } : message));
     setToastMessage(control === "user" ? "You have control of this workspace" : "Agent resumed from the current workspace");
   }, []);
 
-  const pauseAttachedAppAgent = useCallback((messageId: string, agentId: AppAgentId, paused: boolean) => {
-    setMessages((current) => current.map((message) => message.id === messageId ? { ...message, appAgents: message.appAgents?.map((item) => item.id === agentId ? { ...item, paused, action: paused ? "Paused" : "Resumed" } : item) } : message));
+  const pauseAttachedAppAgent = useCallback(async (messageId: string, agentId: AppAgentId, paused: boolean) => {
     if (agentId === "browse") {
-      void fetch("/api/openbrowser/control", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: paused ? "pause" : "resume" }),
-      }).catch(() => undefined);
+      try {
+        const response = await fetch("/api/openbrowser/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: paused ? "pause" : "resume" }),
+        });
+        const payload = await response.json().catch(() => null) as { ok?: boolean; error?: { message?: string } } | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error?.message || "Clyra Browser could not update the task.");
+        }
+      } catch (error) {
+        setToastMessage(error instanceof Error ? error.message : "Clyra Browser could not update the task.");
+        return;
+      }
     }
+    setMessages((current) => current.map((message) => message.id === messageId ? { ...message, appAgents: message.appAgents?.map((item) => item.id === agentId ? { ...item, paused, action: paused ? "Paused" : "Resumed" } : item) } : message));
     setToastMessage(paused ? "Agent paused" : "Agent resumed");
   }, []);
 
   const handleSendMessage = async () => {
     if (!value.trim() && attachments.length === 0 && !selectedCommand && selectedAppAgents.length === 0) return;
+    if (isOffline) return;
+
+    const isClyraMusicCommand = selectedCommand?.id === "spotify";
 
     // "play X", "skip", "resume", "pause", "play something trending" —
     // handled directly against Spotify instead of going through the AI
     // model. Only when Spotify is actually connected, so plain chat isn't
     // hijacked for anyone who hasn't set it up.
     if (
-      value.trim() &&
+      (value.trim() || isClyraMusicCommand) &&
       attachments.length === 0 &&
-      !selectedCommand &&
+      (!selectedCommand || isClyraMusicCommand) &&
       selectedAppAgents.length === 0 &&
       !pendingDocumentRewriteRef.current &&
       !selectedAgent &&
       activeWorkspaceTab === "chat" &&
-      spotifyPlayback.connected
+      (spotifyPlayback.connected || isClyraMusicCommand)
     ) {
       const intent = detectSpotifyIntent(value.trim());
-      if (intent) {
-        const promptText = value.trim();
+      if (intent || isClyraMusicCommand) {
+        const promptText = value.trim() || "Open Clyra Music";
         setValue("");
+        setSelectedCommand(null);
         adjustHeight(true);
         const userMsgId = `${Date.now()}`;
         const assistantMsgId = `${Date.now() + 1}`;
         let actionLabel: string;
-        switch (intent.action) {
+        switch (intent?.action) {
           case "next":
             actionLabel = "Skipping to the next track";
             break;
@@ -6117,6 +6841,9 @@ Please analyze the code you just wrote and fix this error.`;
           case "play_query":
             actionLabel = `Searching Spotify for "${intent.query}"`;
             break;
+          default:
+            actionLabel = "Preparing Clyra Music";
+            break;
         }
         setMessages((prev) => [
           ...prev,
@@ -6131,14 +6858,16 @@ Please analyze the code you just wrote and fix this error.`;
             createdAt: Date.now(),
           },
         ]);
-        setShowSpotifyNotch(true);
+        spotifyCommandInFlightRef.current = true;
         let reply: string;
         try {
           const verifySpotify = async (expected: "playing" | "paused" | "available") => {
             const verification = await spotifyPlayback.verifyPlayback(expected);
             return verification.ok ? null : verification.error || "Spotify did not confirm the requested state.";
           };
-          switch (intent.action) {
+          if (!intent) {
+            reply = "Clyra Music is ready.";
+          } else switch (intent.action) {
             case "next": {
               const res = await spotifyPlayback.next();
               const error = res.ok ? await verifySpotify("available") : res.error;
@@ -6182,6 +6911,11 @@ Please analyze the code you just wrote and fix this error.`;
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantMsgId ? { ...m, content: reply, isThinking: false } : m)),
         );
+        // Do not reveal the player while the command is still being handled.
+        // At this point the chat response has been committed, whether the
+        // requested action succeeded or returned a useful error.
+        spotifyCommandInFlightRef.current = false;
+        revealSpotifyNotch();
         return;
       }
     }
@@ -6262,6 +6996,40 @@ Please analyze the code you just wrote and fix this error.`;
         }
       }
 
+      // A natural-language follow-up during an active autonomous run steers
+      // that exact run rather than starting a duplicate task. This keeps the
+      // completed work and the live workspace in one assistant turn.
+      const activeHermesMessage = [...messages].reverse().find((message) =>
+        message.role === "assistant" &&
+        message.agentRuntime?.kind === "hermes" &&
+        message.mission &&
+        !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(message.mission.state),
+      );
+      if (activeHermesMessage && value.trim() && !value.trim().startsWith("/")) {
+        const instruction = value.trim();
+        const userSteerMessage: Message = { id: `${Date.now()}-steer`, role: "user", content: instruction, createdAt: Date.now() };
+        const update = (previous: Message[]) => [...previous, userSteerMessage];
+        const chatId = currentChatIdRef.current;
+        if (chatId) patchMessagesForChat(chatId, update);
+        else setMessages(update);
+        setValue("");
+        adjustHeight(true);
+        setIsComposerFocused(false);
+        try {
+          const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(activeHermesMessage.agentRuntime.runId)}/steer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: instruction }),
+          });
+          const payload = await response.json().catch(() => null) as { error?: string } | null;
+          if (!response.ok) throw new Error(payload?.error || "Clyra could not apply that instruction.");
+          updateHermesMissionEvent(activeHermesMessage.id, { type: "planning", label: `Updated plan: ${instruction}`, timestamp: Date.now() });
+        } catch (error) {
+          setToastMessage(error instanceof Error ? error.message : "Clyra could not steer the active run.");
+        }
+        return;
+      }
+
       setVibePreviewMessageId(null);
       setVibePreviewFiles(null);
       const attachedAgentCommands = [...selectedAppAgents];
@@ -6301,6 +7069,8 @@ Please analyze the code you just wrote and fix this error.`;
         adjustHeight(true);
         return;
       }
+      const missionCommand = rawUserText.match(/^\/mission(?:\s+(.+))?$/i);
+      const isForcedMission = userCommandId === "mission" || Boolean(missionCommand);
       const isDeepResearchMode = userCommandId === "deep-research" || /^\/deep-research\b/i.test(rawUserText) || Boolean(pendingDeepResearch);
       const googleTool = isDeepResearchMode ? null : detectGoogleTool(rawUserText, selectedCommand);
       const googleAction = googleTool ? googleActionLabel(googleTool, rawUserText) : undefined;
@@ -6325,7 +7095,10 @@ Please analyze the code you just wrote and fix this error.`;
       if (rawUserText) setWorkspaceChromeEngaged(true);
       const vibeCommand = rawUserText.match(/^\/vibe(?:\s+(.+))?$/i);
       const clipCommand = rawUserText.match(/^\/clip(?:\s+(.+))?$/i);
-      const browseCommand = rawUserText.match(/^\/browse(?:\s+(.+))?$/i);
+      // `/browser` is the canonical power command. `/browse` remains a
+      // compatibility alias for conversations created before the rename.
+      const browseCommand = rawUserText.match(/^\/(?:browser|browse)(?:\s+(.+))?$/i);
+      const automateCommand = rawUserText.match(/^\/automate(?:\s+(.+))?$/i);
       const youtubeCommand = rawUserText.match(/^\/youtube(?:\s+(.+))?$/i);
       const searchCommand = rawUserText.match(/^\/search(?:\s+(.+))?$/i);
       if (userCommandId === "clip" || clipCommand) {
@@ -6346,8 +7119,8 @@ Please analyze the code you just wrote and fix this error.`;
         return;
       }
 
-      // Selecting Browse from the command palette removes the visible
-      // `/browse` prefix before send, whereas a typed slash command retains
+      // Selecting Browser from the command palette removes the visible
+      // `/browser` prefix before send, whereas a typed slash command retains
       // it. Support both forms so the actual request always reaches the
       // browser's editable agent composer.
       const browserTask = browseCommand?.[1]?.trim()
@@ -6383,6 +7156,12 @@ Please analyze the code you just wrote and fix this error.`;
         }
       }
 
+      // Scheduling is intentionally opt-in through the Automate command.
+      // A normal conversational “every morning…” must never silently create
+      // a recurring side effect just because it resembles a schedule.
+      const automationRequest = automateCommand?.[1]?.trim()
+        || (userCommandId === "automate" ? rawUserText : "");
+
       const detectedYoutubeUrl = extractYoutubeUrl(rawUserText);
       const attachedAgentOwnsRequest = attachedAgentCommands.length > 0;
       const priorYoutube = [...messages]
@@ -6406,14 +7185,18 @@ Please analyze the code you just wrote and fix this error.`;
         userCommandId !== "clip" &&
         userCommandId !== "weather";
       const weatherCommand = rawUserText.match(/^\/weather\s*(.*)$/i);
-      const awaitingWeatherLocation = [...messages]
-        .reverse()
-        .find(
-          (msg) =>
-            msg.role === "assistant" &&
-            msg.thinkingMode === "weather" &&
-            /which location/i.test(msg.content),
-        );
+      // Only treat this turn as "replying with a location" when the weather
+      // location prompt was the single most recent message — scanning the
+      // whole history here previously made isWeatherMode stick permanently
+      // once that prompt had ever appeared, hijacking unrelated later turns.
+      const lastMessage = messages[messages.length - 1];
+      const awaitingWeatherLocation =
+        lastMessage &&
+        lastMessage.role === "assistant" &&
+        lastMessage.thinkingMode === "weather" &&
+        /which location/i.test(lastMessage.content)
+          ? lastMessage
+          : undefined;
       const isWeatherMode =
         userCommandId === "weather" ||
         Boolean(weatherCommand) ||
@@ -6433,6 +7216,32 @@ Please analyze the code you just wrote and fix this error.`;
       // question like "what's in this file" is actually about — prefer
       // reading it over routing to a web search that can never see it.
       const hasReadableAttachments = attachments.some((file) => file.content);
+      const mapsCommand = rawUserText.match(/^\/maps?\s*(.*)$/i);
+      // Same "only the immediately-next reply counts" scoping as
+      // awaitingWeatherLocation above, for the maps "which location?" prompt.
+      const awaitingMapsLocation =
+        lastMessage &&
+        lastMessage.role === "assistant" &&
+        lastMessage.thinkingMode === "maps" &&
+        /which location/i.test(lastMessage.content)
+          ? lastMessage
+          : undefined;
+      const isMapsMode =
+        !isWeatherMode &&
+        (userCommandId === "maps" ||
+          Boolean(mapsCommand) ||
+          (!attachedAgentOwnsRequest && Boolean(awaitingMapsLocation)) ||
+          (!youtubeFollowUp &&
+            !attachedAgentOwnsRequest &&
+            !detectedYoutubeUrl &&
+            !hasReadableAttachments &&
+            looksLikeLocationQuery(rawUserText)));
+      const mapsWantsCurrentLocation = isAskingForCurrentLocation(rawUserText);
+      const mapsLocationQuery =
+        mapsCommand?.[1]?.trim() ||
+        (awaitingMapsLocation ? rawUserText.replace(/^\/maps?\s*/i, "").trim() : "") ||
+        extractLocationQuery(rawUserText) ||
+        "";
       const autoSearch =
         !isDeepResearchMode &&
         !youtubeCommand &&
@@ -6440,6 +7249,7 @@ Please analyze the code you just wrote and fix this error.`;
         !weatherCommand &&
         !youtubeFollowUp &&
         !isWeatherMode &&
+        !isMapsMode &&
         !hasReadableAttachments &&
         userCommandId !== "youtube" &&
         userCommandId !== "search" &&
@@ -6455,6 +7265,7 @@ Please analyze the code you just wrote and fix this error.`;
       const isSearchMode =
         !isDeepResearchMode &&
         !isWeatherMode &&
+        !isMapsMode &&
         (userCommandId === "search" ||
           Boolean(searchCommand) ||
           autoSearch ||
@@ -6476,8 +7287,10 @@ Please analyze the code you just wrote and fix this error.`;
           : "");
 
       const userText =
+        automationRequest ||
         browserTask ||
         vibeCommand?.[1]?.trim() ||
+        (isForcedMission ? missionCommand?.[1]?.trim() || rawUserText.replace(/^\/mission\s*/i, "").trim() : null) ||
         (isWeatherMode
           ? weatherCommand?.[1]?.trim() ||
             rawUserText.replace(/^\/weather\s*/i, "").trim() ||
@@ -6536,7 +7349,9 @@ Please analyze the code you just wrote and fix this error.`;
             ? "search"
             : isWeatherMode
               ? "weather"
-              : googleTool
+              : isMapsMode
+                ? "maps"
+                : googleTool
                 ? "google"
                 : !isVibeMode && wantsCodeMode(userText)
                   ? "coding"
@@ -6548,7 +7363,17 @@ Please analyze the code you just wrote and fix this error.`;
           priorYoutube?.youtubeVideoId ||
           undefined
         : undefined;
-      setActiveWorkspaceTab(isVibeMode ? "vibe" : browserTask ? "browser" : "chat");
+      // Sending from an attached/app-local composer must not silently pull
+      // the person away from the app they are using. Explicit Vibe/Browser
+      // work still opens its target; ordinary chat stays where it was asked.
+      const destinationWorkspace = isVibeMode
+        ? "vibe"
+        : browserTask
+          ? "browser"
+          : activeWorkspaceTab;
+      if (destinationWorkspace !== activeWorkspaceTab) {
+        setActiveWorkspaceTab(destinationWorkspace);
+      }
       const userMessage: Message = {
         id: userMsgId,
         role: "user",
@@ -6568,12 +7393,13 @@ Please analyze the code you just wrote and fix this error.`;
         ...(researchRunId ? { researchRunId, googleSteps: [] } : {}),
         ...(googleAction ? { googleAction } : {}),
         ...(googleDetail ? { googleDetail } : {}),
-        ...(isSearchMode ? { searchQuery: userText.replace(/^\/search\s*/i, "").trim().slice(0, 160) } : {}),
+        ...(isSearchMode ? { searchQuery: webSearchProgressLabel(searchPayload || rawUserText) } : {}),
         // A request may contain “notes” / “summarize” while being routed to
         // web search, YouTube, research, or Google Docs. Keep the Notes card
         // exclusively for plain chat note requests — search answers stay as
         // normal message text with source chips underneath.
         ...(wantsNotesMode(userText) &&
+        !automationRequest &&
         !googleTool &&
         !isSearchMode &&
         !isYoutubeMode &&
@@ -6592,6 +7418,16 @@ Please analyze the code you just wrote and fix this error.`;
                 instruction: userText,
                 summary: `Queued with this message: ${userText}`,
               })),
+              agentSteps: [
+                { id: "plan", label: "Plan the work", state: "queued" as const },
+                ...attachedAgentCommands.map((agent) => ({
+                  id: `agent-${agent.id}`,
+                  label: agent.label,
+                  agentId: agent.id,
+                  state: "queued" as const,
+                })),
+                { id: "verify", label: "Verify the results", state: "queued" as const },
+              ],
             }
           : {}),
       };
@@ -6644,18 +7480,46 @@ Please analyze the code you just wrote and fix this error.`;
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       setMessages(nextMessages);
 
+      if (automationRequest) {
+        try {
+          const response = await fetch("/api/agent/automations/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: automationRequest }),
+            signal: streamController.signal,
+          });
+          const payload = await response.json().catch(() => null) as { automation?: AutomationStatus; error?: string } | null;
+          const automation = payload?.automation;
+          if (!response.ok || !automation) throw new Error(payload?.error || "Clyra could not save that automation.");
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+            ...message,
+            content: `Scheduled **${automation.name}**. Clyra will use the verified task plan and the concrete run time shown below.`,
+            automation,
+            isThinking: false,
+            isStreaming: false,
+          } : message));
+        } catch (error) {
+          if (streamController.signal.aborted) return;
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+            ...message,
+            content: `I couldn't schedule that automation: ${error instanceof Error ? error.message : "unknown error"}`,
+            isThinking: false,
+            isStreaming: false,
+          } : message));
+        }
+        return;
+      }
+
       // Connected local mission lanes call the same server-owned planner and
       // verifier used by automation. A note is acknowledged only after it is
-      // reopened; a place result is acknowledged only when Maps returns
-      // usable coordinates. Other requests stay on their established routes
-      // until their real adapters are connected to the universal host.
+      // reopened; other requests stay on their established routes until their
+      // real adapters are connected to the universal host.
       const noteMissionCandidate =
         !isDeepResearchMode && !isYoutubeMode && !isSearchMode && !isWeatherMode && !googleTool &&
         /\b(?:make|create|write|save)\s+(?:a\s+)?(?:clyra\s+)?(?:note|report|comparison)\b/i.test(userText);
-      const placesMissionCandidate =
-        !isDeepResearchMode && !isYoutubeMode && !isSearchMode && !isWeatherMode && !googleTool &&
-        /\b(?:where is|locate|coordinates?|address|directions? to)\b/i.test(userText);
-      const serverMissionCandidate = noteMissionCandidate || placesMissionCandidate;
+      // A Mission chip/command explicitly requests the shared mission
+      // runtime. Research plus a Clyra artifact reaches it automatically.
+      const serverMissionCandidate = isForcedMission || noteMissionCandidate;
       const asksForNearbyLeadResearch =
         noteMissionCandidate &&
         /\b(?:near me|nearby|local)\b/i.test(userText) &&
@@ -6669,12 +7533,94 @@ Please analyze the code you just wrote and fix this error.`;
         } : message));
         return;
       }
+      // Ordinary questions keep Clyra's fast chat route. Requests that need
+      // sustained work across tools, apps or specialists become one visible
+      // agent run — no separate mode switch or fake background dashboard.
+      const autonomousAgentCandidate =
+        !isDeepResearchMode && !isYoutubeMode && !isWeatherMode && !googleTool && !browserTask && !attachedAgentOwnsRequest &&
+        (isForcedMission || /\b(?:research|compare|investigate|inspect (?:this |the )?(?:project|codebase)|fix (?:the )?(?:build|bug|tests?)|run (?:the )?(?:build|tests?)|create (?:a )?(?:report|comparison|study note)|use (?:multiple|separate) agents|delegate|(?:edit|modify|move|rename|reorganize|organise|change) (?:the )?(?:project )?files?|(?:edit|modify|move|rename)\s+\S+(?:\s+(?:to|into)\s+\S+)?|build (?:this |a )?(?:feature|project)|open (?:clyra )?notes|continue (?:my |the )?(?:project|work))\b/i.test(userText));
+      if (autonomousAgentCandidate) {
+        try {
+          const runtimeResponse = await fetch("/api/agent/hermes/status", { signal: streamController.signal });
+          const runtimePayload = await runtimeResponse.json().catch(() => null) as { runtime?: { configured?: boolean; connected?: boolean; reason?: string } } | null;
+          if (runtimePayload?.runtime?.configured && runtimePayload.runtime.connected === false) {
+            // Report the real service state immediately. Sending the run would
+            // otherwise wait on a service that is not listening, and the reply
+            // would stay in "Thinking" with no explanation.
+            const reason = runtimePayload.runtime.reason?.trim();
+            updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: `Clyra can't start this task. ${reason || "The local agent service isn't running."}`,
+              isThinking: false,
+              isStreaming: false,
+            } : message));
+            return;
+          }
+          if (runtimePayload?.runtime?.configured) {
+            const response = await fetch("/api/agent/hermes/runs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                input: userText,
+                sessionId: `clyra-chat-${chatId || "temporary"}`,
+                model: CHAT_EFFORT_MODEL[chatEffort],
+                idempotencyKey: `chat-${aiMsgId}`,
+              }),
+              signal: streamController.signal,
+            });
+            const payload = await response.json().catch(() => null) as { run?: Record<string, unknown>; error?: string } | null;
+            const run = payload?.run;
+            const runId = String(run?.run_id || run?.id || "");
+            if (!response.ok || !runId) throw new Error(payload?.error || "Clyra did not receive an agent run receipt.");
+            const rawState = String(run?.status || "queued").toLowerCase();
+            const initialFailed = /fail|error|interrupt/.test(rawState);
+            const initialCancelled = /cancel|stopp?ed/.test(rawState);
+            const initialCompleted = /complete|finish|success/.test(rawState);
+            const state = initialCompleted ? "COMPLETED" : initialCancelled ? "CANCELLED" : rawState.includes("approval") ? "WAITING_FOR_APPROVAL" : initialFailed ? "FAILED" : "PLANNING";
+            const mission: MissionStatus = {
+              id: runId,
+              state,
+              plan: { objective: userText, steps: [{ id: "agent-plan", description: "Preparing the task plan", status: state === "COMPLETED" ? "completed" : "running" }] },
+              traces: [{ at: Date.now(), state, event: "Clyra started an autonomous task" }],
+            };
+            updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: state === "COMPLETED"
+                ? (typeof run?.output === "string" && run.output.trim() ? run.output.trim().slice(0, 12_000) : "Done — Clyra completed the agent task.")
+                : state === "FAILED"
+                  ? `Clyra needs attention: ${typeof run?.error === "string" ? run.error.slice(0, 800) : "the local agent run could not start."}`
+                  : state === "CANCELLED"
+                    ? "Stopped. Clyra kept the work that completed before the stop."
+                    : "Clyra is working through the task.",
+              mission,
+              agentRuntime: { kind: "hermes" as const, runId, sessionId: `clyra-chat-${chatId || "temporary"}` },
+              isThinking: !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(state),
+              isStreaming: !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(state),
+            } : message));
+            if (!["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(state)) {
+              openHermesEventStream(aiMsgId, runId, streamController.signal);
+            }
+            return;
+          }
+        } catch (error) {
+          if (streamController.signal.aborted) return;
+          // If Hermes is installed but cannot start, report the real local
+          // failure instead of silently pretending another runtime handled it.
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+            ...message,
+            content: `Clyra couldn't start the local agent runtime: ${error instanceof Error ? error.message : "unknown error"}`,
+            isThinking: false,
+            isStreaming: false,
+          } : message));
+          return;
+        }
+      }
       if (serverMissionCandidate) {
         try {
           const response = await fetch("/api/agent/missions/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ missionId: `chat-${aiMsgId}`, projectId: currentChatId || undefined, prompt: userText }),
+            body: JSON.stringify({ missionId: `chat-${aiMsgId}`, projectId: currentChatId || undefined, prompt: userText, background: true }),
             signal: streamController.signal,
           });
           const payload = await response.json().catch(() => null);
@@ -6693,54 +7639,61 @@ Please analyze the code you just wrote and fix this error.`;
             } : message));
             return;
           }
-          const places = mission?.outputs?.places?.data?.places;
-          if (response.ok && mission?.state === "COMPLETED" && Array.isArray(places) && places.length) {
-            // Keep the display card tied to the exact coordinates verified by
-            // Clyra Maps. The LLM never invents a pin or a location preview.
-            const verifiedPlaces: LocationMapPlace[] = places.flatMap((place: any) => {
-              const lat = Number(place?.lat);
-              const lng = Number(place?.lng);
-              const name = String(place?.name || "").trim();
-              if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
-              return [{
-                name,
-                address: String(place?.address || name),
-                lat,
-                lng,
-                types: Array.isArray(place?.types)
-                  ? place.types.filter((type: unknown): type is string => typeof type === "string").slice(0, 6)
-                  : undefined,
-              }];
-            }).slice(0, 5);
-            if (!verifiedPlaces.length) {
-              throw new Error("Clyra Maps returned places without valid coordinates.");
-            }
-            const results = verifiedPlaces.map((place, index) =>
-              `${index + 1}. **${place.name}** — ${place.address}`,
-            ).join("\n");
-            updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
-              ...message,
-              content: `Found ${places.length} verified place${places.length === 1 ? "" : "s"} through Clyra Maps:\n\n${results}`,
-              locationPlaces: verifiedPlaces,
-              mission: mission as MissionStatus,
-              isThinking: false,
-              isStreaming: false,
-            } : message));
-            return;
-          }
           if (mission?.id && mission?.state) {
             const waiting = mission.state === "WAITING_FOR_APPROVAL"
               ? "Ready for your approval. Clyra has not run the held action."
               : mission.state === "WAITING_FOR_USER"
                 ? "Clyra saved the task and is waiting for your input."
-                : "Clyra saved this task at its last safe checkpoint.";
+                : "Clyra is working through the saved plan and will verify each step before reporting completion.";
             updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
               ...message,
               content: waiting,
               mission: mission as MissionStatus,
-              isThinking: false,
-              isStreaming: false,
+              isThinking: !["WAITING_FOR_APPROVAL", "WAITING_FOR_USER", "PAUSED"].includes(String(mission.state)),
+              isStreaming: !["WAITING_FOR_APPROVAL", "WAITING_FOR_USER", "PAUSED"].includes(String(mission.state)),
             } : message));
+            // The response above is an initial durable receipt, not a claim
+            // that the goal has completed. Keep the chat row tied to the
+            // persisted mission until it reaches a real terminal state.
+            void (async () => {
+              for (let attempt = 0; attempt < 900; attempt += 1) {
+                await new Promise((resolve) => window.setTimeout(resolve, 850));
+                if (streamController.signal.aborted) return;
+                try {
+                  const statusResponse = await fetch(`/api/agent/missions/${encodeURIComponent(String(mission.id))}`, { signal: streamController.signal });
+                  const statusPayload = await statusResponse.json().catch(() => null) as { mission?: MissionStatus } | null;
+                  const currentMission = statusPayload?.mission;
+                  if (!statusResponse.ok || !currentMission) return;
+                  const terminal = ["COMPLETED", "FAILED", "CANCELLED"].includes(currentMission.state);
+                  const paused = ["PAUSED", "WAITING_FOR_APPROVAL", "WAITING_FOR_USER"].includes(currentMission.state);
+                  const progressText = currentMission.state === "COMPLETED"
+                    ? "Clyra completed and verified every step in this task."
+                    : currentMission.state === "CANCELLED"
+                      ? "Stopped. Any verified work completed before the stop has been kept."
+                      : currentMission.state === "FAILED"
+                        ? currentMission.error?.message || "Clyra could not verify this task."
+                        : currentMission.state === "PAUSED"
+                          ? "Paused at a safe checkpoint. Clyra will re-observe before it resumes."
+                          : currentMission.state === "WAITING_FOR_APPROVAL"
+                            ? "Clyra needs your approval for the exact held action below."
+                            : currentMission.state === "WAITING_FOR_USER"
+                              ? "Clyra needs your input before this task can continue."
+                              : "Clyra is working through the saved plan and verifying the current step.";
+                  updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+                    ...message,
+                    content: progressText,
+                    mission: currentMission,
+                    isThinking: !(terminal || paused),
+                    isStreaming: !(terminal || paused),
+                  } : message));
+                  if (terminal || paused) return;
+                } catch {
+                  // A transient status refresh never alters task state. The
+                  // persisted checkpoint remains available to resume later.
+                  return;
+                }
+              }
+            })();
             return;
           }
           throw new Error(String(payload?.error || mission?.error?.message || "The mission could not be verified."));
@@ -6787,9 +7740,12 @@ Please analyze the code you just wrote and fix this error.`;
           .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
           .join("\n\n")
           .slice(0, 8_000);
-        for (const agent of attachedAgentCommands) {
-          void runAttachedAppAgent(aiMsgId, agent, userText, agentConversationContext);
-        }
+        void runAttachedAppAgentPlan(
+          aiMsgId,
+          attachedAgentCommands,
+          userText,
+          agentConversationContext,
+        );
       }
 
       if (isVibeMode && chatId && !isTemporaryChatRef.current) {
@@ -6948,15 +7904,15 @@ Please analyze the code you just wrote and fix this error.`;
         }
 
         if (attachedAgentCommands.length) {
-          await new Promise((resolve) => window.setTimeout(resolve, 420));
           setMessages((current) =>
             current.map((message) =>
               message.id === aiMsgId
+                && message.isThinking
                 ? {
                     ...message,
-                    content: `I understand you want: “${userText.slice(0, 280)}”. I’m coordinating ${attachedAgentCommands.map((agent) => agent.label).join(", ")} now. The live workspaces below are the source of truth; select a preview to steer that agent from this chat input.`,
-                    isThinking: false,
-                    isStreaming: false,
+                    content: `I’m coordinating ${attachedAgentCommands.map((agent) => agent.label).join(", ")} through the plan below. Each workspace starts after the previous step reaches a stable handoff.`,
+                    isThinking: true,
+                    isStreaming: true,
                   }
                 : message,
             ),
@@ -6965,7 +7921,19 @@ Please analyze the code you just wrote and fix this error.`;
         }
 
         if (isWeatherMode) {
-          if (!weatherLocation) {
+          let weatherRequestBody: { location: string } | { lat: number; lon: number } | null =
+            weatherLocation ? { location: weatherLocation } : null;
+          let isCurrentLocationRequest = false;
+
+          if (!weatherRequestBody) {
+            const deviceCoords = await resolveDeviceLocation();
+            if (deviceCoords) {
+              weatherRequestBody = { lat: deviceCoords.lat, lon: deviceCoords.lon };
+              isCurrentLocationRequest = true;
+            }
+          }
+
+          if (!weatherRequestBody) {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMsgId
@@ -6982,11 +7950,12 @@ Please analyze the code you just wrote and fix this error.`;
             );
             return;
           }
+
           try {
             const response = await fetch("/api/research/weather", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ location: weatherLocation }),
+              body: JSON.stringify(weatherRequestBody),
             });
             const payload = await response.json();
             if (!response.ok || !payload?.ok) {
@@ -7003,7 +7972,7 @@ Please analyze the code you just wrote and fix this error.`;
                         ...msg,
                         content:
                           (payload?.error?.message ||
-                            `I couldn't fetch weather for “${weatherLocation}”. Try another place name.`) +
+                            `I couldn't fetch weather for “${weatherLocation || "your location"}”. Try another place name.`) +
                           suggestionText,
                         isThinking: false,
                         isStreaming: false,
@@ -7025,15 +7994,28 @@ Please analyze the code you just wrote and fix this error.`;
               matchedFrom: payload.matchedFrom
                 ? String(payload.matchedFrom)
                 : undefined,
+              isCurrentLocation: isCurrentLocationRequest,
               current: {
                 tempC: Number(payload.current?.tempC ?? 0),
+                feelsLikeC: Number(payload.current?.feelsLikeC ?? payload.current?.tempC ?? 0),
                 weatherCode: Number(payload.current?.weatherCode ?? 0),
                 isDay: Boolean(payload.current?.isDay),
                 highC: Number(payload.current?.highC ?? 0),
                 lowC: Number(payload.current?.lowC ?? 0),
                 precipProb: Number(payload.current?.precipProb ?? 0),
+                humidity: Number(payload.current?.humidity ?? 0),
+                windKph: Number(payload.current?.windKph ?? 0),
+                windDirection: Number(payload.current?.windDirection ?? 0),
                 condition: String(payload.current?.condition || "Weather"),
               },
+              hourly: Array.isArray(payload.hourly)
+                ? payload.hourly.map((hour: any) => ({
+                    time: String(hour.time || ""),
+                    tempC: Number(hour.tempC ?? 0),
+                    precipProb: Number(hour.precipProb ?? 0),
+                    weatherCode: Number(hour.weatherCode ?? 0),
+                  }))
+                : [],
               daily: Array.isArray(payload.daily)
                 ? payload.daily.map((day: any) => ({
                     date: String(day.date || ""),
@@ -7089,9 +8071,120 @@ Please analyze the code you just wrote and fix this error.`;
           return;
         }
 
+        if (isMapsMode) {
+          let mapsRequestBody: { location: string } | { lat: number; lon: number } | null =
+            mapsLocationQuery && !mapsWantsCurrentLocation ? { location: mapsLocationQuery } : null;
+          let isCurrentLocationRequest = false;
+
+          if (!mapsRequestBody) {
+            const deviceCoords = await resolveDeviceLocation();
+            if (deviceCoords) {
+              mapsRequestBody = { lat: deviceCoords.lat, lon: deviceCoords.lon };
+              isCurrentLocationRequest = true;
+            }
+          }
+
+          if (!mapsRequestBody) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId
+                  ? {
+                      ...msg,
+                      content:
+                        "Which location should I show? Reply with a city or place — for example “Hornsby Heights NSW” or “Tokyo Tower”.",
+                      isThinking: false,
+                      isStreaming: false,
+                      thinkingMode: "maps",
+                    }
+                  : msg,
+              ),
+            );
+            return;
+          }
+
+          try {
+            const response = await fetch("/api/research/geocode", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(mapsRequestBody),
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload?.ok) {
+              const suggestions = Array.isArray(payload?.suggestions)
+                ? payload.suggestions.map(String).filter(Boolean).slice(0, 3)
+                : [];
+              const suggestionText = suggestions.length
+                ? `\n\nDid you mean:\n${suggestions.map((s: string) => `- ${s}`).join("\n")}`
+                : "";
+              updateMessagesForRun((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? {
+                        ...msg,
+                        content:
+                          (payload?.error ||
+                            `I couldn't find "${mapsLocationQuery || "that place"}". Try another place name.`) +
+                          suggestionText,
+                        isThinking: false,
+                        isStreaming: false,
+                        thinkingMode: "maps",
+                      }
+                    : msg,
+                ),
+              );
+              return;
+            }
+            const mapLocationPayload: MapLocationPayload = {
+              name: String(payload.name || mapsLocationQuery || "Location"),
+              region: payload.region ? String(payload.region) : undefined,
+              country: payload.country ? String(payload.country) : undefined,
+              lat: Number(payload.lat),
+              lon: Number(payload.lon),
+              isCurrentLocation: isCurrentLocationRequest,
+              matchedFrom: payload.matchedFrom ? String(payload.matchedFrom) : undefined,
+            };
+            const placeLabel = [mapLocationPayload.name, mapLocationPayload.region, mapLocationPayload.country]
+              .filter(Boolean)
+              .join(", ");
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId
+                  ? {
+                      ...msg,
+                      content: isCurrentLocationRequest
+                        ? `Here's your current location — **${placeLabel}**.`
+                        : `Here's **${placeLabel}** on the map.`,
+                      mapLocation: mapLocationPayload,
+                      isThinking: false,
+                      isStreaming: false,
+                      thinkingMode: "maps",
+                    }
+                  : msg,
+              ),
+            );
+          } catch (mapsError) {
+            console.error("Maps request failed:", mapsError);
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId
+                  ? {
+                      ...msg,
+                      content: "I couldn't reach the maps service right now. Please try again in a moment.",
+                      isThinking: false,
+                      isStreaming: false,
+                      thinkingMode: "maps",
+                    }
+                  : msg,
+              ),
+            );
+          }
+          return;
+        }
+
         if (isYoutubeMode || isSearchMode) {
           let analysisPrompt = "";
           let fetchedWebSourceCount = 0;
+          let fetchedWebCitations: WebCitationView[] = [];
           const researchStartedAt = Date.now();
           let youtubeContextForMessage:
             | { url: string; analysisPrompt: string }
@@ -7362,11 +8455,36 @@ Please analyze the code you just wrote and fix this error.`;
               return;
             }
             try {
-              const response = await fetch("/api/research/web-search", {
+              // Discover results first so real sites can appear while their
+              // page text is being read for the grounded response.
+              const lookupResponse = await fetch("/api/research/web-search/lookup", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ query, maxResults: 6, fetchTop: 3 }),
+                body: JSON.stringify({ query, maxResults: 6 }),
               });
+              const lookupPayload = await lookupResponse.json();
+              const lookupUrls = lookupResponse.ok && lookupPayload?.ok && Array.isArray(lookupPayload.urls)
+                ? lookupPayload.urls.map(String).filter(Boolean).slice(0, 6)
+                : [];
+              const responsePromise = fetch("/api/research/web-search", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ query, maxResults: 6, fetchTop: 3, urls: lookupUrls }),
+              });
+              // A short cadence keeps each source legible without becoming a
+              // multi-second pause before Chat can begin its answer.
+              for (let i = 0; i < lookupUrls.length; i += 1) {
+                const nextSources = lookupUrls.slice(0, i + 1);
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === aiMsgId
+                      ? { ...msg, searchSources: nextSources, isThinking: true, isStreaming: true, thinkingMode: "search" }
+                      : msg,
+                  ),
+                );
+                if (i < lookupUrls.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 160));
+              }
+              const response = await responsePromise;
               const payload = await response.json();
               if (!response.ok || !payload?.ok) {
                 setMessages((prev) =>
@@ -7389,9 +8507,13 @@ Please analyze the code you just wrote and fix this error.`;
               fetchedWebSourceCount = Array.isArray(payload.pages)
                 ? payload.pages.filter((page: { blocked?: unknown; excerpt?: unknown }) => !page?.blocked && typeof page?.excerpt === "string" && page.excerpt.trim().length > 0).length
                 : 0;
-              // Reveal source favicons one-by-one, then hold before answering.
+              fetchedWebCitations = Array.isArray(payload.citations)
+                ? (payload.citations as WebCitationView[])
+                : [];
+              // Lookup already revealed sites while pages were fetched. Keep
+              // this fallback for a failed lookup or additional result URLs.
               const revealUrls = urls.slice(0, 6);
-              for (let i = 0; i < revealUrls.length; i += 1) {
+              for (let i = lookupUrls.length; i < revealUrls.length; i += 1) {
                 const nextSources = revealUrls.slice(0, i + 1);
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -7406,9 +8528,7 @@ Please analyze the code you just wrote and fix this error.`;
                       : msg,
                   ),
                 );
-                await new Promise((resolve) =>
-                  window.setTimeout(resolve, 420),
-                );
+                if (i < revealUrls.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 160));
               }
               if (revealUrls.length === 0) {
                 setMessages((prev) =>
@@ -7425,10 +8545,8 @@ Please analyze the code you just wrote and fix this error.`;
                   ),
                 );
               }
-              // Keep shimmer + icons visible for a beat before the reply streams.
-              await new Promise((resolve) =>
-                window.setTimeout(resolve, 3000),
-              );
+              // Let the final source settle without inserting a noticeable gap.
+              await new Promise((resolve) => window.setTimeout(resolve, 350));
               analysisPrompt = String(payload.analysisPrompt || "");
               if (!analysisPrompt.trim()) {
                 setMessages((prev) =>
@@ -7526,7 +8644,8 @@ Please analyze the code you just wrote and fix this error.`;
             );
             return;
           }
-          const completedAnalysis = isSearchMode && !isGroundedWebResearchAnswer(accumulatedText, fetchedWebSourceCount)
+          const answerIsGrounded = !isSearchMode || isGroundedWebResearchAnswer(accumulatedText, fetchedWebSourceCount);
+          const completedAnalysis = isSearchMode && !answerIsGrounded
             ? "I retrieved sources, but the draft answer did not provide verifiable citations to the fetched pages, so I have not presented it as a factual result. Please retry the search or open the listed sources."
             : accumulatedText || "No analysis was generated.";
           updateMessagesForRun((prev) =>
@@ -7538,6 +8657,9 @@ Please analyze the code you just wrote and fix this error.`;
                     isThinking: false,
                     isStreaming: false,
                     thinkingMode,
+                    ...(isSearchMode && answerIsGrounded && fetchedWebCitations.length
+                      ? { searchCitations: fetchedWebCitations }
+                      : {}),
                     ...(youtubeContextForMessage
                       ? { youtubeContext: youtubeContextForMessage }
                       : {}),
@@ -7632,17 +8754,20 @@ Please analyze the code you just wrote and fix this error.`;
               );
             },
             temperature,
-            8000,
+            CHAT_EFFORT_MAX_TOKENS[chatEffort],
             CHAT_EFFORT_MODEL[chatEffort],
             streamController.signal,
             CHAT_EFFORT_THINKING[chatEffort],
+            CHAT_EFFORT_TIMEOUT_MS[chatEffort],
+            CHAT_EFFORT_REASONING[chatEffort],
           );
 
-          // End of streaming
+          // End of streaming. A cancelled stream can resolve normally, so the
+          // stop is recorded here as well as in the abort branch below.
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === aiMsgId
-                ? { ...msg, isStreaming: false, isThinking: false }
+                ? { ...msg, isStreaming: false, isThinking: false, ...(streamController.signal.aborted ? { stopped: true } : {}) }
                 : msg,
             ),
           );
@@ -7651,7 +8776,7 @@ Please analyze the code you just wrote and fix this error.`;
             updateMessagesForRun((prev) =>
               prev.map((msg) =>
                 msg.id === aiMsgId
-                  ? { ...msg, isStreaming: false, isThinking: false }
+                  ? { ...msg, isStreaming: false, isThinking: false, stopped: true }
                   : msg,
               ),
             );
@@ -7663,8 +8788,7 @@ Please analyze the code you just wrote and fix this error.`;
               msg.id === aiMsgId
                 ? {
                     ...msg,
-                    content:
-                      "Sorry, I've hit a rate limit right now! Please try again in an hour or so. In the meantime, the UI works perfectly.",
+                    content: chatReplyFailureText(error),
                     isThinking: false,
                     isStreaming: false,
                   }
@@ -7676,7 +8800,7 @@ Please analyze the code you just wrote and fix this error.`;
         if (streamController.signal.aborted) {
           updateMessagesForRun((prev) =>
             prev.map((msg) =>
-              msg.id === aiMsgId ? { ...msg, isThinking: false, isStreaming: false } : msg,
+              msg.id === aiMsgId ? { ...msg, isThinking: false, isStreaming: false, stopped: true } : msg,
             ),
           );
           return;
@@ -7687,8 +8811,7 @@ Please analyze the code you just wrote and fix this error.`;
             msg.id === aiMsgId
               ? {
                   ...msg,
-                  content:
-                    "Sorry, I encountered an error while processing your request.",
+                  content: chatReplyFailureText(error),
                   isThinking: false,
                   isStreaming: false,
                 }
@@ -7705,21 +8828,52 @@ Please analyze the code you just wrote and fix this error.`;
     activeStreamController.current?.abort();
   }, []);
 
-  const handleComposerPrimaryAction = (
-    event?: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
-  ) => {
-    event?.preventDefault();
-    event?.stopPropagation();
-    if (isAiResponding) {
+  /** Read the final text with the platform speech service. This is entirely
+   * local to the client: no response content is sent to another provider. */
+  const toggleReadAloud = useCallback((messageId: string, content: string) => {
+    const speech = typeof window === "undefined" ? null : window.speechSynthesis;
+    if (!speech || !content.trim()) {
+      setToastMessage("Read aloud isn't available in this browser.");
+      return;
+    }
+    const requestId = ++speechRequestRef.current;
+    if (readingMessageId === messageId) {
+      speech.cancel();
+      setReadingMessageId(null);
+      return;
+    }
+
+    speech.cancel();
+    const utterance = new SpeechSynthesisUtterance(content);
+    utterance.rate = 1;
+    utterance.onend = utterance.onerror = () => {
+      if (speechRequestRef.current === requestId) setReadingMessageId(null);
+    };
+    setReadingMessageId(messageId);
+    speech.speak(utterance);
+  }, [readingMessageId]);
+
+  useEffect(() => () => {
+    speechRequestRef.current += 1;
+    window.speechSynthesis?.cancel();
+  }, []);
+
+  // Sending moves focus off the composer, so Escape would otherwise land on
+  // <body>. While a chat reply streams, Escape cancels it whenever focus is
+  // not on another control: menus, dialogs and inputs keep their own Escape.
+  useEffect(() => {
+    if (!isAiResponding || activeWorkspaceTab !== "chat") return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const active = document.activeElement;
+      const focusIsFree = !active || active === document.body || active === textareaRef.current;
+      if (!focusIsFree) return;
+      event.preventDefault();
       stopGeneration();
-      return;
-    }
-    if (canSendMessage) {
-      void handleSendMessage();
-      return;
-    }
-    void voiceCall.startCall();
-  };
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [isAiResponding, activeWorkspaceTab, stopGeneration]);
 
   const regenerateResponse = useCallback((messageId: string) => {
     const index = messages.findIndex((message) => message.id === messageId);
@@ -7768,8 +8922,8 @@ Please analyze the code you just wrote and fix this error.`;
       "",
       ...messages.flatMap((message) => {
         const heading = message.role === "user" ? "## You" : "## Clyra";
-        const sourceLines = message.searchSources?.length
-          ? ["", "### Sources", ...message.searchSources.map((url) => `- ${url}`)]
+        const sourceLines = message.searchCitations?.length
+          ? ["", "### Sources", ...message.searchCitations.map((citation) => `- [${citation.id}] ${citation.title} — ${citation.url} (retrieved ${citation.retrievedAt})`)]
           : [];
         return [heading, "", message.content.trim(), ...sourceLines, ""];
       }),
@@ -7817,16 +8971,6 @@ Please analyze the code you just wrote and fix this error.`;
       window.setTimeout(() => void sendMessageRef.current?.(), 110);
     });
   }, [editingMessageId, editingMessageText, messages, cancelEditMessage]);
-
-  /** Start voice on pointerdown so framer-motion whileTap scale can't cancel the click. */
-  const handleComposerVoicePointerDown = (
-    event: React.PointerEvent<HTMLButtonElement>,
-  ) => {
-    if (canSendMessage) return;
-    event.preventDefault();
-    event.stopPropagation();
-    void voiceCall.startCall();
-  };
 
   const handleAttachFile = () => {
     fileInputRef.current?.click();
@@ -7876,22 +9020,23 @@ Please analyze the code you just wrote and fix this error.`;
     }
     setSelectedAppAgents((current) => current.some((agent) => agent.id === selectedCmd.id) ? current.filter((agent) => agent.id !== selectedCmd.id) : [...current, selectedCmd]);
     setSelectedCommand(null);
+    // The slash query is a palette affordance, not part of the user's task.
+    // Clear it before the chip enters so the selected agent feels attached to
+    // the composer rather than merely announced above it.
+    setValue("");
     setClipInitialUrl("");
     setIsCommandPalettePinned(true);
     setShowCommandPalette(true);
     setIsInputExpanded(true);
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-      }
-    }, 50);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const isClipWorkspace =
     activeWorkspaceTab === "clip" || selectedCommand?.id === "clip";
   const isBrowserWorkspace = activeWorkspaceTab === "browser";
-  const isMapsWorkspace = activeWorkspaceTab === "maps";
   const isCareWorkspace = activeWorkspaceTab === "care";
+  const isMapsWorkspace = activeWorkspaceTab === "maps";
+  const isEyeWorkspace = activeWorkspaceTab === "eye";
   const isSpotifyWorkspace = activeWorkspaceTab === "spotify";
   const isCompanionWorkspace = activeWorkspaceTab === "companion";
   const isStudyWorkspace = activeWorkspaceTab === "study";
@@ -7934,10 +9079,12 @@ Please analyze the code you just wrote and fix this error.`;
           ? "companion"
         : isStudyWorkspace
           ? "study"
-        : isMapsWorkspace
-          ? "maps"
         : isCareWorkspace
           ? "care"
+        : isMapsWorkspace
+          ? "maps"
+        : isEyeWorkspace
+          ? "eye"
         : isSpotifyWorkspace
           ? "spotify"
         : creatorMode ??
@@ -7961,22 +9108,33 @@ Please analyze the code you just wrote and fix this error.`;
     : "What can I help you with today?";
   const activeChat = chats.find((chat) => chat.id === currentChatId);
   const activeChatTitle = activeChat?.title || "New conversation";
-  const workflowTabs: Array<{
-    id: WorkspaceTabId;
+  const workspaceRailMeta: Record<WorkspaceRailTabId, {
+    id: WorkspaceRailTabId;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
-  }> = [
-    { id: "chat", label: "Chat", icon: MessageCircleDashed },
-    { id: "vibe", label: "Vibe Coder", icon: SquarePen },
-    { id: "clip", label: "Shorts", icon: Scissors },
-  ];
-  const showWorkflowTabs = !isEmbeddedToolPreview && !workflowTabsHidden;
+  }> = {
+    chat: { id: "chat", label: "Chat", icon: MessageCircleDashed },
+    vibe: { id: "vibe", label: "Vibe Coder", icon: SquarePen },
+    clip: { id: "clip", label: "Shorts", icon: Scissors },
+    browser: { id: "browser", label: "Browser", icon: Globe },
+    study: { id: "study", label: "Study", icon: GraduationCap },
+    cowork: { id: "cowork", label: "Cowork", icon: Users },
+    spotify: { id: "spotify", label: "Music", icon: Music2 },
+    care: { id: "care", label: "Care", icon: Heart },
+  };
+  const workflowTabs = workspaceRailTabs.map((tabId) => workspaceRailMeta[tabId]);
+  // Music is a shared, ongoing activity. Once a command reveals its notch,
+  // keep this small control surface present above every workspace until the
+  // person expands or dismisses it themselves.
+  const showWorkflowTabs = !isEmbeddedToolPreview && (!workflowTabsHidden || showSpotifyNotch);
 
   useEffect(() => {
-    const hide = () => setWorkflowTabsHidden(true);
+    const hide = () => {
+      if (!showSpotifyNotch) setWorkflowTabsHidden(true);
+    };
     window.addEventListener("clyra:workflow-tabs-hide", hide);
     return () => window.removeEventListener("clyra:workflow-tabs-hide", hide);
-  }, []);
+  }, [showSpotifyNotch]);
   const sidebarWidthPx = 272;
   const sidebarClearancePx = sidebarWidthPx + 24;
   const effectiveWorkspaceViewport =
@@ -7998,46 +9156,96 @@ Please analyze the code you just wrote and fix this error.`;
       setIsSidebarOpen(false);
     }
   }, [showSidebarControls]);
-  // Moving the whole shell during a handoff makes Vibe feel detached from the
-  // rest of Clyra. Keep the existing keyed lifecycle, but only crossfade the
-  // surface so the transition is immediate, calm, and interruption-safe.
-  const workspaceSwipeTravelPx = 0;
-  const workspaceSwipeEase = [0.22, 1, 0.36, 1] as [
-    number,
-    number,
-    number,
-    number,
-  ];
-  const workspaceSwipeTransition = {
-    type: "tween" as const,
-    duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.24,
-    ease: workspaceSwipeEase,
-  };
+  // Plain cross-fade between workspace tabs -- no swipe/slide, no scale.
+  const reduceWorkspaceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const workspaceSwipeEase = [0.16, 1, 0.3, 1] as [number, number, number, number];
+  const workspaceSwipeTransition = { type: "tween" as const, duration: reduceWorkspaceMotion ? 0.12 : 0.22, ease: workspaceSwipeEase };
   const workspacePanelVariants = {
-    enter: (direction: number) => ({
-      x: direction === 0 ? 0 : direction > 0 ? workspaceSwipeTravelPx : -workspaceSwipeTravelPx,
-      opacity: direction === 0 ? 1 : 0,
+    enter: {
+      opacity: 0,
       zIndex: 2,
       pointerEvents: "none" as const,
-    }),
+    },
     center: {
-      // Keep every state in pixels. Mixing the incoming pixel distance with
-      // a percentage target leaves Motion unable to finish the exit lifecycle
-      // in Chromium, which is what made Vibe -> Chat appear to fade or stall.
-      x: 0,
       opacity: 1,
       zIndex: 2,
       pointerEvents: "auto" as const,
     },
-    exit: (direction: number) => ({
-      x: direction === 0 ? 0 : direction > 0 ? -workspaceSwipeTravelPx : workspaceSwipeTravelPx,
-      opacity: direction === 0 ? 1 : 0,
+    exit: {
+      opacity: 0,
       zIndex: 1,
       pointerEvents: "none" as const,
-    }),
+    },
   };
 
   const recentUserRequest = recentChat?.messages.find((message) => message.role === "user")?.content.trim();
+  // Welcome-screen quick-starts — fill the draft and focus the composer,
+  // never send on their own. The first slot adapts to whatever the person
+  // was last working on; the rest are steady fallbacks for a blank account.
+  const fillComposerDraft = useCallback((prompt: string) => {
+    setValue(prompt);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(prompt.length, prompt.length);
+    });
+  }, []);
+  const shellSuggestions: ComposerSuggestion[] = useMemo(() => {
+    const items: Array<{
+      id: string;
+      label: string;
+      description: string;
+      prompt: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }> = [];
+    if (recentUserRequest) {
+      items.push({
+        id: "continue",
+        label: "Continue where you left off",
+        description: "Pick up the last thing you asked Clyra to help with.",
+        prompt: `Continue helping me with: ${recentUserRequest}\n\nNext, `,
+        icon: Check,
+      });
+    }
+    items.push(
+      {
+        id: "research",
+        label: "Research a topic",
+        description: "Search current sources and turn them into a clear answer.",
+        prompt: "Research this topic with current sources and cite them: ",
+        icon: Globe,
+      },
+      {
+        id: "write",
+        label: "Write something",
+        description: "Start a draft, rewrite, or polish an idea with Clyra.",
+        prompt: "Help me write ",
+        icon: SquarePen,
+      },
+      {
+        id: "analyze-file",
+        label: "Analyze a file",
+        description: "Attach a document, image, or code file, then ask a question.",
+        prompt: "Analyze the file I attach and help me ",
+        icon: FileUp,
+      },
+      {
+        id: "build",
+        label: "Build an app",
+        description: "Describe what you want to make and Clyra will help build it.",
+        prompt: "Build a ",
+        icon: Code2,
+      },
+    );
+    return items.slice(0, 4).map((item) => ({
+      id: item.id,
+      label: item.label,
+      description: item.description,
+      icon: <item.icon className="h-4 w-4" />,
+      onPick: () => fillComposerDraft(item.prompt),
+    }));
+  }, [recentUserRequest, fillComposerDraft]);
   // Real saved chats for the home-screen "Recent conversations" list —
   // pinned first, then newest first.
   const homeRecentChats = useMemo(
@@ -8187,19 +9395,6 @@ Please analyze the code you just wrote and fix this error.`;
     }, 30);
   };
 
-  // "Ask Clyra about this map" hands the query (with a compact map-context
-  // prefix already applied by the Maps composer) to the main chat composer.
-  const handleMapAskClyra = (prompt: string) => {
-    setActiveWorkspaceTab("chat");
-    setSelectedCommand(null);
-    setValue(prompt);
-    setIsInputExpanded(true);
-    window.setTimeout(() => {
-      textareaRef.current?.focus();
-      adjustHeight(true);
-    }, 30);
-  };
-
   const handleWorkspaceTabChange = (tabId: WorkspaceTabId) => {
     if (tabId === "notes") {
       window.location.assign("/notes");
@@ -8210,29 +9405,36 @@ Please analyze the code you just wrote and fix this error.`;
     if (tabId === "vibe") void loadVibeCoderWorkspace();
     const fromTaskView = taskViewSelectionRef.current;
     taskViewSelectionRef.current = false;
-    setVisitedWorkspaceTabs((current) => (current.includes(tabId) ? current : [...current, tabId]));
     if (tabId === activeWorkspaceTab) {
       setIsTaskViewOpen(false);
       return;
     }
+    // The Browser workspace hosts Chromium in a native WebContentsView.
+    // Animate its DOM placeholder if needed, but never leave the native view
+    // alive for the outgoing 400ms page transition — it otherwise flickers
+    // over Vibe, Notes, and every other destination.
+    if (activeWorkspaceTab === "browser" && tabId !== "browser") {
+      void getElectronDesktop()?.browser.setSurface({ visible: false });
+    }
     const currentIsVibeChat = messages.some(
       (message) => message.assistantKind === "vibe",
     );
-    const fromIndex = workspaceTabIndex(activeWorkspaceTab);
-    const toIndex = workspaceTabIndex(tabId);
+    const fromIndex = workspaceTabIndex(activeWorkspaceTab, workspaceRailTabs);
+    const toIndex = workspaceTabIndex(tabId, workspaceRailTabs);
     // Always derive direction from a stable order so Chat ↔ tool swipes are
     // perfect mirrors (returning to Chat must not reverse or spawn).
-    setWorkspaceTransitionDirection(fromTaskView ? 0 : toIndex >= fromIndex ? 1 : -1);
-    // All workspace loading happens during boot. Switching tools should be
-    // immediate rather than showing a second transition/loading treatment.
-    setIsWorkspaceSwitching(false);
-    // Hide the Chat/Vibe/Clip rail when entering any tool surface so it does not
-    // overlap the workspace. Chat keeps the rail visible.
-    setWorkflowTabsHidden(tabId !== "chat");
-    if (workspaceSwitchTimeoutRef.current != null) {
-      window.clearTimeout(workspaceSwitchTimeoutRef.current);
-    }
-    setActiveWorkspaceTab(tabId);
+    const direction = fromTaskView ? 1 : toIndex >= fromIndex ? 1 : -1;
+    // This is the single programmatic entry point for page motion. It has no
+    // gesture listeners: buttons/actions choose when to invoke it, and rapid
+    // repeated activations are ignored until the present transition settles.
+    if (!workspaceTransition.transitionTo(tabId, direction, () => {
+      setVisitedWorkspaceTabs((current) => (current.includes(tabId) ? current : [...current, tabId]));
+      setActiveWorkspaceTab(tabId);
+    })) return;
+    // Hide the workspace rail when entering a tool surface, except when the
+    // persistent Music notch is active. The notch owns this shared top layer
+    // and must survive normal workspace switches.
+    setWorkflowTabsHidden(tabId !== "chat" && !showSpotifyNotch);
     taskViewOpenRef.current = false;
     setIsTaskViewOpen(false);
     setWorkspaceChromeEngaged(false);
@@ -8266,6 +9468,261 @@ Please analyze the code you just wrote and fix this error.`;
       adjustHeight();
     }, 50);
   };
+
+  const workspaceSwitcherTabAt = (clientX: number, clientY: number) => {
+    const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const tab = target?.closest<HTMLElement>("[data-switcher-tab-id]");
+    const draggingId = workspaceSwitcherDragRef.current?.active
+      ? workspaceSwitcherDragRef.current.id
+      : null;
+    if (tab?.dataset.switcherTabId && tab.dataset.switcherTabId !== draggingId) {
+      return tab.dataset.switcherTabId as WorkspaceRailTabId;
+    }
+    // Browsers can report the rail itself as a native drag target. Resolve the
+    // physical tab under the pointer as a fallback so reordering stays precise.
+    const matchingTab = Array.from(document.querySelectorAll<HTMLElement>("[data-switcher-tab-id]")).find((candidate) => {
+      if (candidate.dataset.switcherTabId === draggingId) return false;
+      const rect = candidate.getBoundingClientRect();
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    });
+    return matchingTab?.dataset.switcherTabId as WorkspaceRailTabId | undefined;
+  };
+
+  const workspaceSwitcherDropAt = (clientX: number, clientY: number) => {
+    const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (!target) return null;
+    if (target.closest("[data-switcher-remove-zone='true']")) return "remove" as const;
+    const tab = workspaceSwitcherTabAt(clientX, clientY);
+    if (tab) return tab;
+    if (target.closest("[data-switcher-rail-drop='true']")) return "rail" as const;
+    return null;
+  };
+
+  const settleWorkspaceSwitcherDrag = () => {
+    if (workspaceSwitcherDragFrameRef.current != null) {
+      window.cancelAnimationFrame(workspaceSwitcherDragFrameRef.current);
+      workspaceSwitcherDragFrameRef.current = null;
+    }
+    workspaceSwitcherDragRef.current = null;
+    setWorkspaceSwitcherDrag(null);
+    setWorkspaceSwitcherDropTarget(null);
+  };
+
+  const addWorkspaceRailApp = (id: WorkspaceRailAppId, target: "rail" | WorkspaceRailTabId = "rail", afterTarget = false) => {
+    setWorkspaceRailTabs((tabs) => {
+      if (tabs.includes(id)) return tabs;
+      const apps = tabs.filter((tab): tab is WorkspaceRailAppId => tab !== "chat");
+      if (apps.length >= WORKSPACE_RAIL_MAX_APPS) {
+        const replaceAt = target !== "rail" && target !== "chat" ? apps.indexOf(target) : -1;
+        if (replaceAt < 0) return tabs;
+        apps[replaceAt] = id;
+        return ["chat", ...apps];
+      }
+      const targetIndex = target === "rail"
+        ? apps.length
+        : target === "chat"
+          ? 0
+          : Math.max(0, apps.indexOf(target) + (afterTarget ? 1 : 0));
+      apps.splice(targetIndex, 0, id);
+      return ["chat", ...apps];
+    });
+  };
+
+  const moveWorkspaceRailApp = (id: WorkspaceRailAppId, direction: -1 | 1) => {
+    setWorkspaceRailTabs((tabs) => {
+      const apps = tabs.filter((tab): tab is WorkspaceRailAppId => tab !== "chat");
+      const from = apps.indexOf(id);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= apps.length) return tabs;
+      [apps[from], apps[to]] = [apps[to], apps[from]];
+      return ["chat", ...apps];
+    });
+  };
+
+  const removeWorkspaceRailApp = (id: WorkspaceRailAppId) => {
+    setWorkspaceRailTabs((tabs) => tabs.filter((tab) => tab !== id) as WorkspaceRailTabId[]);
+  };
+
+  const placeWorkspaceRailApp = (
+    id: WorkspaceRailAppId,
+    source: WorkspaceSwitcherDrag["source"],
+    target: "rail" | WorkspaceRailTabId,
+    afterTarget = false,
+  ) => {
+    if (source === "library") {
+      addWorkspaceRailApp(id, target, afterTarget);
+      return;
+    }
+    setWorkspaceRailTabs((tabs) => {
+      const apps = tabs.filter((tab): tab is WorkspaceRailAppId => tab !== "chat" && tab !== id);
+      const targetIndex = target === "rail"
+        ? apps.length
+        : target === "chat"
+          ? 0
+          : Math.max(0, apps.indexOf(target) + (afterTarget ? 1 : 0));
+      apps.splice(targetIndex, 0, id);
+      return ["chat", ...apps];
+    });
+  };
+
+  const beginWorkspaceSwitcherDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    id: WorkspaceRailAppId,
+    source: WorkspaceSwitcherDrag["source"],
+  ) => {
+    if (!isWorkspaceSwitcherCustomizing || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const next: WorkspaceSwitcherDrag = {
+      id,
+      source,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: 0,
+      y: 0,
+      active: false,
+    };
+    workspaceSwitcherDragRef.current = next;
+    setWorkspaceSwitcherDrag(next);
+  };
+
+  const moveWorkspaceSwitcherDrag = (event: React.PointerEvent<HTMLElement>) => {
+    const current = workspaceSwitcherDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const x = event.clientX - current.startX;
+    const y = event.clientY - current.startY;
+    const active = current.active || Math.hypot(x, y) > 8;
+    // Pointer capture keeps receiving events after this. Taking the grabbed
+    // control out of hit-testing lets the live destination beneath it win,
+    // even during a very quick mouse drag.
+    if (active) event.currentTarget.style.pointerEvents = "none";
+    const next = { ...current, x, y, active };
+    workspaceSwitcherDragRef.current = next;
+    if (workspaceSwitcherDragFrameRef.current == null) {
+      workspaceSwitcherDragFrameRef.current = window.requestAnimationFrame(() => {
+        workspaceSwitcherDragFrameRef.current = null;
+        if (workspaceSwitcherDragRef.current) setWorkspaceSwitcherDrag(workspaceSwitcherDragRef.current);
+      });
+    }
+    setWorkspaceSwitcherDropTarget(active ? workspaceSwitcherDropAt(event.clientX, event.clientY) : null);
+  };
+
+  const finishWorkspaceSwitcherDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    cancelled = false,
+  ) => {
+    const current = workspaceSwitcherDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const dropTargetElement = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-switcher-tab-id]");
+    const dropAfterTarget = Boolean(
+      dropTargetElement &&
+      event.clientX >= dropTargetElement.getBoundingClientRect().left + dropTargetElement.getBoundingClientRect().width / 2,
+    );
+    const target = cancelled || !current.active
+      ? null
+      : workspaceSwitcherDropAt(event.clientX, event.clientY);
+    event.currentTarget.style.pointerEvents = "";
+    if (target && target !== "remove") {
+      placeWorkspaceRailApp(current.id, current.source, target, dropAfterTarget);
+    } else if (target === "remove" && current.source === "rail") {
+      removeWorkspaceRailApp(current.id);
+    }
+    settleWorkspaceSwitcherDrag();
+  };
+
+  const beginNativeWorkspaceSwitcherDrag = (
+    event: React.DragEvent<HTMLElement> | React.MouseEvent<HTMLElement> | React.TouchEvent<HTMLElement> | React.PointerEvent<HTMLElement> | MouseEvent | TouchEvent | PointerEvent,
+    id: WorkspaceRailAppId,
+    source: WorkspaceSwitcherDrag["source"],
+  ) => {
+    if (!isWorkspaceSwitcherCustomizing) return;
+    // Motion's drag callback can surface a pointer event while a native
+    // `dragstart` supplies a DataTransfer. Only native dragging needs this
+    // payload; pointer-driven reordering is handled by its own callbacks.
+    if (!("dataTransfer" in event)) return;
+    const dataTransfer = (event as React.DragEvent<HTMLElement>).dataTransfer;
+    dataTransfer.effectAllowed = source === "rail" ? "move" : "copy";
+    dataTransfer.setData("application/x-clyra-switcher", `${source}:${id}`);
+    const next: WorkspaceSwitcherDrag = {
+      id,
+      source,
+      pointerId: -1,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: 0,
+      y: 0,
+      active: true,
+    };
+    workspaceSwitcherDragRef.current = next;
+    setWorkspaceSwitcherDrag(next);
+  };
+
+  const readNativeWorkspaceSwitcherDrag = (event: React.DragEvent<HTMLElement>) => {
+    const [source, id] = event.dataTransfer.getData("application/x-clyra-switcher").split(":");
+    if ((source !== "rail" && source !== "library") || !SIDEBAR_APP_IDS.includes(id as SidebarAppId)) return null;
+    return { source, id: id as WorkspaceRailAppId } as const;
+  };
+
+  const dropNativeWorkspaceSwitcherDrag = (
+    event: React.DragEvent<HTMLElement>,
+    target: "rail" | WorkspaceRailTabId | "remove",
+  ) => {
+    event.preventDefault();
+    const drag = readNativeWorkspaceSwitcherDrag(event) ?? workspaceSwitcherDragRef.current;
+    if (!drag) return;
+    if (target === "remove") {
+      if (drag.source === "rail") removeWorkspaceRailApp(drag.id);
+    } else {
+      const dropTabId = workspaceSwitcherTabAt(event.clientX, event.clientY);
+      const dropTab = dropTabId
+        ? document.querySelector<HTMLElement>(`[data-switcher-tab-id="${dropTabId}"]`)
+        : null;
+      const after = Boolean(
+        dropTab && event.clientX >= dropTab.getBoundingClientRect().left + dropTab.getBoundingClientRect().width / 2,
+      );
+      placeWorkspaceRailApp(drag.id, drag.source, target, after);
+    }
+    settleWorkspaceSwitcherDrag();
+  };
+
+  const finishNativeWorkspaceSwitcherDrag = (
+    event: React.DragEvent<HTMLElement> | React.MouseEvent<HTMLElement> | React.TouchEvent<HTMLElement> | React.PointerEvent<HTMLElement> | MouseEvent | TouchEvent | PointerEvent,
+  ) => {
+    // Some browser engines dispatch dragend without bubbling the final drop to
+    // the rail. Use the final pointer location as a small recovery path; a
+    // successful drop has already cleared this ref, so it cannot apply twice.
+    const drag = workspaceSwitcherDragRef.current;
+    if (!drag) return;
+    const point = "clientX" in event
+      ? event
+      : event.touches[0] ?? event.changedTouches[0];
+    if (!point) { settleWorkspaceSwitcherDrag(); return; }
+    const target = workspaceSwitcherDropAt(point.clientX, point.clientY);
+    if (target && target !== "remove") {
+      placeWorkspaceRailApp(drag.id, drag.source, target);
+    } else if (target === "remove" && drag.source === "rail") {
+      removeWorkspaceRailApp(drag.id);
+    }
+    settleWorkspaceSwitcherDrag();
+  };
+
+  useEffect(() => {
+    if (!isWorkspaceSwitcherCustomizing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      settleWorkspaceSwitcherDrag();
+      setIsWorkspaceSwitcherCustomizing(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isWorkspaceSwitcherCustomizing]);
 
   const importGitHubRepositoryToVibe = useCallback(async (url: string) => {
     const response = await fetch("/api/vibe/projects/import-github", {
@@ -8313,11 +9770,10 @@ Please analyze the code you just wrote and fix this error.`;
   const handleTaskViewTabClose = useCallback((tabId: string) => {
     const workspaceTabId = tabId as WorkspaceTabId;
     setVisitedWorkspaceTabs((current) => {
-      // Task View is the sole owner of these mounted workspace instances.
-      // Removing an entry here therefore closes the actual tab rather than
-      // merely hiding its overview card. Keep one tab alive as the overview's
-      // stable spatial anchor.
-      if (!current.includes(workspaceTabId) || current.length < 2) return current;
+      // Task View owns these mounted workspace instances. Removing an entry
+      // closes the real tab. The final close returns directly to the global
+      // launcher through the effect below.
+      if (!current.includes(workspaceTabId)) return current;
       const remaining = current.filter((id) => id !== workspaceTabId);
       if (workspaceTabId === activeWorkspaceTab) {
         const fallback = remaining.includes("chat") ? "chat" : remaining[0];
@@ -8337,6 +9793,32 @@ Please analyze the code you just wrote and fix this error.`;
     });
   }, [activeWorkspaceTab]);
 
+  // Dragging a card in either Task View layout (2D grid or 3D fan) commits
+  // its new slot here, into the same `visitedWorkspaceTabs` order both
+  // layouts render from — so a reorder in one is immediately the order in
+  // the other, with nothing to reconcile.
+  const handleTaskViewReorder = useCallback((orderedIds: string[]) => {
+    setVisitedWorkspaceTabs((current) => {
+      const nextIds = orderedIds as WorkspaceTabId[];
+      if (nextIds.length !== current.length) return current;
+      const currentSet = new Set(current);
+      if (!nextIds.every((id) => currentSet.has(id))) return current;
+      return nextIds;
+    });
+  }, []);
+
+  // The final card gets to finish its upward exit before the launcher takes
+  // over. With no visited tabs, no workspace remains mounted underneath it.
+  useEffect(() => {
+    if (!isTaskViewOpen || visitedWorkspaceTabs.length > 0) return;
+    const timer = window.setTimeout(() => {
+      taskViewOpenRef.current = false;
+      setIsTaskViewOpen(false);
+      setIsAppLauncherOpen(true);
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [isTaskViewOpen, visitedWorkspaceTabs.length]);
+
   // --- Clyra Composer reskin: pieces that depend on things declared later
   // in this component (commandSuggestions, selectCommandSuggestion,
   // openChatSession, removeAttachment) ---------------------------------
@@ -8350,7 +9832,12 @@ Please analyze the code you just wrote and fix this error.`;
   const handleShellToggleSource = useCallback(
     (id: string) => {
       if (id === "spotify") {
-        toggleSpotifyNotch();
+        if (selectedCommand?.id === "spotify") {
+          setSelectedCommand(null);
+          return;
+        }
+        const index = commandSuggestions.findIndex((command) => command.id === "spotify");
+        if (index > -1) selectCommandSuggestion(index);
         return;
       }
       if (selectedCommand?.id === id) {
@@ -8360,7 +9847,7 @@ Please analyze the code you just wrote and fix this error.`;
       const index = commandSuggestions.findIndex((c) => c.id === id);
       if (index > -1) selectCommandSuggestion(index);
     },
-    [selectedCommand, commandSuggestions, selectCommandSuggestion, toggleSpotifyNotch],
+    [selectedCommand, commandSuggestions, selectCommandSuggestion],
   );
   const shellPaletteItems: ComposerPaletteItem[] = useMemo(
     () =>
@@ -8372,12 +9859,9 @@ Please analyze the code you just wrote and fix this error.`;
             label: s.label,
             desc: s.description,
             icon: s.icon(false),
-            added: showSpotifyNotch,
+            added: selectedCommand?.id === "spotify",
             onPick: () => {
-              toggleSpotifyNotch();
-              setValue("");
-              setShowCommandPalette(false);
-              setIsCommandPalettePinned(false);
+              selectCommandSuggestion(originalIndex);
             },
           };
         }
@@ -8386,11 +9870,13 @@ Please analyze the code you just wrote and fix this error.`;
           label: s.label,
           desc: s.description,
           icon: s.icon(false),
-          added: selectedCommand?.kind === "command" && selectedCommand.id === s.id,
+          added: s.kind === "app"
+            ? selectedAppAgents.some((agent) => agent.id === s.id)
+            : selectedCommand?.kind === "command" && selectedCommand.id === s.id,
           onPick: () => selectCommandSuggestion(originalIndex),
         };
       }),
-    [filteredSuggestions, commandSuggestions, selectedCommand, selectedAppAgents, selectCommandSuggestion, showSpotifyNotch, toggleSpotifyNotch],
+    [filteredSuggestions, commandSuggestions, selectedCommand, selectedAppAgents, selectCommandSuggestion],
   );
   const shellFiles: ComposerFileItem[] = useMemo(
     () =>
@@ -8401,6 +9887,23 @@ Please analyze the code you just wrote and fix this error.`;
         onRemove: () => removeAttachment(i),
       })),
     [attachments],
+  );
+  const shellSelections = useMemo(
+    () => [
+      ...(selectedCommand ? [{
+        id: selectedCommand.id,
+        label: selectedCommand.label,
+        icon: selectedCommand.icon(true),
+        onRemove: () => setSelectedCommand(null),
+      }] : []),
+      ...selectedAppAgents.map((agent) => ({
+        id: agent.id,
+        label: agent.label,
+        icon: agent.icon(true),
+        onRemove: () => setSelectedAppAgents((current) => current.filter((item) => item.id !== agent.id)),
+      })),
+    ],
+    [selectedCommand, selectedAppAgents],
   );
 
   const transcriptNodes = messages.map((message) => {
@@ -8518,7 +10021,7 @@ Please analyze the code you just wrote and fix this error.`;
                 searchSources={message.searchSources}
                 searchQuery={message.searchQuery}
                 weather={message.weather}
-                locationPlaces={message.locationPlaces}
+                mapLocation={message.mapLocation}
                 googleAction={message.googleAction}
                 googleDetail={message.googleDetail}
                 googleSteps={message.googleSteps}
@@ -8526,6 +10029,7 @@ Please analyze the code you just wrote and fix this error.`;
                 gmailResults={message.gmailResults}
                 workspaceResult={message.workspaceResult}
                 mission={message.mission}
+                automation={message.automation}
                 documentMode={message.documentMode}
                 fontSizeClass={fontClass}
                 markdownSupport={markdownSupport}
@@ -8555,12 +10059,21 @@ Please analyze the code you just wrote and fix this error.`;
                 onGmailThread={openGmailThread}
                 onGmailFollowUp={scheduleGmailFollowUp}
                 onGmailCancelFollowUp={cancelGmailFollowUp}
-                onOpenMaps={(place) => {
-                  setMapChatCommand(`fly to ${place.address}`);
-                  setActiveWorkspaceTab("maps");
-                }}
-                onMissionResume={(mission) => resumeChatMission(message.id, mission)}
+                onMissionResume={message.agentRuntime ? (mission) => resumeHermesRun(message.id, message.agentRuntime!, mission) : (mission) => resumeChatMission(message.id, mission)}
+                onMissionPause={message.agentRuntime ? () => pauseHermesRun(message.id, message.agentRuntime!.runId) : (mission) => controlChatMission(message.id, mission, "pause")}
+                onMissionStop={message.agentRuntime ? () => stopHermesRun(message.id, message.agentRuntime!.runId) : (mission) => controlChatMission(message.id, mission, "stop")}
+                onMissionApproval={message.agentRuntime ? () => approveHermesRun(message.id, message.agentRuntime!.runId) : undefined}
+                onAutomationPause={(automation) => controlChatAutomation(message.id, automation, "pause")}
+                onAutomationResume={(automation) => controlChatAutomation(message.id, automation, "resume")}
+                onAutomationRun={(automation) => controlChatAutomation(message.id, automation, "run")}
               />
+              {message.mission && agentEventsByMessage[message.id]?.length ? (
+                <ClyraAgentActivity events={agentEventsByMessage[message.id]} missionState={message.mission.state} />
+              ) : null}
+              {message.searchCitations?.length && !message.isThinking && !message.isStreaming ? (
+                <ClyraSearchCitations citations={message.searchCitations} />
+              ) : null}
+              <AppAgentPlanTimeline steps={message.agentSteps} />
               <AppAgentFlowPanel
                 messageId={message.id}
                 agents={message.appAgents}
@@ -8574,11 +10087,13 @@ Please analyze the code you just wrote and fix this error.`;
                   openAttachedAppAgent(agentId);
                 }}
               />
+              {message.stopped && !message.isStreaming ? (
+                <p className="clyra-stopped-note" role="status">Stopped{message.content.trim() ? "" : " before Clyra replied"}.</p>
+              ) : null}
               {!message.isThinking && !message.isStreaming && message.content.trim() ? (
                 <AssistantMessageActions
-                  content={message.content}
-                  sources={message.searchSources}
                   copied={copiedMessageId === message.id}
+                  isReading={readingMessageId === message.id}
                   onCopy={() => {
                     if (!navigator.clipboard) {
                       setToastMessage("Copy isn't available in this browser.");
@@ -8592,6 +10107,7 @@ Please analyze the code you just wrote and fix this error.`;
                     });
                   }}
                   onRegenerate={() => regenerateResponse(message.id)}
+                  onReadAloud={() => toggleReadAloud(message.id, message.content)}
                   onBranch={() => branchConversationAt(message.id)}
                   onExport={exportConversation}
                 />
@@ -8603,17 +10119,21 @@ Please analyze the code you just wrote and fix this error.`;
     );
   });
 
-  const shellTranscript = (
-    <>
-      {transcriptNodes}
-      <AnimatePresence>
-        {showScrollToLatest ? (
+  // Rendered beside the transcript, not inside it: the control must stay on
+  // screen while the reader is above the newest content.
+  const scrollLatestControl = (
+    <AnimatePresence>
+      {showScrollToLatest ? (
+        <motion.div
+          key="scroll-latest-anchor"
+          className="clyra-scroll-latest-anchor"
+          exit={{ opacity: 0, transition: { duration: 0.16 } }}
+        >
           <motion.button
             type="button"
             aria-label="Scroll to latest message"
             initial={{ opacity: 0, y: 10, scale: 0.94, filter: "blur(4px)" }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: 8, scale: 0.96, filter: "blur(3px)" }}
             transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
             onPointerDown={(event) => {
               event.preventDefault();
@@ -8629,8 +10149,15 @@ Please analyze the code you just wrote and fix this error.`;
           >
             Scroll to latest <span aria-hidden="true">↓</span>
           </motion.button>
-        ) : null}
-      </AnimatePresence>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+
+  const shellTranscript = (
+    <>
+      {transcriptNodes}
+      {messages.length > 0 ? <ConnectivityIndicator status={connectivityStatus} /> : null}
     </>
   );
 
@@ -8640,30 +10167,29 @@ Please analyze the code you just wrote and fix this error.`;
   const workspaceTaskTabs = visitedWorkspaceTabs.map((tabId): TaskViewTab => {
     const labels: Record<WorkspaceTabId, string> = {
       chat: "Chat", vibe: "Vibe Coder", clip: "AI Clipper", browser: "Browser",
-      companion: "Companion", study: "Study Pal", notes: "Clyra Notes", cowork: "Clyra Cowork",
+      companion: "Companion", study: "Study Pal", notes: "Clyra Notes", cowork: "Cowork",
       "fake-text": "Text Story", "would-rather": "Would You Rather", "reddit-story": "Reddit Story",
-      spotify: "Clyra Music", maps: "Clyra Maps", care: "Clyra Care",
+      spotify: "Clyra Music", care: "Clyra Care", maps: "Clyra Maps", eye: "Clyra Eye",
     };
     const content = tabId === "vibe" ? <Suspense fallback={<VibeWorkspaceLoadingSurface />}><VibeCoderWorkspace initialProjectId={vibeProjectToOpen ?? undefined} onInitialProjectOpened={() => setVibeProjectToOpen(null)} /></Suspense>
-      : tabId === "clip" ? <Suspense fallback={null}><AIClipper embedded initialUrl={clipInitialUrl} onEngaged={() => setWorkspaceChromeEngaged(true)} onClose={() => handleWorkspaceTabChange("chat")} /></Suspense>
+      : tabId === "clip" ? <Suspense fallback={null}><ShortsWorkspaceApp key="clip" entry={{ name: "home" }} onExit={() => handleWorkspaceTabChange("chat")} /></Suspense>
       : tabId === "browser" ? <Suspense fallback={null}><WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} /></Suspense>
       : tabId === "companion" ? <Suspense fallback={null}><ScreenCompanionWorkspace /></Suspense>
       : tabId === "cowork" ? <Suspense fallback={null}><CoworkWorkspace /></Suspense>
       : tabId === "study" ? <Suspense fallback={null}><StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} /></Suspense>
-      : tabId === "fake-text" || tabId === "would-rather" || tabId === "reddit-story" ? <Suspense fallback={null}><CreatorStudioWorkspace mode={tabId} onBack={() => handleWorkspaceTabChange("chat")} /></Suspense>
+      : tabId === "fake-text" || tabId === "would-rather" || tabId === "reddit-story" ? <Suspense fallback={null}><ShortsWorkspaceApp key={tabId} entry={{ name: "setup", kind: tabId }} onExit={() => handleWorkspaceTabChange("chat")} /></Suspense>
       : tabId === "spotify" ? <SpotifyWorkspace playback={spotifyPlayback} />
-      : tabId === "maps" ? <Suspense fallback={null}><ClyraMapsWorkspace initialCommand={mapChatCommand} onAskClyra={handleMapAskClyra} /></Suspense>
       : tabId === "care" ? <Suspense fallback={null}><ClyraCareWorkspace /></Suspense>
+      : tabId === "maps" ? <Suspense fallback={null}><ClyraMapsWorkspace /></Suspense>
+      : tabId === "eye" ? <Suspense fallback={null}><ClyraEyeWorkspace suspended={isTaskViewOpen} /></Suspense>
       : <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden"><ClyraComposerShell
-          userName="Luke" accentColor={accentColor} text={value} onTextChange={setValue} onKeyDown={handleKeyDown} onSend={handleSendMessage} textareaRef={textareaRef} placeholder="Message Clyra" sent={messages.length > 0} temp={isTemporaryChat} onToggleTemp={toggleTemporaryChat}
-          efforts={shellEfforts} currentEffort={chatEffort} sources={shellSources} activeSourceIds={shellActiveSourceIds} onToggleSource={handleShellToggleSource} paletteOpen={showCommandPalette} paletteItems={shellPaletteItems} paletteQuery={commandQuery} paletteActiveIndex={activeSuggestion} onPaletteHoverIndex={setActiveSuggestion}
+          userName="Luke" accentColor={accentColor} text={value} onTextChange={setValue} onKeyDown={handleKeyDown} onSend={handleSendMessage} isResponding={isAiResponding} onStop={stopGeneration} onStartVoiceCall={() => void voiceCall.startCall()} canSend={canSendMessage} textareaRef={textareaRef} placeholder="Message Clyra" sent={messages.length > 0} temp={isTemporaryChat} onToggleTemp={toggleTemporaryChat}
+          efforts={shellEfforts} currentEffort={chatEffort} sources={shellSources} activeSourceIds={shellActiveSourceIds} onToggleSource={handleShellToggleSource} paletteOpen={showCommandPalette} paletteItems={shellPaletteItems} paletteQuery={commandQuery} paletteActiveIndex={activeSuggestion} onPaletteHoverIndex={setActiveSuggestion} selections={shellSelections} suggestions={shellSuggestions}
           files={shellFiles} onPickFiles={handleAttachFile} fileInputRef={fileInputRef} onFilesSelected={handleFilesSelected}
-          dictation={{ phase: composerDictation.phase === "error" ? "error" : composerDictation.phase === "idle" ? "idle" : "listening", level: composerDictation.level, elapsedSeconds: 0, onStart: () => { void composerDictation.start(); }, onStop: composerDictation.cancel }}
-          onStartVoiceCall={() => { void voiceCall.startCall(); }}
-          sidebarOpen={shellSidebarOpen} onToggleSidebar={() => setShellSidebarOpen((v) => !v)} chats={shellChatRows} onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }} onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }} onRenameChat={handleShellRenameChat} onDeleteChat={handleShellDeleteChat} sideQuery={shellSideQuery} onSideQueryChange={setShellSideQuery} usage={shellUsage}
+          dictation={composerDictationState}
+          sidebarOpen={shellSidebarOpen} onToggleSidebar={() => setShellSidebarOpen((v) => !v)} onOpenSettings={() => setIsSettingsOpen(true)} chats={shellChatRows} onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }} onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }} onRenameChat={handleShellRenameChat} onDeleteChat={handleShellDeleteChat} sideQuery={shellSideQuery} onSideQueryChange={setShellSideQuery} usage={shellUsage}
           connections={{ signInAvailable: Boolean(getElectronDesktop()?.google) || googleShellWebConfigured, connected: googleShellStatus.connected, connecting: googleShellConnecting, connectNote: googleShellConnectNote, email: googleShellStatus.email ?? null, onConnect: () => { const desktop = getElectronDesktop(); if (desktop?.google) { setGoogleShellConnecting(true); void desktop.google.signIn().then((result) => { if (!result.ok) { setGoogleShellConnecting(false); setToastMessage(result.error || "Google sign-in could not start."); } }).catch(() => { setGoogleShellConnecting(false); setToastMessage("Google sign-in could not start."); }); return; } startGoogleWebSignIn(); }, onDisconnect: () => { const desktop = getElectronDesktop(); if (desktop?.google) { void desktop.google.disconnect().then(() => setGoogleShellStatus({ connected: false })); return; } void disconnectGoogleWeb(); }, scopes: shellConnectionScopes, webSearchEnabled: webSearchShellEnabled, onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v) }}
-          onImportGitHubRepo={importGitHubRepositoryToVibe}
-          transcript={shellTranscript} transcriptContainerId="chat-container" transcriptContainerRef={chatContentRef}
+          transcript={shellTranscript} transcriptOverlay={scrollLatestControl} transcriptContainerId="chat-container" transcriptContainerRef={chatContentRef}
         /></div>;
     return { id: tabId, label: labels[tabId] || tabId, content };
   });
@@ -8671,9 +10197,6 @@ Please analyze the code you just wrote and fix this error.`;
   return (
     <TerminalRunnerProvider>
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
-      {/* Warm MapLibre's worker pool while Clyra is starting so opening Maps
-          renders an immediately useful map instead of a cold first frame. */}
-      <Suspense fallback={null}><ClyraMapsPrewarm /></Suspense>
       <VoiceCallScreen
         call={voiceCall}
         testMode={voiceTestMode}
@@ -8715,14 +10238,13 @@ Please analyze the code you just wrote and fix this error.`;
           />
         ) : null}
       </AnimatePresence>
-      <ShortsStudioWelcome
-        open={isShortsWelcomeOpen}
-        onClose={() => setIsShortsWelcomeOpen(false)}
-        onSelectMode={(mode: ShortsMode) => {
-          setIsShortsWelcomeOpen(false);
-          handleWorkspaceTabChange(mode);
-        }}
-      />
+      {isShortsWelcomeOpen ? (
+        <div className="fixed inset-0 z-[260]">
+          <Suspense fallback={null}>
+            <ShortsWorkspaceApp key="welcome" entry={{ name: "home" }} onExit={() => setIsShortsWelcomeOpen(false)} />
+          </Suspense>
+        </div>
+      ) : null}
       {typeof document !== "undefined" &&
         createPortal(
           <AnimatePresence>
@@ -9313,7 +10835,7 @@ Please analyze the code you just wrote and fix this error.`;
         )}
 
         <div className={cn("clyra-main-surface relative z-10 flex min-h-0 min-w-0 flex-1 flex-col bg-white sm:border-transparent", activeWorkspaceTab === "chat" && "clyra-chat-page")}>
-          {workflowTabsHidden && !isEmbeddedToolPreview ? (
+          {workflowTabsHidden && !isEmbeddedToolPreview && messages.length === 0 ? (
             <button
               type="button"
               aria-label="Show workspace switcher"
@@ -9341,20 +10863,20 @@ Please analyze the code you just wrote and fix this error.`;
           <motion.div
             key="workflow-tabs"
             initial={false}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
+            animate={isTaskViewOpen ? { opacity: 0, y: -10, scale: 0.97 } : { opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -14, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.34, ease: [0.45, 0.05, 0.15, 1] }}
             className="pointer-events-none absolute inset-x-0 top-0 z-[190] h-[88px] overflow-visible"
           >
             <motion.div
               className="pointer-events-auto absolute left-1/2 top-3 z-50 -translate-x-1/2 sm:top-4"
+              style={isTaskViewOpen ? { pointerEvents: "none" } : undefined}
               initial={false}
               animate={{ y: 0 }}
               onMouseLeave={(event) => {
                 handleHomeGazeLeave();
                 setPillHovered(false);
                 if (showSpotifyNotch) {
-                  if (Date.now() < notchOpenGraceUntilRef.current) return;
                   setNotchOpen(false);
                   return;
                 }
@@ -9387,7 +10909,7 @@ Please analyze the code you just wrote and fix this error.`;
                   own before they moved into this shared shell; the notch
                   keeps the shell visible at all times. */}
               {(() => {
-                const shellChromeVisible = showSpotifyNotch || pillHovered;
+                const shellChromeVisible = showSpotifyNotch || pillHovered || isWorkspaceSwitcherCustomizing;
                 const shellShadow = !showSpotifyNotch || !notchOpen
                   ? "0 10px 24px -14px oklch(0.42 0.04 260 / 0.45), 0 1px 3px oklch(0.42 0.04 260 / 0.07)"
                   : "0 30px 64px -22px oklch(0.42 0.06 260 / 0.34), 0 4px 12px -4px oklch(0.42 0.04 260 / 0.12)";
@@ -9395,7 +10917,7 @@ Please analyze the code you just wrote and fix this error.`;
                   <div
                     style={{
                       position: "relative",
-                      overflow: "hidden",
+                      overflow: isWorkspaceSwitcherCustomizing ? "visible" : "hidden",
                       boxSizing: "border-box",
                       background: shellChromeVisible
                         ? theme === "Dark"
@@ -9409,9 +10931,15 @@ Please analyze the code you just wrote and fix this error.`;
                           ? "1px solid oklch(0.34 0.012 260)"
                           : "1px solid oklch(0.93 0.008 258)"
                         : "1px solid transparent",
-                      width: !showSpotifyNotch ? tabsNaturalSize.width : notchOpen ? 424 : 176,
-                      height: !showSpotifyNotch ? tabsNaturalSize.height : notchOpen ? 196 : 40,
-                      borderRadius: !showSpotifyNotch ? 999 : notchOpen ? 34 : 20,
+                      width: !showSpotifyNotch
+                        ? isWorkspaceSwitcherCustomizing
+                          ? Math.min(Math.max(tabsNaturalSize.width, 552), Math.max(280, viewportWidth - 24))
+                          : tabsNaturalSize.width
+                        : notchOpen ? 424 : 176,
+                      height: !showSpotifyNotch
+                        ? isWorkspaceSwitcherCustomizing ? tabsNaturalSize.height + 58 : tabsNaturalSize.height
+                        : notchOpen ? 196 : 40,
+                      borderRadius: !showSpotifyNotch ? isWorkspaceSwitcherCustomizing ? 18 : 999 : notchOpen ? 34 : 20,
                       boxShadow: shellChromeVisible ? shellShadow : "none",
                       transition: `width ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, height ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, border-radius ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, box-shadow 0.32s ease, background 0.28s ease, border-color 0.28s ease`,
                     }}
@@ -9422,8 +10950,12 @@ Please analyze the code you just wrote and fix this error.`;
                   style={{
                     position: "absolute",
                     left: "50%",
-                    top: "50%",
-                    transform: showSpotifyNotch ? "translate(-50%, -50%) scale(0.94)" : "translate(-50%, -50%) scale(1)",
+                    top: isWorkspaceSwitcherCustomizing ? 9 : "50%",
+                    transform: showSpotifyNotch
+                      ? "translate(-50%, -50%) scale(0.94)"
+                      : isWorkspaceSwitcherCustomizing
+                        ? "translate(-50%, 0) scale(1)"
+                        : "translate(-50%, -50%) scale(1)",
                     opacity: showSpotifyNotch ? 0 : 1,
                     transition: showSpotifyNotch
                       ? `opacity ${MORPH_HIDE_MS}ms ease, transform ${MORPH_HIDE_MS}ms ${MORPH_EASE}`
@@ -9435,13 +10967,31 @@ Please analyze the code you just wrote and fix this error.`;
                     className={cn(
                       "clyra-workflow-tabs clyra-workflow-tabs--bare clyra-workflow-tabs--compact relative pointer-events-auto",
                       theme === "Dark" && "dark-tabs",
+                      isWorkspaceSwitcherCustomizing && "clyra-workflow-tabs--customizing",
+                      workspaceSwitcherDropTarget === "rail" && "clyra-workflow-tabs--drop-target",
                     )}
-                    role="tablist"
-                    aria-label="Clyra workspace"
+                    role={isWorkspaceSwitcherCustomizing ? undefined : "tablist"}
+                    aria-label={isWorkspaceSwitcherCustomizing ? "Customize Clyra workspace switcher" : "Clyra workspace"}
+                    data-switcher-rail-drop="true"
                     data-invert-ignore="true"
                     onPointerMove={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
                       containerMouseX.set(e.clientX - rect.left);
+                    }}
+                    onDragOver={(event) => {
+                      if (!isWorkspaceSwitcherCustomizing) return;
+                      event.preventDefault();
+                      const targetId = workspaceSwitcherTabAt(event.clientX, event.clientY);
+                      setWorkspaceSwitcherDropTarget(targetId ? targetId as WorkspaceRailTabId : "rail");
+                    }}
+                    onDrop={(event) => {
+                      const targetId = workspaceSwitcherTabAt(event.clientX, event.clientY);
+                      dropNativeWorkspaceSwitcherDrag(event, targetId ? targetId as WorkspaceRailTabId : "rail");
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setWorkspaceSwitcherDropTarget(null);
+                      }
                     }}
                     onMouseLeave={() => {
                       setHoveredWorkspaceTab(null);
@@ -9457,7 +11007,7 @@ Please analyze the code you just wrote and fix this error.`;
                     }}
                   >
                     <AnimatePresence>
-                      {hoveredWorkspaceTab && (
+                      {!isWorkspaceSwitcherCustomizing && hoveredWorkspaceTab && (
                         <motion.div
                           className="clyra-workflow-tab__hover--grey absolute pointer-events-none"
                           initial={{ opacity: 0, scale: 0.85 }}
@@ -9489,14 +11039,33 @@ Please analyze the code you just wrote and fix this error.`;
                       const Icon = tabItem.icon;
                       const isActive = activeWorkspaceTab === tabItem.id;
                       const isHovered = hoveredWorkspaceTab === tabItem.id;
+                      const isPinned = tabItem.id === "chat";
+                      const isDragging = workspaceSwitcherDrag?.source === "rail" &&
+                        workspaceSwitcherDrag.id === tabItem.id && workspaceSwitcherDrag.active;
 
                       return (
-                        <button
+                        <motion.button
                           key={tabItem.id}
                           type="button"
-                          role="tab"
-                          aria-selected={isActive}
+                          role={isWorkspaceSwitcherCustomizing ? undefined : "tab"}
+                          aria-selected={isWorkspaceSwitcherCustomizing ? undefined : isActive}
+                          aria-label={isWorkspaceSwitcherCustomizing
+                            ? isPinned
+                              ? "Chat stays on the switcher"
+                              : `Drag ${tabItem.label} to rearrange or remove it`
+                            : undefined}
+                          data-switcher-tab-id={tabItem.id}
+                          layout="position"
+                          transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.72 }}
+                          style={isDragging ? {
+                            transform: `translate3d(${workspaceSwitcherDrag?.x ?? 0}px, ${workspaceSwitcherDrag?.y ?? 0}px, 0) scale(1.025)`,
+                            zIndex: 8,
+                          } : undefined}
                           onPointerDown={(event) => {
+                            if (isWorkspaceSwitcherCustomizing) {
+                              if (!isPinned) beginWorkspaceSwitcherDrag(event, tabItem.id as WorkspaceRailAppId, "rail");
+                              return;
+                            }
                             event.preventDefault();
                             if (tabItem.id === "clip") {
                               setIsShortsWelcomeOpen(true);
@@ -9505,6 +11074,7 @@ Please analyze the code you just wrote and fix this error.`;
                             handleWorkspaceTabChange(tabItem.id);
                           }}
                           onClick={() => {
+                            if (isWorkspaceSwitcherCustomizing) return;
                             if (tabItem.id === "clip") {
                               setIsShortsWelcomeOpen(true);
                               return;
@@ -9512,27 +11082,137 @@ Please analyze the code you just wrote and fix this error.`;
                             handleWorkspaceTabChange(tabItem.id);
                           }}
                           onMouseEnter={() => {
+                            if (isWorkspaceSwitcherCustomizing) return;
                             setHoveredWorkspaceTab(tabItem.id);
                             if (tabItem.id === "vibe") void loadVibeCoderWorkspace();
                           }}
-                          onFocus={() => setHoveredWorkspaceTab(tabItem.id)}
+                          onPointerMove={moveWorkspaceSwitcherDrag}
+                          onPointerUp={finishWorkspaceSwitcherDrag}
+                          onPointerCancel={(event) => finishWorkspaceSwitcherDrag(event, true)}
+                          onDragStart={(event) => {
+                            if (!isPinned) beginNativeWorkspaceSwitcherDrag(event, tabItem.id as WorkspaceRailAppId, "rail");
+                          }}
+                          onDragEnd={finishNativeWorkspaceSwitcherDrag}
+                          onKeyDown={(event) => {
+                            if (!isWorkspaceSwitcherCustomizing || isPinned) return;
+                            if (event.key === "ArrowLeft") {
+                              event.preventDefault();
+                              moveWorkspaceRailApp(tabItem.id as WorkspaceRailAppId, -1);
+                            } else if (event.key === "ArrowRight") {
+                              event.preventDefault();
+                              moveWorkspaceRailApp(tabItem.id as WorkspaceRailAppId, 1);
+                            } else if (event.key === "Backspace" || event.key === "Delete") {
+                              event.preventDefault();
+                              removeWorkspaceRailApp(tabItem.id as WorkspaceRailAppId);
+                            }
+                          }}
+                          onFocus={() => {
+                            if (!isWorkspaceSwitcherCustomizing) setHoveredWorkspaceTab(tabItem.id);
+                          }}
                           className={cn(
                             "clyra-workflow-tab w-[128px] justify-center",
                             isActive && "clyra-workflow-tab--active",
+                            isWorkspaceSwitcherCustomizing && "clyra-workflow-tab--customizing",
+                            isPinned && isWorkspaceSwitcherCustomizing && "clyra-workflow-tab--pinned",
+                            isDragging && "clyra-workflow-tab--dragging",
+                            workspaceSwitcherDropTarget === tabItem.id && "clyra-workflow-tab--drop-target",
                           )}
                         >
                           <Icon className="relative h-4 w-4 shrink-0" />
                           <span className="relative whitespace-nowrap">{tabItem.label}</span>
-                        </button>
+                        </motion.button>
                       );
                     })}
+                    <AnimatePresence initial={false}>
+                      {isWorkspaceSwitcherCustomizing ? (
+                        <motion.div
+                          role="region"
+                          aria-label="Customize the workspace switcher"
+                          initial={{ opacity: 0, y: -6, scale: 0.985 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -4, scale: 0.99 }}
+                          transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.72 }}
+                          className="clyra-workflow-tabs__editor"
+                        >
+                          <div className="clyra-workflow-tabs__editor-copy">
+                            <span>Customize</span>
+                            <small>Drag to add, reorder, or replace</small>
+                          </div>
+                          <div className="clyra-workflow-tabs__editor-apps" aria-label="Available workspace apps">
+                            {SIDEBAR_APP_IDS.filter((id) => !workspaceRailTabs.includes(id)).map((id) => {
+                              const item = workspaceRailMeta[id];
+                              const Icon = item.icon;
+                              const isDragging = workspaceSwitcherDrag?.source === "library" &&
+                                workspaceSwitcherDrag.id === id && workspaceSwitcherDrag.active;
+                              return (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  aria-label={`Drag ${item.label} into the workspace switcher`}
+                                  className={cn("clyra-workflow-tabs__editor-app", isDragging && "is-dragging")}
+                                  style={isDragging ? {
+                                    transform: `translate3d(${workspaceSwitcherDrag?.x ?? 0}px, ${workspaceSwitcherDrag?.y ?? 0}px, 0) scale(1.025)`,
+                                    zIndex: 9,
+                                  } : undefined}
+                                  onPointerDown={(event) => beginWorkspaceSwitcherDrag(event, id, "library")}
+                                  onPointerMove={moveWorkspaceSwitcherDrag}
+                                  onPointerUp={finishWorkspaceSwitcherDrag}
+                                  onPointerCancel={(event) => finishWorkspaceSwitcherDrag(event, true)}
+                                  onDragStart={(event) => beginNativeWorkspaceSwitcherDrag(event, id, "library")}
+                                  onDragEnd={finishNativeWorkspaceSwitcherDrag}
+                                  onClick={() => addWorkspaceRailApp(id)}
+                                >
+                                  <Icon aria-hidden className="h-3.5 w-3.5" />
+                                  <span>{item.label}</span>
+                                </button>
+                              );
+                            })}
+                            {workspaceRailTabs.length === WORKSPACE_RAIL_MAX_APPS + 1 ? (
+                              <span className="clyra-workflow-tabs__editor-limit">Switcher full</span>
+                            ) : null}
+                          </div>
+                          <div
+                            data-switcher-remove-zone="true"
+                            className={cn(
+                              "clyra-workflow-tabs__editor-remove",
+                              workspaceSwitcherDropTarget === "remove" && "is-target",
+                            )}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setWorkspaceSwitcherDropTarget("remove");
+                            }}
+                            onDragLeave={() => setWorkspaceSwitcherDropTarget(null)}
+                            onDrop={(event) => {
+                              event.stopPropagation();
+                              dropNativeWorkspaceSwitcherDrag(event, "remove");
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            <span>Remove</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="clyra-workflow-tabs__editor-done"
+                            onClick={() => {
+                              settleWorkspaceSwitcherDrag();
+                              setIsWorkspaceSwitcherCustomizing(false);
+                              setToastMessage("Workspace switcher updated");
+                            }}
+                          >
+                            Done
+                          </button>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
                   </div>
                 </div>
 
-                <SpotifyNotchPill visible={showSpotifyNotch && !notchOpen} playback={spotifyPlayback} />
+                <SpotifyNotchPill visible={showSpotifyNotch && !notchOpen && !isTaskViewOpen} playback={spotifyPlayback} />
                 <SpotifyNotchPanel
-                  visible={showSpotifyNotch && notchOpen}
+                  visible={showSpotifyNotch && notchOpen && !isTaskViewOpen}
                   playback={spotifyPlayback}
+                  onDismiss={dismissSpotifyNotch}
                   onExpand={() => {
                     setShowSpotifyNotch(false);
                     setNotchOpen(false);
@@ -9600,40 +11280,12 @@ Please analyze the code you just wrote and fix this error.`;
                     />
                   </div>
                 )}
-                <AnimatePresence>
-                  {isWorkspaceSwitching && (
-                    <motion.div
-                      aria-hidden="true"
-                      className="clyra-workspace-swipe-shadow"
-                      initial={{
-                        opacity: 0,
-                        x: workspaceTransitionDirection * 54,
-                        scaleX: 0.9,
-                      }}
-                      animate={{
-                        opacity: [0, 0.26, 0],
-                        x: [
-                          workspaceTransitionDirection * 36,
-                          0,
-                          workspaceTransitionDirection * -28,
-                        ],
-                        scaleX: [0.94, 1.02, 0.98],
-                      }}
-                      exit={{ opacity: 0 }}
-                      transition={{
-                        duration: 0.72,
-                        ease: workspaceSwipeEase,
-                        times: [0, 0.52, 1],
-                      }}
-                    />
-                  )}
-                </AnimatePresence>
                 <div
                   className={cn(
                     "relative z-10 flex flex-col h-full min-h-0 w-full",
                   )}
                 >
-                  {!isTaskViewOpen ? <AnimatePresence initial={false} mode="sync" custom={workspaceTransitionDirection}>
+                  {!isTaskViewOpen && visitedWorkspaceTabs.length > 0 ? <AnimatePresence initial={false} mode="sync" custom={workspaceTransitionDirection}>
                   <motion.div
                     key={workspaceViewKey}
                     data-workspace-motion="true"
@@ -9648,8 +11300,9 @@ Please analyze the code you just wrote and fix this error.`;
                         !isBrowserWorkspace &&
                         !isCompanionWorkspace &&
                         !isStudyWorkspace &&
-                        !isMapsWorkspace &&
                         !isCareWorkspace &&
+                        !isMapsWorkspace &&
+                        !isEyeWorkspace &&
                         !isSpotifyWorkspace &&
                         !isCoworkWorkspace &&
                         !isCreatorWorkspace &&
@@ -9677,11 +11330,10 @@ Please analyze the code you just wrote and fix this error.`;
                         </Suspense>
                       ) : isClipWorkspace ? (
                         <Suspense fallback={null}>
-                          <AIClipper
-                            embedded
-                            initialUrl={clipInitialUrl}
-                            onEngaged={() => setWorkspaceChromeEngaged(true)}
-                            onClose={() => {
+                          <ShortsWorkspaceApp
+                            key="clip"
+                            entry={{ name: "home" }}
+                            onExit={() => {
                               setSelectedCommand(null);
                               setClipInitialUrl("");
                               setActiveWorkspaceTab("chat");
@@ -9704,21 +11356,26 @@ Please analyze the code you just wrote and fix this error.`;
                         <Suspense fallback={null}>
                           <StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} />
                         </Suspense>
-                      ) : isMapsWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ClyraMapsWorkspace initialCommand={mapChatCommand} onAskClyra={handleMapAskClyra} />
-                        </Suspense>
                       ) : isCareWorkspace ? (
                         <Suspense fallback={null}>
                           <ClyraCareWorkspace />
+                        </Suspense>
+                      ) : isMapsWorkspace ? (
+                        <Suspense fallback={null}>
+                          <ClyraMapsWorkspace />
+                        </Suspense>
+                      ) : isEyeWorkspace ? (
+                        <Suspense fallback={null}>
+                          <ClyraEyeWorkspace suspended={isTaskViewOpen} />
                         </Suspense>
                       ) : isSpotifyWorkspace ? (
                         <SpotifyWorkspace playback={spotifyPlayback} />
                       ) : creatorMode ? (
                         <Suspense fallback={null}>
-                          <CreatorStudioWorkspace
-                            mode={creatorMode}
-                            onBack={() => handleWorkspaceTabChange("chat")}
+                          <ShortsWorkspaceApp
+                            key={creatorMode}
+                            entry={{ name: "setup", kind: creatorMode }}
+                            onExit={() => handleWorkspaceTabChange("chat")}
                           />
                         </Suspense>
                       ) : (
@@ -9730,9 +11387,13 @@ Please analyze the code you just wrote and fix this error.`;
                             onTextChange={setValue}
                             onKeyDown={handleKeyDown}
                             onSend={handleSendMessage}
+                            isResponding={isAiResponding}
+                            onStop={stopGeneration}
+                            onStartVoiceCall={() => void voiceCall.startCall()}
+                            canSend={canSendMessage}
                             textareaRef={textareaRef}
                             placeholder="Message Clyra"
-                            sent={messages.length > 0}
+                            sent={isWorkspaceSwitcherCustomizing ? false : messages.length > 0}
                             temp={isTemporaryChat}
                             onToggleTemp={toggleTemporaryChat}
                             efforts={shellEfforts}
@@ -9745,20 +11406,16 @@ Please analyze the code you just wrote and fix this error.`;
                             paletteQuery={commandQuery}
                             paletteActiveIndex={activeSuggestion}
                             onPaletteHoverIndex={setActiveSuggestion}
+                            selections={shellSelections}
+                            suggestions={shellSuggestions}
                             files={shellFiles}
                             onPickFiles={handleAttachFile}
                             fileInputRef={fileInputRef}
                             onFilesSelected={handleFilesSelected}
-                            dictation={{
-                              phase: composerDictation.phase === "error" ? "error" : composerDictation.phase === "idle" ? "idle" : "listening",
-                              level: composerDictation.level,
-                              elapsedSeconds: 0,
-                              onStart: () => { void composerDictation.start(); },
-                              onStop: composerDictation.cancel,
-                            }}
-                            onStartVoiceCall={() => { void voiceCall.startCall(); }}
+                            dictation={composerDictationState}
                             sidebarOpen={shellSidebarOpen}
                             onToggleSidebar={() => setShellSidebarOpen((v) => !v)}
+                            onOpenSettings={() => setIsSettingsOpen(true)}
                             chats={shellChatRows}
                             onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }}
                             onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }}
@@ -9796,8 +11453,7 @@ Please analyze the code you just wrote and fix this error.`;
                               webSearchEnabled: webSearchShellEnabled,
                               onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v),
                             }}
-                            onImportGitHubRepo={importGitHubRepositoryToVibe}
-                            transcript={shellTranscript}
+                            transcript={shellTranscript} transcriptOverlay={scrollLatestControl}
                             transcriptContainerId="chat-container"
                             transcriptContainerRef={chatContentRef}
                           />
@@ -9897,6 +11553,7 @@ Please analyze the code you just wrote and fix this error.`;
                       tabs={workspaceTaskTabs}
                       onClose={() => { taskViewOpenRef.current = false; setIsTaskViewOpen(false); }}
                       onCloseTab={handleTaskViewTabClose}
+                      onReorder={handleTaskViewReorder}
                       onSelect={(id) => {
                         taskViewOpenRef.current = false;
                         taskViewSelectionRef.current = true;
@@ -9997,6 +11654,15 @@ Please analyze the code you just wrote and fix this error.`;
         voiceTestMode={voiceTestMode}
         setVoiceTestMode={setVoiceTestMode}
         chats={chats}
+        onCustomizeWorkspaceSwitcher={() => {
+          setIsSettingsOpen(false);
+          setShellSidebarOpen(false);
+          setShowSpotifyNotch(false);
+          setNotchOpen(false);
+          setWorkflowTabsHidden(false);
+          setIsWorkspaceSwitcherCustomizing(true);
+          if (activeWorkspaceTab !== "chat") handleWorkspaceTabChange("chat");
+        }}
         clearChats={() => {
           setChats([]);
           setMessages([]);
@@ -10020,6 +11686,7 @@ export async function streamOpenAI(
   signal?: AbortSignal,
   thinkingEnabled: boolean = false,
   timeoutMs: number = 75_000,
+  reasoningEffort?: "high" | "max",
 ) {
   const formattedMessages = systemInstruction
     ? [{ role: "system", content: systemInstruction }, ...messages]
@@ -10048,6 +11715,7 @@ export async function streamOpenAI(
       stream: true,
       max_tokens: maxTokens,
       thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
+      ...(thinkingEnabled && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     }),
   });
 

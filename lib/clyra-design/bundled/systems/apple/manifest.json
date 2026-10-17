@@ -1,0 +1,14 @@
+{
+  "id": "apple",
+  "name": "Apple",
+  "category": "Media & Consumer",
+  "description": "Consumer electronics. Premium white space, SF Pro, cinematic imagery.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

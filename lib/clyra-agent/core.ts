@@ -78,15 +78,26 @@ export type MissionStep = {
   toolId: string;
   args: Json;
   dependsOn: string[];
-  status: "pending" | "running" | "completed" | "failed" | "blocked" | "cancelled";
+  /** `pending` remains accepted for compatibility with stored missions;
+   * `queued` is the preferred spelling for a newly planned graph node. */
+  status: "queued" | "pending" | "running" | "waiting" | "blocked" | "paused" | "retrying" | "completed" | "failed" | "cancelled";
   retries?: number;
+  /** Durable node-level facts. These are intentionally structured so a
+   * resumed mission does not need an LLM to reconstruct what already happened. */
+  artifacts?: ToolResult["evidence"];
+  verification?: { status: "pending" | "verified" | "failed"; method?: ToolVerification["method"]; evidence?: ToolResult["evidence"]; reason?: string };
+  approval?: { required: boolean; status: "not-required" | "pending" | "granted"; requestedAt?: number };
+  checkpoint?: Json;
 };
 export type MissionPlan = { objective: string; steps: MissionStep[] };
-export type MissionLimits = { maxSteps: number; maxRetriesPerStep: number; maxRecoveryAttempts: number; maxRuntimeMs: number; maxConsecutiveToolFailures: number };
+/** Public names for the task-graph contract used by Supervisor adapters. */
+export type TaskNode = MissionStep;
+export type TaskGraph = MissionPlan;
+export type MissionLimits = { maxSteps: number; maxRetriesPerStep: number; maxRecoveryAttempts: number; maxRuntimeMs: number; maxConsecutiveToolFailures: number; maxConcurrentReadOnlySteps: number };
 // A long-horizon task may legitimately require one hundred bounded actions.
 // The watchdog still limits retries and overall runtime, so this is not an
 // invitation to run unbounded background work.
-export const DEFAULT_MISSION_LIMITS: MissionLimits = Object.freeze({ maxSteps: 200, maxRetriesPerStep: 3, maxRecoveryAttempts: 3, maxRuntimeMs: 60 * 60_000, maxConsecutiveToolFailures: 3 });
+export const DEFAULT_MISSION_LIMITS: MissionLimits = Object.freeze({ maxSteps: 200, maxRetriesPerStep: 3, maxRecoveryAttempts: 3, maxRuntimeMs: 60 * 60_000, maxConsecutiveToolFailures: 3, maxConcurrentReadOnlySteps: 4 });
 
 const terminal = new Set<MissionState>(["COMPLETED", "FAILED", "CANCELLED"]);
 const transitions: Record<MissionState, readonly MissionState[]> = {
@@ -233,24 +244,42 @@ export class MissionRuntime {
     while (!isTerminal(this.record.state)) {
       if (this.record.state === "PAUSED" || this.record.state === "WAITING_FOR_USER" || this.record.state === "WAITING_FOR_APPROVAL") break;
       this.assertBudget();
-      const step = this.nextStep();
-      if (!step) {
+      const runnable = this.runnableSteps();
+      if (!runnable.length) {
         if (this.record.plan.steps.every((candidate) => candidate.status === "completed")) this.transition("COMPLETED", "all verified steps complete");
         else { this.record.error = { code: "UNKNOWN_STATE", message: "No runnable step remains; dependencies are unresolved." }; this.transition("FAILED", this.record.error.message, undefined, undefined, undefined, "UNKNOWN_STATE"); }
         break;
       }
+      /**
+       * Only explicitly concurrent, read-only adapters may overlap. Writes,
+       * browser/desktop control and approval-gated work retain a serial
+       * boundary even when the graph says they have no data dependency. This
+       * avoids racing a user's visible workspace or widening approval scope.
+       */
+      const parallel = runnable
+        .filter((candidate) => this.canRunReadOnlyInParallel(candidate))
+        .slice(0, Math.max(1, this.limits.maxConcurrentReadOnlySteps));
+      if (parallel.length > 1) {
+        await this.executeConcurrentBatch(parallel);
+        continue;
+      }
+      const step = runnable[0]!;
       const tool = this.tools.get(step.toolId);
       if (!tool) { await this.handleFailure(step, new ClyraAgentError("TOOL_NOT_FOUND", `Tool ${step.toolId} is not registered.`)); continue; }
       const resolvedArgs = this.resolveArgs(step.args);
       const schemaErrors = validateJson(tool.inputSchema, resolvedArgs);
       if (schemaErrors.length) { await this.handleFailure(step, new ClyraAgentError("INVALID_ARGUMENTS", schemaErrors.join("; "))); continue; }
       if (tool.riskLevel !== "safe") {
+        step.approval = { required: true, status: "pending", requestedAt: this.now() };
         this.record.approval = { stepId: step.id, toolId: tool.id, requestedAt: this.now() };
         this.transition("WAITING_FOR_APPROVAL", `approval required for ${tool.id}`, step, tool.id);
         // A declined or absent approval is a durable handoff, not a failed
         // action. It must be explicitly resumed with this exact step ID.
         if (!(await this.options.requestApproval?.(step, tool))) break;
+        step.approval.status = "granted";
         delete this.record.approval; this.transition("READY", "approval granted", step, tool.id);
+      } else if (!step.approval) {
+        step.approval = { required: false, status: "not-required" };
       }
       await this.execute(step, tool, resolvedArgs);
     }
@@ -263,6 +292,8 @@ export class MissionRuntime {
     if (this.record.state === "EXECUTING") this.trace("tool executing", step, tool.id);
     else this.transition("EXECUTING", "tool executing", step, tool.id);
     step.status = "running";
+    step.verification = { status: "pending", method: tool.verification?.method };
+    step.checkpoint = { phase: "executing", attempt: (step.retries || 0) + 1, at: this.now() };
     this.checkpoint();
     const attempt = (step.retries || 0) + 1; const started = this.now();
     const fingerprint = `${tool.id}:${JSON.stringify(args)}`;
@@ -271,21 +302,104 @@ export class MissionRuntime {
     try {
       const result = await this.withTimeout(tool.execute(args, { missionId: this.record.id, projectId: this.record.projectId, signal: this.controller.signal, attempt }), tool.timeoutMs);
       if (!result.ok) throw new ClyraAgentError(result.error?.code || "TOOL_CRASH", result.error?.message || `${tool.id} failed.`, Boolean(result.error?.retryable));
+      // A tool may finish just after Pause or Stop was requested.  Its return
+      // value is evidence of work having happened, not permission to advance
+      // the task past the new control boundary.
+      this.assertBudget();
       this.transition("OBSERVING", "tool result observed", step, tool.id, this.now() - started);
       this.transition("VERIFYING", "verifying actual outcome", step, tool.id);
       const verification = await this.options.verify(step, result, { missionId: this.record.id, projectId: this.record.projectId, signal: this.controller.signal, attempt });
+      this.assertBudget();
       if (!verification.ok) throw new ClyraAgentError("VERIFICATION_FAILED", verification.reason || `${tool.id} did not produce verifiable evidence.`);
-      step.status = "completed"; this.record.outputs[step.id] = { ...result, evidence: verification.evidence || result.evidence }; this.failures = 0; this.transition("EXECUTING", "step verified", step, tool.id, this.now() - started);
+      const evidence = verification.evidence || result.evidence;
+      step.status = "completed";
+      step.artifacts = evidence;
+      step.verification = { status: "verified", method: tool.verification?.method, evidence };
+      step.checkpoint = { phase: "verified", attempt, at: this.now() };
+      this.record.outputs[step.id] = { ...result, evidence };
+      this.failures = 0;
+      this.transition("EXECUTING", "step verified", step, tool.id, this.now() - started);
     } catch (error) { await this.handleFailure(step, this.normaliseError(error)); }
+  }
+  /** Execute a safe fan-out as one scheduler batch. Individual workers never
+   * transition the global mission state, preventing a completed web read from
+   * falsely advancing a sibling that is still being verified. */
+  private async executeConcurrentBatch(steps: MissionStep[]) {
+    if (this.record.state === "EXECUTING") this.trace(`starting ${steps.length} independent read-only tasks`);
+    else this.transition("EXECUTING", `starting ${steps.length} independent read-only tasks`);
+    const outcomes = await Promise.all(steps.map((step) => this.executeReadOnlyStep(step)));
+    for (const outcome of outcomes) {
+      if (!outcome.error) continue;
+      // Every settled child receives a durable status, even when a sibling
+      // has already paused, blocked, or failed the mission. Leaving a settled
+      // child as `running` would make a later resume misrepresent reality.
+      if (this.record.state === "PAUSED") {
+        outcome.step.status = "pending";
+        outcome.step.checkpoint = { phase: "paused", at: this.now(), scheduler: "parallel-read-only" };
+        this.checkpoint();
+        continue;
+      }
+      if (this.record.state === "WAITING_FOR_USER" || this.record.state === "WAITING_FOR_APPROVAL") {
+        outcome.step.status = "blocked";
+        outcome.step.checkpoint = { phase: "waiting", at: this.now(), scheduler: "parallel-read-only", error: outcome.error.code };
+        this.checkpoint();
+        continue;
+      }
+      if (isTerminal(this.record.state)) {
+        outcome.step.status = this.record.state === "CANCELLED" ? "cancelled" : "failed";
+        outcome.step.verification = { status: "failed", reason: outcome.error.message };
+        outcome.step.checkpoint = { phase: "settled-after-terminal", at: this.now(), scheduler: "parallel-read-only", error: outcome.error.code };
+        this.checkpoint();
+        continue;
+      }
+      await this.handleFailure(outcome.step, outcome.error);
+    }
+  }
+  private async executeReadOnlyStep(step: MissionStep): Promise<{ step: MissionStep; error?: ClyraAgentError }> {
+    const tool = this.tools.get(step.toolId)!;
+    const args = this.resolveArgs(step.args);
+    const attempt = (step.retries || 0) + 1;
+    const started = this.now();
+    step.status = "running";
+    step.approval = { required: false, status: "not-required" };
+    step.verification = { status: "pending", method: tool.verification?.method };
+    step.checkpoint = { phase: "executing", attempt, at: started, scheduler: "parallel-read-only" };
+    this.trace("tool executing", step, tool.id);
+    try {
+      const result = await this.withTimeout(tool.execute(args, { missionId: this.record.id, projectId: this.record.projectId, signal: this.controller.signal, attempt }), tool.timeoutMs);
+      if (!result.ok) throw new ClyraAgentError(result.error?.code || "TOOL_CRASH", result.error?.message || `${tool.id} failed.`, Boolean(result.error?.retryable));
+      this.assertBudget();
+      this.trace("tool result observed", step, tool.id, this.now() - started);
+      this.trace("verifying actual outcome", step, tool.id);
+      const verification = await this.options.verify(step, result, { missionId: this.record.id, projectId: this.record.projectId, signal: this.controller.signal, attempt });
+      this.assertBudget();
+      if (!verification.ok) throw new ClyraAgentError("VERIFICATION_FAILED", verification.reason || `${tool.id} did not produce verifiable evidence.`);
+      const evidence = verification.evidence || result.evidence;
+      step.status = "completed";
+      step.artifacts = evidence;
+      step.verification = { status: "verified", method: tool.verification?.method, evidence };
+      step.checkpoint = { phase: "verified", attempt, at: this.now(), scheduler: "parallel-read-only" };
+      this.record.outputs[step.id] = { ...result, evidence };
+      this.failures = 0;
+      this.trace("step verified", step, tool.id, this.now() - started);
+      return { step };
+    } catch (error) {
+      return { step, error: this.normaliseError(error) };
+    }
   }
   private async handleFailure(step: MissionStep, error: ClyraAgentError) {
     if (isTerminal(this.record.state)) return;
     // Pause aborts in-flight work to release mouse/keys and child processes,
     // but is deliberately not cancellation: retain the plan for a fresh,
     // post-resume observation.
-    if (this.record.state === "PAUSED") { step.status = "pending"; this.checkpoint(); return; }
+    // A paused in-flight node is returned to pending so resume can perform a
+    // fresh observation before retrying it; the mission-level PAUSED state and
+    // durable checkpoint retain the user-visible paused condition.
+    if (this.record.state === "PAUSED") { step.status = "pending"; step.checkpoint = { phase: "paused", at: this.now() }; this.checkpoint(); return; }
     if (error.code === "CANCELLED" || this.controller.signal.aborted) { step.status = "cancelled"; this.transition("CANCELLED", "cancelled", step); return; }
     this.failures += 1; step.retries = (step.retries || 0) + 1;
+    step.verification = { status: "failed", reason: error.message };
+    step.checkpoint = { phase: "recovering", attempt: step.retries, at: this.now(), error: error.code };
     this.transition("RECOVERING", error.message, step, undefined, undefined, error.code);
     const recovery = await this.options.recover?.({ record: this.snapshot(), step: structuredClone(step), error }) || (error.retryable && step.retries <= this.limits.maxRetriesPerStep ? "retry" : "fail");
     if (this.failures >= this.limits.maxConsecutiveToolFailures || recovery === "fail" || step.retries > this.limits.maxRetriesPerStep) {
@@ -293,9 +407,17 @@ export class MissionRuntime {
     }
     if (recovery === "wait") { step.status = "blocked"; this.transition("WAITING_FOR_USER", error.message, step, undefined, undefined, error.code); return; }
     if (recovery === "replan") { step.status = "pending"; this.transition("REPLANNING", error.message, step, undefined, undefined, error.code); this.transition("READY", "replanned", step); return; }
-    step.status = "pending"; this.transition("READY", "retrying after recovery", step, undefined, undefined, error.code);
+    step.status = "retrying"; this.transition("READY", "retrying after recovery", step, undefined, undefined, error.code);
   }
-  private nextStep() { return this.record.plan.steps.find((step) => step.status === "pending" && step.dependsOn.every((id) => this.record.plan.steps.find((candidate) => candidate.id === id)?.status === "completed")); }
+  private runnableSteps() {
+    return this.record.plan.steps.filter((step) => (step.status === "queued" || step.status === "pending" || step.status === "retrying") && step.dependsOn.every((id) => this.record.plan.steps.find((candidate) => candidate.id === id)?.status === "completed"));
+  }
+  private canRunReadOnlyInParallel(step: MissionStep) {
+    const tool = this.tools.get(step.toolId);
+    if (!tool || tool.riskLevel !== "safe" || !tool.canRunConcurrently) return false;
+    if (!tool.permissions.length || !tool.permissions.every((permission) => permission === "read")) return false;
+    return validateJson(tool.inputSchema, this.resolveArgs(step.args)).length === 0;
+  }
   private resolveArgs(value: Json): Json {
     if (typeof value === "string") {
       const exact = value.match(/^\$steps\.([\w-]+)\.data\.([\w-]+)$/);

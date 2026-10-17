@@ -4,6 +4,14 @@
  * lib/opencode/opencode-routes.ts and server.ts.
  */
 
+import type { DesignSystemSummary, DesignTemplateSummary } from "../../../lib/clyra-design/directive";
+import type {
+  TemplateImportMode,
+  TemplateManifest,
+  TemplateStatus,
+} from "../../../lib/clyra-code/library/registry";
+import type { TemplateCheckoutInspection, TemplateImportPlan, TemplateRemoteVerification } from "../../../lib/clyra-code/library/service";
+
 export type VibeProject = {
   id: string;
   name: string;
@@ -12,8 +20,19 @@ export type VibeProject = {
   status: string;
   createdAt: string;
   updatedAt: string;
+  /** The name the sidebar shows. Derived from the project itself when the stored name is only a prompt. */
+  displayName?: string;
+  /** "user" once the user has renamed the project. Their name is never replaced. */
+  nameSource?: "user";
+  /** Durable sidebar state. Stored with the project, not in the browser. */
+  pinned?: boolean;
+  archivedAt?: string;
   previewUrl?: string;
   platform?: "web";
+  /** "design" projects are visual screens and live under the Design tab. */
+  kind?: "code" | "design";
+  designSystemId?: string;
+  designTemplateId?: string;
 };
 
 export type ProjectGitStatus = {
@@ -121,17 +140,47 @@ export const api = {
   listProjects: () =>
     json<{ projects: VibeProject[] }>("/api/vibe/projects").then((r) => r.projects ?? []),
 
-  createProject: (name: string, prompt = "") =>
+  createProject: (name: string, prompt = "", options?: { kind?: "code" | "design"; designSystemId?: string | null; designTemplateId?: string | null }) =>
     json<{ project: VibeProject }>("/api/vibe/projects", {
       method: "POST",
-      body: JSON.stringify({ name, prompt }),
+      body: JSON.stringify({
+        name,
+        prompt,
+        kind: options?.kind ?? "code",
+        ...(options?.designSystemId ? { designSystemId: options.designSystemId } : {}),
+        ...(options?.designTemplateId ? { designTemplateId: options.designTemplateId } : {}),
+      }),
     }).then((r) => r.project),
+
+  /** Sets the design system and starting layout of an existing design project. */
+  setProjectDesign: (id: string, choice: { designSystemId: string | null; designTemplateId: string | null }) =>
+    json<{ project: VibeProject }>(`/api/vibe/projects/${enc(id)}/design`, {
+      method: "POST",
+      body: JSON.stringify(choice),
+    }).then((r) => r.project),
+
+  /** The bundled design systems and templates that a Design project can start from. */
+  designCatalog: () =>
+    json<{ systems: DesignSystemSummary[]; templates: DesignTemplateSummary[] }>("/api/design/catalog"),
 
   importProject: (path: string) =>
     json<{ project: VibeProject }>("/api/vibe/projects/import", {
       method: "POST",
       body: JSON.stringify({ path }),
     }).then((r) => r.project),
+
+  /** "Open in Clyra Code" handoff from the embedded OpenDesign UI. */
+  importOpenDesignProject: (openDesignProjectId: string, name?: string) =>
+    json<{ project: VibeProject; path: string }>(`/api/open-design/import/${encodeURIComponent(openDesignProjectId)}`, {
+      method: "POST",
+      body: JSON.stringify({ name: name ?? "" }),
+    }).then((r) => r.project),
+
+  /** Deploy an OpenDesign project to GitHub Pages via the host's `gh` CLI. */
+  deployOpenDesignProject: (openDesignProjectId: string) =>
+    json<{ ok: boolean; url?: string; repo?: string }>(`/api/open-design/deploy/${encodeURIComponent(openDesignProjectId)}`, {
+      method: "POST",
+    }),
 
   importGitHubProject: (url: string) =>
     json<{ project: VibeProject }>("/api/vibe/projects/import-github", {
@@ -143,6 +192,13 @@ export const api = {
     json<{ project: VibeProject }>(`/api/vibe/projects/${enc(id)}`, {
       method: "PATCH",
       body: JSON.stringify({ name }),
+    }).then((r) => r.project),
+
+  /** Pins, unpins, removes from or restores to the sidebar. Never deletes project files. */
+  updateProjectState: (id: string, patch: { pinned?: boolean; archived?: boolean }) =>
+    json<{ project: VibeProject }>(`/api/vibe/projects/${enc(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
     }).then((r) => r.project),
 
   openProjectFolder: (id: string) =>
@@ -322,4 +378,76 @@ export const api = {
     ),
 
   eventsUrl: (projectId: string) => `/api/opencode/events/${enc(projectId)}`,
+
+  diagnostic: (projectId: string) =>
+    json<{ phase?: string; remaining?: string[]; completed?: string[]; changedFiles?: string[] } & Record<string, unknown>>(
+      `/api/opencode/diagnostic/${enc(projectId)}`,
+    ),
+
+  platform: (refresh = false) =>
+    json<PlatformSnapshot>(`/api/clyra-code/platform${refresh ? "?refresh=1" : ""}`),
+
+  projectTargets: (projectId: string) =>
+    json<{ targets: DetectedTarget[]; primary: DetectedTarget | null }>(
+      `/api/clyra-code/projects/${enc(projectId)}/targets`,
+    ),
+
+  swiftCommand: (projectId: string, command: SwiftPackageCommand, options: { configuration?: "debug" | "release" } = {}) =>
+    json<SwiftCommandResult>(`/api/clyra-code/projects/${enc(projectId)}/swift/${command}`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+
+  templateLibrary: (filters: { q?: string; category?: string; status?: TemplateStatus; offset?: number; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
+    const suffix = query.toString();
+    return json<{ entries: TemplateManifest[]; total: number; categories: string[]; nextOffset: number | null }>(`/api/clyra-code/library${suffix ? `?${suffix}` : ""}`);
+  },
+
+  templateManifest: (templateId: string) =>
+    json<{ manifest: TemplateManifest }>(`/api/clyra-code/library/${enc(templateId)}`).then((result) => result.manifest),
+
+  templateImportPlan: (templateId: string) =>
+    json<{ plan: TemplateImportPlan }>(`/api/clyra-code/library/${enc(templateId)}/import-plan`, { method: "POST" }).then((result) => result.plan),
+
+  importTemplateSource: (templateId: string, payload: { mode: TemplateImportMode; projectId?: string | null; confirmed: true }) =>
+    json<{
+      project: VibeProject;
+      importedIntoExisting: boolean;
+      sourcePath: string;
+      verification: TemplateRemoteVerification;
+      inspection: TemplateCheckoutInspection;
+      message: string;
+    }>(`/api/clyra-code/library/${enc(templateId)}/import`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+};
+
+// Server contracts. Type-only imports are erased at build time, so the Node-only
+// platform modules never reach the browser bundle.
+import type { PlatformCapabilityMatrix } from "../../../lib/clyra-code/platform/capabilities";
+import type { DetectedTarget } from "../../../lib/clyra-code/targets/detect";
+import type { SwiftCommandResult, SwiftPackageCommand } from "../../../lib/clyra-code/swift/swift-package";
+import type { SimulatorListing } from "../../../lib/clyra-code/ios/simulators";
+
+export type {
+  PlatformCapabilityMatrix,
+  DetectedTarget,
+  SwiftCommandResult,
+  SwiftPackageCommand,
+  SimulatorListing,
+  TemplateImportMode,
+  TemplateManifest,
+  TemplateStatus,
+  TemplateCheckoutInspection,
+  TemplateImportPlan,
+  TemplateRemoteVerification,
+};
+
+export type PlatformSnapshot = {
+  matrix: PlatformCapabilityMatrix;
+  simulators: SimulatorListing;
+  checkedAt: string;
 };

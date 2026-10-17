@@ -37,7 +37,9 @@ const CANDIDATE_BASES = [
   process.env.CLYRA_VOICE_BASE_URL,
   "http://127.0.0.1:31415",
   "http://127.0.0.1:3000",
-].filter(Boolean).map((u) => String(u).replace(/\/$/, ""));
+]
+  .filter(Boolean)
+  .map((u) => String(u).replace(/\/$/, ""));
 
 const argv = process.argv.slice(2);
 const dictationMode = argv.includes("--dictation");
@@ -60,7 +62,12 @@ function stamp() {
 }
 
 function whichFfmpeg() {
-  for (const candidate of ["ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/Users/lukesimpson/.local/bin/ffmpeg"]) {
+  for (const candidate of [
+    "ffmpeg",
+    "/opt/homebrew/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "/Users/lukesimpson/.local/bin/ffmpeg",
+  ]) {
     try {
       if (candidate === "ffmpeg") return "ffmpeg";
       if (fs.existsSync(candidate)) return candidate;
@@ -86,7 +93,8 @@ function decodeVoicePcmPacket(buf) {
 }
 
 async function ensurePcm16(sourcePath, outDir) {
-  if (sourcePath?.endsWith(".pcm") && fs.existsSync(sourcePath)) return sourcePath;
+  if (sourcePath?.endsWith(".pcm") && fs.existsSync(sourcePath))
+    return sourcePath;
   if (!sourcePath && fs.existsSync(DEFAULT_PCM)) return DEFAULT_PCM;
 
   const media = sourcePath || (fs.existsSync(DEFAULT_M4A) ? DEFAULT_M4A : "");
@@ -102,14 +110,23 @@ async function ensurePcm16(sourcePath, outDir) {
     const idx = buf.indexOf(Buffer.from("data"));
     if (idx >= 0) {
       const pcm = buf.subarray(idx + 8);
-      const outPcm = path.join(outDir, `${path.basename(media, path.extname(media))}.pcm`);
+      const outPcm = path.join(
+        outDir,
+        `${path.basename(media, path.extname(media))}.pcm`,
+      );
       fs.writeFileSync(outPcm, pcm);
       return outPcm;
     }
   }
 
-  const outPcm = path.join(outDir, `${path.basename(media, path.extname(media))}.pcm`);
-  if (fs.existsSync(DEFAULT_PCM) && path.resolve(media) === path.resolve(DEFAULT_M4A)) {
+  const outPcm = path.join(
+    outDir,
+    `${path.basename(media, path.extname(media))}.pcm`,
+  );
+  if (
+    fs.existsSync(DEFAULT_PCM) &&
+    path.resolve(media) === path.resolve(DEFAULT_M4A)
+  ) {
     // Prefer the checked-in 16 kHz PCM when the default m4a is used.
     return DEFAULT_PCM;
   }
@@ -117,7 +134,18 @@ async function ensurePcm16(sourcePath, outDir) {
   await new Promise((resolve, reject) => {
     const child = spawn(
       ffmpeg,
-      ["-y", "-i", media, "-ac", "1", "-ar", String(SAMPLE_RATE), "-f", "s16le", outPcm],
+      [
+        "-y",
+        "-i",
+        media,
+        "-ac",
+        "1",
+        "-ar",
+        String(SAMPLE_RATE),
+        "-f",
+        "s16le",
+        outPcm,
+      ],
       { stdio: ["ignore", "ignore", "pipe"] },
     );
     let stderr = "";
@@ -157,7 +185,9 @@ async function resolveBaseUrl() {
         }).catch(() => undefined);
         return base;
       }
-      errors.push(`${base}: HTTP ${res.status} ${JSON.stringify(body)?.slice(0, 120)}`);
+      errors.push(
+        `${base}: HTTP ${res.status} ${JSON.stringify(body)?.slice(0, 120)}`,
+      );
     } catch (error) {
       errors.push(`${base}: ${error instanceof Error ? error.message : error}`);
     }
@@ -180,31 +210,37 @@ async function streamAudio(ws, sessionId, pcm, marks) {
   for (let off = 0; off < pcm.length; off += CHUNK_BYTES) {
     const slice = pcm.subarray(off, Math.min(pcm.length, off + CHUNK_BYTES));
     seq += 1;
-    ws.send(JSON.stringify({
-      type: "audio",
-      sessionId,
-      codec: "pcm16",
-      data: slice.toString("base64"),
-      seq,
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "audio",
+        sessionId,
+        codec: "pcm16",
+        data: slice.toString("base64"),
+        seq,
+      }),
+    );
     // Slightly faster than realtime (same pattern as voice-latency-bench).
     await sleep(Math.max(4, CHUNK_MS * 0.5));
   }
   marks.audioEnd = Date.now();
   marks.audioPackets = seq;
-  console.log(`audio_streamed packets=${seq} wall_ms=${marks.audioEnd - marks.audioStart}`);
+  console.log(
+    `audio_streamed packets=${seq} wall_ms=${marks.audioEnd - marks.audioStart}`,
+  );
 
   // Trailing silence so VAD / async STT can endpoint (DictationController flush path).
   const silence = Buffer.alloc(CHUNK_BYTES, 0);
   for (let i = 0; i < Math.ceil(700 / CHUNK_MS); i += 1) {
     seq += 1;
-    ws.send(JSON.stringify({
-      type: "audio",
-      sessionId,
-      codec: "pcm16",
-      data: silence.toString("base64"),
-      seq,
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "audio",
+        sessionId,
+        codec: "pcm16",
+        data: silence.toString("base64"),
+        seq,
+      }),
+    );
     await sleep(Math.max(4, CHUNK_MS * 0.5));
   }
   ws.send(JSON.stringify({ type: "flush", sessionId }));
@@ -221,7 +257,8 @@ async function runTurn({ baseUrl, pcmPath, outDir, mode }) {
   if (fs.existsSync(ttsPath)) fs.unlinkSync(ttsPath);
 
   const sessionBody = {
-    conversationId: mode === "dictation" ? "voice-e2e-dictation" : "voice-e2e-call",
+    conversationId:
+      mode === "dictation" ? "voice-e2e-dictation" : "voice-e2e-call",
     history: [],
     mode,
     temperature: 0.4,
@@ -239,7 +276,9 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
   });
   const session = await sessionRes.json();
   if (!sessionRes.ok || !session.ok) {
-    throw new Error(`voice/session failed: HTTP ${sessionRes.status} ${JSON.stringify(session)}`);
+    throw new Error(
+      `voice/session failed: HTTP ${sessionRes.status} ${JSON.stringify(session)}`,
+    );
   }
   if (!session.websocketUrl) {
     throw new Error(
@@ -251,7 +290,9 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
 
   console.log(`base=${baseUrl}`);
   console.log(`mode=${mode}`);
-  console.log(`audio=${pcmPath} bytes=${pcm.length} duration_ms=${durationMs.toFixed(0)}`);
+  console.log(
+    `audio=${pcmPath} bytes=${pcm.length} duration_ms=${durationMs.toFixed(0)}`,
+  );
   console.log(`session=${session.sessionId}`);
   console.log(`websocket=${session.websocketUrl}`);
 
@@ -281,22 +322,36 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
   await new Promise((resolve, reject) => {
     const ws = new WebSocket(session.websocketUrl);
     const timeout = setTimeout(() => {
-      try { ws.close(); } catch { /* ignore */ }
-      reject(new Error(
-        `overall timeout after ${OVERALL_TIMEOUT_MS}ms ` +
-          `(transcript=${Boolean(marks.transcript)} llm=${Boolean(marks.reply)} tts_bytes=${marks.ttsBytes})`,
-      ));
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      reject(
+        new Error(
+          `overall timeout after ${OVERALL_TIMEOUT_MS}ms ` +
+            `(transcript=${Boolean(marks.transcript)} llm=${Boolean(marks.reply)} tts_bytes=${marks.ttsBytes})`,
+        ),
+      );
     }, OVERALL_TIMEOUT_MS);
 
     const finishOk = () => {
       clearTimeout(timeout);
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
       resolve(null);
     };
 
     const fail = (error) => {
       clearTimeout(timeout);
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
       reject(error instanceof Error ? error : new Error(String(error)));
     };
 
@@ -310,7 +365,12 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
       if (marks.ttsDone && (marks.ttsBytes > 0 || marks.firstTts != null)) {
         if (!marks.playbackDoneSent && ws.readyState === WebSocket.OPEN) {
           marks.playbackDoneSent = true;
-          ws.send(JSON.stringify({ type: "playback_done", sessionId: session.sessionId }));
+          ws.send(
+            JSON.stringify({
+              type: "playback_done",
+              sessionId: session.sessionId,
+            }),
+          );
         }
         finishOk();
       }
@@ -318,11 +378,15 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
 
     ws.on("open", async () => {
       try {
-        // Wait for ready / pipeline_mode like useVoiceCall (do not race capture).
+        // Wait briefly for the local dictation bridge mode before capture.
         await sleep(900);
-        if (!marks.ready) console.warn("WARN: ready not received yet; continuing");
-        if (marks.mode && marks.mode !== "pipeline") {
-          console.warn(`WARN: expected pipeline mode, got ${marks.mode}`);
+        if (mode === "conversation" && !marks.ready)
+          console.warn("WARN: ready not received yet; continuing");
+        const expectedMode = mode === "dictation" ? "local" : "pipeline";
+        if (marks.mode && marks.mode !== expectedMode) {
+          console.warn(
+            `WARN: expected ${expectedMode} mode, got ${marks.mode}`,
+          );
         }
         await streamAudio(ws, session.sessionId, pcm, marks);
       } catch (error) {
@@ -341,7 +405,9 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
         if (packet?.sampleRate) marks.ttsSampleRate = packet.sampleRate;
         if (marks.firstTts == null) {
           marks.firstTts = now;
-          console.log(`first_tts +${now - (marks.firstLlmToken || now)}ms after_first_token bytes=${pcmBytes.length}`);
+          console.log(
+            `first_tts +${now - (marks.firstLlmToken || now)}ms after_first_token bytes=${pcmBytes.length}`,
+          );
         }
         appendJsonl(eventsPath, {
           at: now - marks.t0,
@@ -370,22 +436,32 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
         marks.mode = msg.mode;
         console.log(`pipeline_mode=${msg.mode}`);
       }
-      if (msg.type === "transcript_partial" && msg.text && marks.firstPartial == null) {
+      if (
+        msg.type === "transcript_partial" &&
+        msg.text &&
+        marks.firstPartial == null
+      ) {
         marks.firstPartial = now;
-        console.log(`first_partial +${now - marks.audioStart}ms :: ${msg.text}`);
+        console.log(
+          `first_partial +${now - marks.audioStart}ms :: ${msg.text}`,
+        );
       }
       if (msg.type === "transcript_final" || msg.type === "dictation_final") {
         marks.sttFinal = now;
         marks.transcript = String(msg.text || "");
         const afterAudio =
-          marks.audioEnd > 0 ? `${now - marks.audioEnd}ms after_audio_end` : "before_audio_end";
+          marks.audioEnd > 0
+            ? `${now - marks.audioEnd}ms after_audio_end`
+            : "before_audio_end";
         console.log(`${msg.type} +${afterAudio} :: ${marks.transcript}`);
         if (mode === "dictation") maybeComplete();
       }
       if (msg.type === "llm_token") {
         if (marks.firstLlmToken == null) {
           marks.firstLlmToken = now;
-          console.log(`first_llm_token +${now - (marks.sttFinal || now)}ms after_final`);
+          console.log(
+            `first_llm_token +${now - (marks.sttFinal || now)}ms after_final`,
+          );
         }
       }
       if (msg.type === "llm_done") {
@@ -396,7 +472,9 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
       }
       if (msg.type === "tts_format") {
         marks.ttsSampleRate = msg.sampleRate || marks.ttsSampleRate;
-        console.log(`tts_format sampleRate=${msg.sampleRate} codec=${msg.codec}`);
+        console.log(
+          `tts_format sampleRate=${msg.sampleRate} codec=${msg.codec}`,
+        );
       }
       if (msg.type === "tts_chunk" && msg.data) {
         const chunk = Buffer.from(msg.data, "base64");
@@ -405,15 +483,24 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
         marks.ttsPackets += 1;
         if (marks.firstTts == null) {
           marks.firstTts = now;
-          console.log(`first_tts(json) +${now - (marks.firstLlmToken || now)}ms after_first_token`);
+          console.log(
+            `first_tts(json) +${now - (marks.firstLlmToken || now)}ms after_first_token`,
+          );
         }
       }
       if (msg.type === "tts_done") {
         marks.ttsDone = now;
-        console.log(`tts_done bytes=${marks.ttsBytes} packets=${marks.ttsPackets}`);
+        console.log(
+          `tts_done bytes=${marks.ttsBytes} packets=${marks.ttsPackets}`,
+        );
         maybeComplete();
       }
-      if (msg.type === "status" && msg.status === "listening" && marks.llmDone && marks.ttsDone == null) {
+      if (
+        msg.type === "status" &&
+        msg.status === "listening" &&
+        marks.llmDone &&
+        marks.ttsDone == null
+      ) {
         // Browser TTS path: no PCM — treat as done once listening returns.
         marks.ttsDone = now;
         marks.firstTts = marks.firstTts ?? marks.llmDone;
@@ -460,15 +547,25 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
     tts_sample_rate: marks.ttsSampleRate,
     timings_ms: {
       audio_to_first_partial:
-        marks.firstPartial && marks.audioStart ? marks.firstPartial - marks.audioStart : null,
+        marks.firstPartial && marks.audioStart
+          ? marks.firstPartial - marks.audioStart
+          : null,
       audio_end_to_stt_final:
-        marks.sttFinal && marks.audioEnd ? marks.sttFinal - marks.audioEnd : null,
+        marks.sttFinal && marks.audioEnd
+          ? marks.sttFinal - marks.audioEnd
+          : null,
       stt_final_to_first_llm:
-        marks.firstLlmToken && marks.sttFinal ? marks.firstLlmToken - marks.sttFinal : null,
+        marks.firstLlmToken && marks.sttFinal
+          ? marks.firstLlmToken - marks.sttFinal
+          : null,
       first_llm_to_first_tts:
-        marks.firstTts && marks.firstLlmToken ? marks.firstTts - marks.firstLlmToken : null,
+        marks.firstTts && marks.firstLlmToken
+          ? marks.firstTts - marks.firstLlmToken
+          : null,
       speech_end_to_first_tts:
-        marks.firstTts && marks.audioEnd ? marks.firstTts - marks.audioEnd : null,
+        marks.firstTts && marks.audioEnd
+          ? marks.firstTts - marks.audioEnd
+          : null,
       total: Date.now() - marks.t0,
     },
     artifacts: {
@@ -478,15 +575,26 @@ Do not add extra commentary. Keep it to one short spoken sentence.`;
     },
   };
 
-  fs.writeFileSync(path.join(outDir, "result.json"), JSON.stringify(result, null, 2));
-  fs.writeFileSync(path.join(outDir, "transcript.txt"), `${marks.transcript}\n`);
-  if (marks.reply) fs.writeFileSync(path.join(outDir, "reply.txt"), `${marks.reply}\n`);
+  fs.writeFileSync(
+    path.join(outDir, "result.json"),
+    JSON.stringify(result, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(outDir, "transcript.txt"),
+    `${marks.transcript}\n`,
+  );
+  if (marks.reply)
+    fs.writeFileSync(path.join(outDir, "reply.txt"), `${marks.reply}\n`);
 
   return result;
 }
 
 async function main() {
-  const outDir = path.join(ROOT, "tmp/voice-bench", `e2e-${stamp()}${dictationMode ? "-dictation" : ""}`);
+  const outDir = path.join(
+    ROOT,
+    "tmp/voice-bench",
+    `e2e-${stamp()}${dictationMode ? "-dictation" : ""}`,
+  );
   fs.mkdirSync(outDir, { recursive: true });
 
   let baseUrl;
@@ -495,21 +603,32 @@ async function main() {
   } catch (error) {
     fs.writeFileSync(
       path.join(outDir, "result.json"),
-      JSON.stringify({
-        ok: false,
-        failures: [error instanceof Error ? error.message : String(error)],
-        note: "Server was not reachable; script and fixture are ready to re-run.",
-      }, null, 2),
+      JSON.stringify(
+        {
+          ok: false,
+          failures: [error instanceof Error ? error.message : String(error)],
+          note: "Server was not reachable; script and fixture are ready to re-run.",
+        },
+        null,
+        2,
+      ),
     );
     throw error;
   }
 
-  // Fish backs both production call STT/TTS and dictation ASR. Do this
-  // capability check before spending half a minute streaming a fixture only
-  // to receive an inevitable empty transcript/error.
-  const voiceConfig = await fetch(`${baseUrl}/api/voice/config`).then((res) => res.json()).catch(() => null);
-  if (!voiceConfig?.fishConfigured) {
-    throw new Error("Fish Audio is not configured on the target Clyra server; live transcription cannot be benchmarked.");
+  // Dictation transcribes with the installed local whisper.cpp runtime. Fish
+  // is only needed by full-duplex calls for speech output, so do not reject a
+  // valid local-STT benchmark merely because a TTS key is absent.
+  const voiceConfig = await fetch(`${baseUrl}/api/voice/config`)
+    .then((res) => res.json())
+    .catch(() => null);
+  if (
+    !voiceConfig?.enabled ||
+    voiceConfig?.sttProvider !== "local-whisper.cpp"
+  ) {
+    throw new Error(
+      "Local Whisper transcription is unavailable on the target Clyra server; live dictation cannot be benchmarked.",
+    );
   }
 
   const pcmPath = await ensurePcm16(inputArg, outDir);
@@ -532,6 +651,9 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("VOICE_E2E_FAIL", error instanceof Error ? error.message : error);
+  console.error(
+    "VOICE_E2E_FAIL",
+    error instanceof Error ? error.message : error,
+  );
   process.exitCode = 1;
 });

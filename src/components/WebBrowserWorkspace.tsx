@@ -3,42 +3,26 @@ import {
   ArrowRight,
   ArrowUp,
   Bookmark,
-  Check,
-  ChevronDown,
-  ChevronsDown,
-  ChevronsUp,
-  CircleCheck,
-  CircleHelp,
-  CirclePause,
-  CirclePlay,
-  CircleX,
-  Clock3,
+  Copy,
   Crop,
   Download,
   Ellipsis,
-  ExternalLink,
-  Eye,
-  FileDown,
+  EllipsisVertical,
   Globe2,
   History,
-  Keyboard,
   Loader2,
   LockKeyhole,
   Minus,
-  MousePointer2,
   MousePointerClick,
+  PanelRightClose,
   Plus,
-  RefreshCw,
   RotateCcw,
+  RotateCw,
   Search,
   Settings2,
-  ShieldCheck,
+  Sparkles,
   Star,
-  Trash2,
-  TriangleAlert,
-  UserRound,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { createPortal } from "react-dom";
@@ -56,18 +40,10 @@ import {
 import { cn } from "../lib/utils";
 import { getElectronDesktop, isElectronRuntime, requestElectronBrowser } from "../lib/electron-runtime";
 import { ElectronWebContentsSurface } from "./ElectronWebContentsSurface";
-import { BrowserStartPage, hasUsedAskClyra, isBrowserStartPageUrl, markAskClyraUsed } from "./BrowserStartPage";
-import { ShiningBrainIcon, ShiningText, ThinkingDots } from "./ShiningText";
-import { Bloub } from "./bloub/Bloub";
-
-function useLiveAccentColor(fallback = "#2563eb") {
-  const [color] = useState(() => {
-    if (typeof document === "undefined") return fallback;
-    const value = getComputedStyle(document.documentElement).getPropertyValue("--accent-600").trim();
-    return value || fallback;
-  });
-  return color;
-}
+import { BrowserStartPage, faviconFor, hasUsedAskClyra, isBrowserStartPageUrl, looksLikeUrl, markAskClyraUsed } from "./BrowserStartPage";
+import { BrowserAgentAura } from "./BrowserAgentAura";
+import { ActionStream, AssistantMessage, ChatEmpty, ThinkingRow, type FinishedRun, type RunRow, type RunRowKind } from "./browser/AtlasChat";
+import { AtlasInternalPage } from "./browser/AtlasInternalPages";
 
 type AgentStatus =
   | "idle"
@@ -106,7 +82,7 @@ type BrowserTab = {
   zoom: number;
 };
 
-type InternalBrowserPage = "history" | "bookmarks" | "settings";
+type InternalBrowserPage = "history" | "bookmarks" | "settings" | "downloads";
 
 type InternalBrowserTab = {
   id: string;
@@ -156,6 +132,11 @@ interface BrowserState {
   downloads: BrowserDownload[];
   settings: BrowserSettings;
   agent: { status: AgentStatus; paused: boolean; manualControl: boolean; task?: string };
+  /** The most recent cursor position from *any* agent-driven action against
+   * this browser, including ones triggered outside this component (Cowork's
+   * Hermes/Mission Runtime tool calls) — carried on every state poll, not
+   * only this component's own direct action responses. */
+  cursor?: { x: number; y: number; kind: AgentCursor["kind"]; label: string; id: number } | null;
 }
 
 type BrowserAction =
@@ -232,6 +213,9 @@ interface AgentMessage {
   content: string;
   steps?: string[];
   facts?: Array<{ claim: string; sourceUrl: string }>;
+  /** The finished action log, kept collapsed above the answer. */
+  run?: FinishedRun;
+  error?: boolean;
 }
 
 const BROWSER_CHAT_STORAGE = "clyra-browser-agent-chat-v3";
@@ -270,6 +254,19 @@ function initialAgentMessages(): AgentMessage[] {
     }
   }
   return [];
+}
+
+/** Turns provider/transport failures into something a person can act on. */
+function friendlyAgentError(message: string) {
+  if (/insufficient balance|insufficient_quota|exceeded your current quota|payment required/i.test(message)) {
+    return "The AI model account is out of credit, so I can't think through this right now. Top up the DeepSeek account (or add a different API key in Settings) and try again.";
+  }
+  if (/api key|unauthori[sz]ed|invalid_api_key|401/i.test(message)) {
+    return "The AI model key was rejected. Check the DeepSeek API key in Clyra's settings, then try again.";
+  }
+  if (/timed out|timeout/i.test(message)) return "The model took too long to respond. Please try again.";
+  if (/failed to fetch|network|ECONNREFUSED/i.test(message)) return "I couldn't reach Clyra's browser service. Check that Clyra is running, then try again.";
+  return message;
 }
 
 function looksLikeStaleFailureTranscript(messages: AgentMessage[]) {
@@ -350,15 +347,6 @@ function compactUrl(url: string) {
   }
 }
 
-function formatWhen(value: string) {
-  const date = new Date(value);
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function responseError(payload: unknown, fallback: string) {
   if (
     payload &&
@@ -376,26 +364,6 @@ function responseError(payload: unknown, fallback: string) {
 type ActionIconKey =
   | "click" | "keyboard" | "navigate" | "search" | "scrollDown" | "scrollUp"
   | "back" | "forward" | "reload" | "tab" | "wait" | "read" | "check" | "hover" | "done" | "ask" | "generic";
-
-const ACTION_ICONS: Record<ActionIconKey, LucideIcon> = {
-  click: MousePointerClick,
-  keyboard: Keyboard,
-  navigate: Globe2,
-  search: Search,
-  scrollDown: ChevronsDown,
-  scrollUp: ChevronsUp,
-  back: ArrowLeft,
-  forward: ArrowRight,
-  reload: RefreshCw,
-  tab: Plus,
-  wait: Clock3,
-  read: Eye,
-  check: Check,
-  hover: MousePointer2,
-  done: CircleCheck,
-  ask: CircleHelp,
-  generic: CircleHelp,
-};
 
 function truncateLabel(value: string, max = 30) {
   const clean = value.replace(/\s+/g, " ").trim();
@@ -533,156 +501,6 @@ function reduceRunItems(items: RunItem[], event: RunEvent): RunItem[] {
   return items;
 }
 
-const TYPEWRITER_MS = 15;
-
-/** Reveals text character-by-character; continues smoothly when `text` appends or updates. */
-function TypewriterText({
-  text,
-  active = true,
-  msPerChar = TYPEWRITER_MS,
-  className,
-  showCaret = true,
-  onComplete,
-}: {
-  text: string;
-  active?: boolean;
-  msPerChar?: number;
-  className?: string;
-  showCaret?: boolean;
-  onComplete?: () => void;
-}) {
-  const [visibleLength, setVisibleLength] = useState(() => (active ? 0 : text.length));
-  const revealedRef = useRef(active ? 0 : text.length);
-  const previousTextRef = useRef(text);
-  const completedRef = useRef(!active);
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
-
-  useEffect(() => {
-    if (!active) {
-      revealedRef.current = text.length;
-      previousTextRef.current = text;
-      setVisibleLength(text.length);
-      return;
-    }
-
-    const previous = previousTextRef.current;
-    previousTextRef.current = text;
-
-    const isAppend = text.startsWith(previous) || previous.startsWith(text.slice(0, Math.min(previous.length, revealedRef.current)));
-    if (!isAppend && previous !== text) {
-      revealedRef.current = 0;
-      completedRef.current = false;
-      setVisibleLength(0);
-    } else if (revealedRef.current > text.length) {
-      revealedRef.current = text.length;
-      setVisibleLength(text.length);
-    }
-
-    if (revealedRef.current >= text.length) {
-      setVisibleLength(text.length);
-      if (!completedRef.current) {
-        completedRef.current = true;
-        onCompleteRef.current?.();
-      }
-      return;
-    }
-
-    completedRef.current = false;
-    let cancelled = false;
-    let timer: number | null = null;
-    const tick = () => {
-      if (cancelled) return;
-      if (revealedRef.current < previousTextRef.current.length) {
-        revealedRef.current += 1;
-        setVisibleLength(revealedRef.current);
-        if (revealedRef.current >= previousTextRef.current.length) {
-          if (!completedRef.current) {
-            completedRef.current = true;
-            onCompleteRef.current?.();
-          }
-          return;
-        }
-        timer = window.setTimeout(tick, msPerChar);
-      }
-    };
-    timer = window.setTimeout(tick, msPerChar);
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
-    };
-  }, [text, active, msPerChar]);
-
-  const done = visibleLength >= text.length;
-  return (
-    <span className={className}>
-      {text.slice(0, visibleLength)}
-      {showCaret && active && !done ? (
-        <span className="ml-px inline-block h-[1em] w-[1.5px] translate-y-[0.12em] animate-pulse rounded-full bg-current opacity-55" aria-hidden />
-      ) : null}
-    </span>
-  );
-}
-
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  active,
-  children,
-  className,
-}: {
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  active?: boolean;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "grid h-8 w-8 shrink-0 place-items-center rounded-[8px] text-[color:var(--atlas-text-secondary)] transition-[background-color,color,transform,opacity] duration-150 hover:bg-[color:var(--clyra-hover)] hover:text-[color:var(--atlas-text-primary)] active:scale-[0.94] disabled:pointer-events-none disabled:opacity-30",
-        active && "bg-[color:var(--clyra-selected)] text-[color:var(--atlas-text-primary)]",
-        className,
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "relative h-5 w-9 shrink-0 rounded-full border transition-[background-color,border-color] duration-150",
-        checked
-          ? "border-[color:var(--clyra-accent)] bg-[color:var(--clyra-accent)]"
-          : "border-[color:var(--clyra-border-strong)] bg-[color:var(--clyra-surface-muted)]",
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-[2px] h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150",
-          checked ? "translate-x-[17px]" : "translate-x-[2px]",
-        )}
-      />
-    </button>
-  );
-}
-
 type WebBrowserWorkspaceProps = {
   /** A task drafted in the main Clyra composer before Browser mounts. */
   initialTaskDraft?: string;
@@ -705,7 +523,6 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
   // reading the restored page.
   const [isBrowserBusy, setIsBrowserBusy] = useState(false);
   const [isAgentBusy, setIsAgentBusy] = useState(false);
-  const accentColor = useLiveAccentColor();
   const [showAskClyraPulse, setShowAskClyraPulse] = useState(() => !hasUsedAskClyra());
   useEffect(() => {
     if (!showAskClyraPulse) return;
@@ -794,6 +611,28 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     return looksLikeStaleFailureTranscript(saved) ? [] : saved;
   });
   const [runItems, setRunItems] = useState<RunItem[]>([]);
+  const runItemsRef = useRef<RunItem[]>([]);
+  runItemsRef.current = runItems;
+  const [runStartedAt, setRunStartedAt] = useState(0);
+  const runStartedAtRef = useRef(0);
+  const [askingPage, setAskingPage] = useState(false);
+  const askAbortRef = useRef<AbortController | null>(null);
+  const [agentMode, setAgentModeState] = useState(() => {
+    try { return window.localStorage.getItem("clyra-browser-agent-mode") !== "off"; } catch { return true; }
+  });
+  const setAgentMode = useCallback((update: boolean | ((value: boolean) => boolean)) => {
+    setAgentModeState((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      try { window.localStorage.setItem("clyra-browser-agent-mode", next ? "on" : "off"); } catch { /* optional */ }
+      return next;
+    });
+  }, []);
+  /** Snapshot of the live run, attached to the message that ends it. */
+  const finishedRun = (outcome: FinishedRun["outcome"]): FinishedRun | undefined => {
+    const rows = rowsFromRunItems(runItemsRef.current).map((row) => row.status === "running" ? { ...row, status: outcome === "completed" ? "done" as const : "failed" as const } : row);
+    if (!rows.length) return undefined;
+    return { rows, durationMs: Math.max(1_000, Date.now() - (runStartedAtRef.current || Date.now())), outcome };
+  };
   const [runTask, setRunTask] = useState("");
   const [completedStepsOpen, setCompletedStepsOpen] = useState(false);
   const [agentControlledTabId, setAgentControlledTabId] = useState<string | null>(null);
@@ -806,6 +645,9 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
   const typingTimerRef = useRef<number | null>(null);
   const scrollTimerRef = useRef<number | null>(null);
   const cursorSequenceRef = useRef(0);
+  const lastPolledCursorIdRef = useRef(0);
+  const externalCursorTimerRef = useRef<number | null>(null);
+  const [externalCursorActive, setExternalCursorActive] = useState(false);
   const mountedRef = useRef(true);
   const viewportSizeRef = useRef({ width: 0, height: 0 });
   const viewportTimerRef = useRef<number | null>(null);
@@ -862,6 +704,22 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     setAgentPhase(state.agent.status);
     setError(null);
     setFrameTick((value) => value + 1);
+    // A state poll can carry a cursor event this component did not itself
+    // request (an external Mission Runtime / Hermes browser.action call).
+    // The server-assigned `id` lets every open browser surface dedupe
+    // against its own locally-numbered sequence and still show it once.
+    if (state.cursor && state.cursor.id !== lastPolledCursorIdRef.current) {
+      lastPolledCursorIdRef.current = state.cursor.id;
+      setCursor({ x: state.cursor.x, y: state.cursor.y, kind: state.cursor.kind, label: state.cursor.label, id: ++cursorSequenceRef.current });
+      // `isAgentBusy` only tracks this component's own task runner, so an
+      // externally-driven action (Cowork's Hermes/Mission Runtime tool
+      // calls) would otherwise be gated out of the live-cursor check below.
+      // Treat a just-received real cursor event as its own short busy
+      // window instead.
+      setExternalCursorActive(true);
+      if (externalCursorTimerRef.current !== null) window.clearTimeout(externalCursorTimerRef.current);
+      externalCursorTimerRef.current = window.setTimeout(() => setExternalCursorActive(false), 2_500);
+    }
   }, []);
 
   const requestBrowser = useCallback(
@@ -907,6 +765,8 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
   }, [requestBrowser]);
 
   const applyAgentSession = useCallback((session: AgentSession | null) => {
+    // The ?browserDemo QA fixture owns the run state; polling must not erase it.
+    if (agentDemo) return;
     if (!session) {
       setIsAgentBusy(false);
       setAgentPhase("idle");
@@ -944,7 +804,7 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
       agentOriginTabRef.current = null;
       setAgentControlledTabId(null);
     }
-  }, []);
+  }, [agentDemo]);
 
   const syncAgentSession = useCallback(async () => {
     try {
@@ -966,14 +826,19 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
       // A direct Chat request (for example “Open YouTube”) outranks the normal
       // welcome page. Without this boundary the mount-time Google navigation
       // could overwrite an already verified Chat navigation.
-      const openingTarget = initialUrl.trim() || "https://www.google.com/";
-      await requestBrowser("/api/openbrowser/navigate", {
-        body: { target: openingTarget },
-        quiet: true,
-      }).catch(() => undefined);
+      // Reopening the Browser keeps whatever tabs were already open, like a
+      // real browser. Only an explicit request (for example “Open YouTube”
+      // from Chat) navigates the active tab.
+      const openingTarget = initialUrl.trim();
+      if (openingTarget) {
+        await requestBrowser("/api/openbrowser/navigate", {
+          body: { target: openingTarget },
+          quiet: true,
+        }).catch(() => undefined);
+      }
       if (!cancelled && mountedRef.current) {
         setSideOpen(false);
-        setAddress(openingTarget);
+        if (openingTarget) setAddress(openingTarget);
       }
     })();
     return () => {
@@ -981,6 +846,7 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
       mountedRef.current = false;
       if (typingTimerRef.current != null) window.clearTimeout(typingTimerRef.current);
       if (scrollTimerRef.current != null) window.clearTimeout(scrollTimerRef.current);
+      if (externalCursorTimerRef.current != null) window.clearTimeout(externalCursorTimerRef.current);
       if (viewportTimerRef.current != null) window.clearTimeout(viewportTimerRef.current);
     };
   }, [initialUrl, loadState, requestBrowser, syncAgentSession]);
@@ -1038,12 +904,36 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     setRunTask("Fulfilling beach essentials request");
     setAgentPhase("executing");
     setAgentStatus("Comparing sunscreen");
+    // Visual-QA fixture for the action stream. Query-only (?browserDemo=agent).
+    runStartedAtRef.current = Date.now() - 14_000;
+    setRunStartedAt(runStartedAtRef.current);
+    setRunItems([
+      { id: "demo-r1", kind: "reasoning", nextGoal: "Search for well-rated SPF 50 sunscreen" },
+      { id: "demo-a1", kind: "action", actionType: "search", label: "Searching \"SPF 50 sunscreen reviews\"", icon: "search", status: "success", detail: "", result: "Opened Google results" },
+      { id: "demo-a2", kind: "action", actionType: "click", label: "Clicking 'Best sunscreens of 2026'", icon: "click", status: "success", detail: "", result: "Article opened" },
+      { id: "demo-a3", kind: "action", actionType: "scroll", label: "Scrolling down", icon: "scrollDown", status: "success", detail: "" },
+      { id: "demo-a4", kind: "action", actionType: "read_page", label: "Reading the page", icon: "read", status: "running", detail: "" },
+    ]);
   }, [agentDemo, agentDemoKind, requestBrowser]);
 
   useEffect(() => {
     const timer = window.setInterval(() => void syncAgentSession(), isAgentBusy ? 650 : 2_400);
     return () => window.clearInterval(timer);
   }, [isAgentBusy, syncAgentSession]);
+
+  // This component's own action-driven flow already keeps `browserState`
+  // current via direct request responses; nothing otherwise polls the
+  // general browser state while idle. A browser.action taken through
+  // Cowork's Hermes/Mission Runtime path (a caller entirely outside this
+  // component) still needs to reach this view — including its cursor —
+  // so poll lightly for that case too, skipped whenever this component is
+  // already driving its own busy task (which gets much more frequent
+  // updates from its own requests).
+  useEffect(() => {
+    if (desktopChromium || isAgentBusy) return;
+    const timer = window.setInterval(() => { void loadState(); }, 1_800);
+    return () => window.clearInterval(timer);
+  }, [desktopChromium, isAgentBusy, loadState]);
 
   useEffect(() => {
     if (desktopChromium) return;
@@ -1327,6 +1217,8 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     setRunItems([]);
     setRunTask(cleanTask);
     setCompletedStepsOpen(false);
+    runStartedAtRef.current = Date.now();
+    setRunStartedAt(runStartedAtRef.current);
     // Let the sidebar width animation start, then float the user bubble up.
     await new Promise<void>((resolve) => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
@@ -1398,7 +1290,7 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
       if (abort.signal.aborted) {
         setMessages((current) => [
           ...current,
-          { id: `assistant-stop-${Date.now()}`, role: "assistant", content: "Stopped." },
+          { id: `assistant-stop-${Date.now()}`, role: "assistant", content: "Stopped.", run: finishedRun("stopped") },
         ]);
         return;
       }
@@ -1430,6 +1322,8 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
           content: String(payload.content || "Done."),
           steps: Array.isArray(payload.steps) ? payload.steps : undefined,
           facts: uniqueSources,
+          run: finishedRun(payload.success === false ? "failed" : "completed"),
+          error: payload.success === false,
         },
       ]);
     } catch (nextError) {
@@ -1441,7 +1335,9 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
           {
             id: `error-${Date.now()}`,
             role: "assistant",
-            content: nextError instanceof Error ? nextError.message : "The browser agent could not complete that task.",
+            content: friendlyAgentError(nextError instanceof Error ? nextError.message : "The browser agent could not complete that task."),
+            run: finishedRun("failed"),
+            error: true,
           },
         ]);
       }
@@ -1461,6 +1357,44 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
         // the agent still had the controls.
         setCursor(null);
       }
+    }
+  };
+
+  /** Agent-off "Ask" mode: answer from the current page without acting. */
+  const askAboutPage = async (question: string) => {
+    const clean = question.trim();
+    if (!clean || askingPage || isAgentBusy) return;
+    setTask("");
+    sideLockRef.current = true;
+    setSideOpen(true);
+    setSideView("agent");
+    setMessages((current) => [...current, { id: `user-${Date.now()}`, role: "user", content: clean }]);
+    const abort = new AbortController();
+    askAbortRef.current = abort;
+    setAskingPage(true);
+    try {
+      const response = await fetch("/api/openbrowser/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: clean }),
+        signal: abort.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) throw new Error(responseError(payload, "I couldn't read this page."));
+      const sourceUrl = String(payload.source?.url || "");
+      setMessages((current) => [...current, {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content: String(payload.answer || ""),
+        facts: /^https?:/.test(sourceUrl) ? [{ claim: String(payload.source?.title || ""), sourceUrl }] : undefined,
+      }]);
+    } catch (nextError) {
+      if (!abort.signal.aborted) {
+        setMessages((current) => [...current, { id: `error-${Date.now()}`, role: "assistant", content: friendlyAgentError(nextError instanceof Error ? nextError.message : "I couldn't read this page."), error: true }]);
+      }
+    } finally {
+      if (askAbortRef.current === abort) askAbortRef.current = null;
+      setAskingPage(false);
     }
   };
 
@@ -1544,17 +1478,6 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
 
   const saveBookmark = async () => {
     await requestBrowser("/api/openbrowser/bookmarks", { body: {}, quiet: true }).catch(() => undefined);
-  };
-
-  const toggleBookmark = async () => {
-    const currentUrl = activeTab?.url || browserState?.url;
-    if (!currentUrl || activeInternalTab) return;
-    const existing = browserState?.bookmarks.find((bookmark) => bookmark.url === currentUrl);
-    if (existing) {
-      await requestBrowser(`/api/openbrowser/bookmarks/${existing.id}`, { method: "DELETE", quiet: true }).catch(() => undefined);
-      return;
-    }
-    await saveBookmark();
   };
 
   const zoom = async (delta: number | "reset") => {
@@ -1642,7 +1565,6 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     });
     return () => { void desktop.browser.setCursor(null); };
   }, [browserState?.agent.manualControl, cursor, cursorIntent, desktopChromium, isAgentBusy, settings.reducedMotion, settings.showAiActionLabels, settings.showAiCursor]);
-  const pageHost = useMemo(() => displayHost(browserState?.url || address), [address, browserState?.url]);
   const activeTab = useMemo(
     () => browserState?.tabs.find((tab) => tab.active),
     [browserState?.tabs],
@@ -1660,11 +1582,10 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     [activeTab?.title, activeTab?.url, address, browserState?.title, browserState?.url],
   );
   const pageContextReady = Boolean((activeTab?.url || browserState?.url) && (activeTab?.title || browserState?.title));
-  const latestSteps = liveSteps.length ? liveSteps : [...messages].reverse().find((message) => message.steps?.length)?.steps || [];
   const frameUrl = browserState
     ? `/api/openbrowser/frame?${isAgentBusy || agentDemo ? "fresh=1&" : ""}v=${browserState.frameVersion}&t=${frameTick}`
     : "";
-  const showAgentChrome = isAgentBusy || agentDemo;
+  const showAgentChrome = isAgentBusy || agentDemo || externalCursorActive;
   const showStartPage =
     !activeInternalTab &&
     !showAgentChrome &&
@@ -1699,14 +1620,7 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
         id: 1,
       }
     : null;
-  const liveCursor = cursor && isAgentBusy ? cursor : demoCursor;
-
-  const openSideView = (view: SideView) => {
-    sideLockRef.current = true;
-    setSideView(view);
-    setSideOpen(true);
-    setBrowserMenuOpen(false);
-  };
+  const liveCursor = cursor && (isAgentBusy || externalCursorActive) ? cursor : demoCursor;
 
   const openInternalPage = (page: InternalBrowserPage) => {
     const existing = internalTabs.find((tab) => tab.page === page);
@@ -1723,1505 +1637,961 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     setActiveInternalTabId((active) => active === tabId ? null : active);
   };
 
+  /* ======================================================================
+   * Atlas UI — everything below is presentation and UI-only state. All
+   * browsing, agent and profile work goes through the handlers above.
+   * ==================================================================== */
+  const [toastText, setToastText] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const toast = useCallback((text: string) => {
+    setToastText(text);
+    if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToastText(null), 2_400);
+  }, []);
+  const [bookmarkPop, setBookmarkPop] = useState<{ id?: string; title: string; url: string; originalUrl: string; justAdded?: boolean } | null>(null);
+  const [sideMenuOpen, setSideMenuOpen] = useState(false);
+  const [omniIndex, setOmniIndex] = useState(-1);
+  const [tabContext, setTabContext] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [frozenFrame, setFrozenFrame] = useState<string | null>(null);
+  const [reloadSpin, setReloadSpin] = useState(0);
+  const [tabOrder, setTabOrder] = useState<string[]>([]);
+  const [dragTab, setDragTab] = useState<{ id: string; x: number; y: number; width: number; offset: number } | null>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const omniJustFocusedRef = useRef(false);
+  const indicatorRef = useRef<HTMLSpanElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+
+  const orderedTabs = useMemo(() => {
+    const list = browserState?.tabs || [];
+    const byId = new Map(list.map((tab) => [tab.id, tab]));
+    const ordered = tabOrder.filter((id) => byId.has(id)).map((id) => byId.get(id)!);
+    for (const tab of list) if (!tabOrder.includes(tab.id)) ordered.push(tab);
+    return ordered;
+  }, [browserState?.tabs, tabOrder]);
+
+  // Slide the single blue indicator under whichever tab is active.
+  useEffect(() => {
+    const strip = tabsRef.current;
+    const indicator = indicatorRef.current;
+    if (!strip || !indicator) return;
+    let frame = 0;
+    const until = performance.now() + 520;
+    const place = () => {
+      const active = strip.querySelector<HTMLElement>(".ab-tab.is-active");
+      if (!active) {
+        indicator.style.opacity = "0";
+      } else {
+        const width = Math.max(26, Math.min(active.offsetWidth * 0.72, active.offsetWidth - 24));
+        const left = active.offsetLeft + (active.offsetWidth - width) / 2;
+        indicator.style.transform = `translate3d(${left}px,0,0)`;
+        indicator.style.width = `${width}px`;
+        indicator.style.opacity = "1";
+      }
+      if (performance.now() < until) frame = requestAnimationFrame(place);
+    };
+    frame = requestAnimationFrame(place);
+    const onResize = () => requestAnimationFrame(place);
+    window.addEventListener("resize", onResize);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [activeInternalTabId, browserState?.activeTabId, orderedTabs.length, internalTabs.length, settings.reducedMotion]);
+
+  // Chrome-style drag to reorder. Order is a presentation preference; the
+  // native tab identities and their pages are untouched.
+  const beginTabDrag = (event: React.PointerEvent<HTMLElement>, id: string) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest(".ab-tab-close")) return;
+    const node = event.currentTarget;
+    const rect = node.getBoundingClientRect();
+    const startX = event.clientX;
+    let active = false;
+    const onMove = (move: PointerEvent) => {
+      if (!active && Math.abs(move.clientX - startX) < 5) return;
+      if (!active) {
+        active = true;
+        try { node.setPointerCapture(event.pointerId); } catch { /* best effort */ }
+      }
+      const strip = tabsRef.current;
+      const stripRect = strip?.getBoundingClientRect();
+      const x = Math.max(stripRect?.left ?? 0, Math.min((stripRect?.right ?? innerWidth) - rect.width, move.clientX - (startX - rect.left)));
+      setDragTab({ id, x, y: rect.top, width: rect.width, offset: startX - rect.left });
+      const others = [...(strip?.querySelectorAll<HTMLElement>(".ab-tab[data-tab-id]") || [])].filter((el) => el.dataset.tabId !== id && el.dataset.native === "1");
+      const centre = x + rect.width / 2;
+      const ids = orderedTabs.map((tab) => tab.id).filter((tabId) => tabId !== id);
+      let insertAt = ids.length;
+      for (let index = 0; index < others.length; index += 1) {
+        const other = others[index]!.getBoundingClientRect();
+        if (centre < other.left + other.width / 2) {
+          insertAt = ids.indexOf(others[index]!.dataset.tabId || "");
+          break;
+        }
+      }
+      ids.splice(Math.max(0, insertAt), 0, id);
+      setTabOrder((current) => (current.join("|") === ids.join("|") ? current : ids));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (active) {
+        suppressTabClickRef.current = true;
+        window.setTimeout(() => { suppressTabClickRef.current = false; }, 120);
+      }
+      setDragTab(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+  const suppressTabClickRef = useRef(false);
+
+  const activateTab = (id: string) => {
+    if (suppressTabClickRef.current) return;
+    setActiveInternalTabId(null);
+    void performAction({ type: "switch_tab", tabId: id });
+  };
+  const closeTab = (id: string) => {
+    if ((browserState?.tabs.length || 0) <= 1 && !internalTabs.length) {
+      void requestBrowser("/api/openbrowser/navigate", { body: { target: "https://www.google.com/" }, quiet: true }).catch(() => undefined);
+      return;
+    }
+    void performAction({ type: "close_tab", tabId: id });
+  };
+
+  /* ---------- Omnibox ---------- */
+  const omniQuery = omniboxFocused ? address.trim() : "";
+  const omniItems = useMemo(() => {
+    if (!omniboxFocused) return [] as Array<{ key: string; icon: "search" | "globe" | "history" | "star"; label: string; detail: string; target: string; url?: string }>;
+    const items: Array<{ key: string; icon: "search" | "globe" | "history" | "star"; label: string; detail: string; target: string; url?: string }> = [];
+    const typed = omniQuery && omniQuery !== browserState?.url ? omniQuery : "";
+    if (typed) {
+      if (looksLikeUrl(typed)) items.push({ key: "visit", icon: "globe", label: typed, detail: "Visit", target: typed });
+      items.push({ key: "search", icon: "search", label: `Search Google for “${typed}”`, detail: "Google", target: /\s/.test(typed) || !looksLikeUrl(typed) ? typed : `${typed} `.trim() });
+    }
+    const needle = typed.toLowerCase();
+    const seen = new Set<string>();
+    const pool = [
+      ...(browserState?.bookmarks || []).map((entry) => ({ ...entry, kind: "star" as const })),
+      ...(browserState?.history || []).map((entry) => ({ ...entry, kind: "history" as const })),
+    ];
+    for (const entry of pool) {
+      if (items.length >= 7) break;
+      if (seen.has(entry.url) || isBrowserStartPageUrl(entry.url)) continue;
+      if (needle && !`${entry.title} ${entry.url}`.toLowerCase().includes(needle)) continue;
+      seen.add(entry.url);
+      items.push({ key: `${entry.kind}-${entry.id}`, icon: entry.kind, label: entry.title || displayHost(entry.url), detail: compactUrl(entry.url), target: entry.url, url: entry.url });
+    }
+    return items;
+  }, [browserState?.bookmarks, browserState?.history, browserState?.url, omniQuery, omniboxFocused]);
+  useEffect(() => setOmniIndex(-1), [omniQuery]);
+
+  const displayAddress = useMemo(() => {
+    if (omniboxFocused) return address;
+    const url = browserState?.url || address;
+    if (!url || isBrowserStartPageUrl(url)) return "";
+    try {
+      const parsed = new URL(url);
+      if (/(^|\.)google\.[a-z.]+$/i.test(parsed.hostname) && parsed.pathname === "/search" && parsed.searchParams.get("q")) {
+        return parsed.searchParams.get("q") || "";
+      }
+      return `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname === "/" ? "" : parsed.pathname}${parsed.search}`;
+    } catch {
+      return url;
+    }
+  }, [address, browserState?.url, omniboxFocused]);
+
+  /* ---------- Bookmarks ---------- */
+  const openBookmarkEditor = async () => {
+    const url = activeTab?.url || browserState?.url;
+    if (!url || activeInternalTab || isBrowserStartPageUrl(url)) {
+      toast("Visit a webpage to bookmark it");
+      return;
+    }
+    let existing = browserState?.bookmarks.find((bookmark) => bookmark.url === url);
+    const justAdded = !existing;
+    if (!existing) {
+      const response = await requestBrowser("/api/openbrowser/bookmarks", { body: { url, title: browserState?.title || activeTab?.title }, quiet: true }).catch(() => null);
+      existing = (response?.state as BrowserState | undefined)?.bookmarks?.find((bookmark) => bookmark.url === url);
+      toast("Added to bookmarks");
+    }
+    setBookmarkPop({ id: existing?.id, title: existing?.title || browserState?.title || activeTab?.title || displayHost(url), url, originalUrl: url, justAdded });
+  };
+  const saveBookmarkEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!bookmarkPop) return;
+    const url = normalizeTypedUrl(bookmarkPop.url);
+    if (!url) {
+      toast("Enter a valid website address");
+      return;
+    }
+    if (bookmarkPop.id && url !== bookmarkPop.originalUrl) {
+      await requestBrowser(`/api/openbrowser/bookmarks/${bookmarkPop.id}`, { method: "DELETE", quiet: true }).catch(() => undefined);
+    }
+    await requestBrowser("/api/openbrowser/bookmarks", { body: { url, title: bookmarkPop.title.trim() || displayHost(url) }, quiet: true }).catch(() => undefined);
+    if (!settings.showBookmarksBar) void updateSettings({ showBookmarksBar: true });
+    setBookmarkPop(null);
+  };
+  const removeBookmarkFromPop = async () => {
+    if (bookmarkPop?.id) await requestBrowser(`/api/openbrowser/bookmarks/${bookmarkPop.id}`, { method: "DELETE", quiet: true }).catch(() => undefined);
+    setBookmarkPop(null);
+    toast("Bookmark removed");
+  };
+
+  /* ---------- Native page freeze while a menu overlaps it ---------- */
+  const omniMenuVisible = omniboxFocused && omniItems.length > 0;
+  const pageOverlayOpen = desktopChromium && !showStartPage && !activeInternalTab
+    && (omniMenuVisible || browserMenuOpen || Boolean(bookmarkPop) || Boolean(tabContext));
+  useEffect(() => {
+    if (!desktopChromium) return;
+    if (!pageOverlayOpen) {
+      window.dispatchEvent(new CustomEvent("clyra:native-surface-occlusion", { detail: { occluded: false } }));
+      const timer = window.setTimeout(() => setFrozenFrame(null), 90);
+      return () => window.clearTimeout(timer);
+    }
+    let cancelled = false;
+    const desktop = getElectronDesktop();
+    void (async () => {
+      // A native Chromium view paints above every DOM layer, so a menu that
+      // overlaps the page shows a pixel-exact snapshot of the page instead.
+      const shot = await desktop?.taskView
+        .capture({ bounds: { x: 0, y: 0, width: 2, height: 2 }, nativeBrowser: true, nativeOnly: true })
+        .catch(() => null);
+      if (cancelled) return;
+      if (shot?.nativeLayer?.src) setFrozenFrame(shot.nativeLayer.src);
+      window.dispatchEvent(new CustomEvent("clyra:native-surface-occlusion", { detail: { occluded: true } }));
+    })();
+    return () => { cancelled = true; };
+  }, [desktopChromium, pageOverlayOpen]);
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent("clyra:native-surface-occlusion", { detail: { occluded: false } }));
+  }, []);
+
+  // Close floating UI on outside click / Escape.
+  useEffect(() => {
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".ab-menu-pop, [data-menu-toggle]")) setBrowserMenuOpen(false);
+      if (!target.closest(".ab-bookmark-pop, [data-bookmark-toggle]")) setBookmarkPop(null);
+      if (!target.closest(".ab-side-menu, [data-side-menu-toggle]")) setSideMenuOpen(false);
+      if (!target.closest(".ab-tab-context")) setTabContext(null);
+    };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setBrowserMenuOpen(false);
+      setBookmarkPop(null);
+      setSideMenuOpen(false);
+      setTabContext(null);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [setBrowserMenuOpen]);
+
+  // Clicks on the status pill injected into the native page (Electron).
+  const controlAgentRef = useRef(controlAgent);
+  controlAgentRef.current = controlAgent;
+  useEffect(() => {
+    const desktop = getElectronDesktop();
+    if (!desktop?.browser.onAgentControl) return;
+    return desktop.browser.onAgentControl(({ command }) => { void controlAgentRef.current(command); });
+  }, []);
+
+  const runRows = useMemo(() => rowsFromRunItems(runItems), [runItems]);
+  const liveThinking = (((isAgentBusy || agentDemo) && !["executing", "paused", "waiting_for_user"].includes(agentPhase)) || askingPage)
+    && !runRows.some((row) => row.status === "running");
+  const askQuestion = [...runItems].reverse().find((item): item is Extract<RunItem, { kind: "ask" }> => item.kind === "ask");
+  const sendFromSidebar = () => {
+    const text = task.trim();
+    if (!text) return;
+    if (agentMode) void runAgentTask(text);
+    else void askAboutPage(text);
+  };
+  const openAssistant = (draft?: string) => {
+    markAskClyraUsed();
+    sideLockRef.current = true;
+    setSideView("agent");
+    setSideOpen(true);
+    if (draft !== undefined) setTask(draft);
+    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".ab-chat-box textarea")?.focus(), 320);
+  };
+  const tabIcon = (tab: BrowserTab) => {
+    if (tab.loading) return <Loader2 className="animate-spin" />;
+    if (isBrowserStartPageUrl(tab.url)) return <Search />;
+    const src = tab.favicon || (tab.url && !isBrowserStartPageUrl(tab.url) ? faviconFor(tab.url) : "");
+    if (src) return <img src={src} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />;
+    return isBrowserStartPageUrl(tab.url) ? <Search /> : <Globe2 />;
+  };
+  const showWebStatus = !desktopChromium && showAgentChrome;
+
   return (
-    <div className="nui flex min-h-0 flex-1 bg-[var(--atlas-window-bg)]">
-      {/* The navigation rail is deliberately a browser control surface, not a
-          decorative clone. Every destination below opens one of Clyra's real
-          persisted browser features. It gives the browser its chat-first,
-          Atlas-like information architecture without borrowing product
-          names, marks, or copy. */}
-      <aside className="clyra-browser-rail hidden w-[216px] shrink-0 flex-col border-r border-[var(--atlas-divider)] bg-[var(--atlas-sidebar-bg)] p-2.5 lg:flex">
-        <button
-          type="button"
-          onClick={() => {
-            sideLockRef.current = true;
-            setSideView("agent");
-            setSideOpen(true);
-            setTask("");
-          }}
-          className="flex h-9 items-center gap-2 rounded-[9px] px-2.5 text-left text-[12px] font-medium text-[var(--atlas-text-primary)] transition-colors hover:bg-black/[0.045]"
-        >
-          <span className="grid h-5 w-5 place-items-center rounded-md bg-[var(--atlas-text-primary)] text-white"><Plus className="h-3.5 w-3.5" /></span>
-          New conversation
-        </button>
-        <button type="button" onClick={focusOmnibox} className="mt-1 flex h-8 items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]">
-          <Search className="h-3.5 w-3.5" /> Search the web
-        </button>
-        <div className="my-3 h-px bg-[var(--atlas-divider)]" />
-        <nav className="space-y-0.5" aria-label="Browser navigation">
-          <button type="button" onClick={() => openSideView("agent")} className={cn("flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] transition-colors hover:bg-black/[0.045]", sideOpen && sideView === "agent" && "bg-black/[0.05] text-[var(--atlas-text-primary)]", !(sideOpen && sideView === "agent") && "text-[var(--atlas-text-secondary)]")}><Bloub size={15} color={accentColor} /><span>Assistant</span></button>
-          <button type="button" onClick={() => openInternalPage("history")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><History className="h-3.5 w-3.5" /> History</button>
-          <button type="button" onClick={() => openInternalPage("bookmarks")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Bookmark className="h-3.5 w-3.5" /> Saved pages</button>
-          <button type="button" onClick={() => openSideView("downloads")} className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Download className="h-3.5 w-3.5" /> Downloads</button>
-        </nav>
-        <div className="mt-5 px-2.5 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--atlas-text-tertiary)]">Recent tabs</div>
-        <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
-          {browserState?.tabs.slice(0, 10).map((tab) => (
-            <button key={tab.id} type="button" onClick={() => { setActiveInternalTabId(null); void performAction({ type: "switch_tab", tabId: tab.id }); }} className={cn("flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[11px] transition-colors hover:bg-black/[0.045]", tab.active ? "text-[var(--atlas-text-primary)]" : "text-[var(--atlas-text-secondary)]")}>
-              <Globe2 className="h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" /><span className="truncate">{tab.title || "New tab"}</span>
-            </button>
-          ))}
-        </div>
-        <button type="button" onClick={() => openInternalPage("settings")} className="flex h-8 items-center gap-2 rounded-[8px] px-2.5 text-left text-[11.5px] text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.045]"><Settings2 className="h-3.5 w-3.5" /> Settings</button>
-      </aside>
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-        className="relative mx-auto flex h-full min-h-0 w-full max-w-none flex-col overflow-hidden bg-[var(--atlas-window-bg)]"
-      >
-        {/* Tab strip — full width */}
-        <div
-          className="nui-tabs shrink-0 px-2"
-          style={{ height: "var(--atlas-titlebar-height)", background: "var(--atlas-titlebar-bg)" }}
-        >
-          {/* No layout animation on the strip. `layout="position"` re-sprang
-              every tab on each render, and browser state streams continuously
-              while a page loads — which is what made the tabs drift and jump.
-              Width is the whole animation, as it is in Chrome, and the CSS in
-              notes-ui.css owns it. */}
-          <AnimatePresence initial={false}>
-            {browserState?.tabs.map((tab) => {
-              const agentOwnsTab = Boolean(
-                agentControlledTabId
-                && tab.id === agentControlledTabId
-                && isAgentBusy
-                && !browserState.agent.manualControl,
-              );
-              return (
-              <motion.button
+    <div className={cn("ab", settings.reducedMotion && "ab-reduced")}>
+      {/* ---------------- Tab strip ---------------- */}
+      <div className="ab-tabbar">
+        <div className="ab-tabs" ref={tabsRef} role="tablist" aria-label="Browser tabs">
+          {orderedTabs.map((tab) => {
+            const agentOwnsTab = Boolean(agentControlledTabId && tab.id === agentControlledTabId && isAgentBusy && !browserState?.agent.manualControl);
+            const selected = tab.active && !activeInternalTab;
+            return (
+              <button
                 key={tab.id}
-                initial={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
-                animate={{ opacity: 1, maxWidth: 200, paddingLeft: 8, paddingRight: 6 }}
-                exit={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
-                transition={{ duration: 0.165, ease: [0.25, 0.1, 0.25, 1] }}
                 type="button"
-                onClick={() => {
-                  setActiveInternalTabId(null);
-                  void performAction({ type: "switch_tab", tabId: tab.id });
-                }}
-                onAuxClick={(event) => {
-                  if (event.button === 1 && browserState.tabs.length > 1) void performAction({ type: "close_tab", tabId: tab.id });
-                }}
-                className={cn(
-                  "nui-tab group/tab",
-                  tab.active && !activeInternalTab && "is-active",
-                  agentOwnsTab && "clyra-browser-agent-tab",
-                )}
-                title={agentOwnsTab ? "Clyra is controlling this tab" : undefined}
+                role="tab"
+                aria-selected={selected}
+                data-tab-id={tab.id}
+                data-native="1"
+                className={cn("ab-tab", selected && "is-active", dragTab?.id === tab.id && "is-dragging")}
+                title={agentOwnsTab ? "Clyra is working in this tab" : tab.title || "New tab"}
+                onClick={() => activateTab(tab.id)}
+                onPointerDown={(event) => beginTabDrag(event, tab.id)}
+                onAuxClick={(event) => { if (event.button === 1) closeTab(tab.id); }}
+                onContextMenu={(event) => { event.preventDefault(); setTabContext({ id: tab.id, x: event.clientX, y: event.clientY }); }}
               >
-                <span className="nui-tab-icon">
-                  {tab.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" strokeWidth={1.8} />}
+                <span className="ab-tab-icon">{tabIcon(tab)}</span>
+                <span className={cn("ab-tab-label", agentOwnsTab && "ab-shine")}>
+                  {agentOwnsTab ? truncateLabel(agentStatus || "Working", 28) : isBrowserStartPageUrl(tab.url) ? "New Tab" : (tab.active && browserState?.title && browserState.url === tab.url ? browserState.title : tab.title) || displayHost(tab.url)}
                 </span>
-                {agentOwnsTab ? (
-                  <ShiningText
-                    text={agentStatus || "Thinking"}
-                    preset="thinkingChat"
-                    play={!browserState.settings.reducedMotion}
-                    className="min-w-0 flex-1 truncate !text-[13px]"
-                  />
-                ) : (
-                  <span className="nui-tab-label">{tab.title || "New tab"}</span>
-                )}
                 <span
                   role="button"
-                  tabIndex={0}
+                  tabIndex={-1}
                   aria-label={`Close ${tab.title || "tab"}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if ((browserState?.tabs.length || 0) > 1) void performAction({ type: "close_tab", tabId: tab.id });
-                  }}
-                  className="nui-tab-close"
+                  className="ab-tab-close"
+                  onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }}
                 >
-                  <X className="h-2.5 w-2.5" />
+                  <X />
                 </span>
-              </motion.button>
-              );
-            })}
-            {internalTabs.map((tab) => {
-              const pageTitle = tab.page === "history" ? "History" : tab.page === "bookmarks" ? "Bookmarks" : "Settings";
-              const PageIcon = tab.page === "history" ? History : tab.page === "bookmarks" ? Bookmark : Settings2;
-              const selected = activeInternalTabId === tab.id;
-              return (
-                <motion.button
-                  key={tab.id}
-                  initial={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
-                  animate={{ opacity: 1, maxWidth: 200, paddingLeft: 8, paddingRight: 6 }}
-                  exit={{ opacity: 0, maxWidth: 0, paddingLeft: 0, paddingRight: 0 }}
-                  transition={{ duration: 0.165, ease: [0.25, 0.1, 0.25, 1] }}
-                  type="button"
-                  onClick={() => setActiveInternalTabId(tab.id)}
-                  className={cn("nui-tab group/tab", selected && "is-active")}
-                >
-                  <span className="nui-tab-icon"><PageIcon className="h-3.5 w-3.5" /></span>
-                  <span className="nui-tab-label">{pageTitle}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Close ${pageTitle}`}
-                    onClick={(event) => { event.stopPropagation(); closeInternalPage(tab.id); }}
-                    className="nui-tab-close"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </span>
-                </motion.button>
-              );
-            })}
-          </AnimatePresence>
-          <IconButton label="New tab" onClick={() => void performAction({ type: "open_tab" })} className="nui-icon-button">
-            <Plus className="h-4 w-4" />
-          </IconButton>
-        </div>
-
-        {/* Toolbar — full width */}
-        <div
-          className="relative flex shrink-0 items-center gap-1.5 border-b px-2 [&_button]:text-[var(--atlas-text-secondary)] [&_button:hover]:bg-black/[0.05] [&_button:hover]:text-[var(--atlas-text-primary)]"
-          style={{
-            height: "var(--atlas-toolbar-height)",
-            background: "var(--atlas-toolbar-bg)",
-            borderColor: "var(--atlas-divider)",
-          }}
-        >
-          <IconButton label="Back" disabled={Boolean(activeInternalTab) || !browserState?.canGoBack} onClick={() => void performAction({ type: "back" })} className="nui-icon-button">
-            <ArrowLeft className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Forward" disabled={Boolean(activeInternalTab) || !browserState?.canGoForward} onClick={() => void performAction({ type: "forward" })} className="nui-icon-button">
-            <ArrowRight className="h-4 w-4" />
-          </IconButton>
-          <IconButton label={browserState?.loading ? "Stop loading" : "Reload"} disabled={Boolean(activeInternalTab)} onClick={() => void performAction({ type: browserState?.loading ? "stop_loading" : "reload" })} className="nui-icon-button">
-            {browserState?.loading ? <X className="h-4 w-4" /> : <RefreshCw className={cn("h-4 w-4", isBrowserBusy && "animate-spin")} />}
-          </IconButton>
-          <form onSubmit={(event) => void navigate(event)} className="relative min-w-0 flex-1 px-1.5">
-            <div className="nui-addressbar w-full">
-              {browserState?.secure
-                ? <LockKeyhole className="ml-2 h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" strokeWidth={1.8} />
-                : <Search className="ml-2 h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" />}
-              <input
-                data-browser-omnibox
-                value={address}
-                onChange={(event) => {
-                  /* Typing only ever updates local state — no IPC, no
-                     navigation, no bounds work until Enter. */
-                  editingAddressRef.current = true;
-                  setAddress(event.target.value);
-                }}
-                onFocus={(event) => {
-                  editingAddressRef.current = true;
-                  setOmniboxFocused(true);
-                  setAddress(browserState?.url || address);
-                  event.currentTarget.select();
-                }}
-                onBlur={() => {
-                  editingAddressRef.current = false;
-                  setOmniboxFocused(false);
-                  /* Give the field back to the page it is showing. */
-                  if (browserState?.url) setAddress(browserState.url);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    editingAddressRef.current = false;
-                    if (browserState?.url) setAddress(browserState.url);
-                    event.currentTarget.blur();
-                    return;
-                  }
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  /* Read the value off the element rather than React state so
-                     a keystroke that has not yet been committed to state
-                     cannot be lost between render and Enter. */
-                  const typed = event.currentTarget.value;
-                  editingAddressRef.current = false;
-                  void navigate(undefined, typed);
-                  event.currentTarget.blur();
-                }}
-                className="nui-address"
-                placeholder="Search Google or enter an address"
-                aria-label="Address and search bar"
-                onClick={() => {
-                  if (!omniboxFocused) {
-                    setOmniboxFocused(true);
-                    setAddress(browserState?.url || address);
-                  }
-                }}
-              />
-              <button
-                type="button"
-                title={currentPageBookmark ? "Remove bookmark" : "Bookmark this page"}
-                aria-label={currentPageBookmark ? "Remove bookmark" : "Bookmark this page"}
-                disabled={Boolean(activeInternalTab) || !browserState?.url}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void toggleBookmark()}
-                className={cn("nui-icon-button", currentPageBookmark && "is-active")}
-              >
-                <Star
-                  className={cn("h-[15px] w-[15px]", currentPageBookmark && "fill-current text-[var(--atlas-clyra-blue)]")}
-                  strokeWidth={1.8}
-                />
               </button>
+            );
+          })}
+          {internalTabs.map((tab) => {
+            const title = tab.page === "history" ? "History" : tab.page === "bookmarks" ? "Bookmarks" : tab.page === "downloads" ? "Downloads" : "Settings";
+            const Icon = tab.page === "history" ? History : tab.page === "bookmarks" ? Star : tab.page === "downloads" ? Download : Settings2;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeInternalTabId === tab.id}
+                data-tab-id={tab.id}
+                className={cn("ab-tab", activeInternalTabId === tab.id && "is-active")}
+                onClick={() => setActiveInternalTabId(tab.id)}
+                onAuxClick={(event) => { if (event.button === 1) closeInternalPage(tab.id); }}
+              >
+                <span className="ab-tab-icon"><Icon /></span>
+                <span className="ab-tab-label">{title}</span>
+                <span role="button" tabIndex={-1} aria-label={`Close ${title}`} className="ab-tab-close" onClick={(event) => { event.stopPropagation(); closeInternalPage(tab.id); }}>
+                  <X />
+                </span>
+              </button>
+            );
+          })}
+          <span className="ab-tab-indicator" ref={indicatorRef} aria-hidden />
+        </div>
+        <button type="button" className="ab-iconbtn" title="New tab (⌘T)" aria-label="New tab" onClick={() => void performAction({ type: "open_tab" })}>
+          <Plus />
+        </button>
+        <span className="ab-tab-spacer" />
+        <button type="button" className={cn("ab-iconbtn", browserMenuOpen && "is-on")} data-menu-toggle aria-label="Browser menu" title="Customize and control browser" aria-expanded={browserMenuOpen} onClick={() => setBrowserMenuOpen((value) => !value)}>
+          <EllipsisVertical />
+        </button>
+        {browserMenuOpen ? (
+          <div className="ab-pop ab-menu-pop" role="menu" style={{ right: 10, top: 44, width: 268 }}>
+            <button type="button" className="ab-pop-row" onClick={() => { setBrowserMenuOpen(false); void performAction({ type: "open_tab" }); }}><Plus /><span className="ab-pop-main">New tab</span><small>⌘T</small></button>
+            <button type="button" className="ab-pop-row" onClick={() => { setBrowserMenuOpen(false); void performAction({ type: "restore_closed_tab" }); }}><RotateCcw /><span className="ab-pop-main">Reopen closed tab</span><small>⇧⌘T</small></button>
+            <div className="ab-pop-sep" />
+            <button type="button" className="ab-pop-row" onClick={() => openInternalPage("history")}><History /><span className="ab-pop-main">History</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => openInternalPage("bookmarks")}><Star /><span className="ab-pop-main">Bookmarks</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => openInternalPage("downloads")}><Download /><span className="ab-pop-main">Downloads</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => { setBrowserMenuOpen(false); void updateSettings({ showBookmarksBar: !settings.showBookmarksBar }); }}><Bookmark /><span className="ab-pop-main">{settings.showBookmarksBar ? "Hide" : "Show"} bookmarks bar</span><small>⇧⌘B</small></button>
+            <div className="ab-pop-sep" />
+            <button type="button" className="ab-pop-row" onClick={() => { setBrowserMenuOpen(false); setFindOpen(true); window.setTimeout(() => findInputRef.current?.select(), 30); }}><Search /><span className="ab-pop-main">Find in page</span><small>⌘F</small></button>
+            {desktopChromium ? (
+              <button type="button" className="ab-pop-row" disabled={snipBusy} onClick={() => { setBrowserMenuOpen(false); void handleSnip(); }}><Crop /><span className="ab-pop-main">Snip &amp; Ask</span></button>
+            ) : null}
+            <div className="ab-pop-zoom">
+              <span style={{ textAlign: "left", minWidth: 0, fontSize: 12.8, color: "#3b3d42" }}>Zoom</span>
+              <div>
+                <button type="button" className="ab-iconbtn" aria-label="Zoom out" onClick={() => void zoom(-0.1)}><Minus /></button>
+                <span>{Math.round((browserState?.zoom || 1) * 100)}%</span>
+                <button type="button" className="ab-iconbtn" aria-label="Zoom in" onClick={() => void zoom(0.1)}><Plus /></button>
+              </div>
             </div>
-          </form>
-          {desktopChromium && !activeInternalTab ? (
-            <IconButton
-              label="Snip & Ask"
-              onClick={() => void handleSnip()}
-              disabled={snipBusy}
-              className="h-8 w-8"
-            >
-              {snipBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crop className="h-4 w-4" strokeWidth={1.8} />}
-            </IconButton>
-          ) : null}
-          <div className="relative z-50">
-            <IconButton label="Browser menu" onClick={() => setBrowserMenuOpen((value) => !value)} active={browserMenuOpen} className="h-8 w-8">
-              <Ellipsis className="h-4 w-4" />
-            </IconButton>
-            <AnimatePresence>
-              {browserMenuOpen ? (
-                <motion.div
-                  initial={{ opacity: 0, y: -4, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -4, scale: 0.98 }}
-                  transition={{ duration: 0.14 }}
-                  className="absolute right-0 top-8 z-[70] w-56 overflow-hidden rounded-xl border border-[var(--atlas-divider)] bg-white p-1.5 shadow-[0_16px_42px_rgba(15,23,42,0.14)]"
-                >
-                  {[
-                    { view: "history" as const, label: "History", icon: History, tabPage: "history" as const },
-                    { view: "bookmarks" as const, label: "Bookmarks", icon: Bookmark, tabPage: "bookmarks" as const },
-                    { view: "downloads" as const, label: "Downloads", icon: Download },
-                    { view: "settings" as const, label: "Browser settings", icon: Settings2, tabPage: "settings" as const },
-                  ].map((item) => (
-                    <button key={item.view} type="button" onClick={() => item.tabPage ? openInternalPage(item.tabPage) : openSideView(item.view)} className="flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-[12px] font-medium text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.04] hover:text-[var(--atlas-text-primary)]">
-                      <item.icon className="h-4 w-4" /> {item.label}
-                    </button>
-                  ))}
-                  <div className="my-1 h-px bg-[var(--atlas-divider)]" />
-                  <div className="flex items-center justify-between px-2.5 py-1.5 text-[11px] font-medium text-[var(--atlas-text-secondary)]">
-                    <span>Zoom</span>
-                    <div className="flex items-center gap-0.5">
-                      <IconButton label="Zoom out" onClick={() => void zoom(-0.1)} className="h-7 w-7"><Minus className="h-3.5 w-3.5" /></IconButton>
-                      <button type="button" onClick={() => void zoom("reset")} className="min-w-10 text-center text-[10px] font-semibold text-[var(--atlas-text-secondary)]">{Math.round((browserState?.zoom || 1) * 100)}%</button>
-                      <IconButton label="Zoom in" onClick={() => void zoom(0.1)} className="h-7 w-7"><Plus className="h-3.5 w-3.5" /></IconButton>
-                    </div>
-                  </div>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
+            <div className="ab-pop-sep" />
+            <button type="button" className="ab-pop-row" onClick={() => openInternalPage("settings")}><Settings2 /><span className="ab-pop-main">Settings</span></button>
           </div>
+        ) : null}
+        {tabContext ? (
+          <div className="ab-pop ab-tab-context" role="menu" style={{ position: "fixed", left: Math.min(tabContext.x, innerWidth - 200), top: tabContext.y + 4, width: 190 }}>
+            <button type="button" className="ab-pop-row" onClick={() => { setTabContext(null); void performAction({ type: "open_tab" }); }}><Plus /><span className="ab-pop-main">New tab</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => { const id = tabContext.id; setTabContext(null); void performAction({ type: "duplicate_tab", tabId: id }); }}><Copy /><span className="ab-pop-main">Duplicate</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => { const id = tabContext.id; setTabContext(null); closeTab(id); }}><X /><span className="ab-pop-main">Close tab</span></button>
+            <button type="button" className="ab-pop-row" onClick={() => { setTabContext(null); void performAction({ type: "restore_closed_tab" }); }}><RotateCcw /><span className="ab-pop-main">Reopen closed tab</span></button>
+          </div>
+        ) : null}
+      </div>
+      {dragTab ? (
+        <div className="ab-tab-float" style={{ left: dragTab.x, top: dragTab.y, width: dragTab.width }} aria-hidden>
+          {(() => {
+            const tab = orderedTabs.find((item) => item.id === dragTab.id);
+            return tab ? <><span className="ab-tab-icon">{tabIcon(tab)}</span><span className="ab-tab-label">{isBrowserStartPageUrl(tab.url) ? "New Tab" : tab.title}</span></> : null;
+          })()}
+        </div>
+      ) : null}
+
+      {/* ---------------- Toolbar ---------------- */}
+      <div className="ab-toolbar" ref={toolbarRef}>
+        <nav className="ab-nav" aria-label="Browser navigation">
+          <button type="button" className="ab-iconbtn" title="Back" aria-label="Back" disabled={Boolean(activeInternalTab) || !browserState?.canGoBack} onClick={() => void performAction({ type: "back" })}><ArrowLeft /></button>
+          <button type="button" className="ab-iconbtn" title="Forward" aria-label="Forward" disabled={Boolean(activeInternalTab) || !browserState?.canGoForward} onClick={() => void performAction({ type: "forward" })}><ArrowRight /></button>
           <button
             type="button"
+            key={reloadSpin}
+            className={cn("ab-iconbtn ab-reload", reloadSpin > 0 && "is-spinning")}
+            title={browserState?.loading ? "Stop loading" : "Reload"}
+            aria-label={browserState?.loading ? "Stop loading" : "Reload"}
+            disabled={Boolean(activeInternalTab)}
+            onClick={() => {
+              if (browserState?.loading) {
+                void performAction({ type: "stop_loading" });
+                return;
+              }
+              setReloadSpin((value) => value + 1);
+              void performAction({ type: "reload" });
+            }}
+          >
+            {browserState?.loading ? <X /> : <RotateCw />}
+          </button>
+        </nav>
+        <div className="ab-address" role="search">
+          <span className="ab-address-icon">{browserState?.secure && !omniboxFocused && !showStartPage ? <LockKeyhole /> : <Search />}</span>
+          <input
+            data-browser-omnibox
+            value={displayAddress}
+            placeholder="Search Google or type a URL"
+            aria-label="Address and search bar"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => {
+              editingAddressRef.current = true;
+              setAddress(event.target.value);
+            }}
+            onFocus={(event) => {
+              editingAddressRef.current = true;
+              setOmniboxFocused(true);
+              const url = browserState?.url || "";
+              setAddress(isBrowserStartPageUrl(url) ? "" : url);
+              const input = event.currentTarget;
+              omniJustFocusedRef.current = true;
+              window.setTimeout(() => input.select(), 0);
+            }}
+            onMouseUp={(event) => {
+              // Chrome behaviour: the first click selects the whole address;
+              // the mouseup would otherwise collapse that selection.
+              if (!omniJustFocusedRef.current) return;
+              omniJustFocusedRef.current = false;
+              event.preventDefault();
+              event.currentTarget.select();
+            }}
+            onBlur={() => {
+              window.setTimeout(() => {
+                editingAddressRef.current = false;
+                setOmniboxFocused(false);
+                if (browserState?.url) setAddress(browserState.url);
+              }, 140);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" && omniItems.length) {
+                event.preventDefault();
+                setOmniIndex((index) => (index + 1) % omniItems.length);
+                return;
+              }
+              if (event.key === "ArrowUp" && omniItems.length) {
+                event.preventDefault();
+                setOmniIndex((index) => (index <= 0 ? omniItems.length - 1 : index - 1));
+                return;
+              }
+              if (event.key === "Escape") {
+                editingAddressRef.current = false;
+                if (browserState?.url) setAddress(browserState.url);
+                event.currentTarget.blur();
+                return;
+              }
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              const picked = omniIndex >= 0 ? omniItems[omniIndex] : null;
+              const typed = picked ? picked.target : event.currentTarget.value;
+              editingAddressRef.current = false;
+              setOmniboxFocused(false);
+              void navigate(undefined, typed);
+              event.currentTarget.blur();
+            }}
+          />
+          <div className="ab-address-end">
+            <button
+              type="button"
+              className="ab-addr-btn is-clear"
+              aria-label="Clear"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { setAddress(""); document.querySelector<HTMLInputElement>("[data-browser-omnibox]")?.focus(); }}
+            >
+              <X />
+            </button>
+            <button
+              type="button"
+              data-bookmark-toggle
+              className={cn("ab-addr-btn", currentPageBookmark && "is-starred")}
+              title={currentPageBookmark ? "Edit bookmark" : "Bookmark this page (⌘D)"}
+              aria-label={currentPageBookmark ? "Edit bookmark" : "Bookmark this page"}
+              disabled={Boolean(activeInternalTab) || showStartPage}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { if (bookmarkPop) setBookmarkPop(null); else void openBookmarkEditor(); }}
+            >
+              <Star />
+            </button>
+          </div>
+          {omniMenuVisible ? (
+            <div className="ab-pop ab-omnibox" role="listbox">
+              {omniItems.map((item, index) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="option"
+                  aria-selected={index === omniIndex}
+                  className={cn("ab-pop-row", index === omniIndex && "is-selected")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setOmniIndex(index)}
+                  onClick={() => {
+                    editingAddressRef.current = false;
+                    setOmniboxFocused(false);
+                    void navigate(undefined, item.target);
+                    (document.activeElement as HTMLElement | null)?.blur();
+                  }}
+                >
+                  {item.url ? <img src={faviconFor(item.url)} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : item.icon === "search" ? <Search /> : <Globe2 />}
+                  <span className="ab-pop-main">{item.label}</span>
+                  <small>{item.detail}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {bookmarkPop ? (
+            <form className="ab-pop ab-bookmark-pop" style={{ right: 0, top: 46 }} onSubmit={(event) => void saveBookmarkEdit(event)}>
+              <header>
+                <strong>{bookmarkPop.justAdded ? "Bookmark added" : "Edit bookmark"}</strong>
+                <button type="button" className="ab-iconbtn" aria-label="Close" onClick={() => setBookmarkPop(null)}><X /></button>
+              </header>
+              <label>Name<input value={bookmarkPop.title} onChange={(event) => setBookmarkPop((current) => current ? { ...current, title: event.target.value } : current)} maxLength={90} autoFocus /></label>
+              <label>URL<input value={bookmarkPop.url} onChange={(event) => setBookmarkPop((current) => current ? { ...current, url: event.target.value } : current)} spellCheck={false} /></label>
+              <footer>
+                <button type="button" className="ab-btn is-danger" onClick={() => void removeBookmarkFromPop()}>Remove</button>
+                <button type="button" className="ab-btn" onClick={() => setBookmarkPop(null)}>Cancel</button>
+                <button type="submit" className="ab-btn is-primary">Save</button>
+              </footer>
+            </form>
+          ) : null}
+        </div>
+        <div className="ab-end">
+          <button
+            type="button"
+            className={cn("ab-ask", sideOpen && "is-open")}
+            title="Assistant (⌥A)"
+            aria-pressed={sideOpen}
             onClick={() => {
               markAskClyraUsed();
               setShowAskClyraPulse(false);
               setSideView("agent");
               setSideOpen((value) => {
-                const next = sideView === "agent" ? !value : true;
-                sideLockRef.current = next;
-                return next;
+                sideLockRef.current = !value;
+                return !value;
               });
             }}
-            className={cn(
-              "relative ml-0.5 flex h-8 shrink-0 items-center gap-1 rounded-[9px] px-3 text-[12px] font-medium transition-[background-color,color] duration-150",
-              sideOpen && sideView === "agent"
-                ? "bg-black/[0.04] text-[var(--atlas-clyra-blue)]"
-                : "bg-transparent text-[var(--atlas-clyra-blue)] hover:bg-black/[0.035]",
-            )}
-            aria-label={sideOpen ? "Hide Ask Clyra" : "Ask Clyra"}
           >
-            {showAskClyraPulse ? (
-              <span className="clyra-ask-pulse pointer-events-none absolute inset-0 rounded-[9px]" aria-hidden />
-            ) : null}
-            Ask Clyra
+            <Sparkles />
+            <span>Assistant</span>
           </button>
         </div>
+        <div className={cn("ab-loading", (browserState?.loading || isBrowserBusy) && !showStartPage && "is-on")} aria-hidden />
+      </div>
 
-        <AnimatePresence initial={false}>
-          {settings.showBookmarksBar && browserState?.bookmarks.length ? (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 28, opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[var(--atlas-divider)] bg-[var(--atlas-toolbar-bg)] px-2 [scrollbar-width:none]">
-              {browserState.bookmarks.slice(0, 14).map((bookmark) => (
-                <button key={bookmark.id} type="button" onClick={() => void navigate(undefined, bookmark.url)} className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-[10px] font-medium text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.04] hover:text-[var(--atlas-text-primary)]">
-                  <Globe2 className="h-3 w-3" /> <span className="max-w-28 truncate">{bookmark.title}</span>
-                </button>
-              ))}
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+      {/* ---------------- Bookmarks bar ---------------- */}
+      {settings.showBookmarksBar ? (
+        <div className="ab-bmbar" aria-label="Bookmarks bar">
+          <div className="ab-bmbar-items">
+            {browserState?.bookmarks.length ? browserState.bookmarks.slice(0, 24).map((bookmark) => (
+              <button key={bookmark.id} type="button" title={bookmark.url} onClick={() => void navigate(undefined, bookmark.url)}>
+                <img src={faviconFor(bookmark.url)} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+                <span>{bookmark.title || displayHost(bookmark.url)}</span>
+              </button>
+            )) : (
+              <button type="button" className="ab-bmbar-empty" onClick={() => void openBookmarkEditor()}>☆&nbsp; Save pages with the star in the address bar</button>
+            )}
+          </div>
+          <button type="button" onClick={() => openInternalPage("bookmarks")} title="All bookmarks"><Bookmark /><span>All bookmarks</span></button>
+        </div>
+      ) : null}
 
-        {/* Page | divider | sidebar */}
-        <div className="flex min-h-0 flex-1">
-        <section className={cn(
-          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-white",
-          aiInControl && "clyra-browser-control-surface",
-        )}>
-          {findOpen ? (
-              <div
-                className="absolute right-3 top-3 z-[80] flex h-9 items-center gap-1.5 rounded-[10px] border border-[var(--atlas-divider)] bg-white px-2 shadow-[0_10px_28px_rgba(15,23,42,0.14)]"
-              >
-                <Search className="h-3.5 w-3.5 shrink-0 text-[var(--atlas-text-tertiary)]" />
-                <input
-                  ref={findInputRef}
-                  autoFocus
-                  value={findQuery}
-                  onChange={(event) => {
-                    setFindQuery(event.target.value);
-                    void runFind(event.target.value);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void runFind(findQuery);
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeFind();
-                    }
-                  }}
-                  placeholder="Find on page"
-                  className="h-6 w-40 border-0 bg-transparent text-[12.5px] text-[var(--atlas-text-primary)] outline-none placeholder:text-[var(--atlas-text-tertiary)]"
-                />
-                {findResult ? (
-                  <span className="shrink-0 whitespace-nowrap text-[11px] text-[var(--atlas-text-tertiary)]">
-                    {findResult.total ? `${findResult.current} of ${findResult.total}` : "0 results"}
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={closeFind}
-                  aria-label="Close find"
-                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[var(--atlas-text-tertiary)] hover:bg-black/[0.05] hover:text-[var(--atlas-text-primary)]"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-          ) : null}
-          <div
-            ref={previewRef}
-            tabIndex={0}
-            onKeyDown={handlePreviewKeyDown}
-            onWheel={handlePreviewWheel}
-            className="group relative min-h-0 flex-1 overflow-hidden bg-white outline-none"
-            aria-label="Interactive browser page"
-          >
-            {/* A quiet edge wash is status feedback, not a veil: the live
-                page remains completely readable and immediately interactive
-                if the person takes control. */}
-            {aiInControl ? <div className="clyra-browser-control-wash" aria-hidden /> : null}
-            {activeInternalTab ? (
-              <BrowserInternalPage
-                page={activeInternalTab.page}
-                history={browserState?.history || []}
-                bookmarks={browserState?.bookmarks || []}
-                settings={settings}
-                onNavigate={(target) => {
-                  setAddress(target);
-                  void navigate(undefined, target);
-                }}
-                onClearHistory={() => void requestBrowser("/api/openbrowser/history", { method: "DELETE", body: {}, quiet: true })}
-                onSaveBookmark={() => void saveBookmark()}
-                onRemoveBookmark={(id) => void requestBrowser(`/api/openbrowser/bookmarks/${id}`, { method: "DELETE", quiet: true })}
-                onUpdateSettings={(patch) => void updateSettings(patch)}
-              />
-            ) : showStartPage ? (
-              <BrowserStartPage
-                history={browserState?.history}
-                bookmarks={browserState?.bookmarks}
-                onNavigate={(target) => {
-                  setAddress(target);
-                  void navigate(undefined, target);
-                }}
-                onOpenAgent={(draft = "") => {
-                  sideLockRef.current = true;
-                  setSideOpen(true);
-                  setSideView("agent");
-                  setTask(draft);
-                }}
-                onAskAgent={(prompt) => {
-                  sideLockRef.current = true;
-                  setSideOpen(true);
-                  setSideView("agent");
-                  setTask(prompt);
-                  void runAgentTask(prompt);
-                }}
-                onOpenSettings={() => openInternalPage("settings")}
-              />
-            ) : browserState && desktopChromium ? (
+      {/* ---------------- Page + assistant ---------------- */}
+      <div className="ab-main">
+        <main
+          className="ab-web"
+          ref={previewRef}
+          tabIndex={0}
+          onKeyDown={handlePreviewKeyDown}
+          onWheel={showStartPage || activeInternalTab ? undefined : handlePreviewWheel}
+          aria-label="Web page"
+        >
+          {activeInternalTab ? (
+            <AtlasInternalPage
+              page={activeInternalTab.page}
+              history={browserState?.history || []}
+              bookmarks={browserState?.bookmarks || []}
+              downloads={browserState?.downloads || []}
+              settings={settings}
+              onOpenPage={openInternalPage}
+              onNavigate={(target) => void navigate(undefined, target)}
+              onClearHistory={(ids) => void requestBrowser("/api/openbrowser/history", { method: "DELETE", body: ids ? { ids } : {}, quiet: true }).catch(() => undefined)}
+              onRemoveBookmark={(id) => void requestBrowser(`/api/openbrowser/bookmarks/${id}`, { method: "DELETE", quiet: true }).catch(() => undefined)}
+              onAddBookmark={() => {
+                const url = activeTab?.url || browserState?.url;
+                if (!url || isBrowserStartPageUrl(url)) { toast("Open a webpage first, then bookmark it"); return; }
+                void requestBrowser("/api/openbrowser/bookmarks", { body: { url, title: activeTab?.title }, quiet: true }).then(() => toast("Bookmark saved")).catch(() => undefined);
+              }}
+              onUpdateSettings={(patch) => void updateSettings(patch)}
+            />
+          ) : showStartPage ? (
+            <BrowserStartPage
+              onNavigate={(target) => void navigate(undefined, target)}
+              onAskAgent={(prompt) => {
+                openAssistant();
+                void runAgentTask(prompt);
+              }}
+            />
+          ) : browserState && desktopChromium ? (
+            <>
               <ElectronWebContentsSurface
                 title={`Live browser page: ${browserState.title}`}
                 surfaceId="primary-browser"
                 kind="browser"
                 className="h-full w-full"
                 active={!showStartPage && !activeInternalTab}
-                fallback={
-                  <img
-                    data-clyra-browser-frame="1"
-                    src={frameUrl}
-                    alt={`Live browser page: ${browserState.title}`}
-                    draggable={false}
-                    onClick={(event) => void clickPreview(event)}
-                    className="block h-full w-full cursor-default select-none object-contain object-top"
-                  />
-                }
               />
-            ) : browserState ? (
-              <img
-                data-clyra-browser-frame="1"
-                src={frameUrl}
-                alt={`Live browser page: ${browserState.title}`}
-                draggable={false}
-                onClick={(event) => void clickPreview(event)}
-                className="block h-full w-full cursor-default select-none object-contain object-top transition-opacity duration-150 ease-out"
-                style={{ opacity: isBrowserBusy || (isAgentBusy && browserState.loading) ? 0.55 : 1 }}
-              />
-            ) : (
-              <div className="grid h-full place-items-center bg-white">
-                <div className="w-[70%] max-w-xl space-y-3 animate-pulse">
-                  <div className="h-7 w-1/2 rounded-md bg-slate-100" />
-                  <div className="h-3 w-full rounded bg-slate-100" />
-                  <div className="h-3 w-4/5 rounded bg-slate-100" />
-                  <div className="mt-7 h-44 rounded-lg bg-slate-100" />
-                </div>
-              </div>
-            )}
+              {frozenFrame ? <img className="ab-freeze" src={frozenFrame} alt="" aria-hidden /> : null}
+            </>
+          ) : browserState ? (
+            <img
+              data-clyra-browser-frame="1"
+              src={frameUrl}
+              alt={`Live browser page: ${browserState.title}`}
+              draggable={false}
+              onClick={(event) => void clickPreview(event)}
+              className="ab-web-frame"
+              style={{ opacity: isBrowserBusy || (isAgentBusy && browserState.loading) ? 0.6 : 1, transition: "opacity .15s ease" }}
+            />
+          ) : (
+            <div className="ab-skeleton"><div><i style={{ width: "50%", height: 26 }} /><i /><i style={{ width: "80%" }} /><i style={{ height: 160, marginTop: 16 }} /></div></div>
+          )}
 
-            <AnimatePresence>
-              {aiInControl ? (
-                <motion.div
-                  aria-hidden="true"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="pointer-events-none absolute inset-0 z-[18]"
-                >
-                  <div className="absolute inset-0 ring-1 ring-inset ring-black/[0.04]" />
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
+          {/* Web-preview mode draws its own aura + pill; the native Electron
+              page carries an injected equivalent (electron/agent-chrome-script). */}
+          {!desktopChromium ? <BrowserAgentAura active={aiInControl && !activeInternalTab} reducedMotion={settings.reducedMotion} className="ab-aura" /> : null}
 
-            <AnimatePresence>
-              {liveCursor && showAgentChrome && settings.showAiCursor && !browserState?.agent.manualControl ? (
-                <motion.div
-                  key="browser-ai-cursor"
-                  initial={settings.reducedMotion ? false : { opacity: 0, scale: 0.9 }}
-                  animate={{
-                    opacity: 1,
-                    scale: liveCursor.kind === "click" || liveCursor.kind === "double_click" ? [1, 0.88, 1] : 1,
-                    left: `${(liveCursor.x / (browserState?.viewport.width || 1440)) * 100}%`,
-                    top: `${(liveCursor.y / (browserState?.viewport.height || 900)) * 100}%`,
-                  }}
-                  exit={{ opacity: 0, scale: 0.92 }}
-                  transition={{
-                    // Keep the pointer physically connected to each action.
-                    // A critically damped spring reads as intentional movement,
-                    // rather than a sequence of teleports between targets.
-                    left: settings.aiCursorSpeed === "instant" ? { duration: 0.035 } : { type: "spring", stiffness: settings.aiCursorSpeed === "fast" ? 430 : 260, damping: settings.aiCursorSpeed === "fast" ? 34 : 29, mass: 0.52 },
-                    top: settings.aiCursorSpeed === "instant" ? { duration: 0.035 } : { type: "spring", stiffness: settings.aiCursorSpeed === "fast" ? 430 : 260, damping: settings.aiCursorSpeed === "fast" ? 34 : 29, mass: 0.52 },
-                    scale: { duration: 0.16 },
-                    opacity: { duration: 0.1 },
-                  }}
-                  className="clyra-browser-agent-cursor pointer-events-none absolute z-20 -translate-x-[2px] -translate-y-[2px]"
-                  data-kind={liveCursor.kind}
-                >
-                  <svg className="clyra-browser-agent-cursor__arrow" viewBox="0 0 28 32" aria-hidden="true">
-                    <path d="M4.62 2.72C3.09 1.91 1.57 3.43 2.39 4.96l8.36 16.3c.75 1.47 2.87 1.39 3.5-.13l2.69-6.51 6.51-2.69c1.52-.63 1.6-2.75.13-3.5L4.62 2.72Z" />
-                  </svg>
-                  <span className="clyra-browser-agent-cursor__caret" aria-hidden />
-                  {settings.showAiActionLabels ? (
-                    <span className="clyra-browser-agent-cursor__label">{cursorIntent}</span>
-                  ) : null}
-                  {(liveCursor.kind === "click" || liveCursor.kind === "double_click") ? (
-                    <span key={liveCursor.id} className="clyra-browser-agent-cursor__click" aria-hidden />
-                  ) : null}
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
+          {!desktopChromium && liveCursor && showAgentChrome && settings.showAiCursor && !browserState?.agent.manualControl ? (
+            <motion.div
+              className="ab-cursor"
+              initial={false}
+              animate={{
+                left: `${(liveCursor.x / (browserState?.viewport.width || 1440)) * 100}%`,
+                top: `${(liveCursor.y / (browserState?.viewport.height || 900)) * 100}%`,
+              }}
+              transition={settings.aiCursorSpeed === "instant" ? { duration: 0.04 } : { type: "spring", stiffness: settings.aiCursorSpeed === "fast" ? 430 : 260, damping: settings.aiCursorSpeed === "fast" ? 34 : 29, mass: 0.52 }}
+              aria-hidden
+            >
+              <span className="ab-cursor-glow" />
+              <span className="ab-cursor-core" />
+              {settings.showAiActionLabels ? <span className="ab-cursor-label">{cursorIntent}</span> : null}
+              {liveCursor.kind === "click" || liveCursor.kind === "double_click" ? <span key={liveCursor.id} className="ab-cursor-click" /> : null}
+            </motion.div>
+          ) : null}
 
-            <AnimatePresence>
-              {isBrowserBusy || (isAgentBusy && browserState?.loading) ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0, transition: { duration: 0.18 } }}
-                  transition={{ duration: 0.12 }}
-                  className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[2.5px] overflow-hidden bg-transparent"
-                >
-                  {/* Chrome-style progress: a bar that eases up to ~85% and
-                      only completes to 100% on the exit transition above, so
-                      it never sits mid-way — it reads as real progress even
-                      though the page load itself has no granular signal. */}
-                  <motion.div
-                    className="h-full rounded-r-full"
-                    style={{ background: "var(--clyra-accent, #2563eb)" }}
-                    initial={{ width: "0%" }}
-                    animate={{ width: ["0%", "45%", "72%", "85%"] }}
-                    transition={{ duration: 2.4, ease: [0.16, 1, 0.3, 1], times: [0, 0.15, 0.5, 1] }}
-                  />
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-
-            {typeof document !== "undefined" &&
-              createPortal(
-                <AnimatePresence>
-                  {snipCard ? (
-                    <motion.div
-                      key="snip-card"
-                      initial={{ opacity: 0, scale: 0.96, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.12 } }}
-                      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                      style={{ position: "fixed", left: snipCard.left, top: snipCard.top, width: 340, zIndex: 300 }}
-                      className="overflow-hidden rounded-2xl border border-black/[0.08] bg-white/97 shadow-[0_20px_50px_rgba(15,23,42,0.16)] backdrop-blur-xl"
-                    >
-                      <div
-                        onMouseDown={handleSnipCardDragStart}
-                        className="flex cursor-grab items-center justify-between gap-2 border-b border-black/[0.06] px-3.5 py-2.5 active:cursor-grabbing"
-                      >
-                        <span className="text-[11.5px] font-semibold tracking-[-0.01em] text-[var(--clyra-text)]">Clyra</span>
-                        <button
-                          type="button"
-                          onClick={() => setSnipCard(null)}
-                          aria-label="Close"
-                          className="grid h-6 w-6 place-items-center rounded-full text-[var(--clyra-text-tertiary)] transition-colors hover:bg-black/[0.05] hover:text-[var(--clyra-text)]"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="max-h-[340px] overflow-y-auto px-3.5 py-3">
-                        {snipCard.status === "loading" ? (
-                          <div className="flex items-center gap-2 text-[13px] text-[var(--clyra-text-secondary)]">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading selection…
-                          </div>
-                        ) : snipCard.status === "error" ? (
-                          <p className="text-[13px] leading-relaxed text-rose-600">{snipCard.error}</p>
-                        ) : (
-                          <>
-                            <p className="text-[13.5px] leading-relaxed text-[var(--clyra-text)]">{snipCard.direct}</p>
-                            {snipCard.explanation ? (
-                              <p className="mt-2.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--clyra-text-secondary)]">
-                                {snipCard.explanation}
-                              </p>
-                            ) : null}
-                          </>
-                        )}
-                      </div>
-                      {snipCard.status === "done" ? (
-                        <>
-                          <div className="flex items-center gap-1 border-t border-black/[0.06] px-2.5 py-1.5">
-                            <button
-                              type="button"
-                              onClick={() => void navigator.clipboard?.writeText([snipCard.direct, snipCard.explanation].filter(Boolean).join("\n\n"))}
-                              className="rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium text-[var(--clyra-text-secondary)] transition-colors hover:bg-black/[0.05] hover:text-[var(--clyra-text)]"
-                            >
-                              Copy
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-1.5 border-t border-black/[0.06] px-3 py-2">
-                            <input
-                              value={snipFollowUp}
-                              onChange={(event) => setSnipFollowUp(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") void handleSnipFollowUp();
-                              }}
-                              placeholder="Ask a follow-up…"
-                              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-[var(--clyra-text)] outline-none placeholder:text-[var(--clyra-text-tertiary)]"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => void handleSnipFollowUp()}
-                              disabled={snipFollowUpBusy || !snipFollowUp.trim()}
-                              aria-label="Ask follow-up"
-                              className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--clyra-text)] text-[var(--clyra-canvas)] transition-opacity disabled:opacity-25"
-                            >
-                              {snipFollowUpBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowUp className="h-3 w-3" />}
-                            </button>
-                          </div>
-                        </>
-                      ) : null}
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>,
-                document.body,
-              )}
-
-            {/* Floating Atlas agent bar over webpage */}
-            <AnimatePresence>
-              {showAgentChrome ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute bottom-4 left-1/2 z-30 flex h-[30px] max-w-[min(420px,92%)] -translate-x-1/2 items-stretch overflow-hidden rounded-[8px] bg-[var(--atlas-agent-black)] text-[11px] font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,.28)] sm:bottom-[16px]"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
-                    {browserState?.agent.manualControl ? (
-                      <UserRound className="h-3 w-3 shrink-0 text-white/70" />
-                    ) : agentPhase === "paused" ? (
-                      <CirclePause className="h-3 w-3 shrink-0 text-white/70" />
-                    ) : (
-                      <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-white/80" />
-                    )}
-                    <span className="min-w-0 truncate text-white/90">
-                      {browserState?.agent.manualControl
-                        ? "You have control"
-                        : agentPhase === "paused"
-                          ? "Paused"
-                          : truncateLabel(agentTaskTitle, 42)}
-                    </span>
-                  </div>
-                  {browserState?.agent.manualControl ? (
-                    <button
-                      type="button"
-                      onClick={() => void controlAgent("return_control")}
-                      className="flex shrink-0 items-center gap-1 border-l border-white/15 px-3 text-[10.5px] font-semibold text-white/90 transition-colors hover:bg-white/10"
-                    >
-                      <CirclePlay className="h-3 w-3" /> Resume AI
-                    </button>
-                  ) : agentPhase === "paused" ? (
-                    <button
-                      type="button"
-                      onClick={() => void controlAgent("resume")}
-                      className="flex shrink-0 items-center gap-1 border-l border-white/15 px-3 text-[10.5px] font-semibold text-white/90 transition-colors hover:bg-white/10"
-                    >
-                      <CirclePlay className="h-3 w-3" /> Resume
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => void controlAgent("take_control")}
-                      className="flex shrink-0 items-center gap-1 border-l border-white/15 px-3 text-[10.5px] font-semibold text-white/90 transition-colors hover:bg-white/10"
-                    >
-                      Take control
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void controlAgent("stop")}
-                    className="flex shrink-0 items-center gap-1 bg-[var(--atlas-stop-red)] px-3 text-[10.5px] font-semibold text-white transition-colors hover:brightness-110"
-                    aria-label="Stop browser task"
-                  >
-                    Stop
-                  </button>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-
-            {error ? (
+          <AnimatePresence>
+            {showWebStatus ? (
               <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="absolute inset-x-4 bottom-4 z-30 flex max-w-xl items-start gap-3 rounded-lg border border-red-200/90 bg-white/95 px-3 py-2 text-[11px] font-medium text-red-600 shadow-[0_8px_24px_rgba(15,23,42,.12)] backdrop-blur-sm"
+                className="ab-status"
+                role="status"
+                initial={{ opacity: 0, x: "-50%", y: 16 }}
+                animate={{ opacity: 1, x: "-50%", y: 0 }}
+                exit={{ opacity: 0, x: "-50%", y: 12 }}
+                transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
               >
-                <span className="min-w-0 flex-1 line-clamp-3">{error.split("╔")[0]?.trim() || error}</span>
-                <button type="button" onClick={() => void loadState()} className="shrink-0 font-semibold text-[var(--atlas-text-primary)]">Retry</button>
+                <Sparkles />
+                <span className="ab-status-label">
+                  {browserState?.agent.manualControl ? "You have control" : agentPhase === "paused" ? "Paused" : truncateLabel(agentStatus && agentStatus !== "Ready" ? agentStatus : agentTaskTitle, 60)}
+                </span>
+                {browserState?.agent.manualControl ? (
+                  <button type="button" onClick={() => void controlAgent("return_control")}>Return control</button>
+                ) : agentPhase === "paused" ? (
+                  <button type="button" onClick={() => void controlAgent("resume")}>Resume</button>
+                ) : (
+                  <button type="button" onClick={() => void controlAgent("take_control")}>Take control</button>
+                )}
+                <button type="button" className="is-stop" onClick={() => void controlAgent("stop")}>Stop</button>
               </motion.div>
             ) : null}
-          </div>
-        </section>
+          </AnimatePresence>
 
-        {sideOpen ? (
-          <div className="block w-px shrink-0 bg-[var(--atlas-divider)]" aria-hidden />
+          {findOpen ? (
+            <div className="ab-find" role="search">
+              <Search />
+              <input
+                ref={findInputRef}
+                autoFocus
+                value={findQuery}
+                placeholder="Find on page"
+                onChange={(event) => {
+                  setFindQuery(event.target.value);
+                  void runFind(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") { event.preventDefault(); void runFind(findQuery); }
+                  else if (event.key === "Escape") { event.preventDefault(); closeFind(); }
+                }}
+              />
+              {findResult ? <small>{findResult.total ? `${findResult.current} of ${findResult.total}` : "No results"}</small> : null}
+              <button type="button" className="ab-iconbtn" aria-label="Close find" onClick={closeFind}><X /></button>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="ab-error" role="alert">
+              <span>{error.split("╔")[0]?.trim() || error}</span>
+              <button type="button" onClick={() => { setError(null); void loadState(); }}>Retry</button>
+            </div>
+          ) : null}
+          {toastText ? <div className="ab-toast" role="status">{toastText}</div> : null}
+        </main>
+
+        {typeof document !== "undefined" ? createPortal(
+          <AnimatePresence>
+            {snipCard ? (
+              <motion.div
+                key="snip-card"
+                initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.12 } }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                style={{ position: "fixed", left: snipCard.left, top: snipCard.top, width: 340, zIndex: 300 }}
+                className="overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.16)]"
+              >
+                <div onMouseDown={handleSnipCardDragStart} className="flex cursor-grab items-center justify-between gap-2 border-b border-black/[0.06] px-3.5 py-2.5 active:cursor-grabbing">
+                  <span className="text-[11.5px] font-semibold text-[#1f2227]">Clyra</span>
+                  <button type="button" onClick={() => setSnipCard(null)} aria-label="Close" className="grid h-6 w-6 place-items-center rounded-full text-[#8a9099] hover:bg-black/[0.05]"><X className="h-3.5 w-3.5" /></button>
+                </div>
+                <div className="max-h-[340px] overflow-y-auto px-3.5 py-3">
+                  {snipCard.status === "loading" ? (
+                    <div className="flex items-center gap-2 text-[13px] text-[#5a6170]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading selection…</div>
+                  ) : snipCard.status === "error" ? (
+                    <p className="text-[13px] leading-relaxed text-rose-600">{snipCard.error}</p>
+                  ) : (
+                    <>
+                      <p className="text-[13.5px] leading-relaxed text-[#1f2227]">{snipCard.direct}</p>
+                      {snipCard.explanation ? <p className="mt-2.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#5a6170]">{snipCard.explanation}</p> : null}
+                    </>
+                  )}
+                </div>
+                {snipCard.status === "done" ? (
+                  <div className="flex items-center gap-1.5 border-t border-black/[0.06] px-3 py-2">
+                    <input
+                      value={snipFollowUp}
+                      onChange={(event) => setSnipFollowUp(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") void handleSnipFollowUp(); }}
+                      placeholder="Ask a follow-up…"
+                      className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none"
+                    />
+                    <button type="button" onClick={() => void handleSnipFollowUp()} disabled={snipFollowUpBusy || !snipFollowUp.trim()} aria-label="Ask follow-up" className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#1677ff] text-white disabled:opacity-25">
+                      {snipFollowUpBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowUp className="h-3 w-3" />}
+                    </button>
+                  </div>
+                ) : null}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>,
+          document.body,
         ) : null}
 
+        {/* ---------------- Assistant sidebar ---------------- */}
         <AnimatePresence initial={false}>
           {sideOpen ? (
             <motion.aside
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: "var(--atlas-sidebar-width)" }}
-              exit={{ opacity: 0, width: 0 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="ab-sidebar"
+              aria-label="Assistant"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: "var(--ab-sidebar)", opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: settings.reducedMotion ? 0.01 : 0.4, ease: [0.22, 1, 0.36, 1] }}
               onUpdate={() => window.dispatchEvent(new Event("clyra:native-surface-layout"))}
               onAnimationComplete={() => window.dispatchEvent(new Event("clyra:native-surface-layout"))}
-              className="static flex min-h-0 max-w-[var(--atlas-sidebar-width)] shrink-0 flex-col overflow-hidden bg-[var(--atlas-sidebar-bg)] text-[var(--atlas-text-primary)]"
             >
-              <header className="relative flex h-[34px] shrink-0 items-center gap-2 border-b border-[var(--atlas-divider)] px-2">
-                <button
-                  type="button"
-                  onClick={() => (sideView !== "agent" ? setSideView("agent") : setSideOpen(false))}
-                  className="grid h-7 w-7 place-items-center rounded-md text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.04] hover:text-[var(--atlas-text-primary)]"
-                  aria-label={sideView !== "agent" ? "Back" : "Collapse Ask Clyra"}
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                </button>
-                <Bloub state={isAgentBusy ? "thinking" : "idle"} size={18} color={accentColor} background="#ffffff" className="shrink-0" />
-                <span className="text-[11px] font-medium text-[var(--atlas-text-secondary)]">
-                  {sideView === "agent" ? "Ask Clyra" : sideView === "downloads" ? "Downloads" : sideView === "history" ? "History" : sideView === "bookmarks" ? "Bookmarks" : "Browser settings"}
-                </span>
-              </header>
-
-              {sideView === "agent" ? (
-                <>
-                  <div ref={chatScrollRef} className="clyra-visible-scrollbar min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
-                    <div className="space-y-3.5">
-                      <AnimatePresence initial={false} mode="wait">
-                        {messages.length === 0 && !isAgentBusy ? (
-                          <motion.section
-                            key="browser-welcome"
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -6, height: 0 }}
-                            transition={{ duration: settings.reducedMotion ? 0.01 : 0.2, ease: [0.16, 1, 0.3, 1] }}
-                            className="mx-auto flex min-h-[calc(100vh-360px)] max-w-[280px] flex-col items-center justify-center pb-10 pt-6 text-center"
-                          >
-                            <Bloub state="idle" size={40} color={accentColor} background="#ffffff" className="mb-3.5" />
-                            <p className="text-[12px] font-medium leading-5 text-[var(--atlas-text-secondary)]">
-                              Ask about this page, or describe a browser task.
-                            </p>
-                            <div className="mt-5 space-y-1 text-left">
-                              {[
-                                { label: "Summarise this page", prompt: "Summarise the current page and cite the most important details." },
-                                { label: "Find something on this page", prompt: "Find the most relevant information on the current page." },
-                                { label: "Complete a task here", prompt: "Help me complete a task on the current page." },
-                              ].map((action) => (
-                                <button
-                                  key={action.label}
-                                  type="button"
-                                  onClick={() => void runAgentTask(action.prompt)}
-                                  className="block w-full rounded-md px-2 py-1.5 text-left text-[11.5px] font-medium text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.04] hover:text-[var(--atlas-text-primary)]"
-                                >
-                                  {action.label}
-                                </button>
-                              ))}
-                            </div>
-                          </motion.section>
-                        ) : null}
-                      </AnimatePresence>
-
-                      {messages.length > 0 && pageContextReady ? (
-                        <div className="flex items-center gap-1.5 px-0.5">
-                          <span className="grid h-4 w-4 shrink-0 place-items-center overflow-hidden rounded-[3px] border border-[var(--atlas-divider)] bg-white">
-                            {activeTab?.favicon ? <img src={activeTab.favicon} alt="" className="h-2.5 w-2.5" /> : <Globe2 className="h-2.5 w-2.5 text-[var(--atlas-text-tertiary)]" />}
-                          </span>
-                          <span className="truncate text-[10px] font-medium text-[var(--atlas-text-tertiary)]">{pageName}</span>
-                        </div>
-                      ) : null}
-
-                      {messages.map((message) => {
-                        const animateTypewriter = message.role === "assistant"
-                          && !settings.reducedMotion
-                          && !hydratedMessageIdsRef.current.has(message.id)
-                          && !message.id.startsWith("welcome");
-                        return (
-                        <motion.div
-                          key={message.id}
-                          layout="position"
-                          initial={message.role === "user" ? false : { opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          transition={{ duration: message.role === "user" ? 0.01 : 0.18, ease: [0.16, 1, 0.3, 1] }}
-                          className={cn("flex", message.role === "user" && "clyra-browser-user-message-entry origin-bottom-right justify-end")}
-                        >
-                          <div className={cn(
-                            "max-w-[92%] text-[13px] leading-[1.55] tracking-[-0.01em]",
-                            message.role === "user"
-                              ? "rounded-[10px] bg-[var(--atlas-user-bubble)] px-3 py-2 font-normal text-[var(--atlas-text-primary)]"
-                              : "max-w-full pr-1 font-normal text-[var(--atlas-text-primary)]",
-                          )}>
-                            <p className="whitespace-pre-wrap">
-                              {message.role === "assistant" ? (
-                                <TypewriterText
-                                  text={message.content}
-                                  active={animateTypewriter}
-                                  msPerChar={8}
-                                  onComplete={() => { hydratedMessageIdsRef.current.add(message.id); }}
-                                />
-                              ) : (
-                                message.content
-                              )}
-                            </p>
-                            {message.facts?.length ? (
-                              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                                <div className="clyra-message-source-chips" aria-label="Visited sources">
-                                  {[...new Map(message.facts.map((fact) => [displayHost(fact.sourceUrl), fact.sourceUrl])).entries()]
-                                    .filter(([host]) => host)
-                                    .slice(0, 8)
-                                    .map(([host, url]) => (
-                                      <a key={url} href={url} target="_blank" rel="noreferrer" title={host} className="clyra-message-source-chip">
-                                        <span className="clyra-message-source-chip__icon"><Globe2 className="h-3.5 w-3.5" strokeWidth={1.7} /></span>
-                                        <span className="clyra-message-source-chip__bullet"><i className="clyra-message-source-chip__dot" /><span className="clyra-message-source-chip__label">{host}</span></span>
-                                      </a>
-                                    ))}
-                                </div>
-                              </div>
-                            ) : null}
-                            {message.steps?.length ? (
-                              <button type="button" onClick={() => setActivityOpen((value) => !value)} className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-[var(--atlas-text-tertiary)] hover:text-[var(--atlas-text-secondary)]">
-                                <Check className="h-3 w-3 text-emerald-500" /> {message.steps.length} verified actions <ChevronDown className={cn("h-3 w-3 transition-transform", activityOpen && "rotate-180")} />
-                              </button>
-                            ) : null}
-                          </div>
-                        </motion.div>
-                        );
-                      })}
-
-                      {showAgentChrome ? (
-                        <AgentRunSection
-                          task={agentDemo
-                            ? (agentDemoKind === "ebay"
-                              ? "Look at MacBook M2 on eBay and compare the best listings"
-                              : "Find well-rated sunscreen, beach towels and a bucket hat")
-                            : (runTask || browserState?.agent.task || "")}
-                          active={showAgentChrome}
-                          phase={agentDemo ? (agentDemoKind === "ebay" ? "observing" : "executing") : agentPhase}
-                          statusText={agentDemo
-                            ? (agentDemoKind === "ebay" ? "Thinking" : "Comparing sunscreen")
-                            : agentStatus}
-                          plan={agentDemo ? (agentDemoKind === "ebay" ? {
-                            goal: "MacBook M2 on eBay",
-                            successCriteria: ["Search results open", "Listings compared", "Best pick noted"],
-                            steps: [
-                              { id: "1", label: "Opened eBay search", status: "complete" },
-                              { id: "2", label: "Filtering MacBook M2", status: "complete" },
-                              { id: "3", label: "Comparing top listings", status: "active" },
-                              { id: "4", label: "Summarise best options", status: "pending" },
-                            ],
-                          } : {
-                            goal: "Beach essentials",
-                            successCriteria: ["Sunscreen added", "Towels added", "Hat added"],
-                            steps: [
-                              { id: "1", label: "Opened shopping site", status: "complete" },
-                              { id: "2", label: "Set delivery location", status: "complete" },
-                              { id: "3", label: "Comparing sunscreen", status: "active" },
-                              { id: "4", label: "Adding beach towels", status: "pending" },
-                            ],
-                          }) : plan}
-                          items={runItems}
-                          paused={agentPhase === "paused"}
-                          manualControl={Boolean(browserState?.agent.manualControl)}
-                          reducedMotion={settings.reducedMotion}
-                          factCount={factCount}
-                          criteriaProgress={criteriaProgress}
-                          planOpen={planDisclosureOpen}
-                          onTogglePlan={() => setPlanDisclosureOpen((value) => !value)}
-                          completedStepsOpen={completedStepsOpen}
-                          onToggleCompletedSteps={() => setCompletedStepsOpen((value) => !value)}
-                        />
-                      ) : null}
-
-                      <AnimatePresence>
-                        {activityOpen && latestSteps.length ? (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden pl-1">
-                            {latestSteps.map((step, index) => <p key={`${step}-${index}`} className="mb-1.5 text-[10px] font-medium leading-4 text-[var(--atlas-text-tertiary)]">{step.replace(/ -> .*/, "")}</p>)}
-                          </motion.div>
-                        ) : null}
-                      </AnimatePresence>
-                      <div ref={chatEndRef} aria-hidden className="h-px w-full shrink-0" />
-                    </div>
-                  </div>
-
-                  {/* The workspace composer: the page in view is carried as a
-                      chip the same way an attached note is in Notes chat, and
-                      the bar itself is the notes bar. */}
-                  <div className="nui-composer shrink-0 border-t border-[var(--atlas-divider)] px-3 pb-3 pt-2">
-                    {pageContextReady && pageName ? (
-                      <div className="nui-composer-chips">
-                        <span className="nui-chip">
-                          {activeTab?.favicon
-                            ? <img src={activeTab.favicon} alt="" className="h-3 w-3 rounded-[2px]" />
-                            : <Globe2 className="h-3 w-3" />}
-                          <span className="max-w-[190px] truncate">{pageName}</span>
-                        </span>
-                      </div>
-                    ) : null}
-                    <form
-                      onSubmit={(event) => { event.preventDefault(); void runAgentTask(); }}
-                      className="nui-bar"
-                    >
-                      <span className="nui-bar-mark"><Bloub size={20} /></span>
-                      <textarea
-                        value={task}
-                        onChange={(event) => {
-                          setTask(event.target.value);
-                          const node = event.currentTarget;
-                          node.style.height = "auto";
-                          node.style.height = `${Math.min(140, node.scrollHeight)}px`;
-                        }}
-                        onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void runAgentTask(); } }}
-                        rows={1}
-                        placeholder="Ask about this page, or describe a task"
-                        aria-label="Ask Clyra"
-                        className="nui-input"
-                      />
+              <div className="ab-sidebar-inner">
+                <header className="ab-side-head">
+                  <button type="button" className="ab-iconbtn" aria-label="Close assistant" title="Close" onClick={() => { sideLockRef.current = false; setSideOpen(false); }}>
+                    <PanelRightClose />
+                  </button>
+                  <span className="ab-side-title">{isAgentBusy ? <span className="ab-shine">{truncateLabel(agentTaskTitle, 34)}</span> : "Assistant"}</span>
+                  <button type="button" className={cn("ab-iconbtn", sideMenuOpen && "is-on")} data-side-menu-toggle aria-label="Conversation options" onClick={() => setSideMenuOpen((value) => !value)}>
+                    <Ellipsis />
+                  </button>
+                  {sideMenuOpen ? (
+                    <div className="ab-pop ab-side-menu" role="menu">
+                      <button type="button" className="ab-pop-row" onClick={() => { setSideMenuOpen(false); if (isAgentBusy) void controlAgent("stop"); setMessages([]); toast("New chat started"); }}><Plus /><span className="ab-pop-main">New chat</span></button>
                       <button
-                        type="submit"
-                        disabled={isAgentBusy || !task.trim()}
-                        className="nui-send"
-                        aria-label="Run browser task"
+                        type="button"
+                        className="ab-pop-row"
+                        disabled={!messages.length}
+                        onClick={() => {
+                          setSideMenuOpen(false);
+                          const text = messages.map((message) => `${message.role === "user" ? "You" : "Assistant"}: ${message.content}`).join("\n\n");
+                          void navigator.clipboard?.writeText(text).then(() => toast("Conversation copied")).catch(() => toast("Clipboard unavailable"));
+                        }}
                       >
-                        <ArrowUp className="h-4 w-4" />
+                        <Copy /><span className="ab-pop-main">Copy conversation</span>
                       </button>
-                    </form>
-                  </div>
-                </>
-              ) : null}
+                      <button type="button" className="ab-pop-row" onClick={() => { setSideMenuOpen(false); sideLockRef.current = false; setSideOpen(false); }}><PanelRightClose /><span className="ab-pop-main">Close assistant</span></button>
+                    </div>
+                  ) : null}
+                </header>
 
-              {sideView === "history" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                  <div className="mb-2 flex items-center justify-between px-2 py-1"><span className="text-[9px] font-semibold uppercase text-[var(--atlas-text-tertiary)]">Recent</span><button type="button" onClick={() => void requestBrowser("/api/openbrowser/history", { method: "DELETE", body: {}, quiet: true })} className="text-[9px] font-semibold text-[var(--atlas-text-secondary)] hover:text-red-600">Clear</button></div>
-                  {browserState?.history.length ? browserState.history.map((entry) => (
-                    <button key={entry.id} type="button" onClick={() => void navigate(undefined, entry.url)} className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-black/[0.03]">
-                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--atlas-divider)] bg-white"><Clock3 className="h-3.5 w-3.5 text-[var(--atlas-text-tertiary)]" /></span>
-                      <span className="min-w-0 flex-1"><span className="block truncate text-[10px] font-semibold text-[var(--atlas-text-primary)]">{entry.title}</span><span className="block truncate text-[8px] font-medium text-[var(--atlas-text-tertiary)]">{compactUrl(entry.url)}</span></span>
-                      <span className="text-[8px] font-medium text-[var(--atlas-text-tertiary)]">{formatWhen(entry.visitedAt)}</span>
-                    </button>
-                  )) : <EmptyPanel icon={History} label="No browsing history" />}
+                <div className="ab-chat" ref={chatScrollRef}>
+                  {messages.length === 0 && !isAgentBusy && !askingPage ? (
+                    <ChatEmpty onPick={(prompt) => {
+                      if (/ $/.test(prompt)) {
+                        setTask(prompt);
+                        window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".ab-chat-box textarea")?.focus(), 30);
+                      } else if (agentMode) void runAgentTask(prompt);
+                      else void askAboutPage(prompt);
+                    }} />
+                  ) : null}
+                  {messages.length > 0 && pageContextReady && !showStartPage ? (
+                    <div className="ab-chat-page">
+                      {activeTab?.url ? <img src={activeTab.favicon || faviconFor(activeTab.url)} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : <Globe2 />}
+                      <span>{pageName}</span>
+                    </div>
+                  ) : null}
+                  {messages.map((message) => message.role === "user" ? (
+                    <div key={message.id} className="ab-user">{message.content}</div>
+                  ) : (
+                    <div key={message.id}>
+                      {message.run?.rows.length ? <ActionStream rows={message.run.rows} live={false} finished={message.run} /> : null}
+                      <AssistantMessage content={message.content} sources={message.facts} error={message.error} onCopied={() => toast("Copied")} />
+                    </div>
+                  ))}
+                  {(isAgentBusy || agentDemo) && runRows.length ? (
+                    <ActionStream rows={runRows} live startedAt={runStartedAt || undefined} />
+                  ) : null}
+                  {askQuestion && agentPhase === "waiting_for_user" ? (
+                    <div className="ab-ask-card"><strong>Needs your input</strong>{askQuestion.question}</div>
+                  ) : null}
+                  {liveThinking ? <ThinkingRow label={askingPage ? "Reading this page" : agentPhase === "planning" ? "Thinking" : truncateLabel(agentStatus && agentStatus !== "Ready" ? agentStatus : "Thinking", 48)} /> : null}
+                  <div ref={chatEndRef} aria-hidden style={{ height: 1 }} />
                 </div>
-              ) : null}
 
-              {sideView === "bookmarks" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                  <button type="button" onClick={() => void saveBookmark()} className="mb-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--atlas-divider)] text-[10px] font-semibold text-[var(--atlas-text-secondary)] transition-colors hover:bg-black/[0.03]"><Plus className="h-3.5 w-3.5" /> Bookmark current page</button>
-                  {browserState?.bookmarks.length ? browserState.bookmarks.map((bookmark) => (
-                    <div key={bookmark.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-black/[0.03]">
-                      <button type="button" onClick={() => void navigate(undefined, bookmark.url)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
-                        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--atlas-divider)] bg-white"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" /></span>
-                        <span className="min-w-0"><span className="block truncate text-[10px] font-semibold text-[var(--atlas-text-primary)]">{bookmark.title}</span><span className="block truncate text-[8px] font-medium text-[var(--atlas-text-tertiary)]">{compactUrl(bookmark.url)}</span></span>
+                <div className="ab-chat-composer">
+                  {pageContextReady && !showStartPage && !activeInternalTab ? (
+                    <div className="ab-chip-row">
+                      <span className="ab-chip" title={activeTab?.url}>
+                        {activeTab?.url ? <img src={activeTab.favicon || faviconFor(activeTab.url)} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : <Globe2 />}
+                        <span>{pageName}</span>
+                      </span>
+                    </div>
+                  ) : null}
+                  <form className="ab-chat-box" onSubmit={(event) => { event.preventDefault(); sendFromSidebar(); }}>
+                    <textarea
+                      value={task}
+                      rows={2}
+                      placeholder={agentMode ? "Ask anything or describe a task" : "Ask about this page"}
+                      aria-label="Message the assistant"
+                      onChange={(event) => {
+                        setTask(event.target.value);
+                        const node = event.currentTarget;
+                        node.style.height = "auto";
+                        node.style.height = `${Math.min(140, Math.max(43, node.scrollHeight))}px`;
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          sendFromSidebar();
+                        }
+                      }}
+                    />
+                    <div className="ab-chat-actions">
+                      <button
+                        type="button"
+                        className={cn("ab-toggle", agentMode && "is-on")}
+                        aria-pressed={agentMode}
+                        title={agentMode ? "Agent mode: the assistant can use the browser" : "Ask mode: answers from the current page only"}
+                        onClick={() => setAgentMode((value) => !value)}
+                      >
+                        <MousePointerClick /> Agent
                       </button>
-                      <IconButton label="Remove bookmark" onClick={() => void requestBrowser(`/api/openbrowser/bookmarks/${bookmark.id}`, { method: "DELETE", quiet: true })} className="opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></IconButton>
+                      <span className="ab-grow" />
+                      {isAgentBusy || askingPage ? (
+                        <button type="button" className="ab-stop-btn" aria-label="Stop" title="Stop" onClick={() => { if (askingPage) askAbortRef.current?.abort(); else void controlAgent("stop"); }}><i /></button>
+                      ) : (
+                        <button type="submit" className="ab-send" disabled={!task.trim()} aria-label="Send message"><ArrowUp /></button>
+                      )}
                     </div>
-                  )) : <EmptyPanel icon={Bookmark} label="No bookmarks yet" />}
+                  </form>
                 </div>
-              ) : null}
-
-              {sideView === "downloads" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                  {browserState?.downloads.length ? browserState.downloads.map((download) => (
-                    <div key={download.id} className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-black/[0.03]">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[var(--atlas-divider)] bg-white"><FileDown className="h-4 w-4 text-[var(--atlas-text-secondary)]" /></span>
-                      <span className="min-w-0 flex-1"><span className="block truncate text-[10px] font-semibold text-[var(--atlas-text-primary)]">{download.filename}</span><span className={cn("block text-[8px] font-medium", download.status === "failed" ? "text-red-500" : download.status === "complete" ? "text-emerald-600" : "text-[var(--atlas-text-secondary)]")}>{download.status}</span></span>
-                    </div>
-                  )) : <EmptyPanel icon={Download} label="No downloads" />}
-                </div>
-              ) : null}
-
-              {sideView === "settings" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                  <SettingSelect label="Performance" value={settings.performanceMode} options={["quality", "balanced", "efficient"]} onChange={(value) => void updateSettings({ performanceMode: value as BrowserSettings["performanceMode"] })} />
-                  <div className="mt-3 divide-y divide-[var(--atlas-divider)] border-y border-[var(--atlas-divider)]">
-                    <SettingToggle label="Restore tabs" checked={settings.restoreTabs} onChange={(value) => void updateSettings({ restoreTabs: value })} />
-                    <SettingToggle label="Save history" checked={settings.saveHistory} onChange={(value) => void updateSettings({ saveHistory: value })} />
-                    <SettingToggle label="Bookmarks bar" checked={settings.showBookmarksBar} onChange={(value) => void updateSettings({ showBookmarksBar: value })} />
-                    <SettingToggle label="AI cursor" checked={settings.showAiCursor} onChange={(value) => void updateSettings({ showAiCursor: value })} />
-                    <SettingToggle label="Action labels" checked={settings.showAiActionLabels} onChange={(value) => void updateSettings({ showAiActionLabels: value })} />
-                    <SettingToggle label="Private session" checked={settings.privateMode} onChange={(value) => void updateSettings({ privateMode: value })} />
-                  </div>
-                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--atlas-divider)] bg-white px-3 py-2 text-[9px] font-medium text-[var(--atlas-text-secondary)]"><ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" /> Browser data stays in the local Clyra profile.</div>
-                </div>
-              ) : null}
+              </div>
             </motion.aside>
           ) : null}
         </AnimatePresence>
-        </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
 
-function BrowserInternalPage({
-  page,
-  history,
-  bookmarks,
-  settings,
-  onNavigate,
-  onClearHistory,
-  onSaveBookmark,
-  onRemoveBookmark,
-  onUpdateSettings,
-}: {
-  page: InternalBrowserPage;
-  history: BrowserHistoryEntry[];
-  bookmarks: BrowserBookmark[];
-  settings: BrowserSettings;
-  onNavigate: (url: string) => void;
-  onClearHistory: () => void;
-  onSaveBookmark: () => void;
-  onRemoveBookmark: (id: string) => void;
-  onUpdateSettings: (patch: Partial<BrowserSettings>) => void;
-}) {
-  const isHistory = page === "history";
-  const isBookmarks = page === "bookmarks";
-  const [historySearch, setHistorySearch] = useState("");
-  const groupedHistory = useMemo(() => {
-    const groups = new Map<string, BrowserHistoryEntry[]>();
-    const query = historySearch.trim().toLocaleLowerCase();
-    history.filter((entry) => !query || `${entry.title} ${entry.url}`.toLocaleLowerCase().includes(query)).forEach((entry) => {
-      const date = new Date(entry.visitedAt);
-      const label = Number.isNaN(date.valueOf())
-        ? "Earlier"
-        : date.toDateString() === new Date().toDateString()
-          ? "Today"
-          : date.toDateString() === new Date(Date.now() - 86_400_000).toDateString()
-            ? "Yesterday"
-            : date.toLocaleDateString(undefined, { month: "long", day: "numeric" });
-      groups.set(label, [...(groups.get(label) || []), entry]);
-    });
-    return [...groups.entries()].slice(0, 8);
-  }, [history, historySearch]);
+const ICON_TO_ROW: Record<ActionIconKey, RunRowKind> = {
+  click: "click", keyboard: "keyboard", navigate: "navigate", search: "search", scrollDown: "scroll", scrollUp: "scroll",
+  back: "back", forward: "forward", reload: "reload", tab: "tab", wait: "wait", read: "read", check: "done", hover: "hover",
+  done: "done", ask: "ask", generic: "generic",
+};
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 5 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: settings.reducedMotion ? 0.01 : 0.18, ease: [0.16, 1, 0.3, 1] }}
-      className="h-full overflow-y-auto bg-[#fbfbfc] text-[var(--atlas-text-primary)]"
-    >
-      <div className="mx-auto w-full max-w-[860px] px-8 pb-16 pt-10 sm:px-12">
-        {isHistory ? (
-          <>
-            <header className="mb-9 flex items-start justify-between gap-5">
-              <div>
-                <div className="mb-3 grid h-9 w-9 place-items-center rounded-[10px] bg-[#f1f5ff] text-[var(--atlas-clyra-blue)]"><History className="h-[18px] w-[18px]" /></div>
-                <h1 className="text-[25px] font-semibold tracking-[-0.035em]">History</h1>
-                <p className="mt-1.5 text-[13px] text-[var(--atlas-text-secondary)]">Pages you’ve visited in Clyra Browser.</p>
-                <div className="mt-4 flex items-center gap-2 text-[11px] text-[var(--atlas-text-tertiary)]"><span className="rounded-full bg-[#f0f2f5] px-2.5 py-1 font-medium">{history.length} saved visits</span><span>Stored locally</span></div>
-              </div>
-              <button type="button" onClick={onClearHistory} disabled={!history.length} className="mt-1 h-8 rounded-[8px] px-2.5 text-[12px] font-medium text-[var(--atlas-text-secondary)] transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-35">Clear browsing data</button>
-            </header>
-            <div className="mb-7 flex h-10 max-w-[510px] items-center gap-2 rounded-[10px] border border-[var(--atlas-divider)] bg-white px-3 shadow-[0_1px_2px_rgba(15,23,42,0.02)]">
-              <Search className="h-4 w-4 text-[var(--atlas-text-tertiary)]" />
-              <input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--atlas-text-tertiary)]" placeholder="Search history" aria-label="Search history" />
-            </div>
-            {groupedHistory.length ? (
-              <div className="space-y-8">
-                {groupedHistory.map(([label, entries]) => (
-                  <section key={label}>
-                    <h2 className="mb-2 px-1 text-[11px] font-semibold text-[var(--atlas-text-tertiary)]">{label}</h2>
-                    <div className="space-y-0.5">
-                      {entries.slice(0, 18).map((entry) => (
-                        <button key={entry.id} type="button" onClick={() => onNavigate(entry.url)} className="group flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors hover:bg-[#f1f3f6]">
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[var(--atlas-divider)] bg-white"><Globe2 className="h-3.5 w-3.5 text-[var(--atlas-text-tertiary)]" /></span>
-                          <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium text-[var(--atlas-text-primary)]">{entry.title || displayHost(entry.url)}</span><span className="mt-0.5 block truncate text-[11px] text-[var(--atlas-text-tertiary)]">{compactUrl(entry.url)}</span></span>
-                          <span className="shrink-0 text-[11px] text-[var(--atlas-text-tertiary)]">{formatWhen(entry.visitedAt)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ) : <EmptyPanel icon={History} label={historySearch ? "No matching history" : "No browsing history yet"} />}
-          </>
-        ) : isBookmarks ? (
-          <>
-            <header className="mb-9 flex items-start justify-between gap-5">
-              <div>
-                <div className="mb-3 grid h-9 w-9 place-items-center rounded-[10px] bg-[#f1f5ff] text-[var(--atlas-clyra-blue)]"><Bookmark className="h-[18px] w-[18px]" /></div>
-                <h1 className="text-[25px] font-semibold tracking-[-0.035em]">Bookmarks</h1>
-                <p className="mt-1.5 text-[13px] text-[var(--atlas-text-secondary)]">Pages you’ve saved for later.</p>
-                <div className="mt-4 flex items-center gap-2 text-[11px] text-[var(--atlas-text-tertiary)]"><span className="rounded-full bg-[#f0f2f5] px-2.5 py-1 font-medium">{bookmarks.length} saved pages</span><span>Available on this device</span></div>
-              </div>
-              <button type="button" onClick={onSaveBookmark} className="mt-1 flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[12px] font-medium text-[var(--atlas-clyra-blue)] transition-colors hover:bg-[#edf3ff]"><Plus className="h-3.5 w-3.5" /> Bookmark current page</button>
-            </header>
-            <div className="mb-7 flex h-10 max-w-[510px] items-center gap-2 rounded-[10px] border border-[var(--atlas-divider)] bg-white px-3 shadow-[0_1px_2px_rgba(15,23,42,0.02)]">
-              <Search className="h-4 w-4 text-[var(--atlas-text-tertiary)]" />
-              <input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--atlas-text-tertiary)]" placeholder="Search bookmarks" aria-label="Search bookmarks" />
-            </div>
-            {bookmarks.filter((bookmark) => !historySearch.trim() || `${bookmark.title} ${bookmark.url}`.toLocaleLowerCase().includes(historySearch.trim().toLocaleLowerCase())).length ? (
-              <section>
-                <h2 className="mb-2 px-1 text-[11px] font-semibold text-[var(--atlas-text-tertiary)]">Saved pages</h2>
-                <div className="space-y-0.5">
-                  {bookmarks.filter((bookmark) => !historySearch.trim() || `${bookmark.title} ${bookmark.url}`.toLocaleLowerCase().includes(historySearch.trim().toLocaleLowerCase())).map((bookmark) => (
-                    <div key={bookmark.id} className="group flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 transition-colors hover:bg-[#f1f3f6]">
-                      <button type="button" onClick={() => onNavigate(bookmark.url)} className="flex min-w-0 flex-1 items-center gap-3 text-left"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[var(--atlas-divider)] bg-white"><Bookmark className="h-3.5 w-3.5 text-[var(--atlas-clyra-blue)]" /></span><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-[var(--atlas-text-primary)]">{bookmark.title || displayHost(bookmark.url)}</span><span className="mt-0.5 block truncate text-[11px] text-[var(--atlas-text-tertiary)]">{compactUrl(bookmark.url)}</span></span></button>
-                      <button type="button" onClick={() => onRemoveBookmark(bookmark.id)} className="grid h-7 w-7 shrink-0 place-items-center rounded-[7px] text-[var(--atlas-text-tertiary)] opacity-0 transition-[opacity,background-color,color] hover:bg-red-50 hover:text-red-600 group-hover:opacity-100" aria-label={`Remove ${bookmark.title || "bookmark"}`}><Trash2 className="h-3.5 w-3.5" /></button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : <EmptyPanel icon={Bookmark} label={historySearch ? "No matching bookmarks" : "No bookmarks yet"} />}
-          </>
-        ) : (
-          <>
-            <header className="mb-9">
-              <div className="mb-3 grid h-9 w-9 place-items-center rounded-[10px] bg-[#f1f5ff] text-[var(--atlas-clyra-blue)]"><Settings2 className="h-[18px] w-[18px]" /></div>
-              <h1 className="text-[25px] font-semibold tracking-[-0.035em]">Browser settings</h1>
-              <p className="mt-1.5 text-[13px] text-[var(--atlas-text-secondary)]">A quiet, local setup for browsing with Clyra.</p>
-            </header>
-            <div className="space-y-8">
-              <InternalSettingsSection title="General" icon={Search}>
-                <InternalSettingToggle label="Restore tabs" description="Reopen your last browser tabs when Clyra starts." checked={settings.restoreTabs} onChange={(value) => onUpdateSettings({ restoreTabs: value })} />
-                <InternalSettingToggle label="Show bookmarks bar" description="Keep saved pages one click away." checked={settings.showBookmarksBar} onChange={(value) => onUpdateSettings({ showBookmarksBar: value })} />
-              </InternalSettingsSection>
-              <InternalSettingsSection title="Privacy" icon={ShieldCheck}>
-                <InternalSettingToggle label="Save browsing history" description="Store visited pages in your local Clyra profile." checked={settings.saveHistory} onChange={(value) => onUpdateSettings({ saveHistory: value })} />
-                <InternalSettingToggle label="Private session" description="Don’t save new tabs or browsing history." checked={settings.privateMode} onChange={(value) => onUpdateSettings({ privateMode: value })} />
-              </InternalSettingsSection>
-              <InternalSettingsSection title="Clyra assistance" icon={Eye}>
-                <InternalSettingToggle label="Show AI cursor" description="Show Clyra’s position while it works on a page." checked={settings.showAiCursor} onChange={(value) => onUpdateSettings({ showAiCursor: value })} />
-                <InternalSettingToggle label="Show action labels" description="Briefly describe what Clyra is doing beside the cursor." checked={settings.showAiActionLabels} onChange={(value) => onUpdateSettings({ showAiActionLabels: value })} />
-                <InternalSettingSelect label="Cursor speed" description="Choose how quickly Clyra’s cursor travels." value={settings.aiCursorSpeed} options={["natural", "fast", "instant"]} onChange={(value) => onUpdateSettings({ aiCursorSpeed: value as BrowserSettings["aiCursorSpeed"] })} />
-              </InternalSettingsSection>
-              <InternalSettingsSection title="Performance" icon={Settings2}>
-                <InternalSettingSelect label="Browser performance" description="Balance visual quality and system efficiency." value={settings.performanceMode} options={["quality", "balanced", "efficient"]} onChange={(value) => onUpdateSettings({ performanceMode: value as BrowserSettings["performanceMode"] })} />
-                <InternalSettingToggle label="Reduce motion" description="Use quieter transitions throughout the browser." checked={settings.reducedMotion} onChange={(value) => onUpdateSettings({ reducedMotion: value })} />
-              </InternalSettingsSection>
-              <InternalSettingsSection title="Keyboard shortcuts" icon={Keyboard}>
-                <div className="divide-y divide-[var(--atlas-divider)] px-4">
-                  {[['Focus address bar', '⌘ L'], ['Open new tab', '⌘ T'], ['Reopen closed tab', '⇧ ⌘ T'], ['Close tab', '⌘ W'], ['Reload page', '⌘ R']].map(([label, shortcut]) => <div key={label} className="flex h-10 items-center justify-between text-[12px]"><span className="text-[var(--atlas-text-secondary)]">{label}</span><kbd className="rounded-[5px] border border-[var(--atlas-divider)] bg-[#fbfbfc] px-1.5 py-0.5 text-[10px] font-medium text-[var(--atlas-text-tertiary)]">{shortcut}</kbd></div>)}
-                </div>
-              </InternalSettingsSection>
-              <div className="flex items-center gap-2 rounded-[10px] border border-[var(--atlas-divider)] bg-white px-3 py-2.5 text-[11px] leading-4 text-[var(--atlas-text-secondary)]"><ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" /> Your browsing profile and saved pages stay on this device.</div>
-            </div>
-          </>
-        )}
-      </div>
-    </motion.div>
-  );
-}
-
-function InternalSettingsSection({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) {
-  return <section><div className="mb-2 flex items-center gap-2 px-1"><Icon className="h-3.5 w-3.5 text-[var(--atlas-text-tertiary)]" /><h2 className="text-[12px] font-semibold text-[var(--atlas-text-secondary)]">{title}</h2></div><div className="overflow-hidden rounded-[12px] border border-[var(--atlas-divider)] bg-white">{children}</div></section>;
-}
-
-function InternalSettingToggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <div className="flex min-h-[66px] items-center justify-between gap-5 border-b border-[var(--atlas-divider)] px-4 last:border-b-0"><div><p className="text-[13px] font-medium">{label}</p><p className="mt-0.5 text-[11px] leading-4 text-[var(--atlas-text-secondary)]">{description}</p></div><Toggle label={label} checked={checked} onChange={onChange} /></div>;
-}
-
-function InternalSettingSelect({ label, description, value, options, onChange }: { label: string; description: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return <label className="flex min-h-[66px] items-center justify-between gap-5 border-b border-[var(--atlas-divider)] px-4 last:border-b-0"><span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-4 text-[var(--atlas-text-secondary)]">{description}</span></span><select value={value} onChange={(event) => onChange(event.target.value)} className="h-8 min-w-[112px] rounded-[8px] border border-[var(--atlas-divider)] bg-[#fbfbfc] px-2 text-[12px] font-medium capitalize text-[var(--atlas-text-secondary)] outline-none transition-colors focus:border-[var(--atlas-clyra-blue)]">{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>;
-}
-
-function statusPillMeta(phase: AgentStatus, manualControl: boolean): { label: string; className: string; live?: boolean } {
-  switch (phase) {
-    case "planning": return { label: "Planning", className: "text-[var(--atlas-text-secondary)]", live: true };
-    case "observing": return { label: "Observing", className: "text-[var(--atlas-text-secondary)]", live: true };
-    case "executing": return { label: "Acting", className: "text-[var(--atlas-text-secondary)]", live: true };
-    case "verifying": return { label: "Verifying", className: "text-[var(--atlas-text-secondary)]", live: true };
-    case "recovering": return { label: "Recovering", className: "text-amber-600", live: true };
-    case "waiting_for_user": return { label: "Needs you", className: "text-amber-600" };
-    case "paused": return { label: manualControl ? "You have control" : "Paused", className: "text-[var(--atlas-text-tertiary)]" };
-    case "completed": return { label: "Done", className: "text-emerald-600" };
-    case "failed": return { label: "Failed", className: "text-rose-600" };
-    case "cancelled": return { label: "Stopped", className: "text-[var(--atlas-text-tertiary)]" };
-    default: return { label: "Idle", className: "text-[var(--atlas-text-tertiary)]" };
+/** Folds the streamed run feed into Codex-style action rows. */
+function rowsFromRunItems(items: RunItem[]): RunRow[] {
+  const rows: RunRow[] = [];
+  let pendingGoal: string | undefined;
+  for (const item of items) {
+    if (item.kind === "reasoning") {
+      pendingGoal = item.nextGoal;
+    } else if (item.kind === "action") {
+      const space = item.label.indexOf(" ");
+      rows.push({
+        id: item.id,
+        kind: ICON_TO_ROW[item.icon] || "generic",
+        verb: space > 0 ? item.label.slice(0, space) : item.label,
+        target: space > 0 ? item.label.slice(space + 1) : undefined,
+        status: item.status === "running" ? "running" : item.status === "error" ? "failed" : "done",
+        detail: item.result,
+        goal: pendingGoal ? `Goal: ${pendingGoal}` : undefined,
+      });
+      pendingGoal = undefined;
+    } else if (item.kind === "recovery" || item.kind === "strategy") {
+      rows.push({ id: item.id, kind: "recover", verb: item.message, status: "done" });
+    }
   }
+  return rows;
 }
 
-function VerdictIcon({ verdict }: { verdict?: StepEvaluation["verdict"] }) {
-  if (verdict === "Success") return <CircleCheck className="h-3 w-3 shrink-0 text-emerald-500" />;
-  if (verdict === "Failure") return <CircleX className="h-3 w-3 shrink-0 text-rose-500" />;
-  return <CircleHelp className="h-3 w-3 shrink-0 text-amber-500" />;
-}
-
-function PlanDisclosure({
-  plan,
-  task,
-  phase,
-  open,
-  onToggle,
-  completedOpen,
-  onToggleCompleted,
-  reducedMotion,
-  criteriaProgress,
-}: {
-  plan: TaskPlan | null;
-  task: string;
-  phase: AgentStatus;
-  open: boolean;
-  onToggle: () => void;
-  completedOpen: boolean;
-  onToggleCompleted: () => void;
-  reducedMotion: boolean;
-  criteriaProgress: { complete: number; total: number };
-}) {
-  const meta = statusPillMeta(phase, false);
-  const title = plan?.goal || task || meta.label;
-  const steps = plan?.steps || [];
-  const completed = steps.filter((step) => step.status === "complete");
-  const remaining = steps.filter((step) => step.status !== "complete");
-  const progressHint = criteriaProgress.total
-    ? `${criteriaProgress.complete}/${criteriaProgress.total}`
-    : steps.length
-      ? `${completed.length}/${steps.length}`
-      : null;
-
-  const renderStep = (step: TaskPlan["steps"][number]) => (
-    <li key={step.id} className="flex items-start gap-2 py-[2px]">
-      <span className="mt-[3px] grid h-3 w-3 shrink-0 place-items-center" aria-hidden>
-        {step.status === "complete" ? (
-          <CircleCheck className="h-3 w-3 text-emerald-500" />
-        ) : step.status === "active" ? (
-          <motion.span
-            className="h-1.5 w-1.5 rounded-full bg-[var(--atlas-text-primary)]"
-            animate={reducedMotion ? undefined : { scale: [1, 1.35, 1], opacity: [1, 0.55, 1] }}
-            transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-          />
-        ) : step.status === "blocked" ? (
-          <TriangleAlert className="h-3 w-3 text-amber-500" />
-        ) : (
-          <span className="h-1.5 w-1.5 rounded-full border border-[var(--atlas-divider)]" />
-        )}
-      </span>
-      <span className={cn(
-        "min-w-0 flex-1 text-[10.5px] font-medium leading-4",
-        step.status === "complete" ? "text-[var(--atlas-text-tertiary)] line-through decoration-[var(--atlas-divider)]" : step.status === "active" ? "text-[var(--atlas-text-primary)]" : "text-[var(--atlas-text-secondary)]",
-      )}>
-        {step.label}
-      </span>
-    </li>
-  );
-
-  return (
-    <motion.section initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.18 }} className="space-y-1">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex h-6 w-full items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-black/[0.03]"
-      >
-        <ChevronDown className={cn("h-3 w-3 shrink-0 text-[var(--atlas-text-tertiary)] transition-transform duration-150", open && "rotate-180")} />
-        <span className={cn("min-w-0 flex-1 truncate text-[11px] font-medium", meta.className)}>
-          {phase === "planning" || !plan ? `Planning for ${truncateLabel(title, 36)}` : truncateLabel(title, 42)}
-        </span>
-        {progressHint ? <span className="shrink-0 text-[10px] font-medium text-[var(--atlas-text-tertiary)]">{progressHint}</span> : null}
-        {meta.live ? <span className="h-1 w-1 shrink-0 animate-pulse rounded-full bg-[var(--atlas-text-tertiary)]" /> : null}
-      </button>
-      <AnimatePresence initial={false}>
-        {open && steps.length ? (
-          <motion.ol
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.16 }}
-            className="overflow-hidden pl-4"
-          >
-            {completed.length > 1 ? (
-              <li>
-                <button type="button" onClick={onToggleCompleted} className="flex w-full items-center gap-2 py-[2px] text-left text-[10.5px] font-medium text-[var(--atlas-text-tertiary)] hover:text-[var(--atlas-text-secondary)]">
-                  <CircleCheck className="h-3 w-3 shrink-0 text-emerald-500" />
-                  <span className="min-w-0 flex-1">{completed.length} steps completed</span>
-                  <ChevronDown className={cn("h-3 w-3 shrink-0 transition-transform", completedOpen && "rotate-180")} />
-                </button>
-                <AnimatePresence initial={false}>
-                  {completedOpen ? (
-                    <motion.ol initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden pl-1">
-                      {completed.map(renderStep)}
-                    </motion.ol>
-                  ) : null}
-                </AnimatePresence>
-              </li>
-            ) : completed.map(renderStep)}
-            {remaining.map(renderStep)}
-          </motion.ol>
-        ) : null}
-      </AnimatePresence>
-    </motion.section>
-  );
-}
-
-function ReasoningCard({ item, reducedMotion }: { item: Extract<RunItem, { kind: "reasoning" }>; reducedMotion: boolean }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.16 }} className="px-1 py-0.5">
-      <div className="flex items-start gap-2">
-        <span className="mt-[2px]"><VerdictIcon verdict={item.evaluation?.verdict} /></span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] font-medium leading-[1.45] text-[var(--atlas-text-primary)]">{item.nextGoal}</p>
-          {item.evaluation?.reason ? <p className="mt-0.5 text-[11.5px] font-normal leading-[1.4] text-[var(--atlas-text-tertiary)]">{item.evaluation.reason}</p> : null}
-          {item.memory ? <p className="mt-1 text-[11.5px] font-normal leading-[1.4] text-[var(--atlas-text-tertiary)]">{item.memory}</p> : null}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function ActionRow({ item, reducedMotion }: { item: Extract<RunItem, { kind: "action" }>; reducedMotion: boolean }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const Icon = ACTION_ICONS[item.icon] || CircleHelp;
-  const action = item.label.split(" ")[0];
-  const detail = item.label.includes(" ") ? item.label.slice(item.label.indexOf(" ") + 1) : "";
-  return (
-    <motion.div initial={{ opacity: 0, x: -3 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.14 }} className="px-0.5 py-0.5">
-      <div className="flex items-center gap-2">
-        <motion.span
-          className="grid h-3.5 w-3.5 shrink-0 place-items-center text-[var(--atlas-clyra-blue)]"
-          animate={item.status === "running" && !reducedMotion ? { rotate: [0, -8, 8, 0], opacity: [0.75, 1, 0.75] } : { rotate: 0, opacity: 1 }}
-          transition={item.status === "running" ? { duration: 1.15, repeat: Infinity, ease: "easeInOut" } : { duration: 0.14 }}
-        >
-          <Icon className="h-3.5 w-3.5" />
-        </motion.span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium tracking-[-0.01em] text-[var(--atlas-text-primary)]">
-          <span className="text-[color:var(--atlas-clyra-blue,#2b6ef2)]">{action}</span>
-          {detail ? item.status === "running" ? <><span> </span><ShiningText text={detail} preset="thinkingChat" play={!reducedMotion} className="inline" /></> : ` ${detail}` : null}
-        </span>
-        {item.status === "running" ? (
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[var(--atlas-clyra-blue)]" />
-        ) : item.status === "success" ? (
-          <CircleCheck className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-        ) : (
-          <CircleX className="h-3.5 w-3.5 shrink-0 text-rose-500" />
-        )}
-        <button type="button" onClick={() => setDetailsOpen((value) => !value)} aria-label="Toggle action details" className="grid h-4 w-4 shrink-0 place-items-center rounded text-[var(--atlas-text-tertiary)] hover:text-[var(--atlas-text-secondary)]">
-          <ChevronDown className={cn("h-3 w-3 transition-transform duration-150", detailsOpen && "rotate-180")} />
-        </button>
-      </div>
-      <AnimatePresence initial={false}>
-        {detailsOpen ? (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.14 }} className="overflow-hidden">
-            {item.result ? <p className="mt-1 text-[10px] font-medium leading-3.5 text-[var(--atlas-text-secondary)]">{item.result}</p> : null}
-            <pre className="mt-1 max-h-28 overflow-auto rounded-md bg-black/[0.03] p-2 text-[9px] leading-3.5 text-[var(--atlas-text-tertiary)]">{item.detail}</pre>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
-
-function RecoveryCard({ item, reducedMotion }: { item: Extract<RunItem, { kind: "recovery" | "strategy" }>; reducedMotion: boolean }) {
-  const Icon = item.kind === "strategy" ? RotateCcw : TriangleAlert;
-  return (
-    <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.16 }} className="flex items-start gap-2 px-1 py-0.5">
-      <Icon className="mt-[2px] h-3 w-3 shrink-0 text-amber-500" />
-      <p className="min-w-0 flex-1 text-[11px] font-medium leading-4 text-[var(--atlas-text-secondary)]">
-        {item.kind === "strategy" ? <span className="mr-1 font-semibold text-[var(--atlas-text-primary)]">Changing strategy —</span> : null}
-        {item.message}
-      </p>
-    </motion.div>
-  );
-}
-
-function AskUserCard({ question, reducedMotion }: { question: string; reducedMotion: boolean }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.18 }} className="px-1 py-1">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--atlas-text-tertiary)]">Needs your input</p>
-      <p className="mt-1 text-[11.5px] font-medium leading-4.5 text-[var(--atlas-text-primary)]">{question}</p>
-      <p className="mt-1 text-[10px] font-medium text-[var(--atlas-text-tertiary)]">Reply below to continue.</p>
-    </motion.div>
-  );
-}
-
-function CompletionCard({ item, reducedMotion }: { item: Extract<RunItem, { kind: "complete" }>; reducedMotion: boolean }) {
-  const conciseSummary = item.message
-    .replace(/\s+/g, " ")
-    .replace(/^(?:Task (?:completed|complete)[:\-]?\s*)/i, "")
-    .trim()
-    .slice(0, 180);
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reducedMotion ? 0.01 : 0.18 }}
-      className="px-1 py-1"
-    >
-      <div className="flex items-start gap-2">
-        {item.success ? <CircleCheck className="mt-[1px] h-3.5 w-3.5 shrink-0 text-emerald-500" /> : <CircleX className="mt-[1px] h-3.5 w-3.5 shrink-0 text-rose-500" />}
-        <div className="min-w-0 flex-1">
-          <p className={cn("text-[10px] font-semibold", item.success ? "text-emerald-600" : "text-rose-500")}>
-            {item.success ? "Task completed" : "Task not completed"}
-          </p>
-          {item.success && conciseSummary ? <p className="mt-1 text-[10px] font-medium leading-4 text-[var(--atlas-text-secondary)]"><span className="mr-1 text-[var(--atlas-text-tertiary)]">Summary</span>{conciseSummary}</p> : null}
-          {item.message ? <p className="mt-1 whitespace-pre-wrap text-[11px] font-medium leading-4.5 text-[var(--atlas-text-primary)]">{item.message}</p> : null}
-          {item.evidence?.url ? (
-            <a href={item.evidence.url} target="_blank" rel="noreferrer" className="mt-1.5 flex max-w-full items-center gap-1.5 text-[10px] font-medium text-[var(--atlas-text-secondary)] hover:text-[var(--atlas-text-primary)]">
-              <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-              <span className="min-w-0 truncate">{item.evidence.title || displayHost(item.evidence.url)}</span>
-            </a>
-          ) : null}
-          {item.evidence?.checks?.length ? (
-            <ul className="mt-1 space-y-0.5">
-              {item.evidence.checks.slice(0, 6).map((check, index) => (
-                <li key={`${check}-${index}`} className="flex items-start gap-1.5 text-[10px] font-medium leading-3.5 text-[var(--atlas-text-tertiary)]">
-                  <Check className={cn("mt-[1px] h-2.5 w-2.5 shrink-0", item.success ? "text-emerald-500" : "text-[var(--atlas-text-tertiary)]")} />
-                  <span className="min-w-0">{check}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function AgentRunSection({
-  task,
-  active,
-  phase,
-  statusText,
-  plan,
-  items,
-  manualControl,
-  reducedMotion,
-  factCount,
-  criteriaProgress,
-  planOpen,
-  onTogglePlan,
-  completedStepsOpen,
-  onToggleCompletedSteps,
-}: {
-  task: string;
-  active: boolean;
-  phase: AgentStatus;
-  statusText: string;
-  plan: TaskPlan | null;
-  items: RunItem[];
-  paused?: boolean;
-  manualControl: boolean;
-  reducedMotion: boolean;
-  factCount: number;
-  criteriaProgress: { complete: number; total: number };
-  planOpen: boolean;
-  onTogglePlan: () => void;
-  completedStepsOpen: boolean;
-  onToggleCompletedSteps: () => void;
-}) {
-  const completeItem = [...items].reverse().find((item): item is Extract<RunItem, { kind: "complete" }> => item.kind === "complete");
-  const askItem = [...items].reverse().find((item): item is Extract<RunItem, { kind: "ask" }> => item.kind === "ask");
-  const feedItems = active ? items.slice(-24) : [];
-  const thinking = active && ["planning", "observing"].includes(phase) && !manualControl;
-  return (
-    <motion.section initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0.01 : 0.18 }} className="space-y-2">
-      {active ? (
-        <PlanDisclosure
-          plan={plan}
-          task={task}
-          phase={phase}
-          open={planOpen}
-          onToggle={onTogglePlan}
-          completedOpen={completedStepsOpen}
-          onToggleCompleted={onToggleCompletedSteps}
-          reducedMotion={reducedMotion}
-          criteriaProgress={criteriaProgress}
-        />
-      ) : null}
-
-      {feedItems.length ? (
-        <div className="space-y-0.5">
-          {feedItems.map((item) => {
-            if (item.kind === "reasoning") return <ReasoningCard key={item.id} item={item} reducedMotion={reducedMotion} />;
-            if (item.kind === "action") return <ActionRow key={item.id} item={item} reducedMotion={reducedMotion} />;
-            if (item.kind === "ask") return <AskUserCard key={item.id} question={item.question} reducedMotion={reducedMotion} />;
-            if (item.kind === "complete") return <CompletionCard key={item.id} item={item} reducedMotion={reducedMotion} />;
-            return <RecoveryCard key={item.id} item={item} reducedMotion={reducedMotion} />;
-          })}
-        </div>
-      ) : null}
-
-      {!active && askItem && !completeItem ? <AskUserCard question={askItem.question} reducedMotion={reducedMotion} /> : null}
-      {!active && completeItem ? <CompletionCard item={completeItem} reducedMotion={reducedMotion} /> : null}
-
-      {thinking ? (
-        <div className="flex items-center gap-2 px-0.5 py-1.5">
-          <ShiningBrainIcon className="h-4 w-4 shrink-0" />
-          <ShiningText text={statusText || "Thinking"} preset="thinkingChat" play={!reducedMotion} className="min-w-0 flex-1 truncate text-[13px] font-medium tracking-[-0.01em]" />
-          <ThinkingDots />
-          {factCount > 0 ? <span className="shrink-0 text-[11px] font-medium text-[var(--atlas-text-tertiary)]">{factCount} facts</span> : null}
-        </div>
-      ) : null}
-    </motion.section>
-  );
-}
-
-function EmptyPanel({ icon: Icon, label }: { icon: typeof History; label: string }) {
-  return <div className="grid min-h-56 place-items-center text-center"><div><Icon className="mx-auto mb-2 h-5 w-5 text-[var(--atlas-text-tertiary)]" /><p className="text-[10px] font-semibold text-[var(--atlas-text-tertiary)]">{label}</p></div></div>;
-}
-
-function SettingToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <div className="flex h-11 items-center justify-between text-[10px] font-semibold text-[var(--atlas-text-secondary)]"><span>{label}</span><Toggle label={label} checked={checked} onChange={onChange} /></div>;
-}
-
-function SettingSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return (
-    <label className="mb-3 block">
-      <span className="mb-1.5 block text-[9px] font-semibold uppercase text-[var(--atlas-text-tertiary)]">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-9 w-full rounded-lg border border-[var(--atlas-divider)] bg-white px-2.5 text-[10px] font-semibold capitalize text-[var(--atlas-text-primary)] outline-none transition-colors focus:border-[var(--atlas-text-tertiary)]">
-        {options.map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}
-      </select>
-    </label>
-  );
+function normalizeTypedUrl(value: string) {
+  const v = value.trim();
+  if (!v) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
 }

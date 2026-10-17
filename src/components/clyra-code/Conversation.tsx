@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowDown, FilePlus2, Sparkle, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
+import { ShiningText } from "../ShiningText";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
 import { DisclosureRow, StateDot } from "./harness";
@@ -35,7 +36,7 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
     <motion.div layout className="dsh-row-root" data-state={completed ? "ok" : "running"}>
       <DisclosureRow
         icon={<Sparkle />}
-        title={completed ? "Thought" : "Thinking"}
+        title={completed ? "Thought" : <ShiningText text="Thinking" play duration={1.6} />}
         open={expanded && text !== ""}
         expandable={text !== ""}
         expandOnRowClick
@@ -53,6 +54,34 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
       >
         <div className="dsh-think-body">{text}</div>
       </DisclosureRow>
+    </motion.div>
+  );
+}
+
+/**
+ * The live line shown while a run is busy but no action row is moving yet
+ * (right after send, or between tool calls). It keeps the elapsed time
+ * ticking so a long silent phase still reads as progress.
+ */
+function WorkingStatus({ since }: { since: number }) {
+  const reduced = useReducedMotion();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const seconds = Math.max(0, Math.round((now - since) / 1000));
+  return (
+    <motion.div
+      role="status"
+      aria-live="polite"
+      {...(reduced ? {} : { initial: { opacity: 0, y: 4 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -2 } })}
+      transition={{ duration: 0.22, ease: AGENT_EASE }}
+      className="mt-3 flex h-6 items-center gap-2 text-[13px] text-[#73757A]"
+    >
+      <span className="cc-running-dot cc-running-dot--inline" aria-hidden />
+      <ShiningText text="Working…" play={!reduced} duration={1.6} className="text-[13px] font-normal text-[#73757A]" />
+      <span className="cc-counter text-[11.5px] text-[#A0A2A6]">{seconds}s</span>
     </motion.div>
   );
 }
@@ -456,6 +485,23 @@ export function Conversation({
   // artificially delayed rows, which made scroll position lag behind the
   // changing transcript and looked like a raw, staged command log.
   const visibleItems = transcriptItems;
+  const lastPromptTs = useMemo(() => {
+    for (let index = state.log.length - 1; index >= 0; index -= 1) {
+      const entry = state.log[index];
+      if (entry.type === "user") return entry.ts;
+    }
+    return null;
+  }, [state.log]);
+  // The newest reasoning phase that has not finished yet, if any. Its text is
+  // what the user is watching stream, so it takes the status slot.
+  const openThought = useMemo(() => {
+    for (let index = state.log.length - 1; index >= 0; index -= 1) {
+      const entry = state.log[index];
+      if (entry.type === "reasoning" && !entry.endedAt) return entry;
+      if (entry.type === "user") return null;
+    }
+    return null;
+  }, [state.log]);
   // Tool providers can report overlapping calls. Keep their real state, but
   // reserve the moving treatment for the newest one so the user always has a
   // single obvious answer to “what is the agent doing right now?”.
@@ -489,7 +535,7 @@ export function Conversation({
                   key={entry.id}
                   {...(reduced || !fresh
                     ? {}
-                    : { initial: { opacity: 0, y: 3 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: AGENT_EASE } })}
+                    : { initial: { opacity: 0, y: 18, scale: 0.985 }, animate: { opacity: 1, y: 0, scale: 1 }, transition: { duration: 0.34, ease: AGENT_EASE } })}
                   className="mb-2.5 mt-[16px] flex w-full justify-end first:mt-2"
                 >
                   <div
@@ -543,6 +589,18 @@ export function Conversation({
               </div>
             );
           })}
+
+          <AnimatePresence initial={false}>
+            {running && !primaryActiveActionId ? (
+              openThought ? (
+                <motion.div key="thinking" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -2 }} transition={{ duration: 0.22, ease: AGENT_EASE }} className="mt-2">
+                  <ThinkingEvent entry={openThought} />
+                </motion.div>
+              ) : (
+                <WorkingStatus key="working" since={lastPromptTs ?? Date.now()} />
+              )
+            ) : null}
+          </AnimatePresence>
 
           {state.runState === "failed" ? (
             <div className="dsh-row-root mt-2" data-state="error" role="status" aria-label="Run failed">

@@ -127,4 +127,21 @@ check(held_xs[29] >= held_xs[20] - 1.0, "the crop must keep heading the right wa
 check("velocityX" in still[5] or "targetX" in still[5], "trajectory diagnostics are recorded per frame")
 check(all(row.get("zoom", 1.0) >= 1.0 for row in still), "zoom never goes below 1.0")
 
+# ── 7. Content preservation is a hard composition boundary ───────────────
+ranges = cft._scene_ranges([
+    {"timeMs": 0, "fitMode": "cover"},
+    {"timeMs": 33, "fitMode": "contain"},
+    {"timeMs": 66, "fitMode": "contain"},
+    {"timeMs": 99, "fitMode": "cover"},
+], [])
+check(ranges == [(0, 1), (1, 3), (3, 4)], "no-person content must start a fresh, non-cropped composition segment")
+
+# ── 8. Saliency is never promoted to a human crop target ────────────────
+check(not cft.is_verified_subject({"detector": "motion-saliency"}),
+      "moving non-person content must not drive automatic face framing")
+check(cft.is_verified_subject({"detector": "optical-flow", "sourceDetector": "mediapipe-face+pose"}),
+      "optical flow may bridge frames when its originating subject is verified")
+check(not cft.is_verified_subject({"detector": "optical-flow", "sourceDetector": "motion-saliency"}),
+      "optical flow must not legitimise a saliency-only region")
+
 print(f"face-tracking-quality-tests: {assertions} assertions passed")

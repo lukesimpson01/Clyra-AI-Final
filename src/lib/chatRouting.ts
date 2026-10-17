@@ -20,7 +20,17 @@ export function looksLikeWebSearchQuery(text: string): boolean {
   return /^(?:search|look\s*up|find|research|google)\b/i.test(query)
     || /\b(?:search the web|look online|from the (?:web|internet)|web search)\b/i.test(query)
     || /\b(?:latest|current|today'?s|this week'?s|breaking)\b.+\b(?:news|price|score|release|update|headline)s?\b/i.test(query)
-    || /^(?:what(?:'| i)?s|who is|when (?:did|is|was)|how many)\b.+\b(?:latest|current|today|this week|news|price|score|release|update|headline|ceo|president)\b/i.test(query);
+    || /^(?:what(?:'| i)?s|who is|when (?:did|is|was)|how many)\b.+\b(?:latest|current|today|this week|news|price|score|release|update|headline|ceo|president)\b/i.test(query)
+    // Current recommendations, availability, public documentation, and a
+    // time-sensitive event are more useful when grounded in live sources.
+    || /\b(?:recommend|recommendation|best|compare|comparison|review|reviews|available|availability|near me|opening hours?|schedule|roadmap|documentation|docs|release notes?|changelog|announced?|happened)\b/i.test(query)
+    || /\b(?:weather|forecast|temperature|traffic|stock|share price|exchange rate|market cap|election|results?|standings?|fixture|game|match|concert|flight|restaurant)\b/i.test(query);
+}
+
+/** The live-search state should describe the work, never repeat the person's
+ * prompt back to them. The query is still sent to the research service. */
+export function webSearchProgressLabel(_text: string): string {
+  return "Finding current sources";
 }
 
 export function wantsYoutubeAndWebSearch(text: string): boolean {

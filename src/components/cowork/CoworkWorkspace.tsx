@@ -1,744 +1,927 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Check, ChevronDown, FileText, Folder, Globe2, ListTodo, Monitor, Pause, Play, Plus, Search, Settings, Square, Terminal, Wrench, X } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject } from "react";
+import "./mockup/mockup.css";
+import { MockupMarkup } from "./mockup/MockupMarkup";
+import { AGENT_SHAPES, AGENT_SWATCHES, decodeAgentAvatar, encodeAgentAvatar, type AgentShape } from "./AgentAvatar";
+import { AGENT_TEMPLATES, templateToBotInput } from "./agentTemplates";
+import { coworkApi, type Bot, type ConversationSummary, type Conversation, type CoworkMessage, type CoworkTask } from "./coworkApi";
 
-/**
- * Clyra Cowork — conversations with a team of persistent AI workers.
- *
- * Presentation only. Every reply, permission check and handoff is decided by
- * the server (lib/bots/*); this component sends a message and renders what
- * comes back, which is what keeps the security guarantees in one enforceable
- * place instead of duplicated in UI state that can drift.
- */
+const SHELL = "cubic-bezier(.32,.72,0,1)";
+const EASE = "cubic-bezier(.2,.8,.3,1)";
+const SIDE_W = "clamp(240px, 24vw, 292px)";
+const PANE_W = "clamp(320px, 34vw, 440px)";
+const HIDDEN_OVERLAY = "position:absolute;inset:0;opacity:0;visibility:hidden;pointer-events:none;";
+const HIDDEN_CARD = "opacity:0;visibility:hidden;";
 
-type BotStatus = "idle" | "thinking" | "browsing" | "coding" | "waiting" | "needs_approval" | "done" | "error";
+const STARTERS = [
+  { label: "Triage my inbox", text: "Sort my inbox each morning, flag anything urgent and draft short replies." },
+  { label: "Track competitors", text: "Watch competitor sites and pricing pages and tell me when something changes." },
+  { label: "Chase invoices", text: "Find unpaid invoices and send polite reminders after 14 days." },
+  { label: "Plan my week", text: "Build my week from my calendar and to-dos and protect two focus blocks a day." },
+];
 
-type Participant = { id: string; name: string; avatar: string; status: BotStatus };
+interface UiState {
+  current: string | null;
+  view: "market" | null;
+  toMode: boolean;
+  draft: string[];
+  toQuery: string;
+  toFocus: boolean;
+  sugIdx: number;
+  homeTo: string | null;
+  homeMenu: boolean;
+  newMenu: boolean;
+  create: boolean;
+  editId: string | null;
+  dName: string;
+  dPrompt: string;
+  dColor: string;
+  dShape: AgentShape;
+  dKey: number;
+  sideQuery: string;
+  text: string;
+  caret: number | null;
+  palIdx: number;
+  palDismiss: boolean;
+  side: boolean;
+  pane: boolean;
+  paneHome: boolean;
+  rowMenu: { id: string; top: number; right: number } | null;
+  renaming: string | null;
+  renameVal: string;
+  hoverRow: string | null;
+  mq: string;
+  mcat: string;
+  viewAgent: string | null;
+  sending: boolean;
+  sendError: string | null;
+}
 
-type Bot = {
+const INITIAL: UiState = {
+  current: null, view: null, toMode: false, draft: [], toQuery: "", toFocus: false, sugIdx: 0, homeTo: null,
+  homeMenu: false, newMenu: false, create: false, editId: null, dName: "", dPrompt: "", dColor: "bleu", dShape: "cercle",
+  dKey: 0, sideQuery: "", text: "", caret: null, palIdx: 0, palDismiss: false, side: true, pane: true, paneHome: false,
+  rowMenu: null, renaming: null, renameVal: "", hoverRow: null, mq: "", mcat: "All", viewAgent: null, sending: false,
+  sendError: null,
+};
+
+interface Agent {
   id: string;
   name: string;
-  slug: string;
-  role: string;
-  avatar: string;
-  status: BotStatus;
-  permissions: { granted: string[]; canMessage: "all" | "none" | string[] };
-};
+  color: string;
+  shape: AgentShape;
+  prompt: string;
+  busy: boolean;
+}
 
-type Conversation = {
-  id: string;
-  title: string;
-  botIds: string[];
-  isGroup: boolean;
-  lastMessage: string;
-  lastMessageAt: string | null;
-  unread: number;
-  participants: Participant[];
-};
+interface Thread {
+  conversation: Conversation;
+  messages: CoworkMessage[];
+  participants: Bot[];
+}
 
-type Message = {
-  id: string;
-  author: "user" | "bot" | "system";
-  botId: string | null;
-  botName: string | null;
-  text: string;
-  at: string;
-};
+const PALETTE_NAMES = new Map(AGENT_SWATCHES.map(([name, hex]) => [hex.toUpperCase(), name] as const));
+const PALETTE_HEX = new Map(AGENT_SWATCHES.map(([name, hex]) => [name, hex] as const));
 
-type TaskState = "planned" | "running" | "blocked" | "awaiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "retrying";
-type TaskEvent = { id: string; at: string; kind: string; label: string; detail?: string; state?: TaskState };
-type CoworkTask = { id: string; parentId: string | null; botId: string; title: string; objective: string; state: TaskState; currentStep: string; retries: number; artifacts: string[]; filesTouched: string[]; error: string | null; events: TaskEvent[] };
-type WorkspaceTab = "Workspace" | "Browser" | "Terminal" | "Files" | "Tasks" | "Changes";
+function colorNameOf(hex: string): string {
+  return PALETTE_NAMES.get(hex.toUpperCase()) ?? "gris";
+}
 
-/** Stable per-bot colour, so an avatar looks the same everywhere it appears. */
-const AVATAR_COLOURS = [
-  "#2bb3a3", "#f0932b", "#8b7bf7", "#7c6cf6", "#3b82f6", "#e8590c", "#16a34a", "#db2777",
-];
-const colourFor = (seed: string) => {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
-  return AVATAR_COLOURS[hash % AVATAR_COLOURS.length];
-};
+function hexOfName(name: string): string {
+  return PALETTE_HEX.get(name) ?? "A3A3A3";
+}
 
-const clockTime = (iso: string | null) => {
+function clock(iso: string | null | undefined): string {
   if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
-  if (sameDay) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
-function Avatar({ name, avatar, size = 34, dot }: { name: string; avatar?: string; size?: number; dot?: boolean }) {
-  return (
-    <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
-      <span
-        className="grid h-full w-full place-items-center rounded-full text-white"
-        style={{ background: colourFor(name), fontSize: size * 0.44 }}
-      >
-        {avatar || name.slice(0, 1).toUpperCase()}
-      </span>
-      {dot ? <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-[#ef4444]" /> : null}
-    </span>
-  );
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleDateString(undefined, { weekday: "long" });
 }
 
-/** Overlapping avatars for a group row, mirroring the reference layout. */
-function GroupAvatar({ participants, size = 34 }: { participants: Participant[]; size?: number }) {
-  const shown = participants.slice(0, 3);
-  const inner = size * 0.62;
-  return (
-    <span className="relative shrink-0" style={{ width: size, height: size }}>
-      {shown.map((participant, index) => (
-        <span
-          key={participant.id}
-          className="absolute grid place-items-center rounded-full border-2 border-white text-white"
-          style={{
-            width: inner, height: inner, fontSize: inner * 0.44,
-            background: colourFor(participant.name),
-            left: index === 0 ? 0 : index === 1 ? size - inner : (size - inner) / 2,
-            top: index === 2 ? size - inner : 0,
-            zIndex: index,
-          }}
-        >
-          {participant.avatar || participant.name.slice(0, 1).toUpperCase()}
-        </span>
-      ))}
-    </span>
-  );
+function relative(iso: string): string {
+  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  return m < 1 ? "Now" : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`;
 }
+
+function stepKind(state: CoworkTask["state"]): "active" | "paused" | "done" | "queued" {
+  if (state === "running" || state === "retrying") return "active";
+  if (state === "blocked" || state === "awaiting_approval" || state === "paused") return "paused";
+  if (state === "completed") return "done";
+  return "queued";
+}
+
+type Patch = Partial<UiState> | ((s: UiState) => Partial<UiState>);
 
 export function CoworkWorkspace() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [st, setSt] = useState<UiState>(INITIAL);
   const [bots, setBots] = useState<Bot[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [participants, setParticipants] = useState<Bot[]>([]);
-  const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [composing, setComposing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [thread, setThread] = useState<Thread | null>(null);
   const [tasks, setTasks] = useState<CoworkTask[]>([]);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("Workspace");
-  const [creatingBot, setCreatingBot] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const active = useMemo(
-    () => conversations.find((conversation) => conversation.id === activeId) ?? null,
-    [conversations, activeId],
-  );
-
-  const loadSidebar = useCallback(async () => {
-    try {
-      const [threadResponse, botResponse] = await Promise.all([
-        fetch("/api/cowork/conversations", { cache: "no-store" }),
-        fetch("/api/bots", { cache: "no-store" }),
-      ]);
-      const threads = await threadResponse.json();
-      const botPayload = await botResponse.json();
-      if (!threads?.ok) throw new Error(threads?.error || "Could not load conversations.");
-      setConversations(threads.conversations);
-      if (botPayload?.ok) setBots(botPayload.bots);
-      setError(null);
-      setActiveId((current) => current ?? threads.conversations[0]?.id ?? null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load Cowork.");
-    } finally {
-      setLoading(false);
-    }
+  const patch = useCallback((next: Patch) => {
+    setSt((prev) => ({ ...prev, ...(typeof next === "function" ? next(prev) : next) }));
   }, []);
 
-  useEffect(() => { void loadSidebar(); }, [loadSidebar]);
-
-  const loadThread = useCallback(async (id: string) => {
+  const refreshAll = useCallback(async () => {
     try {
-      const [response, taskResponse] = await Promise.all([
-        fetch(`/api/cowork/conversations/${id}`, { cache: "no-store" }),
-        fetch(`/api/cowork/tasks?conversationId=${encodeURIComponent(id)}`, { cache: "no-store" }),
-      ]);
-      const payload = await response.json();
-      const taskPayload = await taskResponse.json();
-      if (!payload?.ok) throw new Error(payload?.error || "Could not open that conversation.");
-      setMessages(payload.messages);
-      setParticipants(payload.participants);
-      if (taskPayload?.ok) setTasks(taskPayload.tasks);
-      // Opening clears the unread badge server-side; mirror it immediately.
-      setConversations((current) => current.map((item) => item.id === id ? { ...item, unread: 0 } : item));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open that conversation.");
+      const [b, c] = await Promise.all([coworkApi.listBots(), coworkApi.listConversations()]);
+      setBots(b.bots);
+      setConversations(c.conversations);
+      setLoadError(null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load agents.");
     }
   }, []);
 
   useEffect(() => {
-    if (!activeId) { setMessages([]); setParticipants([]); return; }
-    void loadThread(activeId);
-  }, [activeId, loadThread]);
+    void refreshAll();
+    const id = window.setInterval(() => void refreshAll(), 6000);
+    return () => window.clearInterval(id);
+  }, [refreshAll]);
 
+  const openId = st.current;
   useEffect(() => {
-    if (!activeId) return;
-    const interval = window.setInterval(() => { void loadThread(activeId); void loadSidebar(); }, 3500);
-    return () => window.clearInterval(interval);
-  }, [activeId, loadSidebar, loadThread]);
-
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [messages.length, sending]);
-
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || !activeId || sending) return;
-    setDraft("");
-    setSending(true);
-    // Optimistic echo so the thread never feels like it swallowed the message.
-    const optimistic: Message = {
-      id: `pending-${Date.now()}`, author: "user", botId: null, botName: null,
-      text, at: new Date().toISOString(),
+    if (!openId) {
+      setThread(null);
+      setTasks([]);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      try {
+        const [t, k] = await Promise.all([coworkApi.getConversation(openId), coworkApi.listTasks({ conversationId: openId })]);
+        if (!alive) return;
+        setThread({ conversation: t.conversation, messages: t.messages, participants: t.participants });
+        setTasks(k.tasks);
+      } catch {
+        // The next poll or list refresh recovers if the conversation was removed or the server restarted.
+      }
     };
-    setMessages((current) => [...current, optimistic]);
+    void load();
+    const id = window.setInterval(load, 2500);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [openId]);
+
+  const runningBotIds = useMemo(
+    () => new Set(tasks.filter((t) => t.state === "running" || t.state === "retrying").map((t) => t.botId)),
+    [tasks],
+  );
+  const agents: Agent[] = useMemo(
+    () => bots.map((b) => {
+      const d = decodeAgentAvatar(b.avatar, b.id);
+      return { id: b.id, name: b.name, color: colorNameOf(d.hex), shape: d.shape, prompt: b.instructions || b.role, busy: runningBotIds.has(b.id) };
+    }),
+    [bots, runningBotIds],
+  );
+  const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [thread?.messages.length, openId]);
+
+  const avOf = (a: Agent | undefined, size: number, busy = false, extra = "") => ({
+    shape: a?.shape ?? "cercle",
+    color: a?.color ?? "gris",
+    size: String(size),
+    busy: busy || a?.busy ? "true" : "false",
+    wrap: `display:flex;flex-shrink:0;${extra}`,
+  });
+
+  const convMembers = (c: { botIds: string[] }) => c.botIds.map((id) => agentById.get(id)).filter(Boolean) as Agent[];
+
+  const openConversation = (id: string) => patch({ current: id, toMode: false, view: null, rowMenu: null });
+
+  const refreshTasks = async (id: string) => {
     try {
-      const response = await fetch(`/api/cowork/conversations/${activeId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      const payload = await response.json();
-      if (!payload?.ok) throw new Error(payload?.error || "Could not send that message.");
-      setMessages(payload.messages);
-      void loadSidebar();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send that message.");
-      setMessages((current) => current.filter((message) => message.id !== optimistic.id));
-      setDraft(text);
-    } finally {
-      setSending(false);
+      setTasks((await coworkApi.listTasks({ conversationId: id })).tasks);
+    } catch {
+      // Polling already retries.
     }
   };
 
-  const visible = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    if (!term) return conversations;
-    return conversations.filter((conversation) =>
-      `${conversation.title} ${conversation.lastMessage}`.toLowerCase().includes(term));
-  }, [conversations, query]);
-
-  const thinking = participants.filter((bot) => bot.status === "thinking");
-
-  const controlTask = async (taskId: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => {
+  const sendText = async () => {
+    const q = st.text.trim();
+    if (!q || st.sending) return;
+    if (!bots.length) {
+      patch({ create: true, editId: null, dName: "", dPrompt: "" });
+      return;
+    }
+    patch({ sending: true, sendError: null });
     try {
-      const response = await fetch(`/api/cowork/tasks/${taskId}/${operation}`, { method: "POST" });
-      const payload = await response.json();
-      if (!payload?.ok) throw new Error(payload?.error || "Could not update the task.");
-      if (activeId) void loadThread(activeId);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update the task."); }
+      let target: string | null = st.current;
+      if (!target && st.toMode && st.draft.length) {
+        target = (await coworkApi.createConversation({ botIds: st.draft })).conversation.id;
+      } else if (!target) {
+        target = st.homeTo ?? (await coworkApi.createConversation({ botIds: [bots[0].id] })).conversation.id;
+      }
+      if (!target) throw new Error("Choose an agent first.");
+      await coworkApi.sendMessage(target, q);
+      patch({ text: "", current: target, toMode: false, draft: [], homeTo: null, sending: false });
+      await refreshAll();
+      await refreshTasks(target);
+    } catch (error) {
+      patch({ sending: false, sendError: error instanceof Error ? error.message : "Could not send." });
+    }
   };
 
-  return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-[#fbfaf7]">
-      {/* ── Sidebar ─────────────────────────────────────────────── */}
-      <aside className="flex w-[254px] shrink-0 flex-col border-r border-[#e8e6e1] bg-[#fdfcf9]">
-        <div className="flex items-center justify-between px-4 pb-3 pt-4">
-          <p className="text-[15px] font-semibold tracking-[-.03em] text-[#171717]">Co-Work</p>
-          <button
-            type="button"
-            onClick={() => setCreatingBot(true)}
-            aria-label="New coworker"
-            className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-stone-100 hover:text-slate-900"
-          >
-            <Plus className="h-[18px] w-[18px]" />
-          </button>
-        </div>
+  const commitDraft = async () => {
+    if (!st.draft.length) return;
+    try {
+      const created = await coworkApi.createConversation({ botIds: st.draft });
+      await refreshAll();
+      patch({ toMode: false, toQuery: "", current: created.conversation.id, draft: [] });
+    } catch (error) {
+      patch({ sendError: error instanceof Error ? error.message : "Could not start chat." });
+    }
+  };
 
-        <div className="px-4 pb-3"><button type="button" onClick={() => setCreatingBot(true)} className="flex h-9 w-full items-center gap-2 rounded-lg bg-[#3269db] px-3 text-[12.5px] font-medium text-white shadow-[0_1px_2px_rgba(28,72,160,.2)] hover:bg-[#285dc9]"><Plus className="h-3.5 w-3.5" /> New Coworker</button></div>
+  const saveAgent = async () => {
+    const name = st.dName.trim();
+    const prompt = st.dPrompt.trim();
+    if (!name || !prompt) return;
+    const avatar = encodeAgentAvatar(hexOfName(st.dColor), st.dShape);
+    try {
+      if (st.editId) {
+        await coworkApi.updateBot(st.editId, { name, instructions: prompt, avatar });
+      } else {
+        const created = await coworkApi.createBot({ name, role: name, instructions: prompt, avatar });
+        await coworkApi.createConversation({ botIds: [created.bot.id] });
+      }
+      await refreshAll();
+      patch({ create: false, editId: null });
+    } catch (error) {
+      patch({ sendError: error instanceof Error ? error.message : "Could not save agent." });
+    }
+  };
 
-        <div className="px-4 pb-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search"
-              aria-label="Search conversations"
-              className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-[13.5px] text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-slate-300"
-            />
-          </div>
-        </div>
+  const deleteConversation = async (id: string) => {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+    try {
+      if (conv.botIds.length === 1) await coworkApi.deleteBot(conv.botIds[0]);
+      else await coworkApi.deleteConversation(id);
+      patch({ rowMenu: null, current: st.current === id ? null : st.current });
+      await refreshAll();
+    } catch (error) {
+      patch({ sendError: error instanceof Error ? error.message : "Could not delete." });
+    }
+  };
 
-        <div className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-[.12em] text-stone-400">Coworkers</div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {loading ? (
-            <div className="grid gap-1 px-2">
-              {[0, 1, 2, 3].map((key) => <div key={key} className="h-[58px] animate-pulse rounded-xl bg-slate-100" />)}
-            </div>
-          ) : visible.length === 0 ? (
-            <p className="px-3 py-8 text-center text-[12.5px] leading-5 text-slate-400">
-              {conversations.length ? "Nothing matches that search." : "No conversations yet."}
-            </p>
-          ) : (
-            visible.map((conversation) => {
-              const isActive = conversation.id === activeId;
-              const busy = conversation.participants.some((participant) =>
-                ["thinking", "browsing", "coding"].includes(participant.status));
-              return (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => setActiveId(conversation.id)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
-                    isActive ? "bg-[#edf3ff]" : "hover:bg-stone-100/70",
-                  )}
-                >
-                  {conversation.isGroup
-                    ? <GroupAvatar participants={conversation.participants} />
-                    : (
-                      <Avatar
-                        name={conversation.participants[0]?.name || conversation.title}
-                        avatar={conversation.participants[0]?.avatar}
-                        dot={conversation.unread > 0}
-                      />
-                    )}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-.01em] text-slate-900">
-                        {conversation.title}
-                      </span>
-                      <span className="shrink-0 text-[11.5px] tabular-nums text-slate-400">
-                        {clockTime(conversation.lastMessageAt)}
-                      </span>
-                    </span>
-                    <span className="mt-0.5 block truncate text-[12.5px] text-slate-500">
-                      {busy ? "Working…" : conversation.lastMessage || "No tasks yet"}
-                    </span>
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
+  const commitRename = async () => {
+    const id = st.renaming;
+    const value = st.renameVal.trim();
+    patch({ renaming: null });
+    const conv = id ? conversations.find((c) => c.id === id) : undefined;
+    if (!conv || !value) return;
+    try {
+      if (conv.botIds.length === 1) await coworkApi.updateBot(conv.botIds[0], { name: value });
+      else await coworkApi.renameConversation(conv.id, value);
+      await refreshAll();
+    } catch (error) {
+      patch({ sendError: error instanceof Error ? error.message : "Could not rename." });
+    }
+  };
 
-        <div className="grid gap-0.5 border-t border-[#e8e6e1] px-3 py-3 text-[12px] text-stone-500">
-          <button type="button" onClick={() => setWorkspaceTab("Tasks")} className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><ListTodo className="h-3.5 w-3.5" /> Skills</button>
-          <button type="button" onClick={() => setWorkspaceTab("Browser")} className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><Wrench className="h-3.5 w-3.5" /> Tools</button>
-          <button type="button" className="flex h-8 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-100"><Settings className="h-3.5 w-3.5" /> Settings</button>
-        </div>
-        <div className="flex items-center gap-2.5 border-t border-[#e8e6e1] px-4 py-3">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
-            YOU
-          </span>
-          <span className="truncate text-[13.5px] font-medium text-slate-800">Your team</span>
-        </div>
-      </aside>
+  const taskOp = async (task: CoworkTask, op: "pause" | "resume") => {
+    try {
+      await coworkApi.taskOperation(task.id, op);
+      if (openId) await refreshTasks(openId);
+    } catch (error) {
+      patch({ sendError: error instanceof Error ? error.message : "Could not update task." });
+    }
+  };
 
-      {/* ── Thread ──────────────────────────────────────────────── */}
-      <section className="flex min-w-0 flex-1 flex-col bg-[#fbfaf7]">
-        {active ? (
-          <>
-            <header className="flex shrink-0 items-center gap-2.5 border-b border-[#e8e6e1] px-5 py-3">
-              {active.isGroup
-                ? <GroupAvatar participants={active.participants} size={26} />
-                : <Avatar name={active.participants[0]?.name || active.title} avatar={active.participants[0]?.avatar} size={26} />}
-              <div className="min-w-0 flex-1"><p className="truncate text-[14.5px] font-semibold tracking-[-.01em] text-slate-900">{active.title}</p><p className="truncate text-[11px] text-stone-500">{tasks.find((task) => task.state === "running")?.currentStep || "Ready for work"}</p></div>
-              {tasks.some((task) => task.state === "running") ? <button type="button" onClick={() => { const task = tasks.find((item) => item.state === "running"); if (task) void controlTask(task.id, "pause"); }} className="flex h-8 items-center gap-1.5 rounded-md border border-stone-200 px-2.5 text-[11.5px] font-medium text-stone-600 hover:bg-white"><Pause className="h-3.5 w-3.5" /> Pause</button> : null}
-              <button
-                type="button"
-                aria-label="View screen"
-                title="Watch this bot work"
-                className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-              >
-                <Monitor className="h-[18px] w-[18px]" />
-              </button>
-            </header>
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (st.toMode && st.draft.length && !st.text.trim()) void commitDraft();
+      else void sendText();
+    }
+  };
 
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3">
-                {messages.length === 0 ? (
-                  <p className="py-10 text-center text-[13px] text-slate-400">
-                    Say hello to {active.isGroup ? "the group" : active.title}.
-                  </p>
-                ) : (
-                  messages.map((message, index) => {
-                    const previous = messages[index - 1];
-                    const showTime = index === 0
-                      || Date.parse(message.at) - Date.parse(previous?.at ?? message.at) > 5 * 60_000;
+  const vm = buildViewModel({
+    st, patch, agents, agentById, conversations, thread, tasks, avOf, convMembers, openConversation,
+    sendText, commitDraft, saveAgent, deleteConversation, commitRename, taskOp, onKey, loadError,
+    inputRef, scrollRef, refreshAll,
+  });
 
-                    if (message.author === "system") {
-                      return (
-                        <div key={message.id} className="flex flex-col items-center gap-2">
-                          {showTime ? <TimeDivider at={message.at} /> : null}
-                          <p className="text-[12.5px] text-slate-400">{message.text}</p>
-                        </div>
-                      );
-                    }
-
-                    const isUser = message.author === "user";
-                    return (
-                      <div key={message.id} className="flex flex-col gap-2">
-                        {showTime ? <TimeDivider at={message.at} /> : null}
-                        <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
-                          {isUser ? (
-                            <div className="clyra-chat-user-bubble max-w-[85%] whitespace-pre-wrap rounded-[24px] border border-slate-200/70 px-5 py-3.5 text-[14px] leading-[22px] text-[#172033] shadow-none sm:max-w-[75%]">
-                              {message.text}
-                            </div>
-                          ) : (
-                            <div className="max-w-[90%] sm:max-w-[80%]">
-                              {/* The speaker's name only matters when more than
-                                  one bot can be talking. */}
-                              {active.isGroup && message.botName ? (
-                                <p className="mb-1 text-[11.5px] font-semibold" style={{ color: colourFor(message.botName) }}>
-                                  {message.botName}
-                                </p>
-                              ) : null}
-                              <p className="whitespace-pre-wrap text-[14px] leading-[22px] text-[#303136]">{message.text}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-
-                {sending ? (
-                  <div className="flex items-center gap-2.5 pt-1"><span className="cc-shimmer cc-shimmer--blue font-medium text-[13px]">Working</span>
-                    <span className="text-[13px] text-slate-500">
-                      {thinking.length ? `${thinking.map((bot) => bot.name).join(", ")} thinking` : "Thinking"}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            {error ? (
-              <p className="mx-6 mb-2 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{error}</p>
-            ) : null}
-
-            <div className="shrink-0 px-6 pb-5">
-              <div className="mx-auto flex w-full max-w-[720px] items-center gap-2 rounded-[26px] border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,.04)]">
-                <button
-                  type="button"
-                  aria-label="Add attachment"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-700"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-                <textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void send();
-                    }
-                  }}
-                  rows={1}
-                  placeholder={`Message ${active.title}`}
-                  aria-label={`Message ${active.title}`}
-                  className="max-h-[140px] min-h-[24px] flex-1 resize-none bg-transparent py-2 text-[14px] leading-[22px] text-slate-800 outline-none placeholder:text-slate-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => void send()}
-                  disabled={!draft.trim() || sending}
-                  aria-label="Send message"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#4169f6] text-white transition-all hover:bg-[#3158ea] active:scale-[.96] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
-                >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
-                </button>
-              </div>
-              {active.isGroup ? (
-                <p className="mx-auto mt-2 w-full max-w-[720px] text-[11.5px] text-slate-400">
-                  Everyone replies. Use @Name to ask just one of them.
-                </p>
-              ) : null}
-            </div>
-          </>
-        ) : !loading ? (
-          <div className="grid flex-1 place-items-center px-6">
-            <div className="max-w-[380px] text-center">
-              <p className="text-[17px] font-semibold tracking-[-.02em] text-slate-900">Message your team</p>
-              <p className="mt-1.5 text-[13px] leading-5 text-slate-500">
-                Start a conversation with one worker, or put several in a group and let them
-                work it out between themselves.
-              </p>
-              <button
-                type="button"
-                onClick={() => setComposing(true)}
-                className="mt-4 h-10 rounded-xl bg-[#4169f6] px-4 text-[13.5px] font-medium text-white transition-colors hover:bg-[#3158ea]"
-              >
-                New message
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <CoworkPanel tasks={tasks} active={active} tab={workspaceTab} onTab={setWorkspaceTab} onControl={controlTask} />
-
-      <AnimatePresence>
-        {composing ? (
-          <NewMessageDialog
-            bots={bots}
-            onClose={() => setComposing(false)}
-            onCreated={(conversation) => {
-              setComposing(false);
-              setConversations((current) =>
-                current.some((item) => item.id === conversation.id) ? current : [conversation, ...current]);
-              setActiveId(conversation.id);
-              void loadSidebar();
-            }}
-          />
-        ) : null}
-        {creatingBot ? <NewCoworkerDialog onClose={() => setCreatingBot(false)} onCreated={() => { setCreatingBot(false); void loadSidebar(); }} /> : null}
-      </AnimatePresence>
-    </div>
-  );
+  return <MockupMarkup vm={vm} />;
 }
 
-function TimeDivider({ at }: { at: string }) {
-  return (
-    <p className="py-1 text-center text-[12px] tabular-nums text-slate-400">
-      {new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-    </p>
-  );
+interface Ctx {
+  st: UiState;
+  patch: (next: Patch) => void;
+  agents: Agent[];
+  agentById: Map<string, Agent>;
+  conversations: ConversationSummary[];
+  thread: Thread | null;
+  tasks: CoworkTask[];
+  avOf: (a: Agent | undefined, size: number, busy?: boolean, extra?: string) => Record<string, string>;
+  convMembers: (c: { botIds: string[] }) => Agent[];
+  openConversation: (id: string) => void;
+  sendText: () => Promise<void>;
+  commitDraft: () => Promise<void>;
+  saveAgent: () => Promise<void>;
+  deleteConversation: (id: string) => Promise<void>;
+  commitRename: () => Promise<void>;
+  taskOp: (task: CoworkTask, op: "pause" | "resume") => Promise<void>;
+  onKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  loadError: string | null;
+  inputRef: MutableRefObject<HTMLTextAreaElement | null>;
+  scrollRef: MutableRefObject<HTMLDivElement | null>;
+  refreshAll: () => Promise<void>;
 }
 
-function ThinkingDots() {
-  return (
-    <span className="flex items-center gap-1" aria-hidden>
-      {["#f0932b", "#f0932b", "#f0932b"].map((colour, index) => (
-        <motion.span
-          key={index}
-          className="h-[7px] w-[7px] rounded-full"
-          style={{ background: colour }}
-          animate={{ opacity: [0.3, 1, 0.3] }}
-          transition={{ duration: 1.1, repeat: Infinity, delay: index * 0.16, ease: "easeInOut" }}
-        />
-      ))}
-    </span>
-  );
-}
+function buildViewModel(c: Ctx): Record<string, any> {
+  const { st, patch, agents, agentById, conversations, thread, tasks } = c;
+  const sq = st.sideQuery.trim().toLowerCase();
+  const cur = st.current ? conversations.find((x) => x.id === st.current) ?? null : null;
+  const curMembers = cur ? c.convMembers(cur) : [];
+  const homeConv = st.homeTo ? conversations.find((x) => x.id === st.homeTo) ?? null : null;
+  const hasAgents = agents.length > 0;
+  const isGroup = curMembers.length > 1;
+  const cr = st.create;
 
-function taskTone(state: TaskState) {
-  if (state === "completed") return "bg-emerald-500";
-  if (state === "failed" || state === "blocked") return "bg-rose-500";
-  if (state === "awaiting_approval") return "bg-amber-500";
-  if (state === "running" || state === "retrying") return "bg-[#3269db]";
-  return "bg-stone-300";
-}
+  const chatRows = conversations
+    .filter((x) => !sq || x.title.toLowerCase().includes(sq))
+    .map((x) => {
+      const mem = c.convMembers(x);
+      const on = x.id === st.current && !st.toMode;
+      const typingHere = tasks.some((t) => t.state === "running" && x.botIds.includes(t.botId));
+      const hovered = st.hoverRow === x.id || st.rowMenu?.id === x.id;
+      const avs = mem.length === 1
+        ? [c.avOf(mem[0], 32)]
+        : [c.avOf(mem[0], 23, false, "position:absolute;left:0;top:0"), c.avOf(mem[1], 23, false, "position:absolute;right:0;bottom:0")];
+      return {
+        title: x.title,
+        time: clock(x.lastMessageAt || x.updatedAt),
+        avs,
+        unread: x.unread > 0 && !on,
+        renaming: st.renaming === x.id,
+        notRenaming: st.renaming !== x.id,
+        onEnter: () => { if (st.hoverRow !== x.id) patch({ hoverRow: x.id }); },
+        onLeave: () => { if (st.hoverRow === x.id) patch({ hoverRow: null }); },
+        onDots: (e: { stopPropagation: () => void; currentTarget: HTMLElement }) => {
+          e.stopPropagation();
+          if (st.rowMenu?.id === x.id) { patch({ rowMenu: null }); return; }
+          const br = e.currentTarget.getBoundingClientRect();
+          patch({ rowMenu: { id: x.id, top: br.bottom + 6, right: 12 } });
+        },
+        dotsStyle: ["position:absolute", "right:10px", "top:8px", "z-index:2", "display:flex", "align-items:center", "justify-content:center", "width:26px", "height:26px", "border-radius:999px", "border:none", "cursor:pointer", "color:#5F636B", `background:${st.rowMenu?.id === x.id ? "rgba(16,18,24,0.07)" : "transparent"}`, `opacity:${hovered && st.renaming !== x.id ? "1" : "0"}`, `transform:scale(${hovered ? "1" : ".85"})`, `pointer-events:${hovered ? "auto" : "none"}`, "transition:opacity .18s ease, transform .22s cubic-bezier(.16,1,.3,1), background .18s ease"].join(";"),
+        timeStyle: ["font-size:11.5px", "color:#7A7E87", "flex-shrink:0", "transition:opacity .18s ease", `opacity:${hovered && st.renaming !== x.id ? "0" : "1"}`].join(";"),
+        preview: typingHere ? (mem.length > 1 ? "Working…" : `${mem[0]?.name ?? ""} is working…`) : x.lastMessage || "No messages yet",
+        previewStyle: ["flex:1", "min-width:0", "font-size:13px", "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis", "color:#6B6F77"].join(";"),
+        style: ["position:relative", "display:flex", "align-items:center", "gap:11px", "padding:8px 10px", "border-radius:10px", "cursor:pointer", "transition:background .28s cubic-bezier(.32,.72,0,1)", `background:${on ? "#E4E5E9" : st.hoverRow === x.id ? "rgba(16,18,24,0.045)" : "transparent"}`].join(";"),
+        onOpen: () => c.openConversation(x.id),
+      };
+    });
 
-function CoworkPanel({ tasks, active, tab, onTab, onControl }: { tasks: CoworkTask[]; active: Conversation | null; tab: WorkspaceTab; onTab: (tab: WorkspaceTab) => void; onControl: (id: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => void }) {
-  const focused = tasks.find((task) => ["running", "awaiting_approval", "blocked", "paused"].includes(task.state)) || tasks[0];
-  const events = focused?.events.slice().reverse() || [];
-  const terminalEvents = tasks.flatMap((task) => task.events.filter((event) => event.kind === "terminal").map((event) => ({ ...event, task })));
-  const fileEvents = tasks.flatMap((task) => task.events.filter((event) => event.kind === "files").map((event) => ({ ...event, task })));
-  const tabs: Array<{ label: WorkspaceTab; icon: typeof Folder }> = [
-    { label: "Workspace", icon: Folder }, { label: "Browser", icon: Globe2 }, { label: "Terminal", icon: Terminal }, { label: "Files", icon: FileText }, { label: "Tasks", icon: ListTodo }, { label: "Changes", icon: ChevronDown },
+  const headAgents = st.toMode ? (st.draft.map((id) => agentById.get(id)).filter(Boolean) as Agent[]) : curMembers;
+  const headAvs = headAgents.slice(0, 3).map((m, i) => c.avOf(m, headAgents.length > 1 ? 28 : 32, false, i ? "margin-left:-10px" : ""));
+  const names = headAgents.map((m) => m.name);
+
+  const tq = st.toQuery.trim().toLowerCase();
+  const pool = agents.filter((a) => !st.draft.includes(a.id) && (!tq || a.name.toLowerCase().includes(tq) || a.prompt.toLowerCase().includes(tq)));
+  const sugIdx = Math.min(st.sugIdx, Math.max(0, pool.length - 1));
+  const toOpen = st.toMode && st.toFocus && !!tq;
+  const suggestions = pool.map((a, i) => ({
+    name: a.name,
+    role: a.prompt,
+    av: c.avOf(a, 28),
+    onPick: (e: { preventDefault: () => void }) => { e.preventDefault(); patch((s) => ({ draft: [...s.draft, a.id], toQuery: "", sugIdx: 0 })); },
+    style: ["display:flex", "align-items:center", "gap:10px", "width:100%", "padding:7px 12px 7px 8px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "transition:background .28s cubic-bezier(.32,.72,0,1)", `background:${i === sugIdx ? "rgba(16,18,24,0.05)" : "transparent"}`].join(";"),
+    hintStyle: `font-size:12px;color:#7A7E87;opacity:${i === sugIdx ? "1" : "0"}`,
+  }));
+  const suggestStyle = ["position:absolute", "top:calc(100% + 4px)", "left:44px", "width:320px", "padding:5px", "border-radius:22px", "background:#FFFFFF", "z-index:30", "transform-origin:top left", "box-shadow:0 1px 1px rgba(16,18,24,0.04), 0 20px 48px -14px rgba(16,18,24,0.26), inset 0 0 0 1px rgba(16,18,24,0.07)", `opacity:${toOpen ? "1" : "0"}`, `transform:translateY(${toOpen ? "0" : "-6px"}) scale(${toOpen ? "1" : ".96"})`, `pointer-events:${toOpen ? "auto" : "none"}`, `visibility:${toOpen ? "visible" : "hidden"}`, "transition:opacity .2s ease, transform .36s cubic-bezier(.16,1,.3,1)"].join(";");
+
+  const msgs = thread ? thread.messages : [];
+  const messages = msgs.map((m, i) => {
+    const me = m.author === "user";
+    const a = !me && m.botId ? agentById.get(m.botId) : undefined;
+    const prev = msgs[i - 1];
+    const first = !prev || prev.author !== m.author || prev.botId !== m.botId;
+    const anim = me ? "clyraBubbleIn 1.15s cubic-bezier(.16,.86,.2,1) both" : "clyraReplyIn 1.15s cubic-bezier(.32,.72,0,1) both";
+    return {
+      hasImgs: false, imgs: [], hasDocs: false, docs: [], hasText: !!m.text,
+      parts: [{ isTok: false, isText: true, text: m.text }],
+      isMe: me, isAgent: !me, hasTools: false, tools: [], text: m.text, isText: true, isFile: false, fileName: "", fileMeta: "",
+      hasLink: false, link: "", post: "",
+      name: me ? "" : a?.name ?? m.botName ?? "System",
+      showName: !me && first && isGroup,
+      av: c.avOf(a, 18),
+      rowStyle: ["display:flex", "width:100%", `justify-content:${me ? "flex-end" : "flex-start"}`, `margin-top:${first && i ? "6px" : "0"}`, `animation:${anim}`].join(";"),
+    };
+  });
+
+  const typingTask = tasks.find((t) => t.state === "running");
+  const typingAgent = typingTask ? agentById.get(typingTask.botId) : undefined;
+  const typingHere = !!typingAgent && !!cur && cur.botIds.includes(typingAgent.id);
+  const viewId = st.viewAgent && curMembers.some((m) => m.id === st.viewAgent) ? st.viewAgent : curMembers[0]?.id;
+  const viewAgent = viewId ? agentById.get(viewId) : undefined;
+  const acts = tasks.filter((t) => t.botId === viewId).flatMap((t) => t.events.filter((ev) => ev.label.trim()).slice(-6).map((ev) => ({ ev, state: t.state })));
+  const actions = acts.map((x, ai) => {
+    const s = stepKind(x.state);
+    return {
+      hasLine: ai < acts.length - 1,
+      label: x.ev.label,
+      done: s === "done",
+      active: s === "active",
+      queued: s === "queued",
+      paused: s === "paused",
+      activeAttr: s === "active" ? "1" : "0",
+      labelStyle: s === "active"
+        ? "flex:1;min-width:0;font-size:13px;line-height:19px;letter-spacing:-0.008em;font-weight:500;color:transparent;background-image:linear-gradient(100deg,#15171C 0%,#15171C 36%,#D2D5DA 50%,#15171C 64%,#15171C 100%);background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:clyraSweep 1.9s cubic-bezier(.45,0,.55,1) infinite"
+        : ["flex:1", "min-width:0", "font-size:13px", "line-height:19px", "letter-spacing:-0.008em", "transition:color .24s ease", `color:${s === "done" ? "#50545C" : s === "paused" ? "#8A8E96" : "#B4B8BF"}`].join(";"),
+    };
+  });
+
+  const tabs = curMembers.map((m) => {
+    const on = m.id === viewId;
+    return {
+      name: m.name, shape: m.shape, color: m.color, busy: m.busy ? "true" : "false", onPick: () => patch({ viewAgent: m.id }),
+      style: ["flex:1", "min-width:0", "height:26px", "padding:0 10px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "font-size:12.5px", `font-weight:${on ? "700" : "400"}`, "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis", "transition:background .24s ease, color .24s ease, box-shadow .24s ease", `background:${on ? "#FFFFFF" : "transparent"}`, `box-shadow:${on ? "0 1px 2px rgba(16,18,24,0.08), 0 0 0 0.5px rgba(16,18,24,0.06)" : "none"}`, `color:${on ? "#15171C" : "#6B6F77"}`].join(";"),
+    };
+  });
+
+  const ready = !!st.dName.trim() && !!st.dPrompt.trim();
+  const swatches = AGENT_SWATCHES.map(([id, hex]) => {
+    const on = id === st.dColor;
+    return {
+      name: id,
+      onPick: () => patch((s) => ({ dColor: id, dKey: s.dKey + 1 })),
+      style: ["width:28px", "height:28px", "border-radius:999px", "border:none", "cursor:pointer", "padding:0", `background:#${hex}`, `box-shadow:${on ? `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${id === "creme" ? "#C9C6BD" : `#${hex}`}` : "inset 0 0 0 1px rgba(0,0,0,0.08)"}`, `transform:scale(${on ? "1" : ".9"})`, "transition:box-shadow .2s ease, transform .25s cubic-bezier(.16,1,.3,1)"].join(";"),
+    };
+  });
+  const shapes = AGENT_SHAPES.map(([s, , label]) => {
+    const on = s === st.dShape;
+    return {
+      shape: s,
+      name: label,
+      onPick: () => patch((x) => ({ dShape: s, dKey: x.dKey + 1 })),
+      style: ["display:flex", "align-items:center", "justify-content:center", "width:44px", "height:44px", "border-radius:12px", "border:none", "cursor:pointer", `background:${on ? "#F0F0F2" : "transparent"}`, `box-shadow:${on ? "inset 0 0 0 1.5px #15171C" : "inset 0 0 0 1px rgba(16,18,24,0.08)"}`, "transition:background .28s cubic-bezier(.32,.72,0,1), box-shadow .2s ease"].join(";"),
+    };
+  });
+
+  const caret = st.caret == null ? st.text.length : Math.min(st.caret, st.text.length);
+  const slash = /(^|\s)\/([^\s/]*)$/.exec(st.text.slice(0, caret));
+  const paletteOpen = !!slash && !st.palDismiss;
+  const pq = paletteOpen && slash ? slash[2].toLowerCase() : "";
+  const hasText = st.text.trim().length > 0 && !paletteOpen;
+  const toolDefs = [
+    { label: "Web search", desc: "Search the live web" },
+    { label: "Deep research", desc: "Multi-step search with cited sources" },
+    { label: "Code", desc: "Write and run code in a sandbox" },
   ];
-  return (
-    <aside className="flex w-[336px] shrink-0 flex-col border-l border-[#e8e6e1] bg-[#fdfcf9]">
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[#e8e6e1] px-2 py-2">
-        {tabs.map(({ label, icon: Icon }) => <button key={label} type="button" onClick={() => onTab(label)} className={cn("grid h-7 w-8 shrink-0 place-items-center rounded-md", tab === label ? "bg-white text-[#3269db] shadow-[0_1px_2px_rgba(0,0,0,.06)]" : "text-stone-400 hover:bg-stone-100 hover:text-stone-700")} title={label}><Icon className="h-3.5 w-3.5" /></button>)}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {tab === "Workspace" ? <>
-          <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-stone-400">Current work</p>
-          {focused ? <div className="mt-3 rounded-lg border border-stone-200 bg-white p-3 shadow-[0_1px_2px_rgba(0,0,0,.025)]"><div className="flex items-start gap-2"><span className={cn("mt-1.5 h-1.5 w-1.5 rounded-full", taskTone(focused.state))} /><div className="min-w-0"><p className="text-[13px] font-medium text-stone-800">{focused.title}</p><p className="mt-1 text-[12px] leading-5 text-stone-500">{focused.currentStep}</p></div></div><TaskActions task={focused} onControl={onControl} /></div> : <EmptyPanel text="Choose a coworker and give them a task." />}
-          {events.length ? <div className="mt-5"><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-stone-400">Activity</p><div className="mt-2 grid gap-2">{events.slice(0, 8).map((event) => <div key={event.id} className="border-l border-stone-200 pl-2.5"><p className="text-[11.5px] font-medium text-stone-700">{event.label}</p>{event.detail ? <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-stone-500">{event.detail}</p> : null}</div>)}</div></div> : null}
-        </> : null}
-        {tab === "Browser" ? <div><p className="text-[12px] font-semibold text-stone-800">Agent browser</p><p className="mt-1 text-[11.5px] leading-4 text-stone-500">Semantic browser control uses the managed persistent session. You can watch or take over at any time.</p><div className="mt-3 overflow-hidden rounded-lg border border-stone-200 bg-white"><img src="/api/openbrowser/frame" alt="Live browser workspace" className="aspect-[16/10] w-full object-cover" /><div className="flex justify-between border-t border-stone-100 px-2.5 py-2"><span className="text-[11px] text-stone-500">Live session</span><button type="button" onClick={() => onTab("Workspace")} className="text-[11px] font-medium text-[#3269db]">Take control</button></div></div></div> : null}
-        {tab === "Terminal" ? <div><p className="text-[12px] font-semibold text-stone-800">Terminal activity</p><div className="mt-3 grid gap-2">{terminalEvents.length ? terminalEvents.map((event) => <div key={event.id} className="rounded-md border border-stone-200 bg-white p-2.5"><p className="font-mono text-[11px] text-stone-700">{event.label}</p><p className="mt-1 text-[11px] text-emerald-600">{event.detail || "Completed"}</p></div>) : <EmptyPanel text="Terminal commands appear here as compact, expandable activity." />}</div></div> : null}
-        {tab === "Files" ? <div><p className="text-[12px] font-semibold text-stone-800">Workspace files</p><div className="mt-3 grid gap-2">{fileEvents.length ? fileEvents.map((event) => <div key={event.id} className="rounded-md border border-stone-200 bg-white p-2.5 text-[11.5px] text-stone-700">{event.label}<p className="mt-1 text-[11px] text-stone-500">{event.detail}</p></div>) : <EmptyPanel text="Each coworker has an isolated files, artifacts, and logs workspace." />}</div></div> : null}
-        {tab === "Tasks" ? <div><p className="text-[12px] font-semibold text-stone-800">{active?.title || "Task graph"}</p><div className="mt-3 grid gap-1.5">{tasks.length ? tasks.map((task) => <div key={task.id} className={cn("rounded-md px-2.5 py-2", task.parentId ? "ml-4 border-l border-stone-200" : "bg-white border border-stone-200")}><div className="flex gap-2"><span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", taskTone(task.state))} /><span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-stone-700">{task.title}</span></div><p className="mt-1 truncate pl-3.5 text-[10.5px] text-stone-500">{task.state.replace(/_/g, " ")}</p></div>) : <EmptyPanel text="A task tree appears once work begins." />}</div></div> : null}
-        {tab === "Changes" ? <div><p className="text-[12px] font-semibold text-stone-800">Changes & artifacts</p><div className="mt-3 grid gap-2">{tasks.flatMap((task) => [...task.filesTouched, ...task.artifacts].map((item) => ({ task, item }))).map(({ task, item }) => <div key={`${task.id}-${item}`} className="rounded-md border border-stone-200 bg-white p-2.5 text-[11.5px] text-stone-700">{item}</div>)}{!tasks.some((task) => task.filesTouched.length || task.artifacts.length) ? <EmptyPanel text="Verified changes and artifacts will appear here." /> : null}</div></div> : null}
-      </div>
-    </aside>
-  );
-}
+  const palItems = toolDefs.filter((d) => !pq || d.label.toLowerCase().includes(pq) || d.desc.toLowerCase().includes(pq));
+  const palIdx = Math.min(st.palIdx, Math.max(0, palItems.length - 1));
+  const paletteItems = palItems.map((d, i) => ({
+    label: d.label,
+    desc: d.desc,
+    icon: "",
+    onPick: (e: { preventDefault: () => void }) => { e.preventDefault(); patch({ text: st.text.replace(/\s*\/[^\s/]*$/, " ").trimStart() }); },
+    onEnter: () => { if (st.palIdx !== i) patch({ palIdx: i }); },
+    style: ["display:flex", "align-items:center", "gap:11px", "width:100%", "padding:8px 12px 8px 8px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", `background:${i === palIdx ? "rgba(16,18,24,0.055)" : "transparent"}`, `transition:background .24s ${SHELL}`].join(";"),
+    hintStyle: "flex-shrink:0;font-size:11px;font-weight:500;color:#0B54D6;opacity:0;transition:opacity .2s ease",
+  }));
 
-function TaskActions({ task, onControl }: { task: CoworkTask; onControl: (id: string, operation: "pause" | "resume" | "stop" | "retry" | "approve" | "reject") => void }) {
-  if (task.state === "awaiting_approval") return <div className="mt-3 flex gap-1.5"><button type="button" onClick={() => onControl(task.id, "approve")} className="h-7 rounded-md bg-[#3269db] px-2 text-[11px] font-medium text-white">Approve</button><button type="button" onClick={() => onControl(task.id, "reject")} className="h-7 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600">Reject</button></div>;
-  if (task.state === "running" || task.state === "retrying") return <div className="mt-3 flex gap-1.5"><button type="button" onClick={() => onControl(task.id, "pause")} className="flex h-7 items-center gap-1 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600"><Pause className="h-3 w-3" /> Pause</button><button type="button" onClick={() => onControl(task.id, "stop")} className="flex h-7 items-center gap-1 rounded-md px-2 text-[11px] text-rose-600 hover:bg-rose-50"><Square className="h-3 w-3" /> Stop</button></div>;
-  if (["paused", "failed", "blocked"].includes(task.state)) return <button type="button" onClick={() => onControl(task.id, task.state === "paused" ? "resume" : "retry")} className="mt-3 flex h-7 items-center gap-1 rounded-md border border-stone-200 px-2 text-[11px] text-stone-600"><Play className="h-3 w-3" /> {task.state === "paused" ? "Resume" : "Retry step"}</button>;
-  return null;
-}
+  const paneOn = st.current ? st.pane : st.paneHome;
+  const iconA = (on: boolean) => ["position:absolute", "left:6.5px", "top:6.5px", `opacity:${on ? "0" : "1"}`, `transform:rotate(${on ? "-90deg" : "0deg"}) scale(${on ? ".55" : "1"})`, "transition:opacity .24s ease, transform .4s cubic-bezier(.25,1,.35,1)"].join(";");
+  const iconB = (on: boolean, dir: number) => ["position:absolute", "left:6.5px", "top:6.5px", `opacity:${on ? "1" : "0"}`, `transform:rotate(${on ? "0deg" : `${dir * 90}deg`}) scale(${on ? "1" : ".55"})`, "transition:opacity .24s ease, transform .4s cubic-bezier(.25,1,.35,1)"].join(";");
+  const sideOn = st.side;
+  const rm = st.rowMenu;
+  const rmConv = rm ? conversations.find((x) => x.id === rm.id) ?? null : null;
+  const rmBot = !!rmConv && rmConv.botIds.length === 1;
 
-function EmptyPanel({ text }: { text: string }) { return <p className="rounded-lg border border-dashed border-stone-200 px-3 py-5 text-center text-[11.5px] leading-5 text-stone-400">{text}</p>; }
+  const lineupAgents = agents.slice(0, 7);
+  const lineup = lineupAgents.length
+    ? lineupAgents.map((a, i) => ({
+        name: a.name,
+        color: a.color,
+        size: String(Math.max(28, Math.round(46 - Math.abs(i - (lineupAgents.length - 1) / 2) * 5))),
+        busy: a.busy ? "true" : "false",
+        onOpen: () => {
+          const conv = conversations.find((x) => x.botIds.length === 1 && x.botIds[0] === a.id);
+          if (conv) c.openConversation(conv.id);
+        },
+        style: `display:flex;padding:3px;border:none;background:transparent;cursor:pointer;transition:transform .4s cubic-bezier(.16,1,.3,1);animation:clyraRise .6s cubic-bezier(.16,1,.3,1) ${(i * 0.05).toFixed(2)}s both`,
+      }))
+    : [{ name: "New agent", color: "gris", size: "60", busy: "false", onOpen: () => patch({ create: true, editId: null, dName: "", dPrompt: "" }), style: "display:flex;padding:3px;border:none;background:transparent;cursor:pointer;animation:clyraRise .6s cubic-bezier(.16,1,.3,1) both" }];
 
-function NewCoworkerDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState(""); const [role, setRole] = useState("Developer"); const [instructions, setInstructions] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
-  const create = async () => { if (!name.trim() || saving) return; setSaving(true); try { const response = await fetch("/api/bots", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, role, instructions, avatar: name.trim().slice(0, 1).toUpperCase(), permissions: { granted: ["web_search", "research", "files", "browser", "terminal"], approvals: { terminal: "always_ask" }, canMessage: "all" } }) }); const payload = await response.json(); if (!payload?.ok) throw new Error(payload?.error || "Could not create coworker."); onCreated(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create coworker."); } finally { setSaving(false); } };
-  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 grid place-items-center bg-stone-950/20 p-6 backdrop-blur-sm" onClick={onClose}><motion.div initial={{ y: 8, opacity: 0.95 }} animate={{ y: 0, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="w-full max-w-[420px] rounded-xl bg-[#fdfcf9] shadow-[0_24px_70px_rgba(28,25,23,.2)]"><div className="flex items-center justify-between border-b border-stone-200 px-5 py-4"><p className="text-[15px] font-semibold text-stone-900">New Coworker</p><button type="button" onClick={onClose} className="text-stone-400 hover:text-stone-700"><X className="h-4 w-4" /></button></div><div className="grid gap-3 p-5"><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">Name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Alex" className="h-9 rounded-md border border-stone-200 bg-white px-3 text-[13px] font-normal text-stone-800 outline-none focus:border-[#3269db]" /></label><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">Role<select value={role} onChange={(event) => setRole(event.target.value)} className="h-9 rounded-md border border-stone-200 bg-white px-2.5 text-[13px] font-normal text-stone-800 outline-none"><option>Developer</option><option>Researcher</option><option>Designer</option><option>Marketing</option><option>Data Analyst</option><option>Operations</option></select></label><label className="grid gap-1.5 text-[11.5px] font-medium text-stone-600">What should this coworker be great at?<textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={3} placeholder="Optional instructions" className="resize-none rounded-md border border-stone-200 bg-white px-3 py-2 text-[13px] font-normal text-stone-800 outline-none focus:border-[#3269db]" /></label>{error ? <p className="text-[11.5px] text-rose-600">{error}</p> : null}</div><div className="flex justify-end gap-2 border-t border-stone-200 px-5 py-3"><button type="button" onClick={onClose} className="h-8 px-2 text-[12px] text-stone-500">Cancel</button><button type="button" onClick={() => void create()} disabled={!name.trim() || saving} className="h-8 rounded-md bg-[#3269db] px-3 text-[12px] font-medium text-white disabled:opacity-40">{saving ? "Creating…" : "Create coworker"}</button></div></motion.div></motion.div>;
-}
+  const feed = tasks
+    .flatMap((t) => t.events.slice(-1).map((ev) => ({ t, ev })))
+    .slice(-4)
+    .reverse()
+    .map(({ t, ev }) => {
+      const a = agentById.get(t.botId);
+      const pct = t.state === "completed" ? 100 : t.state === "running" ? 50 : 10;
+      return {
+        name: a?.name ?? "Agent",
+        label: ev.label,
+        color: a?.color ?? "gris",
+        busy: t.state === "running" ? "true" : "false",
+        time: relative(ev.at),
+        progress: t.state,
+        onOpen: () => {
+          const conv = conversations.find((x) => x.botIds.includes(t.botId));
+          if (conv) c.openConversation(conv.id);
+        },
+        barStyle: `display:block;height:100%;border-radius:999px;transition:width .6s cubic-bezier(.32,.72,0,1);width:${pct}%;background:${t.state === "running" ? "#1E6FFF" : "#15171C"}`,
+        labelStyle: "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:37px;font-size:13.5px;line-height:1.4;color:#3A3D44",
+      };
+    });
 
-/**
- * Pick recipients by typing a name.
- *
- * Choosing more than one makes it a group, which is the only difference
- * between a direct thread and a group as far as the user is concerned.
- */
-function NewMessageDialog({
-  bots,
-  onClose,
-  onCreated,
-}: {
-  bots: Bot[];
-  onClose: () => void;
-  onCreated: (conversation: Conversation) => void;
-}) {
-  const [term, setTerm] = useState("");
-  const [picked, setPicked] = useState<Bot[]>([]);
-  const [title, setTitle] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const needs = conversations.filter((x) => x.unread > 0).slice(0, 4).map((x) => ({
+    title: x.title,
+    sub: x.lastMessage || "New message",
+    color: c.convMembers(x)[0]?.color ?? "gris",
+    tag: "Unread",
+    onOpen: () => c.openConversation(x.id),
+    tagStyle: "flex-shrink:0;height:22px;padding:0 9px;display:flex;align-items:center;border-radius:999px;font-size:11.5px;font-weight:700;background:rgba(30,111,255,0.08);color:#0B54D6",
+  }));
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  const homeTitle = st.view === "market" && !st.current ? "Marketplace" : !st.current && !st.toMode ? "Home" : cur && isGroup ? cur.title : names.join(", ");
+  const today = new Date();
+  const runningCount = agents.filter((a) => a.busy).length;
 
-  const matches = useMemo(() => {
-    const needle = term.trim().toLowerCase();
-    const remaining = bots.filter((bot) => !picked.some((item) => item.id === bot.id));
-    if (!needle) return remaining;
-    return remaining.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(needle));
-  }, [bots, picked, term]);
+  const starters = STARTERS.map((s) => ({ label: s.label, onPick: () => patch((x) => ({ dPrompt: s.text, dName: x.dName || s.label })) }));
+  const firstStarters = STARTERS.map((p, i) => {
+    const color = ["bleu", "vert", "orange", "violet"][i % 4];
+    return { label: p.label, color, onPick: () => patch({ create: true, editId: null, dName: p.label, dPrompt: p.text, dColor: color }) };
+  });
 
-  const add = (bot: Bot) => { setPicked((current) => [...current, bot]); setTerm(""); };
-  const remove = (id: string) => setPicked((current) => current.filter((bot) => bot.id !== id));
-
-  const submit = async () => {
-    if (!picked.length || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/cowork/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botIds: picked.map((bot) => bot.id), title: title.trim() }),
-      });
-      const payload = await response.json();
-      if (!payload?.ok) throw new Error(payload?.error || "Could not start that conversation.");
-      onCreated({ ...payload.conversation, participants: picked.map((bot) => ({ id: bot.id, name: bot.name, avatar: bot.avatar, status: bot.status })) });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start that conversation.");
-    } finally {
-      setSaving(false);
-    }
+  const mq = st.mq.trim().toLowerCase();
+  const templates = AGENT_TEMPLATES.map((t) => ({
+    id: t.id, name: t.name, cat: t.category, tagline: t.blurb, job: t.instructions, color: colorNameOf(t.color), caps: t.permissions, featured: t.pick,
+  }));
+  const categories = Array.from(new Set(AGENT_TEMPLATES.map((t) => t.category)));
+  const matches = (t: { name: string; cat: string; tagline: string; job: string }) => !mq || [t.name, t.cat, t.tagline, t.job].join(" ").toLowerCase().includes(mq);
+  const pooled = templates.filter(matches);
+  const shown = pooled.filter((t) => st.mcat === "All" || t.cat === st.mcat);
+  const marketItem = (t: (typeof templates)[number]) => {
+    const added = agents.some((a) => a.name === t.name);
+    const tpl = AGENT_TEMPLATES.find((x) => x.id === t.id);
+    const prefill = () => patch({ create: true, editId: null, dName: t.name, dPrompt: t.job, dColor: t.color, dShape: "cercle" });
+    return {
+      name: t.name,
+      cat: t.cat,
+      color: t.color,
+      tagline: t.tagline,
+      caps: t.caps,
+      added,
+      getLabel: added ? "Open" : "Get",
+      getStyle: `flex-shrink:0;height:28px;min-width:58px;padding:0 14px;border-radius:999px;border:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;background:${added ? "rgba(16,18,24,0.06)" : "rgba(30,111,255,0.1)"};color:${added ? "#5F636B" : "#1E6FFF"}`,
+      heroGet: "",
+      idle: true,
+      installing: false,
+      tileStyle: `display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:16px;flex-shrink:0;background:color-mix(in oklch, #${hexOfName(t.color)} 13%, #FFFFFF)`,
+      onPrefill: prefill,
+      onOpen: prefill,
+      onAdd: (e: { stopPropagation: () => void }) => {
+        e.stopPropagation();
+        if (!tpl || added) return;
+        void coworkApi.createBot(templateToBotInput(tpl)).then(() => c.refreshAll());
+      },
+      addStyle: `flex-shrink:0;height:28px;padding:0 12px;border-radius:999px;border:none;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;background:${added ? "rgba(16,18,24,0.05)" : "#15171C"};color:${added ? "#15171C" : "#FFFFFF"}`,
+    };
   };
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/25 p-6 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, y: 8, scale: 0.99 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 8, scale: 0.99 }}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-        onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-[480px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_70px_rgba(15,23,42,.18)]"
-      >
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200/70 px-5 py-3.5">
-          <p className="text-[15px] font-semibold tracking-[-.01em] text-slate-900">New message</p>
-          <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+  return {
+    goHome: () => patch({ view: null, current: null, toMode: false, paneHome: false }),
+    openMarket: () => patch({ view: "market", current: null, toMode: false, homeMenu: false }),
+    openTemplates: () => patch({ view: "market" }),
+    sideQuery: st.sideQuery,
+    onSideQuery: (e: { target: { value: string } }) => patch({ sideQuery: e.target.value }),
+    chatRows,
+    noChats: conversations.length === 0 && !sq,
+    toggleNewMenu: () => patch((s) => ({ newMenu: !s.newMenu })),
+    newMenuStyle: ["position:absolute", "top:44px", "right:8px", "width:230px", "padding:5px", "border-radius:22px", "background:#FFFFFF", "z-index:40", "transform-origin:top right", "box-shadow:0 1px 1px rgba(16,18,24,0.04), 0 20px 48px -14px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)", `opacity:${st.newMenu ? "1" : "0"}`, `transform:translateY(${st.newMenu ? "0" : "-6px"}) scale(${st.newMenu ? "1" : ".95"})`, `pointer-events:${st.newMenu ? "auto" : "none"}`, `visibility:${st.newMenu ? "visible" : "hidden"}`, "transition:opacity .18s ease, transform .34s cubic-bezier(.16,1,.3,1)"].join(";"),
+    plusBtnStyle: ["display:flex", "align-items:center", "justify-content:center", "width:30px", "height:30px", "border-radius:999px", "border:none", "cursor:pointer", "color:#5F636B", "transition:background .28s cubic-bezier(.32,.72,0,1), transform .22s cubic-bezier(.32,.72,0,1)", `background:${st.newMenu ? "rgba(16,18,24,0.07)" : "transparent"}`].join(";"),
+    openCreate: () => patch({ newMenu: false, create: true, editId: null, dName: "", dPrompt: "", dColor: AGENT_SWATCHES[(agents.length * 5) % 12][0], dShape: "cercle" }),
+    startGroup: () => patch({ newMenu: false, toMode: true, draft: [], toQuery: "" }),
+    toggleSide: () => patch((s) => ({ side: !s.side, rowMenu: null })),
+    sideTitle: sideOn ? "Collapse sidebar" : "Show sidebar",
+    sideIconA: iconA(sideOn),
+    sideIconB: iconB(sideOn, 1),
+    mainSideIconA: iconA(false),
+    mainSideIconB: iconB(false, 1),
+    mainPaneIconA: iconA(false),
+    mainPaneIconB: iconB(false, -1),
+    paneIconA: iconA(paneOn),
+    paneIconB: iconB(paneOn, -1),
+    sideSlotMain: ["display:flex", "flex-shrink:0", "overflow:hidden", `width:${sideOn ? "0px" : "30px"}`, `margin-right:${sideOn ? "-10px" : "0px"}`, `opacity:${sideOn ? "0" : "1"}`, `transform:scale(${sideOn ? ".8" : "1"})`, `pointer-events:${sideOn ? "none" : "auto"}`, "transition:width .3s cubic-bezier(.25,1,.35,1)"].join(";"),
+    sideWrapStyle: ["display:flex", "flex-shrink:0", "min-height:0", "overflow:hidden", `width:${sideOn ? SIDE_W : "0px"}`, "will-change:width", "contain:layout paint", "transition:width .4s cubic-bezier(.25,1,.35,1)"].join(";"),
+    sideInnerStyle: ["position:relative", `flex:0 0 ${SIDE_W}`, `width:${SIDE_W}`, "display:flex", "flex-direction:column", "min-height:0", "background:#F4F4F6", "border-right:1px solid rgba(16,18,24,0.07)", `opacity:${sideOn ? "1" : "0"}`, `transform:translate3d(${sideOn ? "0" : "-24px"},0,0)`, "will-change:transform, opacity", "backface-visibility:hidden", `transition:opacity ${sideOn ? ".32s ease .04s" : ".2s ease"}, transform .4s cubic-bezier(.25,1,.35,1)`].join(";"),
+    rowMenuStyle: ["position:absolute", `right:${rm ? rm.right : 20}px`, `top:${rm ? rm.top : 0}px`, "width:188px", "padding:5px", "border-radius:20px", "background:#FFFFFF", "z-index:50", "transform-origin:top right", "box-shadow:0 1px 1px rgba(16,18,24,0.04), 0 18px 44px -14px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)", `opacity:${rm ? "1" : "0"}`, `transform:translateY(${rm ? "0" : "-6px"}) scale(${rm ? "1" : ".94"})`, `pointer-events:${rm ? "auto" : "none"}`, `visibility:${rm ? "visible" : "hidden"}`, "transition:opacity .18s ease, transform .32s cubic-bezier(.16,1,.3,1)"].join(";"),
+    renameLabel: rmBot ? "Rename agent" : "Rename group",
+    deleteLabel: rmBot ? "Delete agent" : "Delete group chat",
+    menuIsBot: rmBot,
+    menuRename: () => { if (rmConv) patch({ renaming: rmConv.id, renameVal: rmConv.title, rowMenu: null }); },
+    menuEdit: () => {
+      if (!rmConv || !rmBot) return;
+      const a = agentById.get(rmConv.botIds[0]);
+      if (a) patch({ rowMenu: null, create: true, editId: a.id, dName: a.name, dPrompt: a.prompt, dColor: a.color, dShape: a.shape });
+    },
+    menuDelete: () => { if (rmConv) void c.deleteConversation(rmConv.id); },
+    renameRef: (el: HTMLInputElement | null) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } },
+    renameVal: st.renameVal,
+    onRenameVal: (e: { target: { value: string } }) => patch({ renameVal: e.target.value }),
+    onRenameKey: (e: { key: string; preventDefault: () => void }) => {
+      if (e.key === "Enter") { e.preventDefault(); void c.commitRename(); }
+      else if (e.key === "Escape") patch({ renaming: null });
+    },
+    commitRename: () => { void c.commitRename(); },
+    stop: (e: { stopPropagation: () => void }) => e.stopPropagation(),
+    asideRef: () => {},
 
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200/70 px-4 py-3">
-          <span className="text-[13px] text-slate-400">To:</span>
-          {picked.map((bot) => (
-            <span key={bot.id} className="flex items-center gap-1.5 rounded-lg bg-[#eef3ff] py-1 pl-1.5 pr-1 text-[12.5px] font-medium text-[#2c4bb8]">
-              <Avatar name={bot.name} avatar={bot.avatar} size={18} />
-              {bot.name}
-              <button type="button" onClick={() => remove(bot.id)} aria-label={`Remove ${bot.name}`} className="grid h-5 w-5 place-items-center rounded text-[#2c4bb8]/60 hover:text-[#2c4bb8]">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-          <input
-            ref={inputRef}
-            value={term}
-            onChange={(event) => setTerm(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && matches[0]) { event.preventDefault(); add(matches[0]); }
-              if (event.key === "Backspace" && !term && picked.length) remove(picked[picked.length - 1].id);
-            }}
-            placeholder={picked.length ? "Add another…" : "Type a name"}
-            aria-label="Recipients"
-            className="min-w-[140px] flex-1 bg-transparent py-1 text-[13.5px] text-slate-800 outline-none placeholder:text-slate-400"
-          />
-        </div>
+    headKey: st.view || st.current || "home",
+    headIsChat: !!st.current && !st.view && !st.toMode,
+    headIsPage: !(st.current && !st.view) && !st.toMode,
+    headerMode: !st.toMode,
+    headAvs,
+    headTitle: homeTitle,
+    memberCount: `${names.length} agents`,
+    headClickTitle: isGroup ? "Edit group" : "Edit agent",
+    headClick: () => {
+      if (isGroup || !cur) { patch({ toMode: true, draft: cur ? [...cur.botIds] : [], toQuery: "" }); return; }
+      const a = agentById.get(cur.botIds[0]);
+      if (a) patch({ create: true, editId: a.id, dName: a.name, dPrompt: a.prompt, dColor: a.color, dShape: a.shape });
+    },
+    enterTo: () => patch({ toMode: true, draft: cur ? [...cur.botIds] : [], toQuery: "" }),
+    exitTo: () => { if (st.draft.length) void c.commitDraft(); else patch({ toMode: false }); },
+    toMode: st.toMode,
+    isGroup,
+    togglePane: () => patch((s) => (!s.current ? { paneHome: !s.paneHome } : { pane: !s.pane })),
+    paneTitle: paneOn ? "Collapse agent screen" : "Show agent screen",
+    paneSlotMain: ["display:flex", "flex-shrink:0", "overflow:hidden", "margin-left:auto", `width:${paneOn ? "0px" : "30px"}`, `opacity:${paneOn ? "0" : "1"}`, `transform:scale(${paneOn ? ".8" : "1"})`, `pointer-events:${paneOn ? "none" : "auto"}`].join(";"),
+    paneWrapStyle: ["display:flex", "flex-shrink:0", "min-height:0", "overflow:hidden", `width:${paneOn ? PANE_W : "0px"}`, "will-change:width", "contain:layout paint", "transition:width .4s cubic-bezier(.25,1,.35,1)"].join(";"),
+    paneInnerStyle: [`flex:0 0 ${PANE_W}`, `width:${PANE_W}`, "display:flex", "flex-direction:column", "min-height:0", "background:#FFFFFF", "border-left:1px solid rgba(16,18,24,0.07)", "overflow:hidden", `opacity:${paneOn ? "1" : "0"}`, `transform:translate3d(${paneOn ? "0" : "24px"},0,0)`, "transition:opacity .32s ease .04s, transform .4s cubic-bezier(.25,1,.35,1)"].join(";"),
+    paneScrollRef: () => {},
+    paneTitle2: viewAgent ? viewAgent.name : "Agent",
+    tabs,
+    multiTabs: curMembers.length > 1,
+    actions,
+    noActions: actions.length === 0,
+    actionCount: acts.length ? `${acts.filter((x) => stepKind(x.state) === "done").length} of ${acts.length}` : "",
+    viewLive: !!viewAgent?.busy,
+    vpMode: viewAgent?.busy ? "thinking" : "idle",
+    vpCursors: "[]",
+    vpStatus: viewAgent ? (viewAgent.busy ? "Working" : "Idle") : "Idle",
+    vpTitle: viewAgent ? `${viewAgent.name}'s activity` : "Agent activity",
+    vpAvs: viewAgent ? [c.avOf(viewAgent, 26)] : [],
+    takeoverLabel: "Pause",
+    toggleTakeover: () => {
+      const t = tasks.find((x) => x.botId === viewId && x.state === "running");
+      if (t) void c.taskOp(t, "pause");
+    },
+    canTakeover: !!viewAgent?.busy,
 
-        <div className="max-h-[260px] overflow-y-auto p-2">
-          {bots.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[12.5px] text-slate-400">
-              No bots yet — create one first.
-            </p>
-          ) : matches.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[12.5px] text-slate-400">
-              {term.trim()
-                ? `No one matches “${term.trim()}”.`
-                : "Everyone is already in this conversation."}
-            </p>
-          ) : (
-            matches.map((bot) => (
-              <button
-                key={bot.id}
-                type="button"
-                onClick={() => add(bot)}
-                className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-slate-50"
-              >
-                <Avatar name={bot.name} avatar={bot.avatar} size={32} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px] font-medium text-slate-900">{bot.name}</span>
-                  <span className="block truncate text-[12px] text-slate-500">{bot.role}</span>
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+    greeting: (() => {
+      const h = today.getHours();
+      if (!hasAgents) return "Welcome";
+      return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+    })(),
+    homeTitle,
+    dateDay: today.toLocaleDateString(undefined, { weekday: "long" }),
+    dateLine: `${today.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}${runningCount ? ` · ${runningCount} working` : ""}`,
+    homeSub: hasAgents
+      ? `${agents.length === 1 ? "Your agent is ready." : `Your ${agents.length} agents are ready.`} Choose who to message and what to work on.`
+      : "You don't have any agents yet. Create one, give it a job, and it gets to work.",
+    lineup,
+    feed,
+    feedEmpty: feed.length === 0,
+    feedCount: runningCount ? `${runningCount} working now` : "All caught up",
+    needs,
+    hasNeeds: needs.length > 0,
+    needsCount: `${needs.length} ${needs.length === 1 ? "item" : "items"}`,
+    noAgents: !hasAgents,
+    hasAgents,
+    hasAgentOpts: hasAgents,
+    firstStarters,
+    starters,
+    showStarters: false,
+    homeAgentOpts: agents.map((a) => {
+      const conv = conversations.find((x) => x.botIds.length === 1 && x.botIds[0] === a.id);
+      const on = !!conv && conv.id === st.homeTo;
+      return {
+        name: a.name,
+        sub: a.prompt,
+        color: a.color,
+        busy: a.busy ? "true" : "false",
+        on,
+        onPick: () => { if (conv) patch({ homeTo: conv.id, homeMenu: false }); },
+        style: ["display:flex", "align-items:center", "gap:10px", "width:100%", "padding:7px 12px 7px 8px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "transition:background .26s cubic-bezier(.32,.72,0,1)", `background:${on ? "rgba(30,111,255,0.06)" : "transparent"}`].join(";"),
+      };
+    }),
+    homeGroupOpts: conversations.filter((x) => x.botIds.length > 1).map((x) => {
+      const ms = c.convMembers(x);
+      const on = x.id === st.homeTo;
+      return {
+        name: x.title,
+        sub: `${ms.length} agents`,
+        c1: ms[0]?.color ?? "gris",
+        c2: ms[1]?.color ?? "gris",
+        on,
+        onPick: () => patch({ homeTo: x.id, homeMenu: false }),
+        style: ["display:flex", "align-items:center", "gap:10px", "width:100%", "padding:7px 12px 7px 8px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "transition:background .26s cubic-bezier(.32,.72,0,1)", `background:${on ? "rgba(30,111,255,0.06)" : "transparent"}`].join(";"),
+      };
+    }),
+    hasGroupOpts: conversations.some((x) => x.botIds.length > 1),
+    homeToAvs: homeConv ? c.convMembers(homeConv).slice(0, 3).map((m, k) => c.avOf(m, 20, false, k ? "margin-left:-7px;" : "")) : [],
+    homeToName: homeConv ? homeConv.title : hasAgents ? "Choose agent" : "Create an agent",
+    homePlaceholder: !hasAgents
+      ? "Create an agent to start chatting"
+      : !homeConv
+        ? "Choose an agent, then type your message"
+        : `Message ${homeConv.title}, or type / for tools`,
+    toggleHomeMenu: () => patch((s) => ({ homeMenu: !s.homeMenu })),
+    homeMenuStyle: ["position:absolute", "left:0", "top:calc(100% + 8px)", "width:300px", "padding:5px", "border-radius:22px", "background:#FFFFFF", "z-index:40", "transform-origin:top left", "box-shadow:0 1px 1px rgba(16,18,24,0.04), 0 24px 56px -16px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)", `opacity:${st.homeMenu ? "1" : "0"}`, `transform:translateY(${st.homeMenu ? "0" : "-8px"}) scale(${st.homeMenu ? "1" : ".96"})`, `pointer-events:${st.homeMenu ? "auto" : "none"}`, `visibility:${st.homeMenu ? "visible" : "hidden"}`, "transition:opacity .2s ease, transform .4s cubic-bezier(.16,1,.3,1)"].join(";"),
+    toBtnStyle: ["display:flex", "align-items:center", "gap:7px", "height:30px", "padding:0 10px 0 5px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "font-size:13px", "font-weight:700", "color:#15171C", "transition:background .28s cubic-bezier(.32,.72,0,1), transform .22s cubic-bezier(.32,.72,0,1)", `background:${st.homeMenu ? "rgba(16,18,24,0.08)" : "rgba(16,18,24,0.05)"}`].join(";"),
+    toChevStyle: `color:#7A7E87;transition:transform .3s cubic-bezier(.32,.72,0,1);transform:rotate(${st.homeMenu ? "180deg" : "0deg"})`,
+    homeRowStyle: ["display:flex", "align-items:center", "gap:10px", "width:100%", "height:36px", "padding:0 12px", "border-radius:10px", "border:none", "cursor:pointer", "font-family:inherit", "font-size:14px", "font-weight:700", "text-align:left", "transition:background .24s ease, color .24s ease", "background:transparent", `color:${!st.current && !st.toMode ? "#15171C" : "#3A3D44"}`].join(";"),
+    homeNewGroup: (e: { preventDefault: () => void }) => { e.preventDefault(); patch({ homeMenu: false, toMode: true, draft: [], toQuery: "" }); },
+    homeMenuActionLabel: hasAgents ? "New group chat" : "New agent",
+    homeIdeas: [],
+    chatIdeas: [],
 
-        {picked.length > 1 ? (
-          <div className="border-t border-slate-200/70 px-4 py-3">
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder={picked.map((bot) => bot.name).join(", ")}
-              aria-label="Group name"
-              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-[13.5px] text-slate-800 outline-none focus:border-blue-400"
-            />
-            <p className="mt-1.5 text-[11.5px] text-slate-400">
-              Group name — leave blank to use everyone's names.
-            </p>
-          </div>
-        ) : null}
+    chatKey: st.toMode ? "new" : st.current || "home",
+    inChat: (!!st.current || st.toMode) && !st.view,
+    inMarket: st.view === "market",
+    onHome: !st.current && !st.toMode && !st.view,
+    scrollRef: (el: HTMLDivElement | null) => { c.scrollRef.current = el; },
+    messages,
+    hasStamp: msgs.length > 0,
+    stamp: cur ? clock(cur.updatedAt) : "Today",
+    empty: msgs.length === 0 && !typingHere,
+    emptyTitle: st.toMode && !st.draft.length ? "Who's in this chat?" : "Start the conversation",
+    emptySub: st.toMode && !st.draft.length ? "Type agent names in the To: field. Add as many as you need." : "Everyone here picks up their part. Watch each agent work on the right.",
+    typing: typingHere,
+    soloTyping: typingHere && !isGroup,
+    groupTyping: typingHere && isGroup,
+    groupTypingLabel: typingHere && typingAgent ? `${typingAgent.name} is working…` : "",
+    typingAvs: typingHere && typingAgent ? [c.avOf(typingAgent, 20)] : [],
+    typingLabel: typingHere && typingAgent ? `${typingAgent.name} · ${typingTask?.currentStep || "Thinking"}` : "",
+    freshChat: msgs.length === 0 && !!cur && !st.toMode,
+    freshAvs: curMembers.slice(0, 4).map((m, k) => c.avOf(m, 56, false, k ? "margin-left:-14px;" : "")),
+    freshTitle: curMembers.length > 1 ? cur?.title ?? names.join(", ") : curMembers[0]?.name ?? "",
+    freshSub: curMembers.length > 1 ? "Everyone here picks up their part." : curMembers[0]?.prompt ?? "",
+    chips: st.draft.map((id) => ({
+      name: agentById.get(id)?.name ?? "",
+      av: c.avOf(agentById.get(id), 18),
+      onRemove: (e: { stopPropagation: () => void }) => { e.stopPropagation(); patch((s) => ({ draft: s.draft.filter((x) => x !== id) })); },
+    })),
+    toRef: () => {},
+    focusTo: () => {},
+    toQuery: st.toQuery,
+    toPlaceholder: st.draft.length ? "" : "Type an agent's name",
+    onToQuery: (e: { target: { value: string } }) => patch({ toQuery: e.target.value, sugIdx: 0 }),
+    onToFocus: () => patch({ toFocus: true }),
+    onToBlur: () => patch({ toFocus: false }),
+    onToKey: (e: { key: string; preventDefault: () => void; currentTarget: HTMLElement }) => {
+      if (e.key === "Backspace" && !st.toQuery && st.draft.length) patch((s) => ({ draft: s.draft.slice(0, -1) }));
+      else if (e.key === "ArrowDown") { e.preventDefault(); patch({ sugIdx: Math.min(sugIdx + 1, pool.length - 1) }); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); patch({ sugIdx: Math.max(sugIdx - 1, 0) }); }
+      else if ((e.key === "Enter" || e.key === "Tab") && pool[sugIdx] && tq) {
+        e.preventDefault();
+        const pick = pool[sugIdx];
+        patch((s) => ({ draft: [...s.draft, pick.id], toQuery: "", sugIdx: 0 }));
+      } else if (e.key === "Enter" && !tq && st.draft.length) { e.preventDefault(); void c.commitDraft(); }
+      else if (e.key === "Escape") e.currentTarget.blur();
+    },
+    suggestStyle,
+    suggestions,
+    noSuggest: pool.length === 0,
+    suggestHeading: tq ? "Matching agents" : "Agents",
 
-        {error ? <p className="mx-4 mb-2 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{error}</p> : null}
+    placeholder: names.length ? "Message, or type / for tools" : "Add agents to start",
+    text: st.text,
+    onText: (e: { target: HTMLTextAreaElement }) => patch({ text: e.target.value, caret: e.target.selectionStart, palIdx: 0, palDismiss: false }),
+    onCaret: (e: { target: HTMLTextAreaElement }) => { const p = e.target.selectionStart; if (p !== st.caret) patch({ caret: p }); },
+    inputRef: (el: HTMLTextAreaElement | null) => { c.inputRef.current = el; },
+    mirrorRef: () => {},
+    onTaScroll: () => {},
+    inputParts: [{ isTok: false, isText: true, text: st.text, key: "t" }, { isTok: false, isText: true, text: "​", key: "end" }],
+    onKey: c.onKey,
+    onSend: () => { void c.sendText(); },
+    sendStyle: ["width:34px", "height:34px", "border-radius:999px", "border:none", "display:flex", "align-items:center", "justify-content:center", "cursor:pointer", "margin-left:2px", `background:${hasText ? "#1E6FFF" : "#EDEEF1"}`, `color:${hasText ? "#FFFFFF" : "#AFB3BB"}`, `box-shadow:${hasText ? "0 2px 10px -2px rgba(30,111,255,0.55)" : "none"}`, `transition:background .22s ${EASE}, color .22s ${EASE}, box-shadow .22s ${EASE}, transform .13s ${EASE}`].join(";"),
+    paletteStyle: ["position:absolute", "left:-4px", "right:-4px", "bottom:calc(100% + 12px)", "padding:5px", "border-radius:24px", "background:#FFFFFF", "z-index:22", "transform-origin:bottom center", "box-shadow:0 1px 1px rgba(16,18,24,0.04), 0 24px 56px -16px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)", `opacity:${paletteOpen ? "1" : "0"}`, `transform:translateY(${paletteOpen ? "0" : "14px"}) scale(${paletteOpen ? "1" : ".97"})`, `pointer-events:${paletteOpen ? "auto" : "none"}`, `visibility:${paletteOpen ? "visible" : "hidden"}`, "transition:opacity .2s ease, transform .4s cubic-bezier(.16,1,.3,1)"].join(";"),
+    paletteHeading: pq ? `Matching “${pq}”` : "Tools and sources",
+    noPal: palItems.length === 0,
+    paletteItems,
+    pickMode: st.toMode,
+    pickTitle: st.draft.length ? (st.draft.length === 1 ? `Chat with ${agentById.get(st.draft[0])?.name ?? ""}` : `Group of ${st.draft.length}`) : "Start a new chat",
+    pickSub: st.draft.length ? "Add more agents to make a group, or just start typing below." : "Pick one agent, or several to make a group.",
+    pickAgents: agents.map((a) => {
+      const on = st.draft.includes(a.id);
+      return {
+        name: a.name,
+        prompt: a.prompt,
+        color: a.color,
+        busy: a.busy ? "true" : "false",
+        onToggle: (e: { preventDefault: () => void }) => { e.preventDefault(); patch((s) => ({ draft: s.draft.includes(a.id) ? s.draft.filter((x) => x !== a.id) : [...s.draft, a.id] })); },
+        style: ["display:flex", "flex-direction:column", "align-items:flex-start", "gap:12px", "padding:14px", "border-radius:22px", "border:none", "cursor:pointer", "font-family:inherit", "text-align:left", "min-width:0", `background:${on ? "rgba(30,111,255,0.05)" : "#FFFFFF"}`, `box-shadow:${on ? "inset 0 0 0 1.5px rgba(30,111,255,0.6)" : "inset 0 0 0 1px rgba(16,18,24,0.07)"}`, "transition:background .25s ease, box-shadow .25s ease"].join(";"),
+        checkStyle: ["display:flex", "align-items:center", "justify-content:center", "width:20px", "height:20px", "border-radius:999px", `background:${on ? "#1E6FFF" : "transparent"}`, `box-shadow:${on ? "none" : "inset 0 0 0 1.5px rgba(16,18,24,0.14)"}`].join(";"),
+      };
+    }),
 
-        <div className="flex justify-end gap-2 border-t border-slate-200/70 px-4 py-3">
-          <button type="button" onClick={onClose} className="h-9 rounded-xl px-3 text-[13px] font-medium text-slate-500 hover:text-slate-900">
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!picked.length || saving}
-            onClick={() => void submit()}
-            className="flex h-9 items-center gap-1.5 rounded-xl bg-[#4169f6] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#3158ea] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {saving ? "Starting…" : <>Start{picked.length > 1 ? " group" : ""} <Check className="h-3.5 w-3.5" strokeWidth={2.6} /></>}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
+    scrimStyle: ["position:absolute", "inset:0", "z-index:100", "display:flex", "align-items:center", "justify-content:center", "padding:24px", `background:rgba(20,20,24,${cr ? "0.28" : "0"})`, `pointer-events:${cr ? "auto" : "none"}`, `visibility:${cr ? "visible" : "hidden"}`, "transition:background .3s ease"].join(";"),
+    sheetStyle: ["width:100%", "max-width:460px", "max-height:100%", "overflow-y:auto", "border-radius:24px", "background:#FFFFFF", "box-shadow:0 30px 80px -20px rgba(16,18,24,0.4), inset 0 0 0 1px rgba(16,18,24,0.06)", `opacity:${cr ? "1" : "0"}`, `transform:translateY(${cr ? "0" : "14px"}) scale(${cr ? "1" : ".96"})`, "transition:opacity .22s ease, transform .45s cubic-bezier(.16,1,.3,1)"].join(";"),
+    scrimDown: (e: { target: HTMLElement }) => { if (!e.target.closest("[data-sheet]")) patch({ create: false }); },
+    closeCreate: () => patch({ create: false }),
+    dShape: st.dShape,
+    dColor: st.dColor,
+    draftTitle: st.dName.trim() || "New agent",
+    sheetSub: st.editId ? "Change its name, job or color." : "Name it, tell it what to do, pick a color.",
+    draftName: st.dName,
+    onDraftName: (e: { target: { value: string } }) => patch({ dName: e.target.value }),
+    draftPrompt: st.dPrompt,
+    onDraftPrompt: (e: { target: { value: string } }) => patch({ dPrompt: e.target.value }),
+    promptRows: st.dPrompt.length > 220 ? 12 : 3,
+    promptCount: st.dPrompt.length > 220
+      ? `${st.dPrompt.split("\n").filter(Boolean).length} lines · ${st.dPrompt.length.toLocaleString()} chars`
+      : `${st.dPrompt.length} / 160`,
+    countStyle: `font-size:11.5px;font-variant-numeric:tabular-nums;color:${st.dPrompt.length > 140 && st.dPrompt.length <= 220 ? "#C4372B" : "#9DA1A9"}`,
+    nameRef: () => {},
+    swatches,
+    shapes,
+    saveAgent: () => { void c.saveAgent(); },
+    saveLabel: st.editId ? "Save" : "Create agent",
+    createBtnStyle: ["height:38px", "padding:0 18px", "border-radius:999px", "border:none", "font-family:inherit", "font-size:13.5px", "font-weight:500", "transition:background .28s cubic-bezier(.32,.72,0,1), color .28s cubic-bezier(.32,.72,0,1)", `cursor:${ready ? "pointer" : "default"}`, `background:${ready ? "#1E6FFF" : "#EDEEF1"}`, `color:${ready ? "#FFFFFF" : "#AFB3BB"}`].join(";"),
+
+    tplOverlayStyle: HIDDEN_OVERLAY,
+    tplCardStyle: HIDDEN_CARD,
+    previewOverlayStyle: HIDDEN_OVERLAY,
+    previewCardStyle: HIDDEN_CARD,
+    tplAsk: [],
+    tplQuality: [],
+    tplTone: "",
+    tplCaps: [],
+    tplGoals: [],
+    tplRules: [],
+    tplExtra: [],
+    tplSteps: [],
+    tplIdle: true,
+    tplInstalling: false,
+    tplName: "",
+    tplCat: "",
+    tplColor: "gris",
+    tplTagline: "",
+    tplJob: "",
+    tplRole: "",
+    tplOutput: "",
+    tplAddLabel: "",
+    tplAddStyle: "",
+    tplAdd: () => {},
+    closeTpl: () => {},
+    closePreview: () => {},
+    hasFiles: false,
+    files: [],
+    pickFiles: () => {},
+    onFiles: () => {},
+    fileRef: () => {},
+    previewKey: `p${st.dKey}`,
+    mq: st.mq,
+    onMq: (e: { target: { value: string } }) => patch({ mq: e.target.value }),
+    clearMq: () => patch({ mq: "" }),
+    mHasQ: !!mq,
+    mBrowse: st.view === "market" && st.mcat === "All" && !mq,
+    mFiltered: st.view === "market" && !(st.mcat === "All" && !mq),
+    mEyebrow: `${agents.length} added · ${templates.length} available`,
+    mFilterTitle: mq ? `Results for “${st.mq.trim()}”` : st.mcat,
+    mHero: st.view === "market" ? templates.filter((t) => t.featured).slice(0, 3).map(marketItem) : [],
+    mShelves: st.view !== "market" ? [] : categories
+      .map((cat) => ({
+        title: cat,
+        sub: `${templates.filter((t) => t.cat === cat).length} agents`,
+        onSeeAll: () => patch({ mcat: cat }),
+        items: templates.filter((t) => t.cat === cat && !t.featured).slice(0, 4).map(marketItem),
+      }))
+      .filter((x) => x.items.length),
+    mcats: ["All", ...categories].map((cat) => {
+      const on = st.mcat === cat;
+      const n = cat === "All" ? pooled.length : pooled.filter((t) => t.cat === cat).length;
+      return {
+        label: cat,
+        count: String(n),
+        onPick: () => patch({ mcat: cat }),
+        style: ["display:flex", "align-items:center", "flex-shrink:0", "height:32px", "padding:0 13px", "border-radius:999px", "border:none", "cursor:pointer", "font-family:inherit", "font-size:13.5px", "font-weight:700", "white-space:nowrap", "transition:background .3s cubic-bezier(.32,.72,0,1), color .3s cubic-bezier(.32,.72,0,1)", `background:${on ? "rgba(16,18,24,0.07)" : "transparent"}`, `color:${on ? "#15171C" : "#8A8E96"}`].join(";"),
+        countStyle: `font-size:11.5px;font-weight:400;font-variant-numeric:tabular-nums;color:${on ? "rgba(16,18,24,0.5)" : "#A8ACB4"}`,
+      };
+    }),
+    mResultLabel: `${shown.length} ${shown.length === 1 ? "agent" : "agents"}`,
+    mEmpty: shown.length === 0,
+    mItems: shown.map(marketItem),
+    marketRowStyle: ["display:flex", "align-items:center", "gap:10px", "width:100%", "height:36px", "padding:0 12px", "border-radius:10px", "border:none", "cursor:pointer", "font-family:inherit", "font-size:14px", "font-weight:700", "background:transparent", `color:${st.view === "market" ? "#15171C" : "#3A3D44"}`].join(";"),
+
+    loadError: c.loadError,
+    sendError: st.sendError,
+    sending: st.sending,
+    tplCount: templates.length,
+  };
 }

@@ -1,0 +1,14 @@
+{
+  "id": "shadcn",
+  "name": "Shadcn",
+  "category": "Modern & Minimal",
+  "description": "Shadcn/ui-inspired design with minimal, clean components, monochrome palette, and utility-first patterns.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

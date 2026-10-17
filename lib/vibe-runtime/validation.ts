@@ -38,13 +38,61 @@ function run(command: string, args: string[], cwd: string, timeoutMs = 120_000) 
   });
 }
 
+/**
+ * Native Swift packages are checked with the real toolchain. A Swift project is
+ * never judged as a static HTML site, and an Xcode project without the Xcode
+ * toolchain is reported as skipped with its reason, not as passed.
+ */
+async function nativeEvidence(workspacePath: string): Promise<ValidationEvidence[] | null> {
+  const hasSwiftPackage = existsSync(path.join(workspacePath, "Package.swift"));
+  const entries = await fs.readdir(workspacePath).catch(() => [] as string[]);
+  const hasXcodeProject = entries.some((name) => name.endsWith(".xcodeproj") || name.endsWith(".xcworkspace"));
+  if (!hasSwiftPackage && !hasXcodeProject) return null;
+
+  if (!hasSwiftPackage) {
+    const at = new Date().toISOString();
+    return [{
+      name: "native iOS runtime",
+      status: "skipped",
+      output: "Xcode project found. Native build and simulator checks need full Xcode on macOS; they were not run.",
+      startedAt: at,
+      completedAt: at,
+    }];
+  }
+
+  const { runSwiftPackage } = await import("../clyra-code/swift/swift-package");
+  const evidence: ValidationEvidence[] = [];
+  for (const command of ["build", "test"] as const) {
+    const startedAt = new Date().toISOString();
+    const result = await runSwiftPackage(workspacePath, command, { timeoutMs: 15 * 60 * 1000 }).catch((error: unknown) => ({
+      ok: false,
+      exitCode: null,
+      tail: error instanceof Error ? error.message : String(error),
+    }));
+    evidence.push({
+      name: `swift ${command}`,
+      command: `swift ${command}`,
+      status: result.ok ? "passed" : "failed",
+      exitCode: result.exitCode ?? undefined,
+      output: result.tail?.slice(-4000),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    });
+  }
+  return evidence;
+}
+
 export async function runWorkspaceValidation(workspacePath: string): Promise<ValidationEvidence[]> {
   const startedAt = new Date().toISOString();
   const packagePath = path.join(workspacePath, "package.json");
+  const native = await nativeEvidence(workspacePath);
+  if (native) return native;
   if (!existsSync(packagePath)) {
     const indexPath = path.join(workspacePath, "index.html");
     if (!existsSync(indexPath)) {
-      return [{ name: "static HTML entry", status: "failed", output: "No package.json or index.html is present.", startedAt, completedAt: new Date().toISOString() }];
+      // No recognised target means nothing can be validated yet. Reporting that as a
+      // failure would push the agent to create an HTML page to satisfy the check.
+      return [{ name: "project target", status: "skipped", output: "No project target was detected, so there is nothing to validate yet.", startedAt, completedAt: new Date().toISOString() }];
     }
 
     const evidence: ValidationEvidence[] = [{

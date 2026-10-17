@@ -1,0 +1,53 @@
+.cowork {
+  --agents-bg-top: #fcfcfd;
+  --agents-bg: #f5f6f8;
+  --agents-bg-bottom: #eef0f3;
+  --agents-surface: #ffffff;
+  --agents-surface-raised: rgba(255, 255, 255, 0.94);
+  --agents-text: #15171c;
+  --agents-text-deep: #0e1014;
+  --agents-secondary: #63676f;
+  --agents-tertiary: #7a7e87;
+  --agents-placeholder: #9da1a9;
+  --agents-disabled: #afb3bb;
+  --agents-blue: #1e6fff;
+  --agents-blue-dark: #0b54d6;
+  --agents-danger: #c4372b;
+  --agents-warning: #b87918;
+  --agents-success: #24845b;
+  --agents-divider: rgba(16, 18, 24, 0.07);
+  --agents-divider-strong: rgba(16, 18, 24, 0.11);
+  --agents-soft: rgba(16, 18, 24, 0.055);
+  --agents-hover: rgba(16, 18, 24, 0.05);
+  --agents-hover-light: rgba(16, 18, 24, 0.035);
+  --agents-ease: cubic-bezier(.2, .8, .3, 1);
+  --agents-shell-ease: cubic-bezier(.32, .72, 0, 1);
+  --agents-spring: cubic-bezier(.16, 1, .3, 1);
+  --agents-message-ease: cubic-bezier(.16, .86, .2, 1);
+  --agents-font: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+:root[data-clyra-theme="dark"] .cowork {
+  --agents-bg-top: #15161a;
+  --agents-bg: #111216;
+  --agents-bg-bottom: #0d0e12;
+  --agents-surface: #18191e;
+  --agents-surface-raised: rgba(27, 28, 34, 0.96);
+  --agents-text: #f1f2f4;
+  --agents-text-deep: #ffffff;
+  --agents-secondary: #a7aab2;
+  --agents-tertiary: #858992;
+  --agents-placeholder: #6e727b;
+  --agents-disabled: #545861;
+  --agents-divider: rgba(255, 255, 255, 0.09);
+  --agents-divider-strong: rgba(255, 255, 255, 0.14);
+  --agents-soft: rgba(255, 255, 255, 0.07);
+  --agents-hover: rgba(255, 255, 255, 0.075);
+  --agents-hover-light: rgba(255, 255, 255, 0.05);
+}
+
+.clyra-scroll { scrollbar-width: thin; scrollbar-color: rgba(16, 18, 24, .18) transparent; }
+.clyra-scroll::-webkit-scrollbar { width: 8px; }
+.clyra-scroll::-webkit-scrollbar-track { background: transparent; }
+.clyra-scroll::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: rgba(16, 18, 24, .16); background-clip: content-box; }
+.clyra-scroll::-webkit-scrollbar-thumb:hover { background: rgba(16, 18, 24, .28); background-clip: content-box; }

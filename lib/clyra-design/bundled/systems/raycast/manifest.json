@@ -1,0 +1,14 @@
+{
+  "id": "raycast",
+  "name": "Raycast",
+  "category": "Developer Tools",
+  "description": "Productivity launcher. Sleek dark chrome, vibrant gradient accents.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

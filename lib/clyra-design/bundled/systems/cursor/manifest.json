@@ -1,0 +1,14 @@
+{
+  "id": "cursor",
+  "name": "Cursor",
+  "category": "Developer Tools",
+  "description": "AI-first code editor. Sleek dark interface, gradient accents.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

@@ -8,12 +8,13 @@ import type { ClyraTool, Json, JsonSchema, ToolExecutionContext, ToolResult } fr
 export type ToolAdapter = (args: Json, context: ToolExecutionContext) => Promise<ToolResult>;
 export type ClyraToolBindings = Partial<Record<
   | "chat.ask" | "notes.search" | "notes.create" | "notes.read"
-  | "maps.search"
   | "browser.navigate" | "browser.inspect" | "browser.action" | "browser.search"
   | "vibe.createProject" | "vibe.modifyFiles" | "vibe.build" | "vibe.preview"
   | "media.create" | "media.render" | "computer.observe" | "computer.action"
   | "spotify.search" | "spotify.control" | "email.search" | "email.draft" | "email.send"
-  | "project.memory.get" | "project.memory.update", ToolAdapter>>;
+  | "project.memory.get" | "project.memory.update"
+  | "files.list" | "files.read" | "files.write" | "files.move" | "files.delete"
+  | "terminal.run" | "git.status" | "git.diff" | "git.commit", ToolAdapter>>;
 
 const object = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({ type: "object", properties, required, additionalProperties: false });
 const string = (minLength = 1): JsonSchema => ({ type: "string", minLength });
@@ -24,11 +25,15 @@ const specs: readonly Spec[] = [
   { binding: "notes.search", id: "notes.search", name: "Search Notes", description: "Search saved Clyra Notes.", category: "notes", inputSchema: object({ query: string() }, ["query"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 8_000, supportsCancellation: true },
   { binding: "notes.read", id: "notes.read", name: "Read Note", description: "Read a saved Clyra Note by ID.", category: "notes", inputSchema: object({ pageId: string() }, ["pageId"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 8_000, supportsCancellation: true },
   { binding: "notes.create", id: "notes.create", name: "Create Note", description: "Create a Clyra Note and return its record ID.", category: "notes", inputSchema: object({ title: string(), markdown: string() }, ["title", "markdown"]), permissions: ["write"], riskLevel: "safe", timeoutMs: 12_000, supportsCancellation: true },
-  { binding: "maps.search", id: "maps.search", name: "Search Clyra Earth", description: "Search real places through Clyra Earth's structured geocoder.", category: "maps", inputSchema: object({ query: string() }, ["query"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 12_000, supportsCancellation: true },
   { binding: "browser.search", id: "browser.search", name: "Search the web", description: "Research public sources through Clyra's structured research backend.", category: "browser", inputSchema: object({ query: string() }, ["query"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 45_000, supportsCancellation: true },
   { binding: "browser.navigate", id: "browser.navigate", name: "Navigate browser", description: "Navigate Clyra's managed browser to a URL.", category: "browser", inputSchema: object({ url: string() }, ["url"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 30_000, supportsCancellation: true },
   { binding: "browser.inspect", id: "browser.inspect", name: "Inspect browser", description: "Read the current browser accessibility and page state.", category: "browser", inputSchema: object({}, []), permissions: ["read"], riskLevel: "safe", timeoutMs: 15_000, supportsCancellation: true },
-  { binding: "browser.action", id: "browser.action", name: "Browser action", description: "Perform an authorised browser action against a fresh observation.", category: "browser", inputSchema: object({ action: object({ type: string() }, ["type"]), observationId: optional(string()) }, ["action"]), permissions: ["write"], riskLevel: "review", timeoutMs: 30_000, supportsCancellation: true },
+  // `action` is intentionally not locked to `{ type }` only: `BrowserAction`
+  // (lib/openbrowser/browser-runtime.ts) is a discriminated union whose real
+  // shapes carry a `target`/`x`/`y`/`text`/`key`/`url` etc. depending on
+  // `type` — this schema's job is only to require a `type` string; the
+  // runtime's own `validateBrowserAction` enforces the real per-type shape.
+  { binding: "browser.action", id: "browser.action", name: "Browser action", description: "Perform an authorised browser action (click, type, scroll, navigate within the page, etc.) against a fresh observation.", category: "browser", inputSchema: object({ action: { type: "object", properties: { type: string() }, required: ["type"], additionalProperties: true }, observationId: optional(string()) }, ["action"]), permissions: ["write"], riskLevel: "review", timeoutMs: 30_000, supportsCancellation: true },
   { binding: "vibe.createProject", id: "vibe.createProject", name: "Create Vibe project", description: "Create a Clyra Vibe project.", category: "vibe", inputSchema: object({ name: string(), prompt: string() }, ["name", "prompt"]), permissions: ["write"], riskLevel: "review", timeoutMs: 30_000, supportsCancellation: true },
   { binding: "vibe.modifyFiles", id: "vibe.modifyFiles", name: "Modify Vibe files", description: "Write validated files inside a Vibe project workspace.", category: "vibe", inputSchema: object({ projectId: string(), files: { type: "array", minItems: 1, items: object({ path: string(), content: string() }, ["path", "content"]) } }, ["projectId", "files"]), permissions: ["write"], riskLevel: "review", timeoutMs: 45_000, supportsCancellation: true },
   { binding: "vibe.build", id: "vibe.build", name: "Build Vibe project", description: "Run the project's build validation in the Vibe sandbox.", category: "vibe", inputSchema: object({ projectId: string() }, ["projectId"]), permissions: ["write"], riskLevel: "review", timeoutMs: 180_000, supportsCancellation: true },
@@ -44,6 +49,15 @@ const specs: readonly Spec[] = [
   { binding: "email.send", id: "email.send", name: "Send email", description: "Send a specific reviewed email.", category: "email", inputSchema: object({ draftId: string() }, ["draftId"]), permissions: ["external-send"], riskLevel: "sensitive", timeoutMs: 30_000, supportsCancellation: false },
   { binding: "project.memory.get", id: "project.memory.get", name: "Get project memory", description: "Retrieve memory scoped to the active project only.", category: "memory", inputSchema: object({ query: string() }, ["query"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 8_000, supportsCancellation: true },
   { binding: "project.memory.update", id: "project.memory.update", name: "Update project memory", description: "Store an explicit memory in the active project only.", category: "memory", inputSchema: object({ text: string() }, ["text"]), permissions: ["write"], riskLevel: "review", timeoutMs: 8_000, supportsCancellation: true },
+  { binding: "files.list", id: "files.list", name: "List files", description: "List a directory inside the signed-in user's files.", category: "files", inputSchema: object({ path: optional(string()) }, []), permissions: ["read"], riskLevel: "safe", timeoutMs: 10_000, supportsCancellation: true },
+  { binding: "files.read", id: "files.read", name: "Read file", description: "Read a file inside the signed-in user's files.", category: "files", inputSchema: object({ path: string() }, ["path"]), permissions: ["read"], riskLevel: "safe", timeoutMs: 10_000, supportsCancellation: true },
+  { binding: "files.write", id: "files.write", name: "Write file", description: "Create or overwrite a file inside the signed-in user's files.", category: "files", inputSchema: object({ path: string(), content: string(0), mode: optional(string()) }, ["path", "content"]), permissions: ["write"], riskLevel: "review", timeoutMs: 15_000, supportsCancellation: true },
+  { binding: "files.move", id: "files.move", name: "Move file", description: "Move or rename a file inside the signed-in user's files.", category: "files", inputSchema: object({ from: string(), to: string() }, ["from", "to"]), permissions: ["write"], riskLevel: "review", timeoutMs: 10_000, supportsCancellation: true },
+  { binding: "files.delete", id: "files.delete", name: "Delete file", description: "Permanently delete a file or folder inside the signed-in user's files.", category: "files", inputSchema: object({ path: string() }, ["path"]), permissions: ["write", "delete"], riskLevel: "sensitive", timeoutMs: 10_000, supportsCancellation: true },
+  { binding: "terminal.run", id: "terminal.run", name: "Run terminal command", description: "Run a shell command scoped to the signed-in user's files.", category: "terminal", inputSchema: object({ command: string(), cwd: optional(string()), timeoutMs: optional({ type: "number" }) }, ["command"]), permissions: ["write"], riskLevel: "review", timeoutMs: 130_000, supportsCancellation: true },
+  { binding: "git.status", id: "git.status", name: "Git status", description: "Read the working-tree status of a project.", category: "git", inputSchema: object({ path: optional(string()) }, []), permissions: ["read"], riskLevel: "safe", timeoutMs: 15_000, supportsCancellation: true },
+  { binding: "git.diff", id: "git.diff", name: "Git diff", description: "Read the current diff of a project.", category: "git", inputSchema: object({ path: optional(string()), staged: optional({ type: "boolean" }) }, []), permissions: ["read"], riskLevel: "safe", timeoutMs: 15_000, supportsCancellation: true },
+  { binding: "git.commit", id: "git.commit", name: "Git commit", description: "Commit currently staged changes in a project.", category: "git", inputSchema: object({ path: optional(string()), message: string() }, ["message"]), permissions: ["write"], riskLevel: "review", timeoutMs: 15_000, supportsCancellation: true },
 ] as const;
 
 export function createClyraToolRegistry(bindings: ClyraToolBindings): ClyraTool[] {
@@ -87,9 +101,8 @@ export function routeObjective(prompt: string, available = new Set<string>()): R
   if (/\b(play|pause|next|previous)\b.*\b(spotify|playlist|music)\b|\bspotify\b.*\b(play|pause)\b/.test(text) && available.has("spotify.control")) return { kind: "SINGLE_TOOL", category: "spotify", strategy: "native", reason: "Connected Spotify is preferred over UI control." };
   if (/\b(create|write|save)\b.*\b(note|report|comparison)\b/.test(text) && /\b(find|research|compare|caf(?:e|é)s?|business)\b/.test(text)) return { kind: "SHORT_WORKFLOW", category: "browser", strategy: "structured-api", reason: "Research and a saved artifact need a verified multi-tool workflow." };
   // Artifact intent outranks incidental words inside a title (for example,
-  // “Route QA”). A plain Note request must not turn into a maps/browser task.
+  // “Route QA”). A plain Note request must not turn into a browser task.
   if (/\b(?:make|create|write|save)\b.*\b(?:clyra\s+)?note\b/.test(text) && available.has("notes.create")) return { kind: "SINGLE_TOOL", category: "notes", strategy: "native", reason: "Create the requested Note, then reopen it to verify the artifact." };
-  if (/\b(where is|locate|coordinates?|address|directions? to)\b/.test(text) && available.has("maps.search")) return { kind: "SINGLE_TOOL", category: "maps", strategy: "native", reason: "Use Clyra Earth's exact-place geocoder before browser or computer control." };
   if (/\b(caf(?:e|é)s?|restaurant|eat|nearby|route|directions)\b/.test(text)) return { kind: "SINGLE_TOOL", category: "browser", strategy: "structured-api", reason: "This installation has no verified category/nearby-places backend; use structured research rather than pretending the geocoder can rank businesses." };
   if (/\b(build|landing page|website|dashboard|prototype)\b/.test(text)) return { kind: "MISSION", category: "vibe", strategy: "native", reason: "A build needs files, validation, preview, and verification." };
   if (/\b(research|compare|competitor|business)\b/.test(text)) return { kind: "SHORT_WORKFLOW", category: "browser", strategy: available.has("browser.search") ? "structured-api" : "browser", reason: "Research begins with structured source retrieval." };

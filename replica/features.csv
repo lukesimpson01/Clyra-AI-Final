@@ -1,0 +1,22 @@
+feature,area,priority,original,clone,notes
+Map modes explore/driving/satellite,map,must,yes,yes,MapControls
+2D/3D toggle + compass + recenter,map,must,yes,yes,
+Dropped pin + identify,place,must,yes,yes,
+Place card hours/photos/reviews,place,must,yes,yes,
+Directions drive/walk/bike,routing,must,yes,yes,FOSSGIS foot/bike for correct ETAs
+Transit directions,routing,must,yes,yes,Transitous
+Add stops,routing,should,yes,yes,OSRM waypoints + along-route search
+Share ETA,routing,should,yes,yes,link/clipboard
+Look Around,place,should,yes,yes,open street imagery
+Offline maps,map,should,yes,yes,tile cache
+Search this area,search,should,yes,yes,
+Favorites + Recents,library,must,yes,yes,
+Guides,library,should,yes,no,
+Home/Work,library,should,yes,no,
+Parked car,library,could,yes,no,
+Flyover tour,map,could,yes,no,orbit camera over 3D buildings
+Voice guidance,nav,should,yes,no,speechSynthesis
+Route callouts,routing,could,yes,no,
+Depart/arrive-by,routing,could,yes,no,
+Weather + AQI,place,could,yes,no,Open-Meteo
+Ask Clyra AI agent,ai,must,no,yes,Google-style AI

@@ -1,6 +1,8 @@
-# Clyra voice worker: Pipecat + SmallWebRTCTransport + Fish Audio STT/TTS +
-# DeepSeek (OpenAI-compatible) LLM. No local STT/TTS models -- this venv is
-# intentionally light.
+# Clyra voice worker: Pipecat + SmallWebRTCTransport + local whisper.cpp STT
+# (shells out to the vendored native binary at vendor/whisper.cpp, no Python
+# ASR deps needed here) + Fish Audio TTS + DeepSeek (OpenAI-compatible) LLM.
+# No local TTS model -- this venv is intentionally light. fish_stt.py's
+# FishASRSTTService is currently unused (bot.py wires WhisperCppSTTService).
 #
 # numba/llvmlite/cryptography/numpy are pinned below because pipecat-ai's
 # default resolution picks versions with no prebuilt wheel on Intel macOS,

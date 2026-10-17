@@ -6,6 +6,7 @@ application in this change.
 
 | Component | Revision | Licence | Intended reference use |
 | --- | --- | --- | --- |
+| God's Eye View | `de2a41927b54b3776615a5c0ad13b133f6e42f76` | MIT | Map-engine architecture, viewport-scoped live public-data layers, camera motion, and performance-governor foundation. Clyra supplies its own light consumer UI, provider adapters, account integration, and AI command surface; third-party live feeds remain governed by their providers' terms. |
 | browser-use | `40717057a3f46c403df360206c2784c840da3345` | MIT | Browser agent observation, planning, verification, and chat-card patterns. |
 | xtool-org/xtool | `697adae` | MIT | Optional cross-platform SwiftPM build/sign/install adapter. It runs through WSL on Windows or natively on macOS; Clyra never copies its source. |
 | danielpaulus/go-ios | `9c9fa2a` | MIT | Optional physical-iPhone device stream and UI-automation adapter. Clyra invokes its public CLI contract only. |
@@ -169,5 +170,6 @@ into Clyra. Clyra uses its own UI and integration code.
 | microsoft/vscode | `cc2c3484` | MIT | Workbench density and interaction concepts only. |
 | microsoft/monaco-editor | shallow local checkout | MIT | Editor API reference; Clyra uses the published package. |
 | xtermjs/xterm.js | shallow local checkout | MIT | Terminal API reference; Clyra uses the published package. |
+| nexu-io/open-design | `53231d40` | Apache-2.0 | Bundled design-system and layout files under `lib/clyra-design/bundled/` (12 systems, 10 layouts). See `lib/clyra-design/bundled/NOTICE.md`. |
 
 No source sections from these repositories were adapted in this change.

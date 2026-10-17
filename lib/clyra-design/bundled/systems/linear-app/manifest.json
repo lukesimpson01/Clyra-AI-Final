@@ -1,0 +1,14 @@
+{
+  "id": "linear-app",
+  "name": "Linear",
+  "category": "Productivity & SaaS",
+  "description": "Project management. Ultra-minimal, precise, purple accent.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

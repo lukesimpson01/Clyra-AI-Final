@@ -1,0 +1,14 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "category": "Developer Tools",
+  "description": "Code-forward platform. Functional density, blue-on-white precision, Primer foundations.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

@@ -1,7 +1,8 @@
 """Configuration for the Clyra voice Pipecat worker.
 
-STT + TTS: Fish Audio (https://fish.audio). LLM: DeepSeek, another explicit
-OpenAI-compatible endpoint, or opt-in local Ollama through its /v1 endpoint.
+STT: local whisper.cpp (see whisper_cpp_stt.py). TTS: Fish Audio
+(https://fish.audio). LLM: DeepSeek, another explicit OpenAI-compatible
+endpoint, or opt-in local Ollama through its /v1 endpoint.
 """
 
 from __future__ import annotations

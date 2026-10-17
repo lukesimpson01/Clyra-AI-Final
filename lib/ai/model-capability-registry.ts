@@ -39,6 +39,18 @@ const DEEPSEEK_CAPABILITIES: ModelCapability[] = [
   "tool-calling",
 ];
 
+/**
+ * DeepSeek Flash accepts image_url content in Chat Completions. Keep that
+ * capability model-specific: a user may intentionally configure a text-only
+ * DeepSeek model under the same provider key, and routing an image there
+ * would create a misleading "vision" feature that cannot actually run.
+ */
+function deepseekCapabilities(model: string): ModelCapability[] {
+  return /(?:^|[-_/])flash(?:$|[-_/])/i.test(model.trim())
+    ? [...DEEPSEEK_CAPABILITIES, "image-understanding"]
+    : DEEPSEEK_CAPABILITIES;
+}
+
 const GEMINI_TEXT_CAPABILITIES: ModelCapability[] = [
   "fast-text",
   "deep-reasoning",
@@ -71,7 +83,7 @@ function deepseekConfig(): ProviderConfig | null {
     model: process.env.DEEPSEEK_MODEL || process.env.MY_LLM_MODEL || "deepseek-v4-flash",
     apiKey,
     baseUrl: String(process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, ""),
-    capabilities: DEEPSEEK_CAPABILITIES,
+    capabilities: deepseekCapabilities(process.env.DEEPSEEK_MODEL || process.env.MY_LLM_MODEL || "deepseek-v4-flash"),
   };
 }
 
@@ -123,9 +135,10 @@ export class NoProviderAvailableError extends Error {
 
 /**
  * Pick the first provider for the requested capability. DeepSeek remains the
- * normal text/coding route; Gemini covers its distinct vision/audio
- * capabilities; an explicitly configured local model may be preferred for
- * privacy or cost with CLYRA_PREFER_LOCAL_LLM=true.
+ * normal text/coding route and DeepSeek Flash covers image understanding;
+ * Gemini remains a configured vision/audio fallback. An explicitly configured
+ * local model may be preferred for privacy or cost with
+ * CLYRA_PREFER_LOCAL_LLM=true.
  */
 export function selectProvider(capability: ModelCapability): ProviderConfig {
   return selectProviders(capability)[0];

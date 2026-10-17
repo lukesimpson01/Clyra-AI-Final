@@ -39,7 +39,6 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
   const activeRef = useRef("terminal-1");
   const outputRef = useRef(new Map<string, string>());
   const sequenceRef = useRef(1);
-  const startupTimersRef = useRef(new Map<string, number>());
   const followOutputRef = useRef(true);
   const followFrameRef = useRef<number | null>(null);
   const reportedErrorRef = useRef<string | null>(null);
@@ -73,7 +72,7 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
     const hasLiveOutput = Boolean(outputRef.current.get(tabId));
     // A collapsed/reselected tab already has a real shell and scrollback.
-    // Don't turn it back into a "starting" session or arm a stale timeout.
+    // Don't turn it back into a "starting" session.
     if (hasLiveOutput) {
       setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: false, busy: false } : item));
       fit(tabId);
@@ -84,20 +83,13 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     // shell immediately, rooted in Clyra's projects directory, rather than
     // leaving a permanently blank terminal until their first prompt.
     void bridge.open(projectId ?? "", tabId).then(() => {
-      // Socket connection is enough to make the panel usable. The first PTY
-      // output clears the tiny starting marker; it is not a prerequisite for
-      // rendering or focusing xterm.
+      // A shell is ready once its transport opens. Interactive shells are
+      // allowed to wait for their first command before printing a prompt, so
+      // lack of output is never evidence of a failed terminal.
+      setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: false, busy: false } : item));
       fit(tabId);
+      termRef.current?.focus();
     }).catch(() => setTabs((items) => items.map((item) => item.id === tabId ? { ...item, connectionFailed: true, busy: false } : item)));
-    const existingTimer = startupTimersRef.current.get(tabId);
-    if (existingTimer) window.clearTimeout(existingTimer);
-    startupTimersRef.current.set(tabId, window.setTimeout(() => {
-      // A prompt can arrive on the first socket tick while a reconnect timer
-      // from a preceding project selection is still pending. Never paint a
-      // failure over a terminal that has received real shell output.
-      if (outputRef.current.get(tabId)) return;
-      setTabs((items) => items.map((item) => item.id === tabId && item.busy ? { ...item, connectionFailed: true, busy: false } : item));
-    }, 2000));
   }, [fit, projectId]);
 
   useEffect(() => {
@@ -134,11 +126,6 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
     }
     const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
     const offData = bridge.onData((tabId, data) => {
-      const timer = startupTimersRef.current.get(tabId);
-      if (timer) {
-        window.clearTimeout(timer);
-        startupTimersRef.current.delete(tabId);
-      }
       setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, connectionFailed: false } : item));
       outputRef.current.set(tabId, (outputRef.current.get(tabId) || "") + data);
       if (tabId === activeRef.current) {
@@ -149,21 +136,29 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
       }
     });
     const offExit = bridge.onExit((tabId) => {
-      const timer = startupTimersRef.current.get(tabId);
-      if (timer) {
-        window.clearTimeout(timer);
-        startupTimersRef.current.delete(tabId);
-      }
       setTabs((items) => items.map((item) => item.id === tabId ? { ...item, busy: false, connectionFailed: true } : item));
     });
     connect(activeRef.current);
     return () => {
       offData();
       offExit();
-      for (const timer of startupTimersRef.current.values()) window.clearTimeout(timer);
-      startupTimersRef.current.clear();
     };
   }, [connect, followLatest, hostReady, projectId]);
+
+  const projectRef = useRef(projectId ?? "");
+  useEffect(() => {
+    const next = projectId ?? "";
+    if (projectRef.current === next) return;
+    projectRef.current = next;
+    // A shell must live in the selected project, not wherever it was first
+    // opened. Re-root every existing tab into the new directory.
+    const bridge = bridgeRef.current ?? (bridgeRef.current = createTerminalBridge());
+    for (const tabId of Array.from(outputRef.current.keys())) bridge.kill(tabId);
+    outputRef.current.clear();
+    termRef.current?.reset();
+    setTabs((items) => items.map((item) => ({ ...item, busy: false, connectionFailed: false })));
+    connect(activeRef.current);
+  }, [connect, projectId]);
 
   useEffect(() => {
     activeRef.current = activeTab;

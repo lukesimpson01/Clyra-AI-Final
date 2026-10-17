@@ -160,6 +160,12 @@ for index, raw_x in enumerate([100, 102, 101, 103, 105, 340, 342, 344, 346, 348]
         "trackId": "face_01",
     })
 trajectory = face._optimise_crop_trajectory(trajectory_samples, [{"startMs": 0, "endMs": 210}, {"startMs": 210, "endMs": 420}], "responsive", 720, 1280)
+content_safe_ranges = face._scene_ranges([
+    {"timeMs": 0, "fitMode": "cover"},
+    {"timeMs": 33, "fitMode": "contain"},
+    {"timeMs": 66, "fitMode": "contain"},
+    {"timeMs": 99, "fitMode": "cover"},
+], [])
 locked_trajectory = face._lock_initial_composition([
     {**row, "source": "detected", "confidence": 0.9}
     for row in trajectory
@@ -190,7 +196,7 @@ speaker_brief, speaker_state = face.choose_active_speaker([
 speaker_switched, speaker_state = face.choose_active_speaker([
     {"trackId": "face_01", "personId": "person_001", "confidence": 0.92, "mouthMotion": 0.05, "mouthOpen": 0.02},
     {"trackId": "face_02", "personId": "person_002", "confidence": 0.91, "mouthMotion": 0.95, "mouthOpen": 0.08},
-], speaker_state, 1000, 0.95)
+], speaker_state, 1500, 0.95)
 
 # The lightweight fallback must retain an id through brief profile-detector
 # misses and refuse to attach an obviously different-looking face to that id.
@@ -460,6 +466,7 @@ print(json.dumps({
     "filtered": filtered,
     "hasAppearanceHist": hist,
     "trajectory": trajectory,
+    "contentSafeRanges": content_safe_ranges,
     "lockedTrajectory": locked_trajectory,
     "smartReframe": smart_reframe,
     "noFaceSmartReframe": no_face_smart_reframe,
@@ -569,6 +576,7 @@ const payload = JSON.parse(output.trim()) as {
   filtered: Array<{ id: string }>;
   hasAppearanceHist: boolean;
   trajectory: Array<{ x: number; velocityX: number; estimatedDelayFrames: number; smoothingMode: string; trajectoryVersion: string }>;
+  contentSafeRanges: Array<[number, number]>;
   lockedTrajectory: Array<{ timeMs: number; source: string; velocityX: number; velocityY: number; smoothingMode: string; trajectoryVersion: string }>;
   smartReframe: { faceTracking: { enabled: boolean; smartReframe: boolean; trajectoryMode: string; allowZoom: boolean }; cropKeyframes: Array<{ timeMs: number; x: number; zoom: number; activeSpeakerTrackId?: string }> };
   noFaceSmartReframe: { faceTracking: { preserveSource?: boolean }; cropKeyframes: unknown[] };
@@ -667,7 +675,7 @@ for (let index = 0; index < payload.candidates.length; index += 1) {
 }
 
 assert.equal(payload.shortDuration, 15, "automatic clips honour the fast 15-second delivery option");
-assert.equal(payload.longDuration, 60, "maximum clip duration is enforced");
+assert.equal(payload.longDuration, 180, "maximum clip duration is enforced");
 assert.equal(payload.cleanName, "my-clip-final", "output names are safely normalised");
 assert(payload.customKeywords.includes("laugh"), "custom prompts receive semantic expansion");
 assert(payload.customKeywords.includes("fell"), "multiple custom terms are expanded");
@@ -754,7 +762,8 @@ assert.equal(payload.trajectory[4]?.x, payload.trajectory[0]?.x, "comfort zone i
 assert(payload.trajectory[5]?.x > 250, "offline trajectory responds at the first meaningful movement sample");
 assert.equal(payload.trajectory[5]?.estimatedDelayFrames, 0, "offline path records zero historical delay");
 assert.equal(payload.trajectory[5]?.smoothingMode, "offline-zero-phase", "trajectory declares the offline smoothing mode");
-assert.equal(payload.trajectory[5]?.trajectoryVersion, "offline-cinematic-v10-face-body-fbflow-per-frame", "trajectory records the forward/backward-flow per-frame face/body path version");
+assert.equal(payload.trajectory[5]?.trajectoryVersion, "offline-cinematic-v12-verified-subjects", "trajectory records the verified-subject content-safe path version");
+assert.deepEqual(payload.contentSafeRanges, [[0, 1], [1, 3], [3, 4]], "content-preserving frames are never smoothed into a moving face crop");
 assert.equal(payload.lockedTrajectory.length, 1, "locked composition emits one crop keyframe only");
 assert.equal(payload.lockedTrajectory[0]?.timeMs, 0, "locked composition is applied from the first output frame");
 assert.equal(payload.lockedTrajectory[0]?.source, "locked-composition", "locked composition records its non-moving source");

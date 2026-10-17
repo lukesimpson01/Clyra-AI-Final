@@ -10,7 +10,7 @@ Browser mic (WebRTC, @pipecat-ai/client-js + small-webrtc-transport)
   -> POST /voice/offer (Node: attaches system prompt + history server-side)
     -> POST /api/offer (Python: Pipecat SmallWebRTCTransport SDP answer)
         Silero VAD / turn detection
-        Fish Audio STT (/v1/asr, REST -- see below)
+        Local whisper.cpp STT (warm, on-device, rolling interim captions)
     <- Pipecat pipeline: STT -> LLM -> TTS, real barge-in/interruption
   -> DeepSeek (OpenAI-compatible) LLM, or the in-process Test Mode echo route
   -> Fish Audio TTS (wss://api.fish.audio/v1/tts/live, streaming)
@@ -22,26 +22,28 @@ speaking/transcript events over the WebRTC data channel; the frontend
 (`src/hooks/useVoiceCall.ts`) consumes them via `@pipecat-ai/client-js`
 (`RTVIEvent`), not custom timers.
 
-## Why Fish STT isn't fully streaming
+## Local speech recognition and live captions
 
-Fish Audio's `/v1/asr` is a REST, non-streaming, BETA endpoint (upload
-audio, get one transcript back) -- there's no live partial-transcript
-stream on Fish's side, unlike its TTS (which is real streaming websocket
-and is used as Pipecat's built-in `FishAudioTTSService`). `FishASRSTTService`
-(`backend/voice-pipeline/fish_stt.py`) subclasses Pipecat's
-`SegmentedSTTService`, which already buffers mic audio between VAD
-start/stop and calls the REST endpoint once per utterance for a fast
-**final** transcript. It also polls the growing buffer every ~700ms while
-VAD reports ongoing speech to approximate a live **partial** caption. This
-is a deliberate trade-off documented here, not a fabricated feature.
+Voice calls use Clyra's `WhisperCppSTTService`
+(`backend/voice-pipeline/whisper_cpp_stt.py`). It starts one local
+`whisper-server` process and keeps the selected model warm, so audio stays
+on-device and the model is not reloaded for every utterance. While VAD reports
+speech, it decodes an eight-second rolling audio window roughly every 750 ms
+and emits Pipecat `InterimTranscriptionFrame` events; when the turn ends it
+decodes the complete utterance for the final transcript.
+
+The call screen renders those genuine interim events as the subtitle directly
+below the Clyra presence. The finalized utterance remains visible through the
+brief thinking state and clears as the response starts. It is never a fake or
+timer-generated caption.
 
 ## Test Mode
 
 A persisted, off-by-default UI setting (Settings -> Voice). When on, the
 LLM stage is a loopback route served by the same Python process
-(`backend/voice-pipeline/echo_llm.py`) that streams back exactly what Fish
-STT heard, in the real OpenAI streaming chunk format `OpenAILLMService`
-expects -- so every other stage (WebRTC, VAD, Fish STT, Fish TTS, barge-in,
+(`backend/voice-pipeline/echo_llm.py`) that streams back exactly what local
+Whisper heard, in the real OpenAI streaming chunk format `OpenAILLMService`
+expects -- so every other stage (WebRTC, VAD, local Whisper, Fish TTS, barge-in,
 turn management) still runs for real, but DeepSeek is never called. Exists
 so voice-call development and testing doesn't spend DeepSeek credits.
 
@@ -81,11 +83,9 @@ the Pipecat pipeline above.
 
 ## Not yet verified in this environment
 
-Real Fish Audio STT/TTS behavior, barge-in-mid-sentence, a 10-minute soak,
-and reconnect-after-network-loss all need a real `FISH_AUDIO_API_KEY` (and
-ideally a recorded speech fixture at `tmp/voice-bench/wallace-cl-2.wav`) --
-this development machine doesn't have one configured. `tools/
-voice-call-webrtc-e2e.mjs` is built to exercise all of this once a key is
-set; without one, Fish's TTS websocket rejects the connection with HTTP 401
-and the pipeline reports that as a non-fatal `ErrorFrame`, which is exactly
-what was observed while building this.
+Real Fish Audio TTS behavior, barge-in-mid-sentence, a 10-minute soak, and
+reconnect-after-network-loss still need a real `FISH_AUDIO_API_KEY` (and
+ideally a recorded speech fixture at `tmp/voice-bench/wallace-cl-2.wav`).
+This development machine does not have one configured. Local Whisper can be
+tested without sending microphone audio off-device; a full call also needs the
+local model/runtime installed via `npm run setup:speech`.

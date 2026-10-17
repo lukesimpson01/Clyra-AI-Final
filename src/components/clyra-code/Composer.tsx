@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
 import { Check16, ChevronDown14, TodoChecklist, type TodoRow } from "./harness";
+import type { BriefPlatform } from "./appBrief";
+import { BriefHeader, BriefSkeleton, IOSHostNote } from "./BriefComponents";
+import { useClickAway } from "./useClickAway";
 
 export type ComposerContext = {
   id: string;
@@ -37,6 +40,11 @@ const EFFORT_LEVELS: Array<{ id: "low" | "medium" | "high"; name: string; detail
   { id: "high", name: "High", detail: "Plans deeply and verifies its own work" },
 ];
 
+/** Largest the input grows before it scrolls. */
+const FIELD_MAX_HEIGHT = 140;
+/** Shared height curve for the field, so growth and collapse feel like one motion. */
+const FIELD_HEIGHT_TRANSITION = "height 150ms cubic-bezier(0.22, 1, 0.36, 1)";
+
 const readableSize = (bytes: number) => bytes < 1024 * 1024
   ? `${Math.max(1, Math.round(bytes / 1024))} KB`
   : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -52,7 +60,6 @@ export function Composer({
   onStop,
   placeholder = "Ask Clyra to make a change…",
   welcome = false,
-  suggestion,
   onCommandChange,
   question,
   questionSubmitting = false,
@@ -61,6 +68,8 @@ export function Composer({
   effort = "medium",
   onEffortChange,
   plan,
+  brief = null,
+  onBriefClear,
 }: {
   running: boolean;
   model: string | null;
@@ -70,7 +79,6 @@ export function Composer({
   onStop: () => void;
   placeholder?: string;
   welcome?: boolean;
-  suggestion?: { text: string; nonce: number };
   onCommandChange?: (command: ComposerCommand | null) => void;
   question?: QuestionSet | null;
   questionSubmitting?: boolean;
@@ -80,6 +88,9 @@ export function Composer({
   onEffortChange?: (effort: "low" | "medium" | "high") => void;
   /** The agent's current plan, docked directly above the input card. */
   plan?: readonly TodoRow[] | null;
+  /** A chosen app type from the welcome chips. Shows the guided brief until the user types. */
+  brief?: BriefPlatform | null;
+  onBriefClear?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -89,10 +100,20 @@ export function Composer({
   const [commandIndex, setCommandIndex] = useState(0);
   const [effortMenu, setEffortMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // A hidden mirror of the field, laid out with identical classes, gives the
+  // true content height without touching the live textarea's height. Setting
+  // the textarea to "auto" to measure it would snap it, so the transition
+  // could never run.
+  const mirrorRef = useRef<HTMLDivElement | null>(null);
+  const [fieldHeight, setFieldHeight] = useState<number | undefined>(undefined);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
+  const effortMenuRef = useRef<HTMLDivElement | null>(null);
+  useClickAway(attachmentMenuRef, attachmentMenu, useCallback(() => setAttachmentMenu(false), []));
+  useClickAway(effortMenuRef, effortMenu, useCallback(() => setEffortMenu(false), []));
 
   useEffect(() => {
     const input = folderInputRef.current;
@@ -104,12 +125,6 @@ export function Composer({
   useEffect(() => () => {
     attachmentsRef.current.forEach((attachment) => attachment.preview && URL.revokeObjectURL(attachment.preview));
   }, []);
-
-  useEffect(() => {
-    if (!suggestion?.text) return;
-    setValue(suggestion.text);
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [suggestion]);
 
   const addFiles = useCallback((files: FileList | File[], kind: "image" | "file" | "folder" = "file") => {
     const next = Array.from(files).map((file) => ({
@@ -164,8 +179,16 @@ export function Composer({
     setCommand(null);
     onCommandChange?.(null);
     contexts.forEach((context) => onRemoveContext(context.id));
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
   }, [attachments, command, contexts, onCommandChange, onRemoveContext, onSubmit, value]);
+
+  // Measure after every render that can change the text, before paint, so the
+  // CSS height transition starts from the previous height on the same frame.
+  useLayoutEffect(() => {
+    const mirror = mirrorRef.current;
+    if (!mirror) return;
+    const measured = Math.min(FIELD_MAX_HEIGHT, mirror.offsetHeight);
+    setFieldHeight((previous) => (previous === measured ? previous : measured));
+  }, [value, welcome, brief]);
 
   const visibleCommands = commandQuery === null ? [] : CODING_COMMANDS.filter((item) => item.id.includes(commandQuery.toLowerCase()) || item.name.toLowerCase().includes(commandQuery.toLowerCase()));
   const selectCommand = useCallback((next: ComposerCommand) => {
@@ -183,9 +206,13 @@ export function Composer({
     const match = next.match(/(?:^|\s)\/([a-z]*)$/i);
     setCommandQuery(match ? match[1] : null);
     setCommandIndex(0);
-    event.currentTarget.style.height = "auto";
-    event.currentTarget.style.height = `${Math.min(140, event.currentTarget.scrollHeight)}px`;
   };
+
+  const fieldClass = cn(
+    "min-h-[38px] px-3 pt-2.5 text-[13px] leading-[1.45] tracking-[-0.008em]",
+    welcome && "min-h-[59px] px-4 pt-4 text-[14px]",
+    brief && !value && "min-h-[178px]",
+  );
 
   const attached = attachments.length > 0 || contexts.length > 0;
   const activeEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[1];
@@ -203,8 +230,6 @@ export function Composer({
         </motion.div>
       ) : null}
       <motion.div
-        layout
-        transition={{ layout: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
         className={cn("relative mx-auto overflow-visible rounded-[14px] border border-[var(--border-subtle)] bg-[var(--composer-surface)]", welcome ? "max-w-[620px] shadow-[0_4px_18px_rgba(0,0,0,0.025)] focus-within:border-[var(--border-medium)] focus-within:shadow-[0_4px_18px_rgba(0,0,0,0.035)]" : "max-w-[680px] shadow-[0_1px_2px_rgba(0,0,0,0.025),0_5px_18px_rgba(0,0,0,0.025)] focus-within:border-[var(--border-medium)] focus-within:shadow-[0_0_0_1px_rgba(57,119,246,0.12),0_5px_18px_rgba(0,0,0,0.03)]")}
       >
         <AnimatePresence mode="popLayout" initial={false}>
@@ -223,15 +248,55 @@ export function Composer({
           </motion.div> : null}
         </AnimatePresence>
         {command ? (() => { const item = CODING_COMMANDS.find((candidate) => candidate.id === command)!; const Icon = item.icon; return <div className="px-3 pt-2"><span className="inline-flex h-5 items-center gap-1 rounded-[6px] bg-[var(--accent-blue)]/[0.1] px-1.5 text-[10.5px] font-medium text-[var(--accent-blue)]"><Icon className="h-3 w-3" strokeWidth={1.7} />{item.name}<button type="button" aria-label={`Remove ${item.name} command`} onClick={() => { setCommand(null); onCommandChange?.(null); }} className="ml-0.5 rounded text-[var(--accent-blue)]/70 hover:text-[var(--accent-blue)]"><X className="h-2.5 w-2.5" /></button></span></div>; })() : null}
-        <textarea ref={textareaRef} value={value} rows={1} placeholder={placeholder} onChange={onValueChange} onKeyDown={(event) => { if (commandQuery !== null) { if (event.key === "ArrowDown") { event.preventDefault(); setCommandIndex((index) => Math.min(visibleCommands.length - 1, index + 1)); return; } if (event.key === "ArrowUp") { event.preventDefault(); setCommandIndex((index) => Math.max(0, index - 1)); return; } if (event.key === "Escape") { event.preventDefault(); setCommandQuery(null); return; } if (event.key === "Enter" && visibleCommands[commandIndex]) { event.preventDefault(); selectCommand(visibleCommands[commandIndex].id); return; } } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} className={cn("w-full min-h-[38px] resize-none bg-transparent px-3 pt-2.5 text-[13px] leading-[1.45] tracking-[-0.008em] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]", welcome && "min-h-[59px] px-4 pt-4 text-[14px]")} />
+        {brief ? <BriefHeader platform={brief} onClear={() => onBriefClear?.()} /> : null}
+        <div className="relative">
+        <div
+          ref={mirrorRef}
+          aria-hidden
+          className={cn(fieldClass, "pointer-events-none invisible absolute inset-x-0 top-0 h-auto whitespace-pre-wrap break-words")}
+        >
+          {`${value}​`}
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={value}
+          rows={1}
+          placeholder={brief ? "" : placeholder}
+          onChange={onValueChange}
+          style={{ height: fieldHeight, transition: FIELD_HEIGHT_TRANSITION }}
+          onKeyDown={(event) => { if (commandQuery !== null) { if (event.key === "ArrowDown") { event.preventDefault(); setCommandIndex((index) => Math.min(visibleCommands.length - 1, index + 1)); return; } if (event.key === "ArrowUp") { event.preventDefault(); setCommandIndex((index) => Math.max(0, index - 1)); return; } if (event.key === "Escape") { event.preventDefault(); setCommandQuery(null); return; } if (event.key === "Enter" && visibleCommands[commandIndex]) { event.preventDefault(); selectCommand(visibleCommands[commandIndex].id); return; } } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }}
+          className={cn("block w-full resize-none overflow-y-auto bg-transparent text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]", fieldClass)}
+        />
+        <AnimatePresence initial={false}>
+          {brief && !value ? (
+            <motion.div
+              key={brief}
+              className="pointer-events-none absolute inset-0"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.14 } }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <BriefSkeleton
+                platform={brief}
+                onUse={(line) => {
+                  setValue((previous) => (previous ? `${previous}\n${line}` : line));
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+        </div>
+        {brief === "ios" ? <IOSHostNote /> : null}
         <div className={cn("flex h-8 items-center gap-1 px-2 pb-1.5", welcome && "h-9 px-3 pb-2")}>
-          <div className="relative">
+          <div ref={attachmentMenuRef} className="relative">
             <button type="button" aria-label="Add attachment" onClick={() => setAttachmentMenu((open) => !open)} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><Plus className="h-4 w-4" strokeWidth={1.7} /></button>
             <AnimatePresence>{attachmentMenu ? <motion.div initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 3, scale: 0.98 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }} className="absolute bottom-8 left-0 z-30 w-[176px] rounded-[10px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"><IconComponent className="h-3.5 w-3.5 text-[var(--text-tertiary)]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
-          <div className="relative">
+          <div ref={effortMenuRef} className="relative">
             <button
               type="button"
               className="dsh-chip"

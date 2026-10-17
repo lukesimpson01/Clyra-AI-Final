@@ -37,7 +37,8 @@ export function StateDot({ state }: { state: "done" | "warning" | "error" }) {
 
 export type DisclosureRowProps = {
   icon: ReactNode;
-  title: string;
+  /** Text, or a node such as a shimmering label while the phase is still running. */
+  title: ReactNode;
   open: boolean;
   expandable: boolean;
   onToggle: () => void;

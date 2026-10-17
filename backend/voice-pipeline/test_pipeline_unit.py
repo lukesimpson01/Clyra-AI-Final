@@ -45,7 +45,7 @@ def test_health_endpoint():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["architecture"]["stt"] == "fish-audio"
+    assert body["architecture"]["stt"] == "local-whisper.cpp"
 
 
 def test_echo_route_streams_back_last_user_message():

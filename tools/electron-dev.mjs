@@ -23,7 +23,14 @@ try {
 }
 
 const electronBinary = path.resolve("node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
-const env = { ...process.env, CLYRA_ELECTRON_DEV: "1" };
+// Load the ABI-correct better-sqlite3 build for Electron's Node so the
+// desktop service can run alongside the web dev server (tools/sqlite-abi).
+const sqlitePreload = path.resolve("tools", "sqlite-abi-preload.cjs");
+const env = {
+  ...process.env,
+  CLYRA_ELECTRON_DEV: "1",
+  NODE_OPTIONS: [`--require "${sqlitePreload}"`, process.env.NODE_OPTIONS].filter(Boolean).join(" "),
+};
 // Cursor/agent shells can inherit ELECTRON_RUN_AS_NODE from helper processes.
 // That forces Electron to behave like plain Node and breaks `import from "electron"`.
 delete env.ELECTRON_RUN_AS_NODE;

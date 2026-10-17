@@ -51,7 +51,11 @@ const root = rootHost.__clyraRoot ?? createRoot(rootElement);
 rootHost.__clyraRoot = root;
 
 const embedParams = new URLSearchParams(window.location.search);
-if (embedParams.get("vibe_embed") === "1") {
+if (embedParams.get("shortsRender")) {
+  // Headless frame renderer for Shorts exports. Mounts only the shared canvas.
+  const shortsJobId = embedParams.get("shortsRender") || "";
+  void import("./shorts/engine/RenderHost.tsx").then((m) => root.render(<m.ShortsRenderHost jobId={shortsJobId} />));
+} else if (embedParams.get("vibe_embed") === "1") {
   void import("./vibe-embed.tsx").then((m) => {
     /* No StrictMode: double mount would re-run Babel preview boot twice in the embed iframe. */
     root.render(<m.default />);

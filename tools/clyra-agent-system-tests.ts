@@ -26,23 +26,22 @@ const runtime = (tool: ClyraTool, options: Partial<ConstructorParameters<typeof 
 
 // Registry validation tests against every actual adapter shape, not a rendered catalog.
 const bindings = Object.fromEntries([
-  "chat.ask", "notes.search", "notes.create", "notes.read", "maps.search", "browser.navigate", "browser.inspect", "browser.action", "browser.search",
+  "chat.ask", "notes.search", "notes.create", "notes.read", "browser.navigate", "browser.inspect", "browser.action", "browser.search",
   "vibe.createProject", "vibe.modifyFiles", "vibe.build", "vibe.preview", "media.create", "media.render", "computer.observe", "computer.action",
   "spotify.search", "spotify.control", "email.search", "email.draft", "email.send", "project.memory.get", "project.memory.update",
+  "files.list", "files.read", "files.write", "files.move", "files.delete", "terminal.run", "git.status", "git.diff", "git.commit",
 ].map((id) => [id, async () => ({ ok: true, evidence: [{ kind: "record" as const, value: id }] })])) as ClyraToolBindings;
 const registry = createClyraToolRegistry(bindings);
 equal(validateToolRegistry(registry).length, 0, "complete catalog must validate");
-equal(registry.length, 24, "all catalog adapter contracts are registered when their bindings are present");
+equal(registry.length, 32, "all catalog adapter contracts are registered when their bindings are present");
 const liveServerRegistry = createClyraToolRegistry({
   "notes.search": bindings["notes.search"],
   "notes.create": bindings["notes.create"],
   "notes.read": bindings["notes.read"],
-  "maps.search": bindings["maps.search"],
   "browser.search": bindings["browser.search"],
 });
 equal(validateToolRegistry(liveServerRegistry).length, 0, "live server bindings must validate");
-equal(liveServerRegistry.length, 5, "the web server must expose only its five genuinely bound tools");
-check(!createClyraToolRegistry({ "browser.search": bindings["browser.search"] }).some((tool) => tool.id === "maps.search"), "Maps must disappear when its real binding is unavailable");
+equal(liveServerRegistry.length, 4, "the web server must expose only its genuinely bound tools");
 equal(validateToolRegistry([baseTool(), baseTool()]).length > 0, true, "duplicate IDs are rejected");
 
 // Deterministic state machine rejects impossible transitions.
@@ -65,6 +64,57 @@ result = await new MissionRuntime({ objective: "handoff", steps: [
   { id: "write", description: "consume", toolId: consumer.id, args: { value: "$steps.research.data.value" }, dependsOn: ["research"], status: "pending" },
 ] }, { tools: [producer, consumer], verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length) }) }, "handoff").run();
 equal(result.state, "COMPLETED"); equal(received, "verified handoff"); equal(result.outputs.research.data?.value, "verified handoff");
+
+// Independent, explicitly read-only graph nodes must overlap. The scheduler
+// keeps the following dependent synthesis node behind both verified reads.
+let activeReads = 0;
+let peakReads = 0;
+const parallelRead = baseTool({
+  id: "test.parallelRead",
+  canRunConcurrently: true,
+  execute: async (args) => {
+    activeReads += 1;
+    peakReads = Math.max(peakReads, activeReads);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    activeReads -= 1;
+    return { ok: true, data: { value: String((args as { value?: string }).value || "") }, evidence: [{ kind: "record", value: `read-${String((args as { value?: string }).value || "")}` }] };
+  },
+});
+let synthesisRan = false;
+const synthesis = baseTool({ id: "test.synthesis", execute: async () => { synthesisRan = true; return { ok: true, evidence: [{ kind: "record", value: "synthesis" }] }; } });
+result = await new MissionRuntime({ objective: "parallel research then synthesize", steps: [
+  { id: "web", description: "read web", toolId: parallelRead.id, args: { value: "web" }, dependsOn: [], status: "queued" },
+  { id: "files", description: "read files", toolId: parallelRead.id, args: { value: "files" }, dependsOn: [], status: "queued" },
+  { id: "synthesize", description: "synthesize", toolId: synthesis.id, args: { value: "complete" }, dependsOn: ["web", "files"], status: "queued" },
+] }, { tools: [parallelRead, synthesis], verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length), evidence: toolResult.evidence }) }, "parallel-reads").run();
+equal(result.state, "COMPLETED");
+check(peakReads >= 2, "independent read-only nodes should run concurrently");
+check(synthesisRan, "dependent synthesis should run only after the reads verify");
+equal(result.plan.steps.find((step) => step.id === "web")?.verification?.status, "verified");
+check(Boolean(result.plan.steps.find((step) => step.id === "files")?.checkpoint), "a completed node keeps checkpoint data");
+
+// A write-capable adapter must never join the read-only fan-out, even if an
+// adapter accidentally advertises concurrent support.
+let activeWrites = 0;
+let peakWrites = 0;
+const guardedWrite = baseTool({
+  id: "test.guardedWrite",
+  permissions: ["read", "write"],
+  canRunConcurrently: true,
+  execute: async () => {
+    activeWrites += 1;
+    peakWrites = Math.max(peakWrites, activeWrites);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    activeWrites -= 1;
+    return { ok: true, evidence: [{ kind: "record", value: "write" }] };
+  },
+});
+result = await new MissionRuntime({ objective: "serial writes", steps: [
+  { id: "first", description: "first write", toolId: guardedWrite.id, args: { value: "one" }, dependsOn: [], status: "queued" },
+  { id: "second", description: "second write", toolId: guardedWrite.id, args: { value: "two" }, dependsOn: [], status: "queued" },
+] }, { tools: [guardedWrite], verify: async (_step, toolResult) => ({ ok: Boolean(toolResult.evidence?.length), evidence: toolResult.evidence }) }, "serial-writes").run();
+equal(result.state, "COMPLETED");
+equal(peakWrites, 1, "write-capable nodes retain a serial safety boundary");
 
 // Schema checks happen before implementation invocation.
 let calls = 0;
@@ -102,12 +152,28 @@ const cancellable = baseTool({ execute: async (_args, context) => await new Prom
 const pausable = runtime(cancellable);
 const pausedRun = pausable.run(); await new Promise((resolve) => setTimeout(resolve, 5)); pausable.pause();
 result = await pausedRun; equal(result.state, "PAUSED"); check(observedAbort, "pause must propagate cancellation to the active child");
+// An adapter is allowed to finish late (for example after a network request
+// ignores abort). Its successful result must never carry a paused task over
+// the control boundary and mark work complete.
+let finishLateTool!: () => void;
+const ignoresAbort = baseTool({ execute: async () => await new Promise<ToolResult>((resolve) => {
+  finishLateTool = () => resolve({ ok: true, evidence: [{ kind: "record", value: "late-result" }] });
+}) });
+const pausedLate = runtime(ignoresAbort);
+const pausedLateRun = pausedLate.run();
+await new Promise((resolve) => setTimeout(resolve, 5));
+pausedLate.pause();
+finishLateTool();
+result = await pausedLateRun;
+equal(result.state, "PAUSED", "late tool completion must respect Pause");
+equal(result.plan.steps[0]?.status, "pending", "a late result must not mark the pending step complete");
+check(!result.outputs.one, "a paused task must not retain an unverified late result");
 // Explicit Stop is terminal and does not permit a delayed follow-up action.
 const stoppable = runtime(cancellable); const stoppedRun = stoppable.run(); await new Promise((resolve) => setTimeout(resolve, 5)); stoppable.cancel();
 result = await stoppedRun; equal(result.state, "CANCELLED");
 
 // Routing matrix: 100 prompts intentionally exercises native/API/browser/computer priority.
-const available = new Set(["spotify.control", "browser.search", "maps.search"]);
+const available = new Set(["spotify.control", "browser.search"]);
 const cases: Array<[string, string, string]> = [];
 for (let i = 0; i < 25; i += 1) cases.push([`What is ${i + 2} times 8?`, "DIRECT_RESPONSE", "chat"]);
 for (let i = 0; i < 15; i += 1) cases.push([`Play my study playlist ${i}`, "SINGLE_TOOL", "spotify"]);
@@ -117,11 +183,9 @@ for (let i = 0; i < 15; i += 1) cases.push([`Research competitor company ${i}`, 
 for (let i = 0; i < 10; i += 1) cases.push([`Open Calculator using Computer Use ${i}`, "SINGLE_TOOL", "computer"]);
 equal(cases.length, 100);
 for (const [promptText, kind, category] of cases) { const decision = routeObjective(promptText, available); equal(decision.kind, kind, promptText); equal(decision.category, category, promptText); }
-const noMaps = routeObjective("Find somewhere good to eat nearby", new Set(["browser.search"]));
-equal(noMaps.category, "browser"); equal(noMaps.strategy, "structured-api");
-const geocode = routeObjective("Locate Sydney Opera House", new Set(["maps.search", "browser.search"]));
-equal(geocode.category, "maps"); equal(geocode.strategy, "native");
-const plainNote = routeObjective("Make a note called Route QA and add verified.", new Set(["notes.create", "maps.search", "browser.search"]));
+const nearbySearch = routeObjective("Find somewhere good to eat nearby", new Set(["browser.search"]));
+equal(nearbySearch.category, "browser"); equal(nearbySearch.strategy, "structured-api");
+const plainNote = routeObjective("Make a note called Route QA and add verified.", new Set(["notes.create", "browser.search"]));
 equal(plainNote.kind, "SINGLE_TOOL"); equal(plainNote.category, "notes"); equal(plainNote.strategy, "native");
 equal(looksLikeWebSearchQuery("What is 14 × 8?"), false, "arithmetic must not trigger web research");
 equal(looksLikeWebSearchQuery("What is the current price of X?"), true, "fresh facts can use research");

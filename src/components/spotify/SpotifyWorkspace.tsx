@@ -1,1400 +1,916 @@
 /**
- * Full Spotify workspace — a real, Spotify-styled Home / Search / Library
- * client living inside Clyra, backed by the same `useSpotifyPlayback` hook
- * (and therefore the same connection/tokens) as the ambient notch. Opened
- * from the app launcher, or via the "expand" affordance on the notch.
+ * Clyra Music — a full Spotify-layout client (Home, Search & Browse, Your
+ * Library, playlists, albums, artists, lyrics, queue, full-screen player)
+ * living inside Clyra. It runs on the same `useSpotifyPlayback` hook, and
+ * therefore the same Spotify connection, as the ambient notch.
  *
- * Visually this mirrors Spotify's own desktop layout (persistent top search
- * bar with back/forward history, a collapsed icon-only playlist rail, a
- * "Now Playing" dock, and a full transport bar) but in a light theme with
- * Clyra's own accent, type, radius and shadow tokens (see the constants
- * below — lifted from ClyraComposerShell/index.css, not re-invented) and
- * the house motion language (AppLauncher's springs/easing) instead of flat
- * CSS transitions, so it reads as part of the same app as chat.
+ * Layout, spacing and behaviour follow Spotify's desktop app; the palette is
+ * the requested inversion (green → blue, black → white). All styling lives in
+ * spotify.css; the views are in views.tsx, shared pieces in lists.tsx / ui.tsx
+ * and the menu/toast/liked-cache plumbing in ctx.tsx.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactElement, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
 import type { SpotifyPlaybackHook } from "../chat/SpotifyNotch";
-import type { SpotifyPlaylist, SpotifyPlaylistItem, SpotifyTrack } from "../../lib/electron-runtime";
+import type { SpotifyAlbum, SpotifyArtist, SpotifyPlaylist, SpotifyTrack } from "../../lib/electron-runtime";
+import { NewPlaylistDialog, SpProvider, useLikedCache, useMenuHost, useSp, useToastHost, viewKey, type MenuItem, type SpContext, type ViewEntry } from "./ctx";
+import { AlbumPage, ArtistPage, HomeView, LibraryView, LikedPage, LyricsView, PageWash, PlaylistPage, SearchView, activeLyricIndexFor, centerLyric, copyLink, useArtworkTint, useTrackLyrics, type HomeFilter, type SearchTab } from "./views";
+import { mergeContextRecency, playlistIdFromUri, readPlaylistRecency, sortPlaylistsByRecency, writePlaylistRecency } from "./music-state";
+import { Artwork, Icon, IconBtn, LikedArt, MusicMark, PlayBtn, activateOnKey, bigImage, fmt, initials, midImage, type IconName } from "./ui";
+import "./spotify.css";
 
-// Clyra's own tokens (ClyraComposerShell.tsx / index.css), not re-picked hexes.
-const ACCENT = "#1E6FFF";
-const ACCENT_HOVER = "#3D82FF";
-const ACCENT_TINT = "#EEF3FF";
-const ACCENT_GLOW = "rgba(30,111,255,.5)";
-const FOCUS_RING = "rgba(0,82,251,.22)";
-const BG = "#FFFFFF";
-const SIDEBAR_BG = "#F7F7F6";
-const PANEL_BG = "#F4F4F3";
-const CARD_BG = "#FFFFFF";
-const CARD_BORDER = "rgba(0,0,0,0.07)";
-const CARD_BORDER_STRONG = "rgba(0,0,0,0.1)";
-const CARD_HOVER = "#F7F9FF";
-const TEXT = "#15171C";
-const TEXT_MUTED = "#63676F";
-const TEXT_FAINT = "#9CA0AA";
-const DANGER = "#B3261E";
-const FONT = "'Instrument Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif";
+/* ── Persistent UI prefs ─────────────────────────────────────────────────── */
 
-// Radius scale: sm/md/lg/xl (index.css --clyra-radius-*), pill for anything button-shaped.
-const R_SM = 6;
-const R_MD = 8;
-const R_LG = 12;
-const R_XL = 14;
-const R_PILL = 999;
+const PREFS_KEY = "clyra-music-ui-v2";
+type Prefs = { libCollapsed: boolean; libWidth: number; libView: "list" | "compact" | "grid"; libSort: "recents" | "alpha" | "creator"; right: "now" | "queue" | null };
+const DEFAULT_PREFS: Prefs = { libCollapsed: false, libWidth: 320, libView: "list", libSort: "recents", right: null };
 
-// Shadow tokens (index.css --clyra-shadow-*).
-const SHADOW_POPOVER = "0 8px 24px rgba(15,23,42,.08)";
-const SHADOW_ELEVATED = "0 1px 2px rgba(15,23,42,.03), 0 5px 18px rgba(15,23,42,.05)";
-const SHADOW_FLOATING = "0 20px 48px rgba(15,23,42,.16)";
-
-// House easing (AppLauncher's LAUNCHER_OPEN curve, reused app-wide for "arrive" motion).
-const EASE_ARRIVE = [0.22, 1, 0.36, 1] as const;
-// House springs (AppLauncher.tsx) — tight, near-critically-damped, used for anything
-// that should feel like it's being tracked/pressed rather than eased.
-const SPRING_TIGHT = { type: "spring", stiffness: 780, damping: 44, mass: 0.1 } as const;
-// Softer settle, used for panels/cards arriving rather than tracking a pointer.
-const SPRING_SOFT = { type: "spring", stiffness: 320, damping: 28, mass: 0.4 } as const;
-
-const MUSIC_ICON = "/icons/clyra-music.svg";
-
-function fmt(ms: number) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+function readPrefs(): Prefs {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PREFS_KEY) || "{}") as Partial<Prefs>;
+    return {
+      libCollapsed: Boolean(parsed.libCollapsed),
+      libWidth: Math.min(480, Math.max(260, Number(parsed.libWidth) || DEFAULT_PREFS.libWidth)),
+      libView: parsed.libView === "compact" || parsed.libView === "grid" ? parsed.libView : "list",
+      libSort: parsed.libSort === "alpha" || parsed.libSort === "creator" ? parsed.libSort : "recents",
+      right: parsed.right === "now" || parsed.right === "queue" ? parsed.right : null,
+    };
+  } catch {
+    return DEFAULT_PREFS;
+  }
 }
 
-function fmtDate(iso: string) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-}
+/* ── Slider (progress + volume) ──────────────────────────────────────────── */
 
-function fmtDuration(ms: number) {
-  const totalMinutes = Math.round(ms / 60000);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  return h > 0 ? `${h} hr ${m} min` : `${m} min`;
-}
-
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 5) return "Good night";
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
-
-function initials(name: string) {
-  return name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
-}
-
-function activateFromKeyboard(event: KeyboardEvent<HTMLElement>, action: () => void) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  action();
-}
-
-type ViewEntry =
-  | { type: "home" }
-  | { type: "search" }
-  | { type: "library" }
-  | { type: "playlist"; playlist: SpotifyPlaylist };
-
-function viewKey(v: ViewEntry) {
-  return v.type === "playlist" ? `playlist:${v.playlist.id}` : v.type;
-}
-
-const NAV_ITEMS: { id: "home" | "search" | "library"; label: string; icon: (active: boolean) => ReactElement }[] = [
-  {
-    id: "home",
-    label: "Home",
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill={active ? TEXT : "none"} stroke="currentColor" strokeWidth="2">
-        <path d="M3 11.5 12 4l9 7.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-  },
-  {
-    id: "search",
-    label: "Search",
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.6 : 2}>
-        <circle cx="11" cy="11" r="7" />
-        <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    id: "library",
-    label: "Your Library",
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.6 : 2}>
-        <path d="M3 5v14M9 3v18M15 6l3 15" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-  },
-];
-
-function ChevronIcon({ dir }: { dir: "back" | "forward" }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6">
-      <path d={dir === "back" ? "m15 6-6 6 6 6" : "m9 6 6 6-6 6"} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function PlayGlyph({ size = 17, color = "#fff" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-
-function AlbumFallback({ size = 36 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={TEXT_FAINT} strokeWidth="1.5">
-      <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-    </svg>
-  );
-}
-
-/** Image with a graceful fallback glyph on missing/broken art — used for every
- *  piece of Spotify artwork so a bad URL never shows a browser broken-image icon. */
-function Artwork({ src, size, radius = R_MD, iconSize }: { src?: string; size: number | string; radius?: number; iconSize?: number }) {
-  const [broken, setBroken] = useState(false);
-  const dim = typeof size === "number" ? `${size}px` : size;
+function Slider({ value, max, label, disabled, onPreview, onCommit, step = 1, className = "" }: { value: number; max: number; label: string; disabled?: boolean; onPreview?: (value: number) => void; onCommit: (value: number) => void; step?: number; className?: string }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  const shown = drag ?? value;
+  const pct = max > 0 ? Math.max(0, Math.min(100, (shown / max) * 100)) : 0;
+  const read = (event: { clientX: number }) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
+    return Math.round(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * max);
+  };
+  const down = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (disabled || max <= 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const next = read(event);
+    setDrag(next);
+    onPreview?.(next);
+  };
+  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag === null) return;
+    const next = read(event);
+    setDrag(next);
+    onPreview?.(next);
+  };
+  const up = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag === null) return;
+    const next = read(event);
+    setDrag(null);
+    onCommit(next);
+  };
   return (
     <div
-      style={{
-        width: dim,
-        height: dim,
-        flexShrink: 0,
-        borderRadius: radius,
-        overflow: "hidden",
-        background: "#EDEEF1",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+      ref={ref}
+      className={`sp-slider ${drag !== null ? "is-drag" : ""} ${disabled ? "is-off" : ""} ${className}`}
+      style={{ ["--pct" as string]: `${pct}%` }}
+      role="slider"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(shown)}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : 0}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={() => setDrag(null)}
+      onKeyDown={(event) => {
+        if (disabled) return;
+        const delta = event.key === "ArrowRight" || event.key === "ArrowUp" ? step : event.key === "ArrowLeft" || event.key === "ArrowDown" ? -step : 0;
+        if (!delta) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onCommit(Math.max(0, Math.min(max, value + delta)));
       }}
     >
-      {src && !broken ? (
-        <img src={src} alt="" onError={() => setBroken(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      ) : (
-        <AlbumFallback size={iconSize ?? (typeof size === "number" ? Math.max(14, size * 0.4) : 24)} />
-      )}
+      <div className="sp-slider__track"><div className="sp-slider__fill" /></div>
+      <div className="sp-slider__thumb" />
     </div>
   );
 }
 
-/** Hover-reveal circular play button used on cards/tiles/rows — clicking it
- *  (not the card body) is one of the only two ways to actually start playback. */
-function HoverPlayButton({ visible, onPlay, size = 42 }: { visible: boolean; onPlay: () => void; size?: number }) {
+/* ── Player bar ──────────────────────────────────────────────────────────── */
+
+function ArtistLinks({ track }: { track: SpotifyTrack }) {
+  const { openArtist } = useSp();
   return (
-    <motion.button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onPlay();
-      }}
-      aria-label="Play"
-      initial={false}
-      animate={{ opacity: visible ? 1 : 0, y: visible ? 0 : 6, scale: visible ? 1 : 0.88 }}
-      transition={SPRING_TIGHT}
-      whileHover={visible ? { scale: 1.06 } : undefined}
-      whileTap={visible ? { scale: 0.92 } : undefined}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: ACCENT,
-        border: "none",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        boxShadow: `0 8px 16px ${ACCENT_GLOW}`,
-        pointerEvents: visible ? "auto" : "none",
-        flexShrink: 0,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = ACCENT_HOVER)}
-      onMouseLeave={(e) => (e.currentTarget.style.background = ACCENT)}
-    >
-      <PlayGlyph size={size < 40 ? 14 : 17} />
-    </motion.button>
+    <>
+      {track.artists.map((artist, index) => (
+        <span key={`${artist.name}-${index}`}>{index > 0 ? ", " : ""}<span className="sp-link" onClick={() => openArtist(artist)}>{artist.name}</span></span>
+      ))}
+    </>
   );
 }
 
-function PlaylistCard({ playlist, onOpen, onPlay }: { playlist: SpotifyPlaylist; onOpen: () => void; onPlay: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <motion.div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={onOpen}
-      onDoubleClick={onPlay}
-      onKeyDown={(event) => activateFromKeyboard(event, onOpen)}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open playlist ${playlist.name}`}
-      whileTap={{ scale: 0.985 }}
-      animate={{ y: hover ? -3 : 0 }}
-      transition={SPRING_TIGHT}
-      style={{
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        padding: 14,
-        borderRadius: R_LG,
-        background: hover ? CARD_HOVER : CARD_BG,
-        border: `1px solid ${hover ? CARD_BORDER_STRONG : CARD_BORDER}`,
-        cursor: "pointer",
-        boxShadow: hover ? SHADOW_POPOVER : SHADOW_ELEVATED,
-      }}
-    >
-      <div style={{ position: "relative", width: "100%", aspectRatio: "1" }}>
-        <Artwork src={playlist.images?.[0]?.url} size="100%" radius={R_MD} iconSize={36} />
-        <div style={{ position: "absolute", right: 8, bottom: 8 }}>
-          <HoverPlayButton visible={hover} onPlay={onPlay} />
-        </div>
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{playlist.name}</div>
-      <div style={{ fontSize: 12, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>By {playlist.owner?.display_name || "Clyra Music"}</div>
-    </motion.div>
-  );
-}
+function PlayerBar({ rightPanel, onRight, onExpand, lyricsOpen, onLyrics }: { rightPanel: Prefs["right"]; onRight: (mode: "now" | "queue") => void; onExpand: () => void; lyricsOpen: boolean; onLyrics: () => void }) {
+  const { playback, openAlbum, isLiked, toggleLike, toast } = useSp();
+  const { track, isPlaying, progressMs, volume, device, devices, onPrev, onNext, seekTo, setVolumePercent, refreshDevices, transferToDevice, shuffleOn, toggleShuffle, repeatMode, cycleRepeat, error, startingDevice } = playback;
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [restore, setRestore] = useState<number | null>(null);
+  const [scrub, setScrub] = useState<number | null>(null);
+  const liked = track ? isLiked(track) : false;
 
-function QuickTile({ playlist, onOpen, onPlay }: { playlist: SpotifyPlaylist; onOpen: () => void; onPlay: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <motion.div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={onOpen}
-      onDoubleClick={onPlay}
-      onKeyDown={(event) => activateFromKeyboard(event, onOpen)}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open playlist ${playlist.name}`}
-      whileTap={{ scale: 0.985 }}
-      style={{
-        position: "relative",
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-        borderRadius: R_LG,
-        overflow: "hidden",
-        background: hover ? CARD_HOVER : CARD_BG,
-        border: `1px solid ${hover ? CARD_BORDER_STRONG : CARD_BORDER}`,
-        cursor: "pointer",
-        transition: `background .18s ${EASE_STR}, border-color .18s ${EASE_STR}`,
-        minWidth: 0,
-      }}
-    >
-      <Artwork src={playlist.images?.[0]?.url} size={56} radius={0} iconSize={20} />
-      <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: 1 }}>
-        {playlist.name}
-      </div>
-      <div style={{ marginRight: 10 }}>
-        <HoverPlayButton visible={hover} onPlay={onPlay} />
-      </div>
-    </motion.div>
-  );
-}
+  useEffect(() => {
+    if (!devicesOpen) return;
+    const close = (event: MouseEvent) => { if (!(event.target as HTMLElement | null)?.closest(".sp-device-pop, .sp-device-toggle")) setDevicesOpen(false); };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [devicesOpen]);
 
-function TrackRow({ track, index, playing, onPlay, onQueue }: { track: SpotifyTrack; index: number; playing: boolean; onPlay: () => void; onQueue?: () => void }) {
-  const [hover, setHover] = useState(false);
+  const volumeIcon: IconName = volume === 0 ? "volume0" : volume < 40 ? "volume1" : "volume2";
   return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onDoubleClick={onPlay}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "24px 1fr auto auto",
-        alignItems: "center",
-        gap: 14,
-        padding: "8px 12px",
-        borderRadius: R_SM,
-        background: hover ? CARD_HOVER : "transparent",
-        transition: `background .15s ${EASE_STR}`,
-        cursor: "default",
-      }}
-    >
-      <button
-        type="button"
-        onClick={onPlay}
-        aria-label="Play"
-        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13, color: playing ? ACCENT : TEXT_MUTED, textAlign: "center" }}
-      >
-        {hover && !playing ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill={TEXT}><path d="M8 5v14l11-7z" /></svg>
-        ) : playing ? (
-          <PlayingGlyph />
+    <footer className="sp-player" aria-label="Player">
+      <div className="sp-player__left">
+        {track ? (
+          <>
+            <div className="sp-player__art">
+              <button type="button" aria-label="Open full screen player" onClick={onExpand} style={{ width: "100%", height: "100%", display: "block" }}>
+                <Artwork src={midImage(track.album?.images)} eager />
+              </button>
+              <span className="sp-player__expand" aria-hidden><Icon name="expand" size={12} /></span>
+            </div>
+            <div className="sp-player__text">
+              <div className="sp-player__name sp-ellipsis"><span className="sp-link" onClick={() => openAlbum(track.album, track)}>{track.name}</span></div>
+              <div className="sp-player__artist sp-ellipsis"><ArtistLinks track={track} /></div>
+            </div>
+            <button
+              type="button"
+              className={`sp-ctl ${liked ? "" : ""}`}
+              style={liked ? { color: "var(--sp-accent)" } : undefined}
+              aria-label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"}
+              aria-pressed={liked}
+              onClick={() => { toggleLike(track); toast(liked ? "Removed from Liked Songs" : "Added to Liked Songs"); }}
+            >
+              <Icon name={liked ? "checkCircle" : "plusCircle"} size={18} />
+            </button>
+          </>
         ) : (
-          index + 1
+          <div style={{ fontSize: 13, color: "var(--sp-sub)" }}>{startingDevice ? "Opening Spotify…" : "Pick something to play"}</div>
         )}
-      </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-        <Artwork src={track.album?.images?.[track.album.images.length - 1]?.url || track.album?.images?.[0]?.url} size={40} iconSize={16} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 500, color: playing ? ACCENT : TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</div>
-          <div style={{ fontSize: 12.5, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.artists.map((a) => a.name).join(", ")}</div>
+      </div>
+
+      <div className="sp-player__mid">
+        <div className="sp-player__btns">
+          <button type="button" className={`sp-ctl ${shuffleOn ? "is-on" : ""}`} aria-label="Shuffle" aria-pressed={shuffleOn} onClick={toggleShuffle}><Icon name="shuffle" size={18} /></button>
+          <button type="button" className="sp-ctl" aria-label="Previous" onClick={onPrev}><Icon name="prev" size={20} /></button>
+          <button type="button" className="sp-playpause" aria-label={isPlaying ? "Pause" : "Play"} onClick={playback.onToggle}>
+            {startingDevice ? <span className="sp-spin" /> : <Icon name={isPlaying ? "pause" : "play"} size={16} />}
+          </button>
+          <button type="button" className="sp-ctl" aria-label="Next" onClick={onNext}><Icon name="next" size={20} /></button>
+          <button type="button" className={`sp-ctl ${repeatMode !== "off" ? "is-on" : ""}`} aria-label={repeatMode === "track" ? "Repeat one" : repeatMode === "context" ? "Repeat all" : "Repeat"} aria-pressed={repeatMode !== "off"} onClick={cycleRepeat}><Icon name={repeatMode === "track" ? "repeat1" : "repeat"} size={18} /></button>
+        </div>
+        <div className="sp-player__bar">
+          <span className="sp-time sp-time--l">{track ? fmt(scrub ?? progressMs) : "0:00"}</span>
+          <Slider label="Playback position" value={track ? Math.min(progressMs, track.duration_ms) : 0} max={track?.duration_ms ?? 0} disabled={!track} step={5000} onPreview={setScrub} onCommit={(next) => { setScrub(null); seekTo(next); }} />
+          <span className="sp-time">{track ? fmt(track.duration_ms) : "0:00"}</span>
         </div>
       </div>
-      <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>{fmt(track.duration_ms)}</div>
-      {onQueue ? (
-        <button type="button" onClick={onQueue} title="Add to queue" aria-label={`Add ${track.name} to queue`} style={{ opacity: hover ? 1 : 0, border: "none", background: "transparent", color: TEXT_MUTED, cursor: "pointer", padding: 4, transition: "opacity .15s ease" }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h10M4 12h10M4 18h6M18 15v6M15 18h6" strokeLinecap="round" /></svg>
+
+      <div className="sp-player__right">
+        <button type="button" className={`sp-ctl ${rightPanel === "now" ? "is-on" : ""}`} aria-label="Now playing view" aria-pressed={rightPanel === "now"} onClick={() => onRight("now")}><Icon name="nowPlaying" size={16} /></button>
+        <button type="button" className={`sp-ctl ${lyricsOpen ? "is-on" : ""}`} aria-label="Lyrics" aria-pressed={lyricsOpen} onClick={onLyrics}><Icon name="lyrics" size={16} /></button>
+        <button type="button" className={`sp-ctl ${rightPanel === "queue" ? "is-on" : ""}`} aria-label="Queue" aria-pressed={rightPanel === "queue"} onClick={() => onRight("queue")}><Icon name="queue" size={16} /></button>
+        <button type="button" className={`sp-ctl sp-device-toggle ${device ? "is-on" : ""}`} aria-label="Connect to a device" aria-expanded={devicesOpen} onClick={() => { setDevicesOpen((value) => !value); refreshDevices(); }}><Icon name="device" size={16} /></button>
+        <button
+          type="button"
+          className="sp-ctl"
+          aria-label={volume > 0 ? "Mute" : "Unmute"}
+          onClick={() => {
+            if (volume > 0) { setRestore(volume); setVolumePercent(0); } else { setVolumePercent(restore || 50); setRestore(null); }
+          }}
+        >
+          <Icon name={volumeIcon} size={16} />
         </button>
-      ) : <span />}
+        <Slider className="sp-player__vol" label="Volume" value={volume} max={100} step={5} onPreview={setVolumePercent} onCommit={setVolumePercent} />
+        <button type="button" className="sp-ctl" aria-label="Full screen" onClick={onExpand} disabled={!track}><Icon name="expand" size={16} /></button>
+        {devicesOpen ? (
+          <div className="sp-device-pop" role="dialog" aria-label="Connect to a device">
+            <h3>Connect to a device</h3>
+            {devices.length === 0 ? <div style={{ padding: 8, color: "var(--sp-sub)" }}>No devices found. Open Spotify on a phone or computer.</div> : devices.map((item) => (
+              <button key={item.id} type="button" className={`sp-device ${item.is_active ? "is-active" : ""}`} onClick={() => { void transferToDevice(item.id); setDevicesOpen(false); }}>
+                <Icon name={/phone|smartphone/i.test(item.type) ? "user" : "device"} size={20} />
+                <span><span style={{ fontWeight: 600 }}>{item.name}</span><small>{item.is_active ? "Listening on this device" : item.type}</small></span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {error ? <div role="alert" className="sp-error">{error}</div> : null}
+    </footer>
+  );
+}
+
+/* ── Right panel: Now playing / Queue ────────────────────────────────────── */
+
+const artistCache = new Map<string, SpotifyArtist>();
+
+function NowPlayingPanel({ mode, onMode, onClose, onExpand, onLyrics }: { mode: "now" | "queue"; onMode: (mode: "now" | "queue") => void; onClose: () => void; onExpand: () => void; onLyrics: () => void }) {
+  const { playback, openAlbum, openArtist, isLiked, toggleLike, toast, trackMenu, openMenu } = useSp();
+  const { track, queue, recentTracks, playTrackUri, lyricsForTrack, progressMs, browse } = playback;
+  const [queueTab, setQueueTab] = useState<"queue" | "recent">("queue");
+  const [about, setAbout] = useState<SpotifyArtist | null>(null);
+  const [following, setFollowing] = useState(false);
+  const artistId = track?.artists[0]?.id;
+  const { lyrics } = useTrackLyrics(mode === "now" ? track : null, lyricsForTrack);
+  const tint = useArtworkTint(bigImage(track?.album?.images));
+  const active = activeLyricIndexFor(lyrics, progressMs);
+  const liked = track ? isLiked(track) : false;
+
+  useEffect(() => {
+    if (mode !== "now" || !artistId) { setAbout(null); return; }
+    const cached = artistCache.get(artistId);
+    if (cached) setAbout(cached); else setAbout(null);
+    let alive = true;
+    if (!cached) void browse("artist", { id: artistId }).then((res) => { if (alive && res.ok && res.artist) { artistCache.set(artistId, res.artist); setAbout(res.artist); } });
+    void browse("is-following", { id: artistId }).then((res) => { if (alive && res.ok) setFollowing(Boolean(res.following?.[0])); });
+    return () => { alive = false; };
+  }, [mode, artistId, browse]);
+
+  const lines = lyrics?.lines ?? [];
+  const start = Math.max(0, active < 0 ? 0 : active - 1);
+  const queueRow = (item: SpotifyTrack, key: string, playing = false) => (
+    <div key={key} className={`sp-qrow ${playing ? "is-playing" : ""}`} onDoubleClick={() => void playTrackUri(item.uri)} onContextMenu={(event) => openMenu(event, trackMenu(item))}>
+      <div className="sp-qrow__art">
+        <Artwork src={midImage(item.album?.images)} />
+        <button type="button" className="sp-lrow__play" aria-label={`Play ${item.name}`} onClick={() => void playTrackUri(item.uri)}><Icon name="play" size={16} /></button>
+      </div>
+      <div className="sp-qrow__text"><div className="sp-qrow__name sp-ellipsis">{item.name}</div><div className="sp-qrow__sub sp-ellipsis">{item.artists.map((artist) => artist.name).join(", ")}</div></div>
     </div>
   );
-}
 
-function PlayingGlyph() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill={ACCENT}>
-      <rect x="5" y="4" width="4" height="16" /><rect x="15" y="4" width="4" height="16" />
-    </svg>
-  );
-}
-
-function PlaylistTrackRow({ item, index, playing, onPlay, onQueue }: { item: SpotifyPlaylistItem; index: number; playing: boolean; onPlay: () => void; onQueue?: () => void }) {
-  const [hover, setHover] = useState(false);
-  const { track } = item;
-  return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onDoubleClick={onPlay}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "28px 1fr 1fr 110px 44px 44px",
-        alignItems: "center",
-        gap: 14,
-        padding: "6px 10px",
-        borderRadius: R_SM,
-        background: hover ? CARD_HOVER : "transparent",
-        transition: `background .15s ${EASE_STR}`,
-      }}
-    >
-      <button
-        type="button"
-        onClick={onPlay}
-        aria-label="Play"
-        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13, color: playing ? ACCENT : TEXT_MUTED, textAlign: "center" }}
-      >
-        {hover && !playing ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill={TEXT}><path d="M8 5v14l11-7z" /></svg>
-        ) : playing ? (
-          <PlayingGlyph />
+    <aside className="sp-panel sp-right" aria-label={mode === "queue" ? "Queue" : "Now playing"}>
+      <div className="sp-right__head">
+        <h2 className="sp-ellipsis">{mode === "queue" ? "Queue" : track?.album?.name || "Now playing"}</h2>
+        <IconBtn icon="close" label="Close panel" onClick={onClose} />
+      </div>
+      <div className="sp-right__body sp-scroll">
+        {mode === "queue" ? (
+          <>
+            <div className="sp-chips" style={{ padding: 0 }}>
+              <button type="button" className={`sp-chip ${queueTab === "queue" ? "is-on" : ""}`} onClick={() => setQueueTab("queue")}>Queue</button>
+              <button type="button" className={`sp-chip ${queueTab === "recent" ? "is-on" : ""}`} onClick={() => setQueueTab("recent")}>Recently played</button>
+            </div>
+            {queueTab === "queue" ? (
+              <div>
+                {track ? <><div className="sp-qlabel">Now playing</div>{queueRow(track, "now", true)}</> : null}
+                <div className="sp-qlabel">Next in queue</div>
+                {queue.length === 0 ? <div style={{ color: "var(--sp-sub)", padding: "8px 0" }}>Your queue is empty. Add songs from the “…” menu on any track.</div> : queue.slice(0, 40).map((item, index) => queueRow(item, `${item.id}-${index}`))}
+              </div>
+            ) : (
+              <div>{recentTracks.length === 0 ? <div style={{ color: "var(--sp-sub)", padding: "8px 0" }}>Nothing played yet.</div> : recentTracks.slice(0, 40).map((item, index) => queueRow(item, `${item.id}-${index}`))}</div>
+            )}
+          </>
+        ) : track ? (
+          <>
+            <div className="sp-np__art" role="button" tabIndex={0} aria-label={`Open full screen player for ${track.name}`} onClick={onExpand} onKeyDown={(event) => activateOnKey(event, onExpand)}><Artwork src={bigImage(track.album?.images)} eager /></div>
+            <div className="sp-np__row">
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="sp-np__title sp-clamp2"><span className="sp-link" onClick={() => openAlbum(track.album, track)}>{track.name}</span></div>
+                <div className="sp-np__artist sp-ellipsis"><ArtistLinks track={track} /></div>
+              </div>
+              <button type="button" className="sp-ctl" style={liked ? { color: "var(--sp-accent)" } : undefined} aria-label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"} aria-pressed={liked} onClick={() => { toggleLike(track); toast(liked ? "Removed from Liked Songs" : "Added to Liked Songs"); }}><Icon name={liked ? "checkCircle" : "plusCircle"} size={22} /></button>
+            </div>
+            {lines.length > 0 ? (
+              <button type="button" className="sp-lyr-prev" style={{ background: tint || "#3a56a8" }} onClick={onLyrics} aria-label="Open lyrics">
+                <h3>Lyrics</h3>
+                {lines.slice(start, start + 4).map((line, index) => <p key={start + index} className={start + index === active || !lyrics?.synced ? "is-active" : ""}>{line.text}</p>)}
+              </button>
+            ) : null}
+            {about ? (
+              <div className="sp-card-box sp-about">
+                {bigImage(about.images) ? <img className="sp-about__img" src={bigImage(about.images)} alt="" /> : null}
+                <div className="sp-card-box__head" style={{ position: bigImage(about.images) ? "absolute" : "relative", top: 0, left: 0, right: 0, color: bigImage(about.images) ? "#fff" : undefined, textShadow: bigImage(about.images) ? "0 1px 8px rgba(0,0,0,.45)" : undefined }}>About the artist</div>
+                <div className="sp-card-box__body">
+                  <div className="sp-about__name"><span className="sp-link" onClick={() => openArtist(about)}>{about.name}</span></div>
+                  <div className="sp-about__meta">
+                    <span>{about.followers?.total ? `${new Intl.NumberFormat().format(about.followers.total)} followers` : "Artist"}</span>
+                    <button
+                      type="button"
+                      className="sp-pill sp-pill--ghost"
+                      style={{ height: 28, padding: "0 14px" }}
+                      onClick={() => {
+                        const next = !following;
+                        setFollowing(next);
+                        void browse(next ? "follow-artist" : "unfollow-artist", { id: about.id }).then((res) => { if (!res.ok) { setFollowing(!next); toast(res.error || "Couldn't update follow."); } });
+                      }}
+                    >{following ? "Following" : "Follow"}</button>
+                  </div>
+                  {about.genres?.length ? <div style={{ color: "var(--sp-sub)", fontSize: 14 }}>{about.genres.slice(0, 3).join(" • ")}</div> : null}
+                </div>
+              </div>
+            ) : null}
+            <div className="sp-card-box">
+              <div className="sp-card-box__head">Credits</div>
+              <div className="sp-card-box__body">
+                {track.artists.map((artist, index) => <div key={`${artist.name}-${index}`} className="sp-credit"><b className="sp-link" onClick={() => openArtist(artist)}>{artist.name}</b><span>{index === 0 ? "Main artist" : "Featured artist"}</span></div>)}
+              </div>
+            </div>
+            <div className="sp-card-box">
+              <div className="sp-card-box__head">Next in queue<button type="button" className="sp-shelf__more" onClick={() => onMode("queue")}>Open queue</button></div>
+              <div className="sp-card-box__body">
+                {queue.length === 0 ? <div style={{ color: "var(--sp-sub)" }}>Your queue is empty.</div> : queue.slice(0, 3).map((item, index) => queueRow(item, `${item.id}-${index}`))}
+              </div>
+            </div>
+          </>
         ) : (
-          index + 1
+          <div className="sp-empty" style={{ padding: "48px 8px" }}><h3 style={{ fontSize: 20 }}>Nothing playing</h3><p>Play a song to see its details here.</p></div>
         )}
-      </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-        <Artwork src={track.album?.images?.[track.album.images.length - 1]?.url || track.album?.images?.[0]?.url} size={40} iconSize={16} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 500, color: playing ? ACCENT : TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</div>
-          <div style={{ fontSize: 12.5, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.artists.map((a) => a.name).join(", ")}</div>
+      </div>
+    </aside>
+  );
+}
+
+/* ── Your Library sidebar ────────────────────────────────────────────────── */
+
+type LibItem = { key: string; kind: "liked" | "playlist" | "artist" | "album"; title: string; sub: string; art?: ReactNode; round?: boolean; active: boolean; playing: boolean; open: () => void; play: () => void; menu: () => MenuItem[]; pinned?: boolean; creator: string };
+
+function LibrarySidebar({ prefs, setPrefs, items, onCreate }: { prefs: Prefs; setPrefs: (patch: Partial<Prefs>) => void; items: LibItem[]; onCreate: () => void }) {
+  const { openMenu, isPlaying, goTo } = useSp();
+  const [chip, setChip] = useState<"all" | "playlist" | "artist" | "album">("all");
+  const [findOpen, setFindOpen] = useState(false);
+  const [needle, setNeedle] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const collapsed = prefs.libCollapsed;
+
+  const visible = useMemo(() => {
+    const text = needle.trim().toLowerCase();
+    let list = items.filter((item) => (chip === "all" || item.kind === chip || (chip === "playlist" && item.kind === "liked")) && (!text || item.title.toLowerCase().includes(text)));
+    if (prefs.libSort === "alpha") list = [...list].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.title.localeCompare(b.title));
+    else if (prefs.libSort === "creator") list = [...list].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.creator.localeCompare(b.creator));
+    return list;
+  }, [items, chip, needle, prefs.libSort]);
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(true);
+    const origin = event.clientX;
+    const base = prefs.libWidth;
+    const move = (ev: PointerEvent) => setPrefs({ libWidth: Math.min(480, Math.max(260, base + ev.clientX - origin)), libCollapsed: false });
+    const up = () => { setDragging(false); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const sortLabel = prefs.libSort === "recents" ? "Recents" : prefs.libSort === "alpha" ? "Alphabetical" : "Creator";
+  const viewIcon: IconName = prefs.libView === "grid" ? "grid" : prefs.libView === "compact" ? "compact" : "list";
+
+  const row = (item: LibItem) => {
+    const art = item.art ?? <Artwork src={undefined} round={item.round} />;
+    if (prefs.libView === "grid" && !collapsed) {
+      return (
+        <div key={item.key} className={`sp-lcard ${item.active ? "is-active" : ""}`} role="button" tabIndex={0} aria-label={`Open ${item.title}`} onClick={item.open} onKeyDown={(event) => activateOnKey(event, item.open)} onContextMenu={(event) => openMenu(event, item.menu())}>
+          <div className={`sp-lrow__art ${item.round ? "is-round" : ""}`}>{art}<button type="button" className="sp-lrow__play" aria-label={`Play ${item.title}`} onClick={(event) => { event.stopPropagation(); item.play(); }}><Icon name="play" size={20} /></button></div>
+          <div><div className="sp-lrow__title sp-ellipsis">{item.title}</div><div className="sp-lrow__sub"><span className="sp-ellipsis">{item.sub}</span></div></div>
         </div>
+      );
+    }
+    return (
+      <div
+        key={item.key}
+        className={`sp-lrow ${item.active ? "is-active" : ""} ${item.playing ? "is-playing" : ""} ${prefs.libView === "compact" && !collapsed ? "is-compact" : ""}`}
+        role="button"
+        tabIndex={0}
+        aria-label={`Open ${item.title}`}
+        title={collapsed ? item.title : undefined}
+        onClick={item.open}
+        onDoubleClick={item.play}
+        onKeyDown={(event) => { if (event.target === event.currentTarget) activateOnKey(event, item.open); }}
+        onContextMenu={(event) => openMenu(event, item.menu())}
+      >
+        <div className={`sp-lrow__art ${item.round ? "is-round" : ""}`}>
+          {art}
+          <button type="button" className="sp-lrow__play" aria-label={`Play ${item.title}`} onClick={(event) => { event.stopPropagation(); item.play(); }}><Icon name={item.playing && isPlaying ? "pause" : "play"} size={prefs.libView === "compact" ? 12 : 18} /></button>
+        </div>
+        {!collapsed ? (
+          <>
+            <div className="sp-lrow__text">
+              <div className="sp-lrow__title sp-ellipsis">{item.title}</div>
+              <div className="sp-lrow__sub">{item.pinned ? <Icon name="pin" size={14} /> : null}<span className="sp-ellipsis">{item.sub}</span></div>
+            </div>
+            {item.playing ? <span className="sp-lrow__eq"><Icon name="speaker" size={16} /></span> : null}
+          </>
+        ) : null}
       </div>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.album?.name || ""}</div>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, whiteSpace: "nowrap" }}>{fmtDate(item.addedAt)}</div>
-      <div style={{ fontSize: 13, color: TEXT_MUTED, textAlign: "right" }}>{fmt(track.duration_ms)}</div>
-      {onQueue ? <button type="button" onClick={onQueue} title="Add to queue" aria-label={`Add ${track.name} to queue`} style={{ opacity: hover ? 1 : 0, border: "none", background: "transparent", color: TEXT_MUTED, cursor: "pointer", padding: 4, transition: "opacity .15s ease" }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h10M4 12h10M4 18h6M18 15v6M15 18h6" strokeLinecap="round" /></svg></button> : <span />}
-    </div>
-  );
-}
-
-function PlaylistRow({ playlist, onOpen, onPlay }: { playlist: SpotifyPlaylist; onOpen: () => void; onPlay: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={onOpen}
-      onDoubleClick={onPlay}
-      onKeyDown={(event) => activateFromKeyboard(event, onOpen)}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open playlist ${playlist.name}`}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: R_MD, background: hover ? CARD_HOVER : "transparent", cursor: "pointer", transition: `background .15s ${EASE_STR}` }}
-    >
-      <Artwork src={playlist.images?.[0]?.url} size={48} iconSize={20} />
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{playlist.name}</div>
-        <div style={{ fontSize: 12.5, color: TEXT_MUTED }}>Playlist · {playlist.owner?.display_name || "Clyra Music"} · {playlist.tracks?.total ?? 0} songs</div>
-      </div>
-      <HoverPlayButton visible={hover} onPlay={onPlay} size={36} />
-    </div>
-  );
-}
-
-/** Collapsed icon-only playlist rail (matches Spotify's own collapsed
- *  sidebar) — the name only appears in a floating tooltip on hover. */
-function SidebarPlaylistIcon({ playlist, active, onOpen }: { playlist: SpotifyPlaylist; active: boolean; onOpen: () => void }) {
-  const [hover, setHover] = useState(false);
-  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-
-  const handleEnter = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (r) setTooltipPos({ top: r.top + r.height / 2, left: r.right + 8 });
-    setHover(true);
+    );
   };
 
   return (
-    <div style={{ position: "relative" }} onMouseEnter={handleEnter} onMouseLeave={() => setHover(false)}>
-      <motion.button
-        ref={btnRef}
-        type="button"
-        onClick={onOpen}
-        aria-label={playlist.name}
-        whileHover={{ scale: 1.06 }}
-        whileTap={{ scale: 0.92 }}
-        transition={SPRING_TIGHT}
-        style={{
-          width: 40,
-          height: 40,
-          padding: 0,
-          border: active ? `2px solid ${ACCENT}` : `1px solid ${CARD_BORDER}`,
-          borderRadius: R_MD,
-          overflow: "hidden",
-          cursor: "pointer",
-          background: "#EDEEF1",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {playlist.images?.[0]?.url ? (
-          <img src={playlist.images[0].url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        ) : (
-          <AlbumFallback size={18} />
-        )}
-      </motion.button>
-      {createPortal(
-        <AnimatePresence>
-          {hover && tooltipPos ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.92, x: -4 }}
-              animate={{ opacity: 1, scale: 1, x: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={SPRING_TIGHT}
-              style={{
-                position: "fixed",
-                top: tooltipPos.top,
-                left: tooltipPos.left,
-                transform: "translateY(-50%)",
-                background: TEXT,
-                color: "#fff",
-                fontSize: 12,
-                fontWeight: 600,
-                padding: "5px 10px",
-                borderRadius: R_MD,
-                whiteSpace: "nowrap",
-                zIndex: 1000,
-                boxShadow: SHADOW_FLOATING,
-                pointerEvents: "none",
-              }}
-            >
-              {playlist.name}
-            </motion.div>
-          ) : null}
-        </AnimatePresence>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-function QueueRow({ track, onPlay }: { track: SpotifyTrack; onPlay: () => void }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={onPlay}
-      onDoubleClick={onPlay}
-      onKeyDown={(event) => activateFromKeyboard(event, onPlay)}
-      role="button"
-      tabIndex={0}
-      aria-label={`Play ${track.name}`}
-      style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: R_MD, background: hover ? CARD_HOVER : "transparent", transition: `background .15s ${EASE_STR}`, cursor: "pointer" }}
-    >
-      <Artwork src={track.album?.images?.[track.album.images.length - 1]?.url || track.album?.images?.[0]?.url} size={40} iconSize={16} />
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</div>
-        <div style={{ fontSize: 11.5, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.artists.map((a) => a.name).join(", ")}</div>
+    <nav className={`sp-panel sp-lib ${collapsed ? "is-collapsed" : ""} ${dragging ? "is-dragging" : ""}`} style={{ ["--sp-lib-w" as string]: `${prefs.libWidth}px`, position: "relative" }} aria-label="Your Library">
+      <div className="sp-lib__head">
+        <button type="button" className="sp-lib__title" aria-label={collapsed ? "Expand Your Library" : "Collapse Your Library"} title={collapsed ? "Expand Your Library" : "Collapse Your Library"} onClick={() => setPrefs({ libCollapsed: !collapsed })}>
+          <Icon name="library" size={24} />
+          {!collapsed ? <span>Your Library</span> : null}
+        </button>
+        {!collapsed ? (
+          <>
+            <IconBtn icon="plus" label="Create" size={18} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openMenu({ clientX: rect.left, clientY: rect.bottom + 4 }, [{ label: "Create a new playlist", icon: "note", onClick: onCreate }]); }} />
+            <IconBtn icon="arrowRight" label="Open your library" size={18} onClick={() => goTo({ type: "library" })} />
+          </>
+        ) : null}
       </div>
-      <motion.button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onPlay();
-        }}
-        aria-label="Play"
-        animate={{ opacity: hover ? 1 : 0 }}
-        whileTap={{ scale: 0.85 }}
-        transition={{ duration: 0.15 }}
-        style={{ background: "none", border: "none", padding: 4, cursor: "pointer", color: TEXT }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-      </motion.button>
-    </div>
-  );
-}
-
-function NowPlayingDock({ playback, onClose }: { playback: SpotifyPlaybackHook; onClose: () => void }) {
-  const { track, queue, playTrackUri, liked, toggleSaveTrack } = playback;
-
-  return (
-    <motion.aside
-      className="clyra-music-now-playing"
-      initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 300, opacity: 1 }}
-      exit={{ width: 0, opacity: 0 }}
-      transition={{ duration: 0.28, ease: EASE_ARRIVE }}
-      style={{
-        flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        borderLeft: `1px solid ${CARD_BORDER}`,
-      }}
-    >
-      <div
-        style={{
-          width: 300,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-          padding: 16,
-          background: SIDEBAR_BG,
-          overflowY: "auto",
-        }}
-        className="clyra-composer-scroll"
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Now Playing</span>
-          <motion.button
-            type="button"
-            onClick={onClose}
-            aria-label="Hide now playing"
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.9 }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: TEXT_MUTED, padding: 4, display: "flex" }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" /></svg>
-          </motion.button>
-        </div>
-
-        <AnimatePresence mode="wait">
-          {track ? (
-            <motion.div
-              key={track.id}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2, ease: EASE_ARRIVE }}
-              style={{ display: "flex", flexDirection: "column", gap: 16 }}
-            >
-              <div style={{ width: "100%", aspectRatio: "1", borderRadius: R_LG, boxShadow: SHADOW_ELEVATED, overflow: "hidden" }}>
-                <Artwork src={track.album?.images?.[0]?.url} size="100%" radius={0} iconSize={48} />
-              </div>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{track.name}</div>
-                <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 2 }}>{track.artists.map((a) => a.name).join(", ")}</div>
-                </div>
-                <IconButton onClick={() => { void toggleSaveTrack(); }} title={liked ? "Remove from Your Library" : "Save to Your Library"} active={liked}>
-                  <HeartIcon filled={liked} />
-                </IconButton>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Credits</div>
-                {track.artists.map((a) => (
-                  <div key={a.name} style={{ fontSize: 13, color: TEXT, padding: "4px 0" }}>{a.name}</div>
-                ))}
-              </div>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              style={{ fontSize: 13, color: TEXT_MUTED, padding: "24px 4px", textAlign: "center" }}
-            >
-              Nothing playing right now.
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Next in queue</div>
-          {queue.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: TEXT_FAINT, padding: "4px 0" }}>Your queue is empty.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {queue.slice(0, 8).map((t, i) => (
-                <QueueRow key={`${t.id}-${i}`} track={t} onPlay={() => void playTrackUri(t.uri)} />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.aside>
-  );
-}
-
-function ShuffleIcon({ active }: { active: boolean }) {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={active ? ACCENT : "currentColor"} strokeWidth="2">
-      <path d="m18 4 3 3-3 3M18 20l3-3-3-3" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M3 6h3.5c1.6 0 3 .9 3.8 2.3l3.4 5.9c.7 1.3 2.2 2.2 3.8 2.2H21M3 18h3.5c1.6 0 3-.9 3.8-2.3l.4-.7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function RepeatIcon({ mode }: { mode: "off" | "track" | "context" }) {
-  const active = mode !== "off";
-  return (
-    <div style={{ position: "relative", display: "flex" }}>
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={active ? ACCENT : "currentColor"} strokeWidth="2">
-        <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M3 11V9a4 4 0 0 1 4-4h14" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M21 13v2a4 4 0 0 1-4 4H3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      {mode === "track" ? (
-        <span style={{ position: "absolute", right: -4, bottom: -4, fontSize: 8, fontWeight: 800, color: ACCENT, background: BG, borderRadius: "50%", width: 10, height: 10, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>1</span>
-      ) : null}
-    </div>
-  );
-}
-
-function HeartIcon({ filled = false }: { filled?: boolean }) {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.5 1-1a5.5 5.5 0 0 0 0-7.8Z" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-}
-
-/** Small icon buttons on the transport bar all share this tight tap/hover feel. */
-function IconButton({ children, onClick, title, active, style }: { children: ReactNode; onClick: (event: MouseEvent<HTMLButtonElement>) => void; title?: string; active?: boolean; style?: React.CSSProperties }) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={title}
-      whileHover={{ scale: 1.1 }}
-      whileTap={{ scale: 0.88 }}
-      transition={SPRING_TIGHT}
-      style={{ background: "none", border: "none", cursor: "pointer", color: active ? ACCENT : TEXT_MUTED, padding: 4, display: "flex", alignItems: "center", ...style }}
-    >
-      {children}
-    </motion.button>
-  );
-}
-
-function PlayerBar({ playback, queueOpen, onToggleQueue }: { playback: SpotifyPlaybackHook; queueOpen: boolean; onToggleQueue: () => void }) {
-  const { track, isPlaying, progressMs, volume, pct, device, devices, onToggle, onPrev, onNext, seekTo, setVolumePercent, refreshDevices, transferToDevice, shuffleOn, toggleShuffle, repeatMode, cycleRepeat, liked, toggleSaveTrack, error } = playback;
-  const [devicesOpen, setDevicesOpen] = useState(false);
-  const [barHover, setBarHover] = useState(false);
-  return (
-    <div
-      className="clyra-music-playerbar"
-      style={{
-        height: 90,
-        flexShrink: 0,
-        display: "grid",
-        gridTemplateColumns: "1fr minmax(0,2fr) 1fr",
-        alignItems: "center",
-        gap: 16,
-        padding: "0 16px",
-        position: "relative",
-        background: PANEL_BG,
-        borderTop: `1px solid ${CARD_BORDER}`,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-        <AnimatePresence mode="wait">
-          {track ? (
-            <motion.div
-              key={track.id}
-              initial={{ opacity: 0, x: -6 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18, ease: EASE_ARRIVE }}
-              style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}
-            >
-              <Artwork src={track.album?.images?.[track.album.images.length - 1]?.url || track.album?.images?.[0]?.url} size={56} iconSize={22} />
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</div>
-                <div style={{ fontSize: 11.5, color: TEXT_MUTED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.artists.map((a) => a.name).join(", ")}</div>
-              </div>
-              <IconButton onClick={() => { void toggleSaveTrack(); }} title={liked ? "Remove from Your Library" : "Save to Your Library"} active={liked}>
-                <HeartIcon filled={liked} />
-              </IconButton>
-            </motion.div>
-          ) : (
-            <motion.div key="none" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ fontSize: 12.5, color: TEXT_MUTED }}>
-              Nothing playing
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <IconButton onClick={toggleShuffle} title="Shuffle" active={shuffleOn}>
-            <ShuffleIcon active={shuffleOn} />
-          </IconButton>
-          <IconButton onClick={onPrev} title="Previous track">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6 9 12l11 6z" /></svg>
-          </IconButton>
-          <motion.button
-            type="button"
-            onClick={onToggle}
-            aria-label={isPlaying ? "Pause" : "Play"}
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.88 }}
-            transition={SPRING_TIGHT}
-            style={{ width: 32, height: 32, borderRadius: "50%", background: TEXT, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: SHADOW_ELEVATED }}
-          >
-            <AnimatePresence mode="wait" initial={false}>
-              {isPlaying ? (
-                <motion.svg key="pause" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={{ duration: 0.12 }} width="14" height="14" viewBox="0 0 24 24" fill="#fff">
-                  <rect x="6" y="5" width="4" height="14" /><rect x="14" y="5" width="4" height="14" />
-                </motion.svg>
-              ) : (
-                <motion.svg key="play" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={{ duration: 0.12 }} width="14" height="14" viewBox="0 0 24 24" fill="#fff" style={{ marginLeft: 2 }}>
-                  <path d="M8 5v14l11-7z" />
-                </motion.svg>
-              )}
-            </AnimatePresence>
-          </motion.button>
-          <IconButton onClick={onNext} title="Next track">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l11 6-11 6z" /></svg>
-          </IconButton>
-          <IconButton onClick={cycleRepeat} title="Repeat" active={repeatMode !== "off"}>
-            <RepeatIcon mode={repeatMode} />
-          </IconButton>
-        </div>
-        <div
-          onMouseEnter={() => setBarHover(true)}
-          onMouseLeave={() => setBarHover(false)}
-          onFocus={() => setBarHover(true)}
-          onBlur={() => setBarHover(false)}
-          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", maxWidth: 500 }}
-        >
-          <span style={{ fontSize: 11, color: TEXT_MUTED, minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{track ? fmt(progressMs) : "0:00"}</span>
-          <div style={{ position: "relative", flex: 1, height: 4, borderRadius: R_PILL, background: "#E4E4E2", cursor: track ? "pointer" : "default" }}>
-            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: R_PILL, background: barHover ? ACCENT : TEXT, width: `${track ? pct : 0}%`, transition: `width .2s linear, background .15s ${EASE_STR}` }} />
-            <input
-              type="range"
-              min={0}
-              max={track?.duration_ms || 0}
-              value={track ? Math.min(progressMs, track.duration_ms) : 0}
-              disabled={!track}
-              onChange={(event) => seekTo(Number(event.target.value))}
-              aria-label="Playback position"
-              style={{ position: "absolute", inset: "-8px 0", width: "100%", height: 20, margin: 0, opacity: 0, cursor: track ? "pointer" : "default" }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: `${track ? pct : 0}%`,
-                width: 12,
-                height: 12,
-                borderRadius: "50%",
-                background: ACCENT,
-                boxShadow: "0 1px 4px rgba(0,0,0,.3)",
-                transform: `translate(-50%, -50%) scale(${barHover ? 1 : 0})`,
-                transition: `transform .15s ${EASE_STR}, left .2s linear`,
-              }}
-            />
+      {!collapsed ? (
+        <>
+          <div className="sp-chips" role="group" aria-label="Library filters">
+            {([["playlist", "Playlists"], ["artist", "Artists"], ["album", "Albums"]] as const).map(([id, label]) => (
+              <button key={id} type="button" className={`sp-chip ${chip === id ? "is-on" : ""}`} aria-pressed={chip === id} onClick={() => setChip((current) => (current === id ? "all" : id))}>{label}</button>
+            ))}
           </div>
-          <span style={{ fontSize: 11, color: TEXT_MUTED, minWidth: 32, fontVariantNumeric: "tabular-nums" }}>{track ? fmt(track.duration_ms) : "0:00"}</span>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, position: "relative" }}>
-        <IconButton onClick={onToggleQueue} title="Now Playing" active={queueOpen}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h13M3 12h13M3 18h9" strokeLinecap="round" /><path d="M18 15v6M15 18h6" strokeLinecap="round" /></svg>
-        </IconButton>
-        <IconButton
-          onClick={() => {
-            setDevicesOpen((v) => !v);
-            refreshDevices();
-          }}
-          title={device?.name || "Devices"}
-          active={Boolean(device)}
-          style={{ gap: 6 }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="4" width="16" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
-          <span style={{ fontSize: 11.5, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{device?.name || "Devices"}</span>
-        </IconButton>
-        <AnimatePresence>
-          {devicesOpen ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94, y: 6 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 4 }}
-              transition={SPRING_TIGHT}
-              style={{ transformOrigin: "bottom right", position: "absolute", bottom: 44, right: 0, width: 240, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: R_XL, boxShadow: SHADOW_FLOATING, padding: 8, zIndex: 10 }}
+          <div className="sp-lib__tools">
+            <div className={`sp-lib__find ${findOpen ? "is-open" : ""}`}>
+              <IconBtn icon="search" label="Search in Your Library" size={16} onClick={() => setFindOpen((value) => !value)} />
+              <input value={needle} onChange={(event) => setNeedle(event.target.value)} placeholder="Search in Your Library" aria-label="Search in Your Library" tabIndex={findOpen ? 0 : -1} onBlur={() => { if (!needle) setFindOpen(false); }} />
+            </div>
+            <button
+              type="button"
+              className="sp-lib__sort"
+              aria-label="Sort and view options"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const mark = (on: boolean): IconName | undefined => (on ? "check" : undefined);
+                openMenu({ clientX: Math.min(rect.left, window.innerWidth - 240), clientY: rect.bottom + 4 }, [
+                  { kind: "label", label: "Sort by" },
+                  { label: "Recents", icon: mark(prefs.libSort === "recents"), onClick: () => setPrefs({ libSort: "recents" }) },
+                  { label: "Alphabetical", icon: mark(prefs.libSort === "alpha"), onClick: () => setPrefs({ libSort: "alpha" }) },
+                  { label: "Creator", icon: mark(prefs.libSort === "creator"), onClick: () => setPrefs({ libSort: "creator" }) },
+                  { kind: "sep" },
+                  { kind: "label", label: "View as" },
+                  { label: "Compact", icon: mark(prefs.libView === "compact"), onClick: () => setPrefs({ libView: "compact" }) },
+                  { label: "List", icon: mark(prefs.libView === "list"), onClick: () => setPrefs({ libView: "list" }) },
+                  { label: "Grid", icon: mark(prefs.libView === "grid"), onClick: () => setPrefs({ libView: "grid" }) },
+                ]);
+              }}
             >
-              <div style={{ fontSize: 11, fontWeight: 600, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "4px 8px" }}>Connect to a device</div>
-              {devices.length === 0 ? (
-                <div style={{ fontSize: 12.5, color: TEXT_MUTED, padding: "8px" }}>No devices found</div>
-              ) : (
-                devices.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => {
-                      void transferToDevice(d.id);
-                      setDevicesOpen(false);
-                    }}
-                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px", borderRadius: R_MD, border: "none", background: "transparent", color: d.is_active ? ACCENT : TEXT, cursor: "pointer", fontSize: 13, textAlign: "left", transition: `background .15s ${EASE_STR}` }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = ACCENT_TINT)}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    {d.name} {d.is_active ? " (active)" : ""}
-                  </button>
-                ))
-              )}
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-        <div title={`Volume ${volume}%`} style={{ position: "relative", width: 108, height: 4, borderRadius: R_PILL, background: "#E4E4E2", cursor: "pointer" }}>
-          <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: R_PILL, background: TEXT, width: `${volume}%` }} />
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={volume}
-            onInput={(event) => setVolumePercent(Number((event.target as HTMLInputElement).value))}
-            onChange={(event) => setVolumePercent(Number(event.target.value))}
-            aria-label="Volume"
-            style={{ position: "absolute", zIndex: 2, inset: "-8px 0", width: "100%", height: 20, margin: 0, opacity: 0, cursor: "pointer" }}
-          />
-          <span aria-hidden style={{ position: "absolute", zIndex: 1, top: "50%", left: `${volume}%`, width: 10, height: 10, borderRadius: "50%", background: TEXT, transform: "translate(-50%, -50%)", boxShadow: "0 1px 3px rgba(0,0,0,.22)", pointerEvents: "none" }} />
-        </div>
+              {sortLabel}
+              <Icon name={viewIcon} size={16} />
+            </button>
+          </div>
+        </>
+      ) : null}
+      <div className={`sp-lib__list sp-scroll ${prefs.libView === "grid" && !collapsed ? "sp-lib__grid" : ""}`} style={prefs.libView === "grid" && !collapsed ? { alignContent: "start" } : undefined}>
+        {visible.map(row)}
+        {visible.length === 0 && !collapsed ? (
+          items.length === 0 ? (
+            <div className="sp-lib__empty">
+              <h3>Create your first playlist</h3>
+              <p>It's easy, we'll help you</p>
+              <button type="button" className="sp-pill" onClick={onCreate}>Create playlist</button>
+            </div>
+          ) : <div style={{ padding: "12px 8px", color: "var(--sp-sub)" }}>Nothing matches “{needle || chip}”.</div>
+        ) : null}
       </div>
-      {error ? <div role="alert" style={{ position: "absolute", right: 16, bottom: 94, maxWidth: 340, padding: "8px 10px", borderRadius: R_MD, background: "#FFF4F3", border: "1px solid rgba(179,38,30,.18)", color: DANGER, fontSize: 12, boxShadow: SHADOW_POPOVER }}>{error}</div> : null}
-    </div>
+      <div className={`sp-resize ${dragging ? "is-active" : ""}`} style={{ right: -8, margin: 0 }} onPointerDown={startResize} onDoubleClick={() => setPrefs({ libWidth: 320 })} role="separator" aria-orientation="vertical" aria-label="Resize Your Library" />
+    </nav>
   );
 }
+
+/* ── Full-screen player (light, artwork-tinted) ──────────────────────────── */
+
+function FullscreenPlayer({ onClose }: { onClose: () => void }) {
+  const { playback, isLiked, toggleLike, toast } = useSp();
+  const { track, isPlaying, progressMs, volume, seekTo, setVolumePercent, onToggle, onPrev, onNext, lyricsForTrack, shuffleOn, toggleShuffle, repeatMode, cycleRepeat } = playback;
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const { lyrics, loading, error } = useTrackLyrics(track, lyricsForTrack);
+  const active = useMemo(() => activeLyricIndexFor(lyrics, progressMs), [lyrics, progressMs]);
+  const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    closeRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  useEffect(() => { centerLyric(viewportRef.current, active, !reduce); }, [active, reduce]);
+  if (!track) return null;
+  const art = bigImage(track.album?.images);
+  const liked = isLiked(track);
+
+  return createPortal(
+    <div className="sp-full clyra-music-fullscreen" role="dialog" aria-modal="true" aria-label={`Now playing ${track.name}`}>
+      {art ? <img src={art} className="sp-full__ambient clyra-music-fullscreen__ambient-art" alt="" aria-hidden /> : null}
+      <div className="sp-full__wash" />
+      <div className="sp-full__inner">
+        <div className="sp-full__top">
+          <span>Now playing</span>
+          <button ref={closeRef} type="button" className="sp-full__close" aria-label="Close full screen player" onClick={onClose}><Icon name="chevD" size={20} /></button>
+        </div>
+        <div className="sp-full__hero">
+          <div className="sp-full__art"><Artwork src={art} eager /></div>
+          <section style={{ minWidth: 0 }}>
+            <div className="sp-full__album">{track.album?.name || "Single"}</div>
+            <h1 className="sp-full__title">{track.name}</h1>
+            <div className="sp-full__artist">{track.artists.map((a) => a.name).join(", ")}</div>
+            <div className="sp-full__controls">
+              <div className="sp-full__row">
+                <span style={{ width: 40, textAlign: "right" }}>{fmt(progressMs)}</span>
+                <Slider label="Playback position" value={Math.min(progressMs, track.duration_ms)} max={track.duration_ms} step={5000} onCommit={seekTo} />
+                <span style={{ width: 40 }}>{fmt(track.duration_ms)}</span>
+              </div>
+              <div className="sp-full__btns">
+                <button type="button" className={`sp-ctl ${shuffleOn ? "is-on" : ""}`} aria-label="Shuffle" onClick={toggleShuffle}><Icon name="shuffle" size={22} /></button>
+                <button type="button" className="sp-ctl" aria-label="Previous track" onClick={onPrev}><Icon name="prev" size={28} /></button>
+                <button type="button" className="sp-playpause" aria-label={isPlaying ? "Pause" : "Play"} onClick={onToggle}><Icon name={isPlaying ? "pause" : "play"} size={26} /></button>
+                <button type="button" className="sp-ctl" aria-label="Next track" onClick={onNext}><Icon name="next" size={28} /></button>
+                <button type="button" className={`sp-ctl ${repeatMode !== "off" ? "is-on" : ""}`} aria-label="Repeat" onClick={cycleRepeat}><Icon name={repeatMode === "track" ? "repeat1" : "repeat"} size={22} /></button>
+              </div>
+              <div className="sp-full__vol">
+                <Icon name={volume === 0 ? "volume0" : "volume2"} size={18} />
+                <Slider label="Volume" value={volume} max={100} step={5} onPreview={setVolumePercent} onCommit={setVolumePercent} />
+                <span style={{ width: 36, fontSize: 12 }}>{volume}%</span>
+                <button type="button" className="sp-ctl" style={liked ? { color: "var(--sp-accent)" } : undefined} aria-label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"} onClick={() => { toggleLike(track); toast(liked ? "Removed from Liked Songs" : "Added to Liked Songs"); }}><Icon name={liked ? "checkCircle" : "plusCircle"} size={22} /></button>
+              </div>
+            </div>
+          </section>
+        </div>
+        <section className="sp-full__lyrics" aria-label="Lyrics">
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}><h2>Lyrics</h2><span style={{ color: "#566074", fontSize: 12 }}>{lyrics?.source === "LRCLIB" ? "Synced by LRCLIB" : "Clyra Music"}</span></div>
+          {loading ? <p style={{ margin: "16px 0 0", color: "#566074" }}>Loading lyrics…</p> : null}
+          {!loading && lyrics?.instrumental ? <p style={{ margin: "16px 0 0", color: "#566074" }}>This track is instrumental.</p> : null}
+          {!loading && lyrics && lyrics.lines.length > 0 ? (
+            <div ref={viewportRef} className="sp-full__lyrics-body" tabIndex={0} aria-label="Song lyrics">
+              {lyrics.lines.map((line, index) => {
+                const on = index === active;
+                return <p key={`${line.timeMs ?? "plain"}-${index}`} data-lyric-index={index} style={{ color: on || !lyrics.synced ? "#0b1020" : "#8993a6", fontSize: lyrics.synced ? 22 : 17, transform: on && !reduce ? "translateX(4px)" : "none" }}>{line.text}</p>;
+              })}
+            </div>
+          ) : null}
+          {!loading && !error && lyrics && !lyrics.instrumental && lyrics.lines.length === 0 ? <p style={{ margin: "16px 0 0", color: "#566074" }}>No lyrics were found for this version of the track.</p> : null}
+          {error ? <p role="status" style={{ margin: "16px 0 0", color: "#566074" }}>{error}</p> : null}
+        </section>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ── Connect screen ──────────────────────────────────────────────────────── */
 
 function ConnectScreen({ playback }: { playback: SpotifyPlaybackHook }) {
   const { available, connecting, connect, error } = playback;
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: EASE_ARRIVE }}
-      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, background: BG, color: TEXT }}
-    >
-      <img src={MUSIC_ICON} alt="" style={{ width: 64, height: 64, borderRadius: R_XL, boxShadow: SHADOW_ELEVATED }} />
+    <div className="sp-connect">
+      <MusicMark size={72} />
       {!available ? (
         <>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>Clyra Music is a desktop feature</div>
-          <div style={{ fontSize: 13.5, color: TEXT_MUTED, maxWidth: 360, textAlign: "center" }}>Open Clyra's desktop app to browse and control music from here.</div>
+          <h1>Clyra Music is a desktop feature</h1>
+          <p>Open Clyra's desktop app to browse and control music from here.</p>
         </>
       ) : (
         <>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>Welcome to Clyra Music</div>
-          <div style={{ fontSize: 13.5, color: TEXT_MUTED, maxWidth: 360, textAlign: "center" }}>
-            Sign in to browse your playlists, search, and control playback right here.
-          </div>
-          {error ? <div style={{ fontSize: 12.5, color: DANGER }}>{error}</div> : null}
-          <motion.button
-            type="button"
-            onClick={connect}
-            disabled={connecting}
-            whileHover={connecting ? undefined : { scale: 1.03 }}
-            whileTap={connecting ? undefined : { scale: 0.97 }}
-            transition={SPRING_TIGHT}
-            style={{ height: 44, padding: "0 28px", borderRadius: R_PILL, border: "none", background: ACCENT, color: "#fff", fontWeight: 700, fontSize: 14, cursor: connecting ? "default" : "pointer", opacity: connecting ? 0.7 : 1, boxShadow: `0 10px 24px -6px ${ACCENT_GLOW}` }}
-          >
-            {connecting ? "Connecting…" : "Connect Spotify"}
-          </motion.button>
+          <h1>Welcome to Clyra Music</h1>
+          <p>Sign in with Spotify to browse your library, search, and control playback right here.</p>
+          {error ? <p style={{ color: "var(--sp-danger)", fontSize: 13 }}>{error}</p> : null}
+          <button type="button" className="sp-pill sp-pill--accent sp-pill--lg" onClick={connect} disabled={connecting} style={connecting ? { opacity: 0.7 } : undefined}>{connecting ? "Connecting…" : "Connect Spotify"}</button>
         </>
       )}
-    </motion.div>
-  );
-}
-
-function PlaylistDetailView({ playlist, playback }: { playlist: SpotifyPlaylist; playback: SpotifyPlaybackHook }) {
-  const { getPlaylistTracks, playPlaylistUri, playTrackUri, addToQueue, track: nowPlaying } = playback;
-  const [items, setItems] = useState<SpotifyPlaylistItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setItems(null);
-    setError(null);
-    void getPlaylistTracks(playlist.id).then((res) => {
-      if (cancelled) return;
-      if (res.ok) setItems(res.items ?? []);
-      else setError(res.error || "Couldn't load this playlist.");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [playlist.id, getPlaylistTracks]);
-
-  const totalMs = useMemo(() => (items ?? []).reduce((sum, it) => sum + (it.track?.duration_ms || 0), 0), [items]);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 24, padding: "8px 0 24px" }}>
-        <div style={{ width: 200, height: 200, flexShrink: 0, borderRadius: R_LG, boxShadow: SHADOW_FLOATING, overflow: "hidden" }}>
-          <Artwork src={playlist.images?.[0]?.url} size="100%" radius={0} iconSize={56} />
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_MUTED }}>Playlist</span>
-          <h1 style={{ fontSize: 40, fontWeight: 800, color: TEXT, margin: 0, lineHeight: 1.1, wordBreak: "break-word" }}>{playlist.name}</h1>
-          <div style={{ fontSize: 13.5, color: TEXT_MUTED }}>
-            <span style={{ fontWeight: 700, color: TEXT }}>{playlist.owner?.display_name || "Clyra Music"}</span>
-            {items ? <> · {items.length} songs{totalMs > 0 ? <>, {fmtDuration(totalMs)}</> : null}</> : null}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "8px 0 20px" }}>
-        <motion.button
-          type="button"
-          onClick={() => void playPlaylistUri(playlist.uri)}
-          aria-label="Play"
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.92 }}
-          transition={SPRING_TIGHT}
-          style={{ width: 56, height: 56, borderRadius: "50%", border: "none", background: ACCENT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 10px 24px -4px ${ACCENT_GLOW}` }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = ACCENT_HOVER)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = ACCENT)}
-        >
-          <PlayGlyph size={22} />
-        </motion.button>
-      </div>
-
-      {error ? (
-        <div style={{ color: DANGER, fontSize: 13.5, padding: "12px 0" }}>{error}</div>
-      ) : items === null ? (
-        <div style={{ color: TEXT_MUTED, fontSize: 13.5, padding: "12px 0" }}>Loading songs…</div>
-      ) : items.length === 0 ? (
-        <div style={{ color: TEXT_MUTED, fontSize: 13.5, padding: "12px 0" }}>This playlist has no songs yet.</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 110px 56px", gap: 14, padding: "0 10px 8px", borderBottom: `1px solid ${CARD_BORDER}`, marginBottom: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED }}>#</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em" }}>Title</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em" }}>Album</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em" }}>Date added</span>
-            <span />
-          </div>
-          {items.map((item, i) => (
-            <PlaylistTrackRow
-              key={`${item.track.id}-${i}`}
-              item={item}
-              index={i}
-              playing={nowPlaying?.id === item.track.id}
-              onPlay={() => void playTrackUri(item.track.uri)}
-              onQueue={() => void addToQueue(item.track.uri)}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-const EASE_STR = "cubic-bezier(.22,1,.36,1)";
+/* ── Workspace ───────────────────────────────────────────────────────────── */
 
 export function SpotifyWorkspace({ playback }: { playback: SpotifyPlaybackHook }) {
-  const [history, setHistory] = useState<ViewEntry[]>([{ type: "home" }]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-  const view = history[historyIndex];
+  const { available, connected } = playback;
+  if (!available || !connected) {
+    return <div className="sp clyra-music-workspace"><ConnectScreen playback={playback} /></div>;
+  }
+  return <ConnectedWorkspace playback={playback} />;
+}
+
+function ConnectedWorkspace({ playback }: { playback: SpotifyPlaybackHook }) {
+  const [nav, setNav] = useState<{ stack: ViewEntry[]; index: number }>({ stack: [{ type: "home" }], index: 0 });
+  const view = nav.stack[nav.index];
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<{ tracks: SpotifyTrack[]; playlists: SpotifyPlaylist[] }>({ tracks: [], playlists: [] });
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [queueOpen, setQueueOpen] = useState(true);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [searchFocused, setSearchFocused] = useState(false);
-  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const searchRequestRef = useRef(0);
+  const [searchTab, setSearchTab] = useState<SearchTab>("all");
+  const [homeFilter, setHomeFilter] = useState<HomeFilter>("all");
+  const [prefs, setPrefsState] = useState<Prefs>(readPrefs);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [profileMenu, setProfileMenu] = useState(false);
+  const [wash, setWash] = useState<string | null>(null);
+  const [scrolled, setScrolled] = useState(false);
+  const [showTitle, setShowTitle] = useState(false);
+  const [dialog, setDialog] = useState<{ seed: SpotifyTrack[] } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [recency, setRecency] = useState(readPlaylistRecency);
+  const [libArtists, setLibArtists] = useState<SpotifyArtist[]>([]);
+  const [libAlbums, setLibAlbums] = useState<SpotifyAlbum[]>([]);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const { connected, profile, playlists, refreshPlaylists, recentTracks, savedTracks, playPlaylistUri, playTrackUri, addToQueue, search, track, disconnect, isPlaying, pause, resume } = playback;
+  const { connected, profile, playlists, refreshPlaylists, refreshRecentTracks, refreshSavedTracks, savedTracks, playLikedSongs, playPlaylistUri, track, isPlaying, pause, resume, contextUri, recentContexts, needsReconnect, connect, disconnect, browse, addToQueue, playlistsChanged } = playback;
 
-  const canGoBack = historyIndex > 0;
-  const canGoForward = historyIndex < history.length - 1;
-  const goTo = (next: ViewEntry) => {
-    if (viewKey(next) === viewKey(view)) return;
-    setHistory((h) => [...h.slice(0, historyIndex + 1), next]);
-    setHistoryIndex((i) => i + 1);
+  const menuHost = useMenuHost();
+  const toastHost = useToastHost();
+  const liked = useLikedCache(playback);
+  const { toast } = toastHost;
+
+  const setPrefs = useCallback((patch: Partial<Prefs>) => {
+    setPrefsState((current) => {
+      const next = { ...current, ...patch };
+      try { window.localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* preference only */ }
+      return next;
+    });
+  }, []);
+
+  const goTo = useCallback((next: ViewEntry) => {
+    setNav((current) => (viewKey(current.stack[current.index]) === viewKey(next) ? current : { stack: [...current.stack.slice(0, current.index + 1), next], index: current.index + 1 }));
+  }, []);
+  const goBack = useCallback(() => setNav((current) => ({ ...current, index: Math.max(0, current.index - 1) })), []);
+  const goForward = useCallback(() => setNav((current) => ({ ...current, index: Math.min(current.stack.length - 1, current.index + 1) })), []);
+  const canBack = nav.index > 0;
+  const canForward = nav.index < nav.stack.length - 1;
+
+  const markUsed = useCallback((id: string) => {
+    setRecency((current) => {
+      const next = { ...current, [id]: Date.now() };
+      writePlaylistRecency(next);
+      return next;
+    });
+  }, []);
+  const openPlaylist = useCallback((playlist: SpotifyPlaylist) => { markUsed(playlist.id); goTo({ type: "playlist", playlist }); }, [goTo, markUsed]);
+
+  const openArtist = useCallback((artist: { id?: string; name: string }) => {
+    if (artist.id) { goTo({ type: "artist", artist: { ...artist, id: artist.id } }); return; }
+    void browse("search-all", { query: artist.name }).then((res) => {
+      const found = res.artists?.find((item) => item.name.toLowerCase() === artist.name.toLowerCase()) ?? res.artists?.[0];
+      if (found) goTo({ type: "artist", artist: found });
+      else toast(res.error || `Couldn't find ${artist.name}.`);
+    });
+  }, [goTo, browse, toast]);
+
+  const openAlbum = useCallback((album: { id?: string; name: string; images?: Array<{ url: string }> } | undefined, source?: SpotifyTrack) => {
+    if (!album) return;
+    if (album.id) { goTo({ type: "album", album: { id: album.id, name: album.name, uri: `spotify:album:${album.id}`, images: album.images, ...(album as Partial<SpotifyAlbum>) } }); return; }
+    const artist = source?.artists[0]?.name ?? "";
+    void browse("search-all", { query: `${album.name} ${artist}`.trim() }).then((res) => {
+      const found = res.albums?.find((item) => item.name.toLowerCase() === album.name.toLowerCase()) ?? res.albums?.[0];
+      if (found) goTo({ type: "album", album: found });
+      else toast(res.error || `Couldn't find ${album.name}.`);
+    });
+  }, [goTo, browse, toast]);
+
+  const editablePlaylists = useMemo(() => playlists.filter((item) => item.owner?.id === profile?.id || item.collaborative), [playlists, profile?.id]);
+
+  const addToPlaylist = useCallback(async (playlist: SpotifyPlaylist, tracks: SpotifyTrack[]) => {
+    const res = await browse("add-to-playlist", { playlistId: playlist.id, uris: tracks.map((item) => item.uri) });
+    if (res.ok) { toast(`Added to ${playlist.name}`); markUsed(playlist.id); playlistsChanged(); }
+    else toast(res.error || "Couldn't add to that playlist.");
+    return Boolean(res.ok);
+  }, [browse, toast, markUsed, playlistsChanged]);
+
+  const newPlaylist = useCallback((seed: SpotifyTrack[] = []) => setDialog({ seed }), []);
+
+  const trackMenu = useCallback((item: SpotifyTrack, extra?: { playlist?: SpotifyPlaylist; onRemove?: () => void }): MenuItem[] => {
+    const likedNow = liked.isLiked(item);
+    const artists: MenuItem[] = item.artists.length > 1
+      ? [{ label: "Go to artist", icon: "artist", submenu: item.artists.map((artist) => ({ label: artist.name, onClick: () => openArtist(artist) })) }]
+      : item.artists[0] ? [{ label: "Go to artist", icon: "artist", onClick: () => openArtist(item.artists[0]) }] : [];
+    const targets: MenuItem[] = [
+      { label: "New playlist", icon: "plus", onClick: () => newPlaylist([item]) },
+      ...(editablePlaylists.length ? [{ kind: "sep" } as MenuItem] : []),
+      ...editablePlaylists.filter((playlist) => playlist.id !== extra?.playlist?.id).slice(0, 30).map((playlist): MenuItem => ({ label: playlist.name, onClick: () => void addToPlaylist(playlist, [item]) })),
+    ];
+    return [
+      { label: "Add to queue", icon: "queue", onClick: () => void addToQueue(item.uri).then((res) => toast(res.ok ? "Added to queue" : res.error || "Couldn't add to queue")) },
+      { kind: "sep" },
+      ...artists,
+      { label: "Go to album", icon: "album", onClick: () => openAlbum(item.album, item) },
+      { kind: "sep" },
+      { label: likedNow ? "Remove from your Liked Songs" : "Save to your Liked Songs", icon: likedNow ? "checkCircle" : "plusCircle", onClick: () => { liked.toggleLike(item); toast(likedNow ? "Removed from Liked Songs" : "Added to Liked Songs"); } },
+      { label: "Add to playlist", icon: "folder", submenu: targets },
+      { kind: "sep" },
+      { label: "Copy song link", icon: "link", onClick: () => copyLink(`https://open.spotify.com/track/${item.id}`, toast) },
+      { label: "Open in Spotify", icon: "external", onClick: () => window.open(`https://open.spotify.com/track/${item.id}`, "_blank", "noopener") },
+    ];
+  }, [liked, editablePlaylists, openArtist, openAlbum, newPlaylist, addToPlaylist, addToQueue, toast]);
+
+  const createPlaylist = useCallback(async (name: string) => {
+    if (!dialog) return;
+    setCreating(true);
+    const res = await browse("create-playlist", { name });
+    setCreating(false);
+    if (!res.ok || !res.playlist) { toast(res.error || "Couldn't create the playlist."); return; }
+    const created: SpotifyPlaylist = { ...res.playlist, owner: res.playlist.owner ?? { display_name: profile?.displayName, id: profile?.id }, tracks: { total: 0 } };
+    if (dialog.seed.length) await browse("add-to-playlist", { playlistId: created.id, uris: dialog.seed.map((item) => item.uri) });
+    setDialog(null);
+    playlistsChanged();
+    toast(`Created ${name}`);
+    openPlaylist(created);
+  }, [dialog, browse, toast, profile?.displayName, profile?.id, playlistsChanged, openPlaylist]);
+
+  /* Library data beyond playlists. */
+  useEffect(() => {
+    let alive = true;
+    void browse("followed-artists").then((res) => { if (alive && res.ok) setLibArtists(res.artists ?? []); });
+    void browse("saved-albums").then((res) => { if (alive && res.ok) setLibAlbums(res.albums ?? []); });
+    return () => { alive = false; };
+  }, [browse, view.type === "artist" ? view.artist.id : null]);
+
+  useEffect(() => { if (connected) { refreshPlaylists(); refreshRecentTracks(); refreshSavedTracks(); } }, [connected, refreshPlaylists, refreshRecentTracks, refreshSavedTracks]);
+  useEffect(() => {
+    if (!recentContexts.length) return;
+    setRecency((current) => { const next = mergeContextRecency(current, recentContexts); if (next !== current) writePlaylistRecency(next); return next; });
+  }, [recentContexts]);
+  useEffect(() => { const id = playlistIdFromUri(contextUri); if (id) markUsed(id); }, [contextUri, markUsed]);
+
+  /* Scroll position drives the sticky header. */
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+    setScrolled(false);
+    setShowTitle(false);
+    setWash(null);
+  }, [viewKey(view)]);
+  const onScroll = () => {
+    const top = scrollRef.current?.scrollTop ?? 0;
+    setScrolled(top > 12);
+    setShowTitle(top > (view.type === "playlist" || view.type === "album" || view.type === "liked" || view.type === "artist" ? 250 : 99999));
   };
-  const openPlaylist = (playlist: SpotifyPlaylist) => goTo({ type: "playlist", playlist });
-  const goBack = () => setHistoryIndex((i) => Math.max(0, i - 1));
-  const goForward = () => setHistoryIndex((i) => Math.min(history.length - 1, i + 1));
 
+  /* Keyboard shortcuts. */
   useEffect(() => {
-    if (connected) refreshPlaylists();
-  }, [connected, refreshPlaylists]);
-
-  useEffect(() => {
-    if (view.type !== "search" || !query.trim()) {
-      searchRequestRef.current += 1;
-      setResults({ tracks: [], playlists: [] });
-      setSearching(false);
-      setSearchError(null);
-      return;
-    }
-    const request = ++searchRequestRef.current;
-    let cancelled = false;
-    setSearching(true);
-    setSearchError(null);
-    const id = window.setTimeout(async () => {
-      try {
-        const res = await search(query.trim());
-        if (cancelled || request !== searchRequestRef.current) return;
-        if (!res.ok) {
-          setResults({ tracks: [], playlists: [] });
-          setSearchError(res.error || "Search is temporarily unavailable.");
-        } else {
-          setResults({ tracks: res.tracks ?? [], playlists: res.playlists ?? [] });
-        }
-      } catch {
-        if (cancelled || request !== searchRequestRef.current) return;
-        setResults({ tracks: [], playlists: [] });
-        setSearchError("Search is temporarily unavailable.");
-      } finally {
-        if (!cancelled && request === searchRequestRef.current) setSearching(false);
-      }
-    }, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(id);
-    };
-  }, [query, view.type, search]);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+    const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const editing = Boolean(target?.closest("input, textarea, [contenteditable='true']"));
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        goTo({ type: "search" });
-        window.setTimeout(() => searchInputRef.current?.focus(), 0);
-        return;
-      }
-      if (event.key === "Escape" && document.activeElement === searchInputRef.current && query) {
-        event.preventDefault();
-        setQuery("");
-        return;
-      }
-      if (event.key === " " && !editing) {
-        event.preventDefault();
-        void (isPlaying ? pause() : resume());
-      }
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && (event.key.toLowerCase() === "k" || event.key.toLowerCase() === "l")) { event.preventDefault(); goTo({ type: "search" }); window.setTimeout(() => searchRef.current?.focus(), 0); return; }
+      if ((event.altKey && event.key === "ArrowLeft") || (mod && event.key === "[")) { event.preventDefault(); goBack(); return; }
+      if ((event.altKey && event.key === "ArrowRight") || (mod && event.key === "]")) { event.preventDefault(); goForward(); return; }
+      if (event.key === "Escape" && document.activeElement === searchRef.current && query) { event.preventDefault(); setQuery(""); return; }
+      if (event.key === " " && !editing && !(target?.closest("button, [role='button'], [role='slider']"))) { event.preventDefault(); void (isPlaying ? pause() : resume()); }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isPlaying, pause, query, resume]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goTo, goBack, goForward, isPlaying, pause, resume, query]);
 
-  const quickPicks = useMemo(() => playlists.slice(0, 6), [playlists]);
+  const orderedPlaylists = useMemo(() => sortPlaylistsByRecency(playlists, recency), [playlists, recency]);
+  const likedPlaying = Boolean(track && !contextUri && savedTracks.some((item) => item.id === track.id) && isPlaying);
 
-  if (!playback.available || !playback.connected) {
-    return (
-      <div className="clyra-music-workspace" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: BG, fontFamily: FONT }}>
-        <ConnectScreen playback={playback} />
-      </div>
-    );
-  }
+  /* Sidebar items. */
+  const libItems = useMemo<LibItem[]>(() => {
+    const list: LibItem[] = [];
+    const urlFor = (kind: string, id: string) => `https://open.spotify.com/${kind}/${id}`;
+    if (savedTracks.length) {
+      list.push({ key: "liked", kind: "liked", title: "Liked Songs", sub: `Playlist • ${savedTracks.length} songs`, art: <LikedArt />, active: view.type === "liked", playing: likedPlaying, pinned: true, creator: profile?.displayName || "", open: () => goTo({ type: "liked" }), play: () => void playLikedSongs(), menu: () => [{ label: "Play", icon: "play", onClick: () => void playLikedSongs() }] });
+    }
+    for (const playlist of orderedPlaylists) {
+      list.push({
+        key: `p-${playlist.id}`, kind: "playlist", title: playlist.name, sub: `Playlist • ${playlist.owner?.display_name || "Spotify"}`, art: <Artwork src={midImage(playlist.images)} />,
+        active: view.type === "playlist" && view.playlist.id === playlist.id, playing: contextUri === playlist.uri && isPlaying, creator: playlist.owner?.display_name || "",
+        open: () => openPlaylist(playlist), play: () => { markUsed(playlist.id); void playPlaylistUri(playlist.uri); },
+        menu: () => [
+          { label: "Play", icon: "play", onClick: () => void playPlaylistUri(playlist.uri) },
+          { kind: "sep" },
+          { label: "Copy playlist link", icon: "link", onClick: () => copyLink(urlFor("playlist", playlist.id), toast) },
+          { label: "Open in Spotify", icon: "external", onClick: () => window.open(urlFor("playlist", playlist.id), "_blank", "noopener") },
+        ],
+      });
+    }
+    for (const artist of libArtists) {
+      list.push({ key: `a-${artist.id}`, kind: "artist", title: artist.name, sub: "Artist", round: true, art: <Artwork src={midImage(artist.images)} round />, active: view.type === "artist" && view.artist.id === artist.id, playing: contextUri === artist.uri && isPlaying, creator: artist.name, open: () => goTo({ type: "artist", artist }), play: () => void playPlaylistUri(artist.uri), menu: () => [{ label: "Play", icon: "play", onClick: () => void playPlaylistUri(artist.uri) }, { label: "Copy artist link", icon: "link", onClick: () => copyLink(urlFor("artist", artist.id), toast) }] });
+    }
+    for (const album of libAlbums) {
+      list.push({ key: `b-${album.id}`, kind: "album", title: album.name, sub: `Album • ${album.artists?.[0]?.name ?? ""}`, art: <Artwork src={midImage(album.images)} />, active: view.type === "album" && view.album.id === album.id, playing: contextUri === album.uri && isPlaying, creator: album.artists?.[0]?.name || "", open: () => goTo({ type: "album", album }), play: () => void playPlaylistUri(album.uri), menu: () => [{ label: "Play", icon: "play", onClick: () => void playPlaylistUri(album.uri) }, { label: "Copy album link", icon: "link", onClick: () => copyLink(urlFor("album", album.id), toast) }] });
+    }
+    return list;
+  }, [savedTracks.length, orderedPlaylists, libArtists, libAlbums, view, likedPlaying, contextUri, isPlaying, profile?.displayName, goTo, openPlaylist, markUsed, playLikedSongs, playPlaylistUri, toast]);
+
+  const ctx: SpContext = {
+    playback, view, goTo, openArtist, openAlbum, openPlaylist, openMenu: menuHost.open, toast, editablePlaylists,
+    isLiked: liked.isLiked, primeLiked: liked.primeLiked, toggleLike: liked.toggleLike, addToPlaylist, newPlaylist, trackMenu,
+    playingTrackId: track?.id ?? null, isPlaying,
+  };
+
+  const toggleRight = (mode: "now" | "queue") => setPrefs({ right: prefs.right === mode ? null : mode });
+  const toggleLyrics = () => { if (view.type === "lyrics") { if (canBack) goBack(); else goTo({ type: "home" }); } else goTo({ type: "lyrics" }); };
+
+  const headerTitle = view.type === "playlist" ? view.playlist.name : view.type === "album" ? view.album.name : view.type === "artist" ? view.artist.name : view.type === "liked" ? "Liked Songs" : "";
+  const headerPlaying = view.type === "playlist" ? contextUri === view.playlist.uri && isPlaying : view.type === "album" ? contextUri === view.album.uri && isPlaying : view.type === "liked" ? likedPlaying : false;
+  const headerPlay = () => {
+    if (headerPlaying) { void pause(); return; }
+    if (view.type === "playlist") void playPlaylistUri(view.playlist.uri);
+    else if (view.type === "album") void playPlaylistUri(view.album.uri);
+    else if (view.type === "liked") void playLikedSongs();
+  };
+  const washed = view.type === "home" || view.type === "playlist" || view.type === "album" || view.type === "liked" || view.type === "library";
+  const homeWash = view.type === "home" || view.type === "library" ? wash ?? "#7fa2e8" : wash;
+  const initial = initials(profile?.displayName || "Music");
 
   return (
-    <div className="clyra-music-workspace" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: BG, fontFamily: FONT }}>
-      {/* Top bar — back/forward history + persistent search, like Spotify's own chrome */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, height: 64, flexShrink: 0, padding: "0 16px", background: SIDEBAR_BG, borderBottom: `1px solid ${CARD_BORDER}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <motion.button
-            type="button"
-            onClick={goBack}
-            disabled={!canGoBack}
-            whileHover={canGoBack ? { scale: 1.08 } : undefined}
-            whileTap={canGoBack ? { scale: 0.9 } : undefined}
-            transition={SPRING_TIGHT}
-            style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: CARD_BG, color: canGoBack ? TEXT : TEXT_FAINT, cursor: canGoBack ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: SHADOW_ELEVATED }}
-          >
-            <ChevronIcon dir="back" />
-          </motion.button>
-          <motion.button
-            type="button"
-            onClick={goForward}
-            disabled={!canGoForward}
-            whileHover={canGoForward ? { scale: 1.08 } : undefined}
-            whileTap={canGoForward ? { scale: 0.9 } : undefined}
-            transition={SPRING_TIGHT}
-            style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: CARD_BG, color: canGoForward ? TEXT : TEXT_FAINT, cursor: canGoForward ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: SHADOW_ELEVATED }}
-          >
-            <ChevronIcon dir="forward" />
-          </motion.button>
-        </div>
-
-        <div style={{ position: "relative", width: "100%", maxWidth: 420 }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={TEXT_MUTED} strokeWidth="2" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }}>
-            <circle cx="11" cy="11" r="7" />
-            <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-          </svg>
-          <input
-            ref={searchInputRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (e.target.value.trim()) goTo({ type: "search" });
-            }}
-            onFocus={() => {
-              goTo({ type: "search" });
-              setSearchFocused(true);
-            }}
-            onBlur={() => setSearchFocused(false)}
-            placeholder="What do you want to play?"
-            style={{
-              width: "100%",
-              height: 42,
-              padding: "0 36px 0 40px",
-              borderRadius: R_PILL,
-              border: `1px solid ${searchFocused ? ACCENT : CARD_BORDER}`,
-              background: CARD_BG,
-              color: TEXT,
-              fontSize: 14,
-              outline: "none",
-              boxSizing: "border-box",
-              boxShadow: searchFocused ? `0 0 0 4px ${FOCUS_RING}` : "none",
-              transition: `box-shadow .18s ${EASE_STR}, border-color .18s ${EASE_STR}`,
-            }}
-          />
-          {query ? (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              aria-label="Clear search"
-              style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "#E4E4E2", border: "none", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: TEXT }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" /></svg>
+    <SpProvider value={ctx}>
+      <div className="sp clyra-music-workspace">
+        <header className="sp-top">
+          <div className="sp-top__logo"><MusicMark size={32} /><span>Clyra Music</span></div>
+          <div className="sp-top__mid">
+            <button type="button" className="sp-home-btn" aria-label="Home" aria-current={view.type === "home" ? "page" : undefined} onClick={() => { goTo({ type: "home" }); setQuery(""); }}>
+              <Icon name={view.type === "home" ? "homeFill" : "home"} size={24} />
             </button>
-          ) : null}
-        </div>
-
-        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-          <motion.button
-            type="button"
-            onClick={() => setProfileMenuOpen((v) => !v)}
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.94 }}
-            transition={SPRING_TIGHT}
-            style={{ width: 32, height: 32, borderRadius: "50%", border: "none", cursor: "pointer", background: ACCENT, color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}
-          >
-            {profile?.image ? <img src={profile.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials(profile?.displayName || "Music")}
-          </motion.button>
-          <AnimatePresence>
-            {profileMenuOpen ? (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.94, y: -4 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: -2 }}
-                transition={SPRING_TIGHT}
-                style={{ transformOrigin: "top right", position: "absolute", top: 40, right: 0, minWidth: 200, background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: R_XL, boxShadow: SHADOW_FLOATING, padding: 8, zIndex: 20 }}
-              >
-                <div style={{ padding: "6px 10px", fontSize: 13, fontWeight: 700, color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profile?.displayName || "Music account"}</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProfileMenuOpen(false);
-                    disconnect();
-                  }}
-                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: R_MD, border: "none", background: "transparent", color: TEXT, fontSize: 13, cursor: "pointer", transition: `background .15s ${EASE_STR}` }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = ACCENT_TINT)}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                >
-                  Log out of Spotify
-                </button>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        {/* Sidebar */}
-        <nav className="clyra-music-sidebar" style={{ width: libraryCollapsed ? 68 : 232, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: 12, background: SIDEBAR_BG, borderRight: `1px solid ${CARD_BORDER}`, transition: `width .22s ${EASE_STR}` }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: libraryCollapsed ? "center" : "space-between", gap: 10, padding: "4px 6px 8px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-            <img src={MUSIC_ICON} alt="" style={{ width: 28, height: 28, borderRadius: R_SM }} />
-            {!libraryCollapsed ? <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 750, color: TEXT, letterSpacing: "-0.015em" }}>Clyra Music</div>
-              <div style={{ fontSize: 11.5, color: TEXT_MUTED }}>Your listening space</div>
-            </div> : null}
-            </div>
-            <button type="button" onClick={() => setLibraryCollapsed((value) => !value)} title={libraryCollapsed ? "Expand Your Library" : "Collapse Your Library"} aria-label={libraryCollapsed ? "Expand Your Library" : "Collapse Your Library"} style={{ border: "none", background: "transparent", color: TEXT_MUTED, cursor: "pointer", padding: 4, display: "flex" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={libraryCollapsed ? "m9 18 6-6-6-6" : "m15 18-6-6 6-6"} strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-          </div>
-          <div style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: R_LG, padding: 6, display: "flex", flexDirection: "column", gap: 2 }}>
-            {NAV_ITEMS.map((item) => {
-              const active = view.type === item.id;
-              return (
-                <motion.button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    goTo({ type: item.id } as ViewEntry);
-                    if (item.id === "search") window.setTimeout(() => searchInputRef.current?.focus(), 50);
-                  }}
-                  whileTap={{ scale: 0.97 }}
-                  transition={SPRING_TIGHT}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: libraryCollapsed ? "center" : undefined,
-                    gap: libraryCollapsed ? 0 : 14,
-                    padding: libraryCollapsed ? "10px" : "10px 12px",
-                    borderRadius: R_MD,
-                    border: "none",
-                    background: active ? ACCENT_TINT : "transparent",
-                    color: active ? TEXT : TEXT_MUTED,
-                    fontSize: 14,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    textAlign: libraryCollapsed ? "center" : "left",
-                    transition: `background .15s ${EASE_STR}, color .15s ${EASE_STR}`,
-                  }}
-                >
-                  <span title={libraryCollapsed ? item.label : undefined} style={{ display: "flex" }}>{item.icon(active)}</span>
-                  {!libraryCollapsed ? item.label : null}
-                </motion.button>
-              );
-            })}
-          </div>
-          {!libraryCollapsed ? <div style={{ fontSize: 11, fontWeight: 700, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "6px 10px 2px" }}>Playlists</div> : null}
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "visible", background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: R_LG, padding: 8, display: "flex", flexDirection: "column", gap: 8 }} className="clyra-composer-scroll">
-            {playlists.map((p) => (
-              <SidebarPlaylistIcon
-                key={p.id}
-                playlist={p}
-                active={view.type === "playlist" && view.playlist.id === p.id}
-                onOpen={() => openPlaylist(p)}
+            <div className="sp-search" role="search">
+              <span className="sp-search__icon"><Icon name="search" size={22} /></span>
+              <input
+                ref={searchRef}
+                value={query}
+                placeholder="What do you want to play?"
+                aria-label="Search songs, artists, albums and playlists"
+                onChange={(event) => { setQuery(event.target.value); setSearchTab("all"); goTo({ type: "search" }); }}
+                onFocus={() => goTo({ type: "search" })}
               />
-            ))}
-            {playlists.length === 0 ? <div style={{ fontSize: 12, color: TEXT_FAINT, padding: "4px 2px" }}>No playlists</div> : null}
+              {query ? <button type="button" className="sp-search__clear" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><Icon name="close" size={16} /></button> : null}
+              <span className="sp-search__browse">
+                <button type="button" aria-label="Browse" aria-current={view.type === "search" && !query ? "page" : undefined} onClick={() => { setQuery(""); goTo({ type: "search" }); }}><Icon name="browse" size={22} /></button>
+              </span>
+            </div>
           </div>
-        </nav>
+          <div className="sp-top__end">
+            <div style={{ position: "relative" }}>
+              <button type="button" className="sp-avatar" aria-label="Account" aria-expanded={profileMenu} onClick={() => setProfileMenu((value) => !value)}>
+                <span className="sp-avatar__img">{profile?.image ? <img src={profile.image} alt="" /> : initial}</span>
+              </button>
+              {profileMenu ? (
+                <div className="sp-menu" role="menu" style={{ position: "absolute", top: 54, right: 0, left: "auto" }} onMouseLeave={() => setProfileMenu(false)}>
+                  <div className="sp-menu__label" style={{ fontSize: 14, color: "var(--sp-text)" }}>{profile?.displayName || "Music account"}</div>
+                  {profile?.product ? <div className="sp-menu__label" style={{ paddingTop: 0, fontWeight: 500 }}>Spotify {profile.product}</div> : null}
+                  <div className="sp-menu__sep" />
+                  <button type="button" role="menuitem" className="sp-menu__item" onClick={() => { setProfileMenu(false); window.open("https://open.spotify.com", "_blank", "noopener"); }}><Icon name="external" size={16} />Open Spotify</button>
+                  <button type="button" role="menuitem" className="sp-menu__item" onClick={() => { setProfileMenu(false); disconnect(); }}>Log out</button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </header>
 
-        {/* Main content */}
-        <main className="clyra-composer-scroll clyra-music-content" style={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "hidden", padding: "20px 28px 32px", background: BG }}>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={view.type === "playlist" ? viewKey(view) : view.type}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.22, ease: EASE_ARRIVE }}
-            >
+        <div className="sp-body">
+          <LibrarySidebar prefs={prefs} setPrefs={setPrefs} items={libItems} onCreate={() => newPlaylist()} />
+
+          <main className="sp-panel sp-main" aria-label={view.type}>
+            <div className={`sp-header ${scrolled ? "is-solid" : ""}`}>
+              <div className="sp-header__nav">
+                <button type="button" className="sp-nav-btn" aria-label="Go back" disabled={!canBack} onClick={goBack}><Icon name="chevL" size={18} /></button>
+                <button type="button" className="sp-nav-btn" aria-label="Go forward" disabled={!canForward} onClick={goForward}><Icon name="chevR" size={18} /></button>
+              </div>
               {view.type === "home" ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-                  <h1 style={{ fontSize: 26, fontWeight: 800, color: TEXT, margin: 0 }}>{greeting()}</h1>
-                  {recentTracks.length > 0 ? (
-                    <div>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 10px" }}>Recently played</h2>
-                      <div style={{ display: "flex", flexDirection: "column", maxWidth: 720 }}>
-                        {recentTracks.slice(0, 6).map((item, index) => <TrackRow key={`${item.id}-${index}`} track={item} index={index} playing={track?.id === item.id} onPlay={() => void playTrackUri(item.uri)} onQueue={() => void addToQueue(item.uri)} />)}
-                      </div>
-                    </div>
-                  ) : null}
-                  {quickPicks.length > 0 ? (
-                    <div>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 14px" }}>Quick picks</h2>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-                        {quickPicks.map((p) => (
-                          <QuickTile key={p.id} playlist={p} onOpen={() => openPlaylist(p)} onPlay={() => void playPlaylistUri(p.uri)} />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div>
-                    <h2 style={{ fontSize: 20, fontWeight: 700, color: TEXT, margin: "0 0 14px" }}>Your playlists</h2>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 16 }}>
-                      {playlists.map((p) => (
-                        <PlaylistCard key={p.id} playlist={p} onOpen={() => openPlaylist(p)} onPlay={() => void playPlaylistUri(p.uri)} />
-                      ))}
-                      {playlists.length === 0 ? <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>No playlists found.</div> : null}
-                    </div>
-                  </div>
+                <div className="sp-header__chips" role="group" aria-label="Home filters">
+                  {([["all", "All"], ["music", "Music"], ["playlists", "Playlists"], ["artists", "Artists"]] as const).map(([id, label]) => (
+                    <button key={id} type="button" className={`sp-chip ${homeFilter === id ? "is-on" : ""}`} aria-pressed={homeFilter === id} onClick={() => setHomeFilter(id)}>{label}</button>
+                  ))}
                 </div>
-              ) : view.type === "search" ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                  {!query.trim() ? (
-                    <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>Search for songs, artists, or playlists.</div>
-                  ) : searching ? (
-                    <div style={{ color: TEXT_MUTED, fontSize: 13 }}>Searching…</div>
-                  ) : null}
-                  {searchError ? <div role="alert" style={{ color: DANGER, fontSize: 13.5 }}>{searchError}</div> : null}
-                  {results.tracks.length > 0 ? (
-                    <div>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 10px" }}>Songs</h2>
-                      <div style={{ display: "flex", flexDirection: "column" }}>
-                        {results.tracks.map((t, i) => (
-                          <TrackRow key={t.id} track={t} index={i} playing={track?.id === t.id} onPlay={() => void playTrackUri(t.uri)} onQueue={() => void addToQueue(t.uri)} />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {results.playlists.length > 0 ? (
-                    <div>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 10px" }}>Playlists</h2>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 16 }}>
-                        {results.playlists.map((p) => (
-                          <PlaylistCard key={p.id} playlist={p} onOpen={() => openPlaylist(p)} onPlay={() => void playPlaylistUri(p.uri)} />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {!searching && !searchError && query.trim() && results.tracks.length === 0 && results.playlists.length === 0 ? (
-                    <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>No results for "{query.trim()}".</div>
-                  ) : null}
+              ) : null}
+              {headerTitle ? (
+                <div className="sp-header__title" style={showTitle ? undefined : { visibility: "hidden" }}>
+                  {view.type !== "artist" ? <PlayBtn size="xs" playing={headerPlaying} onClick={headerPlay} /> : null}
+                  <h2 className="sp-ellipsis">{headerTitle}</h2>
                 </div>
-              ) : view.type === "library" ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-                  <h1 style={{ fontSize: 26, fontWeight: 800, color: TEXT, margin: "0 0 16px" }}>Your Library</h1>
-                  {savedTracks.length > 0 ? <div><h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 10px" }}>Liked Songs</h2>{savedTracks.map((item, index) => <TrackRow key={item.id} track={item} index={index} playing={track?.id === item.id} onPlay={() => void playTrackUri(item.uri)} onQueue={() => void addToQueue(item.uri)} />)}</div> : null}
-                  <div>
-                    <h2 style={{ fontSize: 18, fontWeight: 700, color: TEXT, margin: "0 0 10px" }}>Playlists</h2>
-                    {playlists.map((p) => <PlaylistRow key={p.id} playlist={p} onOpen={() => openPlaylist(p)} onPlay={() => void playPlaylistUri(p.uri)} />)}
-                    {playlists.length === 0 && savedTracks.length === 0 ? <div style={{ color: TEXT_MUTED, fontSize: 13.5 }}>No saved music or playlists yet.</div> : null}
-                  </div>
-                </div>
+              ) : null}
+            </div>
+
+            <div ref={scrollRef} className="sp-main__scroll sp-scroll" onScroll={onScroll}>
+              {washed ? <PageWash color={homeWash} /> : null}
+              {view.type === "lyrics" ? (
+                <div style={{ position: "absolute", inset: 0 }}><LyricsView /></div>
               ) : (
-                <PlaylistDetailView playlist={view.playlist} playback={playback} />
+                <div className="sp-content">
+                  {needsReconnect ? (
+                    <div role="status" className="sp-notice">
+                      <span>Reconnect Spotify once to sync your listening history and recently played playlists.</span>
+                      <button type="button" className="sp-pill sp-pill--accent" onClick={connect}>Reconnect</button>
+                    </div>
+                  ) : null}
+                  {view.type === "home" ? <HomeView filter={homeFilter} onWash={setWash} />
+                    : view.type === "search" ? <SearchView query={query} setQuery={(value) => { setQuery(value); setSearchTab("all"); }} tab={searchTab} onTab={setSearchTab} />
+                    : view.type === "library" ? <LibraryView />
+                    : view.type === "liked" ? <LikedPage onWash={setWash} />
+                    : view.type === "playlist" ? <PlaylistPage key={view.playlist.id} playlist={view.playlist} onWash={setWash} />
+                    : view.type === "album" ? <AlbumPage key={view.album.id} album={view.album} onWash={setWash} />
+                    : view.type === "artist" ? <ArtistPage key={view.artist.id} artist={view.artist} onWash={setWash} />
+                    : null}
+                </div>
               )}
-            </motion.div>
-          </AnimatePresence>
-        </main>
+            </div>
+          </main>
 
-        <AnimatePresence>{queueOpen ? <NowPlayingDock playback={playback} onClose={() => setQueueOpen(false)} /> : null}</AnimatePresence>
+          {prefs.right ? <NowPlayingPanel mode={prefs.right} onMode={(mode) => setPrefs({ right: mode })} onClose={() => setPrefs({ right: null })} onExpand={() => setFullscreen(true)} onLyrics={() => goTo({ type: "lyrics" })} /> : null}
+        </div>
+
+        <PlayerBar rightPanel={prefs.right} onRight={toggleRight} onExpand={() => setFullscreen(true)} lyricsOpen={view.type === "lyrics"} onLyrics={toggleLyrics} />
+        {fullscreen ? <FullscreenPlayer onClose={() => setFullscreen(false)} /> : null}
+        {menuHost.node}
+        {toastHost.node}
+        <NewPlaylistDialog open={Boolean(dialog)} busy={creating} onClose={() => setDialog(null)} onCreate={(name) => void createPlaylist(name)} />
       </div>
-
-      <PlayerBar playback={playback} queueOpen={queueOpen} onToggleQueue={() => setQueueOpen((v) => !v)} />
-    </div>
+    </SpProvider>
   );
 }
+

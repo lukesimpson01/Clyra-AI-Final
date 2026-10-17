@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
+import { execFile } from "node:child_process";
 import { safeStorage, shell } from "electron";
+import { normalizeLyricsPayload } from "./spotify-lyrics.mjs";
 
 const AUTH_TIMEOUT_MS = 10 * 60_000;
 const SCOPES = [
@@ -11,15 +13,26 @@ const SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
+  "user-read-recently-played",
+  "user-top-read",
   "playlist-read-private",
   "playlist-read-collaborative",
   "user-library-read",
   "user-library-modify",
   "user-follow-modify",
+  "user-follow-read",
+  "playlist-modify-public",
+  "playlist-modify-private",
 ].join(" ");
 
 const base64url = (value) => Buffer.from(value).toString("base64url");
-const successPage = `<!doctype html><title>Spotify connected to Clyra</title><style>body{margin:0;display:grid;min-height:100vh;place-items:center;background:#f8fafc;color:#162033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:min(340px,calc(100% - 48px));padding:32px;border:1px solid #e2e8f0;border-radius:24px;background:#fff;box-shadow:0 20px 50px #0f172a18;text-align:center}.logo{width:42px;height:42px;border-radius:50%}h1{margin:14px 0 7px;font-size:21px}p{margin:0;color:#64748b;line-height:1.55;font-size:14px}</style><main class="card"><svg class="logo" viewBox="0 0 24 24" fill="#1DB954"><circle cx="12" cy="12" r="12"/><path d="M17.2 16.6c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5-.1-.4.1-.7.5-.8 4-.9 7.5-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.3.4-.8.5-1.1.3-2.9-1.8-7.3-2.3-10.7-1.3-.4.1-.9-.1-1-.5-.1-.4.1-.9.5-1 3.9-1.2 8.7-.6 12 1.4.4.2.5.8.3 1.1zm.1-2.8C15.3 8.9 9.6 8.7 6.3 9.7c-.5.1-1-.2-1.1-.6-.1-.5.2-1 .6-1.1 3.8-1.2 10.1-.9 14 1.4.4.3.6.9.3 1.3-.3.4-.9.5-1.3.3z"/></svg><h1>Spotify is connected</h1><p>Return to Clyra — your music controls are ready.</p></main>`;
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Playlist editing and followed-artist reads were added later; existing
+// connections keep working without them and only see a reconnect hint when they
+// try one of those actions, so they are requested but not "required".
+const OPTIONAL_SCOPES = new Set(["user-follow-read", "playlist-modify-public", "playlist-modify-private"]);
+const REQUIRED_SCOPES = SCOPES.split(" ").filter((scope) => !OPTIONAL_SCOPES.has(scope));
+const successPage = `<!doctype html><title>Spotify connected to Clyra</title><style>body{margin:0;display:grid;min-height:100vh;place-items:center;background:#f8fafc;color:#162033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:min(340px,calc(100% - 48px));padding:32px;border:1px solid #e2e8f0;border-radius:24px;background:#fff;box-shadow:0 20px 50px #0f172a18;text-align:center}.logo{width:42px;height:42px;border-radius:50%}h1{margin:14px 0 7px;font-size:21px}p{margin:0;color:#64748b;line-height:1.55;font-size:14px}</style><main class="card"><svg class="logo" viewBox="0 0 24 24" fill="#1E6FFF"><circle cx="12" cy="12" r="12"/><path d="M17.2 16.6c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5-.1-.4.1-.7.5-.8 4-.9 7.5-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.3.4-.8.5-1.1.3-2.9-1.8-7.3-2.3-10.7-1.3-.4.1-.9-.1-1-.5-.1-.4.1-.9.5-1 3.9-1.2 8.7-.6 12 1.4.4.2.5.8.3 1.1zm.1-2.8C15.3 8.9 9.6 8.7 6.3 9.7c-.5.1-1-.2-1.1-.6-.1-.5.2-1 .6-1.1 3.8-1.2 10.1-.9 14 1.4.4.3.6.9.3 1.3-.3.4-.9.5-1.3.3z"/></svg><h1>Spotify is connected</h1><p>Return to Clyra — your music controls are ready.</p></main>`;
 
 function sameSecret(left, right) {
   const a = Buffer.from(String(left || ""));
@@ -91,7 +104,12 @@ export class SpotifyManager {
 
   async status() {
     const tokens = await this.readTokens();
-    return { connected: Boolean(tokens?.refresh_token || tokens?.access_token), profile: tokens?.profile || null };
+    const connected = Boolean(tokens?.refresh_token || tokens?.access_token);
+    // Connections made before a scope was added keep working, but the
+    // renderer is told which features need a one-click reconnect.
+    const granted = new Set(String(tokens?.scope || "").split(/\s+/).filter(Boolean));
+    const missingScopes = connected && granted.size ? REQUIRED_SCOPES.filter((scope) => !granted.has(scope)) : [];
+    return { connected, profile: tokens?.profile || null, missingScopes };
   }
 
   async disconnect() {
@@ -437,6 +455,113 @@ export class SpotifyManager {
     };
   }
 
+  /**
+   * Catalogue / library reads and edits behind the artist, album, browse and
+   * "create playlist" screens. One whitelisted entry point instead of a dozen
+   * IPC channels. Spotify trims endpoints for development-mode apps, so every
+   * optional read degrades to an empty result instead of failing the page.
+   */
+  async browse(kind, args = {}) {
+    const id = String(args.id || "").trim();
+    const requireId = () => {
+      if (!/^[A-Za-z0-9]{10,40}$/.test(id)) throw Object.assign(new Error("A valid Spotify id is required."), { code: "SPOTIFY_INVALID_QUERY" });
+      return id;
+    };
+    const optional = async (path, stage) => {
+      try {
+        return await this.api(path, {}, stage, { expectEmpty: true });
+      } catch (error) {
+        if (error?.code === "SPOTIFY_SIGN_IN_REQUIRED") throw error;
+        return null;
+      }
+    };
+    const compact = (list) => (Array.isArray(list) ? list.filter(Boolean) : []);
+    switch (kind) {
+      case "artist": {
+        const artist = await this.api(`/artists/${requireId()}`, {}, "spotify-artist");
+        return { artist };
+      }
+      case "artist-top-tracks": {
+        const name = String(args.name || "").trim().slice(0, 120);
+        const direct = await optional(`/artists/${requireId()}/top-tracks`, "spotify-artist-top-tracks");
+        let tracks = compact(direct?.tracks);
+        if (!tracks.length && name) {
+          // Top-tracks was removed for development-mode apps; search by artist
+          // returns the same popularity-ranked songs.
+          const found = await optional(`/search?q=${encodeURIComponent(`artist:"${name}"`)}&type=track&limit=10`, "spotify-artist-search");
+          tracks = compact(found?.tracks?.items).filter((track) => (track.artists || []).some((artist) => artist.id === id));
+          if (!tracks.length) tracks = compact(found?.tracks?.items);
+        }
+        return { tracks: tracks.slice(0, 10) };
+      }
+      case "artist-albums": {
+        const body = await optional(`/artists/${requireId()}/albums?include_groups=album,single&limit=10`, "spotify-artist-albums");
+        return { albums: compact(body?.items) };
+      }
+      case "album": {
+        const album = await this.api(`/albums/${requireId()}`, {}, "spotify-album");
+        const cover = { name: album.name, images: album.images || [] };
+        const tracks = compact(album?.tracks?.items).map((track) => ({ ...track, album: track.album?.images ? track.album : cover }));
+        return { album: { ...album, tracks: undefined }, tracks };
+      }
+      case "search-all": {
+        const q = String(args.query || "").trim().slice(0, 200);
+        if (!q) throw Object.assign(new Error("A search query is required."), { code: "SPOTIFY_INVALID_QUERY" });
+        const body = await this.api(`/search?q=${encodeURIComponent(q)}&type=track,playlist,artist,album&limit=10`, {}, "spotify-search-all");
+        return {
+          tracks: compact(body?.tracks?.items),
+          playlists: compact(body?.playlists?.items),
+          artists: compact(body?.artists?.items),
+          albums: compact(body?.albums?.items),
+        };
+      }
+      case "followed-artists": {
+        const body = await optional("/me/following?type=artist&limit=50", "spotify-followed-artists");
+        return { artists: compact(body?.artists?.items) };
+      }
+      case "saved-albums": {
+        const body = await optional("/me/albums?limit=50", "spotify-saved-albums");
+        return { albums: compact(body?.items).map((entry) => entry?.album ?? entry).filter((album) => album?.id) };
+      }
+      case "top-artists": {
+        const body = await optional("/me/top/artists?limit=10&time_range=medium_term", "spotify-top-artists");
+        return { artists: compact(body?.items) };
+      }
+      case "top-tracks": {
+        const body = await optional("/me/top/tracks?limit=10&time_range=medium_term", "spotify-top-tracks");
+        return { tracks: compact(body?.items) };
+      }
+      case "is-following": {
+        const ids = (Array.isArray(args.ids) ? args.ids : [id]).map((value) => String(value || "")).filter((value) => /^[A-Za-z0-9]{10,40}$/.test(value)).slice(0, 50);
+        if (!ids.length) return { following: [] };
+        const body = await optional(`/me/following/contains?type=artist&ids=${ids.join(",")}`, "spotify-is-following");
+        return { following: Array.isArray(body) ? body.map(Boolean) : ids.map(() => false) };
+      }
+      case "follow-artist":
+        await this.api(`/me/following?type=artist&ids=${requireId()}`, { method: "PUT" }, "spotify-follow", { expectEmpty: true });
+        return {};
+      case "unfollow-artist":
+        await this.api(`/me/following?type=artist&ids=${requireId()}`, { method: "DELETE" }, "spotify-unfollow", { expectEmpty: true });
+        return {};
+      case "create-playlist": {
+        const name = String(args.name || "").trim().slice(0, 100);
+        if (!name) throw Object.assign(new Error("Give the playlist a name."), { code: "SPOTIFY_INVALID_QUERY" });
+        const playlist = await this.api("/me/playlists", { method: "POST", body: JSON.stringify({ name, description: String(args.description || "").slice(0, 300), public: false }) }, "spotify-create-playlist");
+        return { playlist };
+      }
+      case "add-to-playlist": {
+        const playlistId = String(args.playlistId || "").trim();
+        if (!/^[A-Za-z0-9]{10,40}$/.test(playlistId)) throw Object.assign(new Error("A valid playlist id is required."), { code: "SPOTIFY_INVALID_QUERY" });
+        const uris = this.normalizeUris(args.uris).filter((uri) => uri.startsWith("spotify:track:"));
+        if (!uris.length) throw Object.assign(new Error("Only songs can be added to a playlist."), { code: "SPOTIFY_INVALID_QUERY" });
+        await this.api(`/playlists/${playlistId}/items`, { method: "POST", body: JSON.stringify({ uris }) }, "spotify-playlist-add");
+        return {};
+      }
+      default:
+        throw Object.assign(new Error(`Unsupported Spotify browse request: ${kind}`), { code: "SPOTIFY_UNSUPPORTED_ACTION" });
+    }
+  }
+
   /** Full playback state — track, progress, device, volume, shuffle, repeat. */
   async getPlaybackState() {
     return this.api("/me/player", {}, "spotify-playback-state", { expectEmpty: true });
@@ -447,9 +572,114 @@ export class SpotifyManager {
     return this.api("/me/player/queue", {}, "spotify-queue", { expectEmpty: true });
   }
 
+  /** Listening history. `contexts` carries the playlist/album each play came
+   *  from so the library can order playlists by when they were last played,
+   *  the way Spotify's own "Recents" sort does. */
   async getRecentlyPlayed() {
-    const body = await this.api("/me/player/recently-played?limit=20", {}, "spotify-recently-played");
-    return (Array.isArray(body?.items) ? body.items : []).map((entry) => entry?.track ?? entry?.item).filter((item) => item?.type === "track" && item.id && item.uri);
+    const body = await this.api("/me/player/recently-played?limit=50", {}, "spotify-recently-played");
+    const entries = Array.isArray(body?.items) ? body.items : [];
+    const tracks = [];
+    const seen = new Set();
+    const contexts = [];
+    for (const entry of entries) {
+      const item = entry?.track ?? entry?.item;
+      if (item?.type === "track" && item.id && item.uri && !seen.has(item.id)) {
+        seen.add(item.id);
+        tracks.push({ ...item, played_at: entry?.played_at || "" });
+      }
+      if (entry?.context?.uri && entry?.played_at) contexts.push({ uri: entry.context.uri, type: entry.context.type || "", playedAt: entry.played_at });
+    }
+    return { tracks, contexts };
+  }
+
+  async getLyrics({ trackName, artistName, albumName, durationMs } = {}) {
+    const track = String(trackName || "").trim().slice(0, 240);
+    const artist = String(artistName || "").trim().slice(0, 240);
+    const album = String(albumName || "").trim().slice(0, 240);
+    if (!track || !artist) throw Object.assign(new Error("A track and artist are required for lyrics."), { code: "SPOTIFY_INVALID_QUERY" });
+    // LRCLIB indexes the primary artist and the bare title. Spotify names
+    // often carry "feat."/"- Remastered" suffixes and several artists, which
+    // make exact lookups miss, so try progressively looser queries.
+    const primaryArtist = artist.split(/,|&| feat\.? | ft\.? /i)[0].trim() || artist;
+    const bareTitle = track.replace(/\s*[([](?:feat|ft|with)\.?[^)\]]*[)\]]/gi, "").replace(/\s+-\s+.*(?:remaster|version|edit|live|mix|mono|stereo).*$/i, "").trim() || track;
+    const durationSec = Math.round(Number(durationMs) / 1000);
+    const hasDuration = Number.isFinite(durationSec) && durationSec > 0;
+
+    const lookup = async (path, params) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+      try {
+        const response = await fetch(`https://lrclib.net/api/${path}?${new URLSearchParams(params)}`, {
+          headers: { "user-agent": "Clyra/1.0 (desktop music player)" },
+          signal: controller.signal,
+        });
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`Lyrics service failed (HTTP ${response.status}).`);
+        return await response.json();
+      } catch (error) {
+        if (error?.name === "AbortError") throw new Error("Lyrics took too long to load.");
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    const hasText = (payload) => Boolean(payload && (payload.syncedLyrics || payload.plainLyrics || payload.instrumental));
+
+    const exact = { track_name: bareTitle, artist_name: primaryArtist, ...(album ? { album_name: album } : {}), ...(hasDuration ? { duration: String(durationSec) } : {}) };
+    const direct = await lookup("get", exact).catch(() => null);
+    if (hasText(direct)) return normalizeLyricsPayload(direct);
+
+    // Rank search hits: synced first, then the closest duration.
+    const rank = (rows) => (Array.isArray(rows) ? rows : [])
+      .filter(hasText)
+      .map((row) => ({ row, drift: hasDuration && Number(row.duration) ? Math.abs(Number(row.duration) - durationSec) : 0 }))
+      .filter(({ drift }) => drift <= 8)
+      .sort((a, b) => Number(Boolean(b.row.syncedLyrics)) - Number(Boolean(a.row.syncedLyrics)) || a.drift - b.drift)[0]?.row;
+    const searched = rank(await lookup("search", { track_name: bareTitle, artist_name: primaryArtist }))
+      || rank(await lookup("search", { q: `${bareTitle} ${primaryArtist}` }));
+    if (searched) return normalizeLyricsPayload(searched);
+    return { synced: false, instrumental: false, lines: [], source: "LRCLIB" };
+  }
+
+  /** Spotify Connect needs a running Spotify client to play on. When none is
+   *  available, open the desktop app in the background and wait for it to
+   *  register as a device, so "play" works even when Spotify was closed. */
+  async launchApp() {
+    if (process.platform === "darwin") {
+      const opened = await new Promise((resolve) => execFile("open", ["-g", "-j", "-a", "Spotify"], (error) => resolve(!error)));
+      if (opened) return true;
+    }
+    try {
+      await shell.openExternal("spotify:");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async prepareDevice({ preferId = "" } = {}) {
+    const usable = (devices) => devices.filter((device) => device?.id && !device.is_restricted);
+    const pick = (devices) => devices.find((device) => device.id === preferId) || devices.find((device) => device.is_active) || devices.find((device) => /computer/i.test(device.type)) || devices[0];
+    let devices = usable(await this.getDevices());
+    let launched = false;
+    if (!devices.length) {
+      launched = await this.launchApp();
+      if (!launched) throw Object.assign(new Error("Install the Spotify app or open Spotify on any device, then press play again."), { code: "SPOTIFY_NO_DEVICE" });
+      // The desktop client usually registers with Spotify Connect within a
+      // few seconds of launch; poll briefly instead of failing immediately.
+      for (let attempt = 0; attempt < 20 && !devices.length; attempt += 1) {
+        await delay(attempt < 4 ? 600 : 900);
+        devices = usable(await this.getDevices().catch(() => []));
+      }
+      if (!devices.length) throw Object.assign(new Error("Spotify is starting — press play again in a moment."), { code: "SPOTIFY_NO_DEVICE" });
+    }
+    const target = pick(devices);
+    if (!target.is_active) {
+      await this.api("/me/player", { method: "PUT", body: JSON.stringify({ device_ids: [target.id], play: false }) }, "spotify-transfer");
+      // Give Connect a moment to make the transfer authoritative before a play call.
+      await delay(launched ? 700 : 300);
+    }
+    return { ...target, is_active: true, launched };
   }
 
   async getSavedTracks() {
@@ -482,12 +712,30 @@ export class SpotifyManager {
   async control(action, payload = {}) {
     const deviceQuery = payload.deviceId ? `?device_id=${encodeURIComponent(payload.deviceId)}` : "";
     switch (action) {
-      case "play":
-        return this.api(
-          `/me/player/play${deviceQuery}`,
-          { method: "PUT", body: JSON.stringify({ ...(payload.contextUri ? { context_uri: payload.contextUri } : {}), ...(payload.uris ? { uris: payload.uris } : {}) }) },
-          "spotify-play",
-        );
+      case "play": {
+        // `offset` starts a context (playlist/album/Liked Songs) or a list of
+        // URIs at a specific track so playback continues through the rest,
+        // exactly like double-clicking a row in Spotify.
+        const offset = typeof payload.offsetUri === "string" && /^spotify:(track|episode):/.test(payload.offsetUri)
+          ? { uri: payload.offsetUri }
+          : Number.isInteger(payload.offsetPosition) && payload.offsetPosition >= 0 ? { position: payload.offsetPosition } : null;
+        const body = {
+          ...(payload.contextUri ? { context_uri: payload.contextUri } : {}),
+          ...(Array.isArray(payload.uris) ? { uris: payload.uris.slice(0, 100) } : {}),
+          ...(offset && (payload.contextUri || payload.uris) ? { offset } : {}),
+          ...(Number.isFinite(payload.positionMs) && payload.positionMs > 0 ? { position_ms: Math.round(payload.positionMs) } : {}),
+        };
+        const start = (query) => this.api(`/me/player/play${query}`, { method: "PUT", body: JSON.stringify(body) }, "spotify-play");
+        try {
+          return await start(deviceQuery);
+        } catch (error) {
+          // Nothing is running (404 NO_ACTIVE_DEVICE / stale device id): wake or
+          // activate a device through the same Web API path, then replay once.
+          if (error?.httpStatus !== 404) throw error;
+          const device = await this.prepareDevice({ preferId: payload.deviceId || "" });
+          return start(`?device_id=${encodeURIComponent(device.id)}`);
+        }
+      }
       case "pause":
         return this.api(`/me/player/pause${deviceQuery}`, { method: "PUT" }, "spotify-pause");
       case "next":

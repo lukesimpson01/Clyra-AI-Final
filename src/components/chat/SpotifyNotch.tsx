@@ -18,7 +18,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getElectronDesktop } from "../../lib/electron-runtime";
-import type { SpotifyDevice, SpotifyPlaylist, SpotifyPlaylistItem, SpotifyProfile, SpotifyTrack } from "../../lib/electron-runtime";
+import type { SpotifyBrowseKind, SpotifyBrowseResult, SpotifyDevice, SpotifyLyrics, SpotifyPlayContext, SpotifyPlaylist, SpotifyPlaylistItem, SpotifyProfile, SpotifyTrack } from "../../lib/electron-runtime";
+import { mergeHistory, readLocalHistory, writeLocalHistory } from "../spotify/music-state";
 
 type RepeatMode = "off" | "track" | "context";
 
@@ -29,12 +30,12 @@ const POLL_MS = 4000;
 // (used by both this file's own pill/panel reveal and App.tsx's tabs layer +
 // shell, so the "hide elements -> resize the shell -> reveal new content"
 // sequence stays in lockstep everywhere it happens).
-export const MORPH_EASE = "cubic-bezier(.22,.9,.24,1)";
-export const MORPH_HIDE_MS = 180;
-export const MORPH_REVEAL_MS = 360;
-export const MORPH_REVEAL_DELAY_MS = 460;
-export const MORPH_SHELL_MS = 600;
-export const MORPH_SHELL_DELAY_MS = 140;
+export const MORPH_EASE = "cubic-bezier(.2,.86,.25,1)";
+export const MORPH_HIDE_MS = 120;
+export const MORPH_REVEAL_MS = 220;
+export const MORPH_REVEAL_DELAY_MS = 120;
+export const MORPH_SHELL_MS = 360;
+export const MORPH_SHELL_DELAY_MS = 35;
 
 function fmt(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -87,8 +88,21 @@ export type SpotifyPlaybackHook = {
   devices: SpotifyDevice[];
   refreshDevices: () => void;
   transferToDevice: (deviceId: string) => Promise<{ ok: boolean; error?: string }>;
-  playTrackUri: (uri: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Plays a track. With `contextUri` (playlist/album/Liked Songs) or a
+   *  `uris` list, playback starts at that track and continues through the rest. */
+  playTrackUri: (uri: string, from?: { contextUri?: string; uris?: string[] }) => Promise<{ ok: boolean; error?: string }>;
+  /** Liked Songs, in order, starting at an optional track. */
+  playLikedSongs: (startUri?: string) => Promise<{ ok: boolean; error?: string }>;
+  /** URI of the playlist/album the current track is playing from. */
+  contextUri: string | null;
+  /** Where recent plays came from, newest first (playlist recency source). */
+  recentContexts: SpotifyPlayContext[];
+  /** Spotify is being opened in the background to act as a playback device. */
+  startingDevice: boolean;
+  /** The saved connection predates a permission newer features need. */
+  needsReconnect: boolean;
   playPlaylistUri: (uri: string) => Promise<{ ok: boolean; error?: string }>;
+  lyricsForTrack: (track: SpotifyTrack) => Promise<{ ok: boolean; lyrics?: SpotifyLyrics; error?: string }>;
   search: (query: string, types?: string, limit?: number) => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; playlists?: SpotifyPlaylist[]; error?: string }>;
   // Shuffle/repeat + the real up-next queue (Spotify Web API's `/me/player/queue`).
   shuffleOn: boolean;
@@ -100,11 +114,19 @@ export type SpotifyPlaybackHook = {
   liked: boolean;
   toggleSaveTrack: () => Promise<{ ok: boolean; error?: string }>;
   addToQueue: (uri: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Artist/album/browse/playlist-edit requests (see SpotifyManager.browse). */
+  browse: (kind: SpotifyBrowseKind, args?: Record<string, unknown>) => Promise<SpotifyBrowseResult>;
+  /** Saves/removes any songs in Your Library (not just the current one). */
+  likeUris: (uris: string[], like: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** Which of these songs are already in Your Library, in order. */
+  checkLiked: (uris: string[]) => Promise<boolean[]>;
+  /** Re-reads the playlist list (after creating or editing one). */
+  playlistsChanged: () => void;
 };
 
-/** `active` gates background polling — pass `showSpotifyNotch` so Clyra only
- *  talks to Spotify while the notch is actually visible. */
-export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
+/** `active` gates lightweight playback polling; `loadLibrary` separately
+ * gates playlists, history, and queue reads for a visible music surface. */
+export function useSpotifyPlayback(active: boolean, loadLibrary = active): SpotifyPlaybackHook {
   const desktop = getElectronDesktop();
   const spotify = desktop?.spotify;
   const available = Boolean(spotify);
@@ -125,15 +147,23 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
   const [queue, setQueue] = useState<SpotifyTrack[]>([]);
   const [liked, setLiked] = useState(false);
+  const [contextUri, setContextUri] = useState<string | null>(null);
+  const [recentContexts, setRecentContexts] = useState<SpotifyPlayContext[]>([]);
+  const [startingDevice, setStartingDevice] = useState(false);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
+  // Progress is extrapolated from the last authoritative reading so the bar
+  // and synced lyrics move smoothly between the 4 s Spotify polls.
+  const progressAnchorRef = useRef({ ms: 0, at: 0 });
 
-  // Volume: `volume` is the immediate drag/wheel target; `displayVolume`
-  // eases toward it every frame so both the fader and the printed
-  // percentage glide smoothly instead of snapping straight to the cursor.
+  // Keep the fader's value as the user's immediate target.  In particular,
+  // don't feed a smoothed display value back into a native range input: it
+  // makes the thumb lag behind the pointer and lets the next playback poll
+  // appear to undo a volume change.
   const [volume, setVolume] = useState(50);
-  const [displayVolume, setDisplayVolume] = useState(50);
   const volumeRef = useRef(50);
   const dragRectRef = useRef<DOMRect | null>(null);
   const volumeCommitTimer = useRef<number | null>(null);
+  const volumeWriteUntilRef = useRef(0);
 
   // Initial status + live auth-state updates from the main process.
   useEffect(() => {
@@ -143,11 +173,13 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
       if (cancelled) return;
       setConnected(res.connected);
       setProfile(res.profile ?? null);
+      setNeedsReconnect(Boolean(res.connected && res.missingScopes?.length));
     }).catch(() => undefined);
     const unsubscribe = spotify.onAuthState((payload) => {
       setConnecting(Boolean(payload.pending));
       setConnected(payload.connected);
       if (payload.profile !== undefined) setProfile(payload.profile ?? null);
+      if (payload.connected && !payload.pending) setNeedsReconnect(false);
       setError(payload.error ?? null);
     });
     return () => {
@@ -184,13 +216,18 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     }
     setTrack(state.item ?? null);
     setIsPlaying(Boolean(state.is_playing));
+    progressAnchorRef.current = { ms: Number(state.progress_ms || 0), at: Date.now() };
     setProgressMs(Number(state.progress_ms || 0));
+    setContextUri(state.context?.uri ?? null);
     setDevice(state.device ?? null);
     setShuffleOn(Boolean(state.shuffle_state));
     if (state.repeat_state === "track" || state.repeat_state === "context" || state.repeat_state === "off") {
       setRepeatMode(state.repeat_state);
     }
-    if (typeof state.device?.volume_percent === "number") {
+    // Spotify Connect can return the previous device volume for a moment
+    // after a write. Preserve the local control position until that small
+    // consistency window has passed.
+    if (typeof state.device?.volume_percent === "number" && Date.now() >= volumeWriteUntilRef.current) {
       volumeRef.current = state.device.volume_percent;
       setVolume(state.device.volume_percent);
     }
@@ -220,26 +257,19 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   // Smoothly advance progress between polls so it doesn't sit frozen for 4s.
   useEffect(() => {
     if (!active || !isPlaying || !track) return;
+    progressAnchorRef.current = { ms: progressAnchorRef.current.ms, at: progressAnchorRef.current.at || Date.now() };
     const id = window.setInterval(() => {
-      setProgressMs((p) => Math.min(track.duration_ms, p + 1000));
-    }, 1000);
+      const anchor = progressAnchorRef.current;
+      setProgressMs(Math.min(track.duration_ms, anchor.ms + (Date.now() - anchor.at)));
+    }, 250);
     return () => window.clearInterval(id);
   }, [active, isPlaying, track]);
 
+  // Pausing freezes the extrapolation at the position shown right now.
   useEffect(() => {
-    let raf: number;
-    const tick = () => {
-      setDisplayVolume((d) => {
-        const target = volumeRef.current;
-        const diff = target - d;
-        if (Math.abs(diff) < 0.05) return target;
-        return d + diff * 0.22;
-      });
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    if (!isPlaying) progressAnchorRef.current = { ms: progressMs, at: Date.now() };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
 
   const connect = useCallback(() => {
     if (!spotify) return;
@@ -265,14 +295,21 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   const commitVolume = useCallback(
     (percent: number) => {
       if (!spotify) return;
-      void spotify.control({ action: "volume", volumePercent: Math.round(percent) }).catch(() => undefined);
+      volumeWriteUntilRef.current = Date.now() + 900;
+      void spotify.control({ action: "volume", volumePercent: Math.round(percent), ...(device?.id ? { deviceId: device.id } : {}) })
+        .then((result) => {
+          if (result.ok) setError(null);
+          else setError(result.error || "Spotify couldn't change the volume. Select an active device and try again.");
+        })
+        .catch(() => setError("Spotify couldn't change the volume. Select an active device and try again."));
     },
-    [spotify],
+    [spotify, device?.id],
   );
 
   const setFromX = (clientX: number, rect: DOMRect) => {
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     const percent = Math.round(ratio * 100);
+    volumeWriteUntilRef.current = Date.now() + 900;
     volumeRef.current = percent;
     setVolume(percent);
     return percent;
@@ -300,6 +337,7 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     e.stopPropagation();
     const d = (e.deltaY || e.deltaX) > 0 ? -4 : 4;
     const next = Math.max(0, Math.min(100, volumeRef.current + d));
+    volumeWriteUntilRef.current = Date.now() + 900;
     volumeRef.current = next;
     setVolume(next);
     if (volumeCommitTimer.current) window.clearTimeout(volumeCommitTimer.current);
@@ -308,6 +346,7 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
 
   const setVolumePercent = useCallback((percent: number) => {
     const next = Math.max(0, Math.min(100, Math.round(percent)));
+    volumeWriteUntilRef.current = Date.now() + 900;
     volumeRef.current = next;
     setVolume(next);
     // Native range inputs emit continuously during a drag.  Keep the UI
@@ -320,6 +359,7 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   const seekTo = useCallback((positionMs: number) => {
     if (!spotify || !track) return;
     const next = Math.max(0, Math.min(track.duration_ms, positionMs));
+    progressAnchorRef.current = { ms: next, at: Date.now() };
     setProgressMs(next);
     void spotify.control({ action: "seek", positionMs: next }).catch(() => undefined);
   }, [spotify, track]);
@@ -341,12 +381,90 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     if (!spotify) return;
     void spotify.control({ action: "next" }).then(() => window.setTimeout(refreshPlayback, 400)).catch(() => undefined);
   };
+
+  const ensurePlaybackDevice = useCallback(async () => {
+    if (!spotify) return { ok: false as const, error: "Spotify is only available in the Clyra desktop app." };
+    if (device?.id && device.is_active) return { ok: true as const, deviceId: device.id };
+
+    // The main process picks (or wakes) a device: an active one first, then
+    // this computer, and if Spotify isn't running anywhere it opens the
+    // desktop app in the background and waits for it to come online.
+    if (spotify.prepareDevice) {
+      setStartingDevice(true);
+      const prepared = await spotify.prepareDevice(device?.id).catch(() => null);
+      setStartingDevice(false);
+      if (!prepared?.ok || !prepared.device) {
+        const message = prepared?.error || "Clyra couldn't reach a Spotify device.";
+        setError(message);
+        return { ok: false as const, error: message };
+      }
+      setDevice(prepared.device);
+      setError(null);
+      return { ok: true as const, deviceId: prepared.device.id };
+    }
+
+    const response = await spotify.devices().catch(() => null);
+    const availableDevices = response?.ok ? (response.devices ?? []).filter((item) => item.id && !item.is_restricted) : [];
+    setDevices(response?.ok ? response.devices ?? [] : []);
+    const target = availableDevices.find((item) => item.is_active) ?? availableDevices[0];
+    if (!target) {
+      const message = "Open Spotify on a phone or computer once, then choose that device in Clyra.";
+      setError(message);
+      return { ok: false as const, error: message };
+    }
+
+    if (!target.is_active) {
+      const transferred = await spotify.control({ action: "transfer", deviceId: target.id, play: false });
+      if (!transferred.ok) {
+        const message = transferred.error || "Clyra couldn't activate that Spotify device.";
+        setError(message);
+        return { ok: false as const, error: message };
+      }
+    }
+    setDevice(target);
+    setError(null);
+    return { ok: true as const, deviceId: target.id };
+  }, [spotify, device?.id, device?.is_active]);
+
+  /** Resume where Spotify left off; when a freshly woken device has nothing
+   * to resume, start the listening history instead so Play always plays. */
+  const recentTracksRef = useRef<SpotifyTrack[]>([]);
+  const lastTrackRef = useRef<SpotifyTrack | null>(null);
+  const startOrResume = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
+    const ready = await ensurePlaybackDevice();
+    if (!ready.ok) return ready;
+    const resumed = await spotify.control({ action: "play", deviceId: ready.deviceId });
+    if (resumed.ok) {
+      // A woken device may accept "play" with nothing loaded; confirm.
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      const state = await spotify.playbackState().catch(() => null);
+      if (state?.ok && state.state?.item) return resumed;
+    }
+    const history = [lastTrackRef.current, ...recentTracksRef.current].filter((item): item is SpotifyTrack => Boolean(item?.uri));
+    const uris = [...new Set(history.map((item) => item.uri))].slice(0, 50);
+    if (!uris.length) return resumed.ok ? { ok: false, error: "Choose a song or playlist to start listening." } : resumed;
+    return spotify.control({ action: "play", deviceId: ready.deviceId, uris });
+  }, [spotify, ensurePlaybackDevice]);
+
   const onToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!spotify) return;
     const next = !isPlaying;
-    setIsPlaying(next);
-    void spotify.control({ action: next ? "play" : "pause" }).then(() => window.setTimeout(refreshPlayback, 400)).catch(() => undefined);
+    if (!next) {
+      setIsPlaying(false);
+      void spotify.control({ action: "pause", ...(device?.id ? { deviceId: device.id } : {}) }).then(() => window.setTimeout(refreshPlayback, 400)).catch(() => undefined);
+      return;
+    }
+    setIsPlaying(true);
+    void (async () => {
+      const result = await startOrResume();
+      if (!result.ok) {
+        setIsPlaying(false);
+        setError(result.error || "Spotify couldn't start playback.");
+      }
+      window.setTimeout(refreshPlayback, 400);
+    })();
   };
 
   // Explicit pause/resume/next/previous — used by chat-driven commands
@@ -361,12 +479,10 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   }, [spotify, refreshPlayback]);
 
   const resume = useCallback(async () => {
-    if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
-    setIsPlaying(true);
-    const res = await spotify.control({ action: "play" });
+    const res = await startOrResume();
     window.setTimeout(refreshPlayback, 400);
     return res;
-  }, [spotify, refreshPlayback]);
+  }, [startOrResume, refreshPlayback]);
 
   const next = useCallback(async () => {
     if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
@@ -405,20 +521,27 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     return { ok: false, error: expected === "playing" ? "Spotify did not report active playback." : expected === "paused" ? "Spotify did not report paused playback." : "Spotify did not report an active track." };
   }, [spotify, refreshPlayback]);
 
-  /** Search Spotify for `query` and start playing the first matching track. */
+  /** Search Spotify and start a short, contiguous result queue so playback
+   * continues naturally when the selected result ends. */
   const playQuery = useCallback(
     async (query: string): Promise<{ ok: boolean; error?: string; trackName?: string; artistName?: string }> => {
       if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
-      const res = await spotify.search(query, "track", 1);
+      const res = await spotify.search(query, "track", 10);
       if (!res.ok) return { ok: false, error: res.error || "Spotify search failed." };
       const found = res.tracks?.[0];
       if (!found) return { ok: false, error: `No Spotify track matched "${query}".` };
-      const playRes = await spotify.control({ action: "play", uris: [found.uri] });
+      const uris = res.tracks
+        ?.map((track) => track.uri)
+        .filter((uri): uri is string => Boolean(uri))
+        .slice(0, 10) ?? [found.uri];
+      const ready = await ensurePlaybackDevice();
+      if (!ready.ok) return ready;
+      const playRes = await spotify.control({ action: "play", uris, deviceId: ready.deviceId });
       if (!playRes.ok) return { ok: false, error: playRes.error || "Couldn't start playback — is a Spotify device active?" };
       window.setTimeout(refreshPlayback, 600);
       return { ok: true, trackName: found.name, artistName: found.artists.map((a) => a.name).join(", ") };
     },
-    [spotify, refreshPlayback],
+    [spotify, refreshPlayback, ensurePlaybackDevice],
   );
 
   /** Play a well-known trending/top-hits playlist — Spotify's Web API has no
@@ -429,11 +552,13 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     if (!res.ok) return { ok: false, error: res.error || "Spotify search failed." };
     const playlist = res.playlists?.[0];
     if (!playlist) return { ok: false, error: "Couldn't find a trending playlist." };
-    const playRes = await spotify.control({ action: "play", contextUri: playlist.uri });
+    const ready = await ensurePlaybackDevice();
+    if (!ready.ok) return ready;
+    const playRes = await spotify.control({ action: "play", contextUri: playlist.uri, deviceId: ready.deviceId });
     if (!playRes.ok) return { ok: false, error: playRes.error || "Couldn't start playback — is a Spotify device active?" };
     window.setTimeout(refreshPlayback, 600);
     return { ok: true, playlistName: playlist.name };
-  }, [spotify, refreshPlayback]);
+  }, [spotify, refreshPlayback, ensurePlaybackDevice]);
 
   const refreshPlaylists = useCallback(() => {
     if (!spotify) return;
@@ -445,9 +570,27 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
   const refreshRecentTracks = useCallback(() => {
     if (!spotify) return;
     void spotify.recentlyPlayed().then((res) => {
-      if (res.ok) setRecentTracks(res.tracks ?? []);
+      if (res.ok) {
+        setRecentTracks((current) => mergeHistory(res.tracks ?? [], current));
+        setRecentContexts(res.contexts ?? []);
+      } else if (res.code === "SPOTIFY_SCOPE_REQUIRED") {
+        setNeedsReconnect(true);
+      }
     });
   }, [spotify]);
+
+  // History survives restarts locally, so Search and Home can show what was
+  // played before even while Spotify's own history endpoint is unavailable.
+  useEffect(() => {
+    setRecentTracks((current) => mergeHistory(current, readLocalHistory()));
+  }, []);
+  useEffect(() => {
+    recentTracksRef.current = recentTracks;
+    if (recentTracks.length) writeLocalHistory(recentTracks);
+  }, [recentTracks]);
+  useEffect(() => {
+    if (track) lastTrackRef.current = track;
+  }, [track]);
 
   const refreshSavedTracks = useCallback(() => {
     if (!spotify) return;
@@ -456,33 +599,74 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     });
   }, [spotify]);
 
-  // Load the library once on connect, for the full Home/Library views.
+  // Playback can be monitored by Chat without loading the full music library.
+  // Keep those heavier reads for a visible Music surface or notch.
   useEffect(() => {
-    if (!connected) return;
+    if (!loadLibrary || !connected) return;
     refreshPlaylists();
     refreshRecentTracks();
     refreshSavedTracks();
-  }, [connected, refreshPlaylists, refreshRecentTracks, refreshSavedTracks]);
+  }, [loadLibrary, connected, refreshPlaylists, refreshRecentTracks, refreshSavedTracks]);
 
   const playTrackUri = useCallback(
-    async (uri: string) => {
+    async (uri: string, from?: { contextUri?: string; uris?: string[] }) => {
       if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
-      const res = await spotify.control({ action: "play", uris: [uri] });
-      window.setTimeout(refreshPlayback, 500);
+      const ready = await ensurePlaybackDevice();
+      if (!ready.ok) return ready;
+      const uris = from?.uris?.length ? [...new Set(from.uris)].slice(0, 100) : null;
+      const res = from?.contextUri
+        ? await spotify.control({ action: "play", contextUri: from.contextUri, offsetUri: uri, deviceId: ready.deviceId })
+        : uris && uris.includes(uri)
+          ? await spotify.control({ action: "play", uris, offsetUri: uri, deviceId: ready.deviceId })
+          : await spotify.control({ action: "play", uris: [uri], deviceId: ready.deviceId });
+      if (!res.ok) setError(res.error || "Spotify couldn't play that song.");
+      else setIsPlaying(true);
+      window.setTimeout(refreshPlayback, 450);
       return res;
     },
-    [spotify, refreshPlayback],
+    [spotify, refreshPlayback, ensurePlaybackDevice],
+  );
+
+  const savedTracksRef = useRef<SpotifyTrack[]>([]);
+  useEffect(() => {
+    savedTracksRef.current = savedTracks;
+  }, [savedTracks]);
+  const playLikedSongs = useCallback(
+    async (startUri?: string) => {
+      if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
+      const uris = savedTracksRef.current.map((item) => item.uri);
+      if (!uris.length) return { ok: false, error: "You haven't liked any songs yet." };
+      return playTrackUri(startUri && uris.includes(startUri) ? startUri : uris[0], { uris });
+    },
+    [spotify, playTrackUri],
   );
 
   const playPlaylistUri = useCallback(
     async (uri: string) => {
       if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
-      const res = await spotify.control({ action: "play", contextUri: uri });
-      window.setTimeout(refreshPlayback, 500);
+      const ready = await ensurePlaybackDevice();
+      if (!ready.ok) return ready;
+      const res = await spotify.control({ action: "play", contextUri: uri, deviceId: ready.deviceId });
+      if (!res.ok) setError(res.error || "Spotify couldn't play that playlist.");
+      else {
+        setIsPlaying(true);
+        setContextUri(uri);
+      }
+      window.setTimeout(refreshPlayback, 450);
       return res;
     },
-    [spotify, refreshPlayback],
+    [spotify, refreshPlayback, ensurePlaybackDevice],
   );
+
+  const lyricsForTrack = useCallback(async (currentTrack: SpotifyTrack) => {
+    if (!spotify) return { ok: false, error: "Lyrics are only available in the Clyra desktop app." };
+    return spotify.lyrics({
+      trackName: currentTrack.name,
+      artistName: currentTrack.artists.map((artist) => artist.name).join(", "),
+      albumName: currentTrack.album?.name,
+      durationMs: currentTrack.duration_ms,
+    });
+  }, [spotify]);
 
   const search = useCallback(
     async (query: string, types = "track,playlist", limit = 10) => {
@@ -524,6 +708,18 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     });
   }, [spotify]);
 
+  // A new item is the useful moment to update both side panels.  Spotify's
+  // recently-played endpoint can lag a little, so immediately prepend the
+  // newly observed track as well; its server order will take over on the
+  // next library refresh and duplicate IDs are removed either way.
+  useEffect(() => {
+    if (!loadLibrary || !connected || !track) return;
+    setRecentTracks((items) => [{ ...track, played_at: new Date().toISOString() }, ...items.filter((item) => item.id !== track.id)].slice(0, 50));
+    refreshQueue();
+    const id = window.setTimeout(() => refreshRecentTracks(), 900);
+    return () => window.clearTimeout(id);
+  }, [track?.id, loadLibrary, connected, refreshQueue, refreshRecentTracks]);
+
   const addToQueue = useCallback(async (uri: string) => {
     if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
     const result = await spotify.control({ action: "queue", uri });
@@ -553,18 +749,62 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
 
   // Keep the up-next list current while the full workspace/notch is open.
   useEffect(() => {
-    if (!active || !connected) return;
+    if (!loadLibrary || !connected) return;
     void refreshQueue();
     const id = window.setInterval(() => void refreshQueue(), POLL_MS * 2);
     return () => window.clearInterval(id);
-  }, [active, connected, refreshQueue]);
+  }, [loadLibrary, connected, refreshQueue]);
+
+  const browse = useCallback(async (kind: SpotifyBrowseKind, args: Record<string, unknown> = {}): Promise<SpotifyBrowseResult> => {
+    if (!spotify?.browse) return { ok: false, error: "Update the Clyra desktop app to use this feature." };
+    try {
+      return await spotify.browse(kind, args);
+    } catch {
+      return { ok: false, error: "Spotify request failed." };
+    }
+  }, [spotify]);
+
+  const likeUris = useCallback(async (uris: string[], like: boolean) => {
+    if (!spotify) return { ok: false, error: "Spotify is only available in the Clyra desktop app." };
+    const result = like ? await spotify.saveLibrary(uris) : await spotify.removeLibrary(uris);
+    if (result.ok) {
+      setError(null);
+      void spotify.savedTracks().then((res) => { if (res.ok) setSavedTracks(res.tracks ?? []); });
+      if (track?.uri && uris.includes(track.uri)) setLiked(like);
+    } else {
+      setError(result.error || "Spotify couldn't update your Library.");
+    }
+    return result;
+  }, [spotify, track?.uri]);
+
+  const checkLiked = useCallback(async (uris: string[]) => {
+    if (!spotify || !uris.length) return uris.map(() => false);
+    const out: boolean[] = [];
+    for (let index = 0; index < uris.length; index += 40) {
+      const chunk = uris.slice(index, index + 40);
+      const res = await spotify.libraryContains(chunk).catch(() => null);
+      out.push(...(res?.ok ? chunk.map((_, offset) => Boolean(res.contains?.[offset])) : chunk.map(() => false)));
+    }
+    return out;
+  }, [spotify]);
 
   const toggleShuffle = useCallback(() => {
     if (!spotify) return;
     const next = !shuffleOn;
     setShuffleOn(next);
-    void spotify.control({ action: "shuffle", state: next }).catch(() => undefined);
-  }, [spotify, shuffleOn]);
+    void spotify.control({ action: "shuffle", state: next }).then((result) => {
+      if (!result.ok) {
+        setShuffleOn(!next);
+        setError(result.error || "Spotify couldn't update shuffle.");
+        return;
+      }
+      setError(null);
+      window.setTimeout(refreshPlayback, 300);
+    }).catch(() => {
+      setShuffleOn(!next);
+      setError("Spotify couldn't update shuffle.");
+    });
+  }, [spotify, shuffleOn, refreshPlayback]);
 
   const cycleRepeat = useCallback(() => {
     if (!spotify) return;
@@ -585,7 +825,7 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     isPlaying,
     progressMs,
     device,
-    volume: Math.round(displayVolume),
+    volume: Math.round(volume),
     pct,
     error,
     connect,
@@ -613,7 +853,13 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     refreshSavedTracks,
     getPlaylistTracks,
     playTrackUri,
+    playLikedSongs,
+    contextUri,
+    recentContexts,
+    startingDevice,
+    needsReconnect,
     playPlaylistUri,
+    lyricsForTrack,
     search,
     devices,
     refreshDevices,
@@ -627,6 +873,10 @@ export function useSpotifyPlayback(active: boolean): SpotifyPlaybackHook {
     liked,
     toggleSaveTrack,
     addToQueue,
+    browse,
+    likeUris,
+    checkLiked,
+    playlistsChanged: refreshPlaylists,
   };
 }
 
@@ -843,11 +1093,14 @@ export function SpotifyNotchPanel({
   visible,
   playback,
   onExpand,
+  onDismiss,
 }: {
   visible: boolean;
   playback: SpotifyPlaybackHook;
   /** Opens the full Home/Search/Library Clyra Music workspace. */
   onExpand?: () => void;
+  /** Hides the music notch until the user starts music again. */
+  onDismiss?: () => void;
 }) {
   const { connected, track, isPlaying, progressMs, volume, pct, onSeek, onPrev, onNext, onToggle, onVolumeDown, onVolumeWheel } = playback;
   const showPlayer = connected && track;
@@ -875,6 +1128,36 @@ export function SpotifyNotchPanel({
         pointerEvents: visible ? "auto" : "none",
       }}
     >
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          title="Hide music"
+          aria-label="Hide music"
+          style={{
+            position: "absolute",
+            top: 14,
+            left: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 26,
+            height: 26,
+            borderRadius: "50%",
+            border: "none",
+            background: "oklch(0.95 0.008 258)",
+            color: "oklch(0.42 0.02 260)",
+            cursor: "pointer",
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      ) : null}
       {onExpand && connected ? (
         <button
           type="button"

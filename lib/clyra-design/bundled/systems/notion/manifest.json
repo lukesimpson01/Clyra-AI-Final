@@ -1,0 +1,14 @@
+{
+  "id": "notion",
+  "name": "Notion",
+  "category": "Productivity & SaaS",
+  "description": "All-in-one workspace. Warm minimalism, serif headings, soft surfaces.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

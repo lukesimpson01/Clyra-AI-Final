@@ -8,6 +8,9 @@ function subscribe(channel, callback) {
 
 contextBridge.exposeInMainWorld("clyraDesktop", {
   runtime: "electron",
+  // A plain string only. The renderer uses it to add macOS traffic-light spacing and
+  // drag regions. Platform branches stay in this layer, not in the components.
+  platform: process.platform,
   preview: {
     launch: (payload) => ipcRenderer.invoke("preview:launch-desktop", payload),
   },
@@ -19,7 +22,7 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     find: (text) => ipcRenderer.invoke("browser:find", { text }),
     zoom: (delta) => ipcRenderer.invoke("browser:zoom", { delta }),
     updateSettings: (patch) => ipcRenderer.invoke("browser:update-settings", { patch }),
-    addBookmark: () => ipcRenderer.invoke("browser:add-bookmark"),
+    addBookmark: (input) => ipcRenderer.invoke("browser:add-bookmark", input || {}),
     removeBookmark: (id) => ipcRenderer.invoke("browser:remove-bookmark", { id }),
     clearHistory: (ids) => ipcRenderer.invoke("browser:clear-history", { ids }),
     inspect: () => ipcRenderer.invoke("browser:inspect"),
@@ -31,6 +34,7 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     onFocusAddress: (callback) => subscribe("browser:focus-address", callback),
     onFocusFind: (callback) => subscribe("browser:focus-find", callback),
     onAskSelection: (callback) => subscribe("browser:ask-selection", callback),
+    onAgentControl: (callback) => subscribe("browser:agent-control", callback),
   },
   surfaces: {
     update: (payload) => ipcRenderer.invoke("surface:update", payload),
@@ -50,9 +54,19 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     setEnabled: (enabled) => ipcRenderer.invoke("anywhere:set-enabled", enabled),
     onState: (callback) => subscribe("anywhere:state", callback),
   },
+  care: {
+    scan: () => ipcRenderer.invoke("care:scan"),
+  },
+  eye: {
+    status: () => ipcRenderer.invoke("eye:status"),
+    setSurface: (payload) => ipcRenderer.invoke("eye:set-surface", payload),
+    setLocation: (location) => ipcRenderer.invoke("eye:set-location", location),
+  },
   dictation: {
     toggle: () => ipcRenderer.invoke("dictation:toggle"),
     shortcutStatus: () => ipcRenderer.invoke("dictation:shortcut-status"),
+    setRendererReady: (ready) => ipcRenderer.invoke("dictation:renderer-ready", Boolean(ready)),
+    syncSettings: (settings) => ipcRenderer.invoke("dictation:sync-settings", settings),
     setState: (payload) => ipcRenderer.invoke("dictation:set-state", payload),
     serviceUrl: () => ipcRenderer.invoke("dictation:service-url"),
     insert: (payload) => ipcRenderer.invoke("dictation:insert", payload),
@@ -89,11 +103,14 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     playbackState: () => ipcRenderer.invoke("spotify:playback-state"),
     queue: () => ipcRenderer.invoke("spotify:queue"),
     recentlyPlayed: () => ipcRenderer.invoke("spotify:recently-played"),
+    prepareDevice: (preferId) => ipcRenderer.invoke("spotify:prepare-device", { preferId }),
+    lyrics: (track) => ipcRenderer.invoke("spotify:lyrics", track),
     savedTracks: () => ipcRenderer.invoke("spotify:saved-tracks"),
     libraryContains: (uris) => ipcRenderer.invoke("spotify:library-contains", { uris }),
     saveLibrary: (uris) => ipcRenderer.invoke("spotify:library-save", { uris }),
     removeLibrary: (uris) => ipcRenderer.invoke("spotify:library-remove", { uris }),
     search: (query, types, limit) => ipcRenderer.invoke("spotify:search", { query, types, limit }),
+    browse: (kind, args) => ipcRenderer.invoke("spotify:browse", { kind, args }),
     control: (payload) => ipcRenderer.invoke("spotify:control", payload),
     onAuthState: (callback) => subscribe("spotify:auth-state", callback),
   },

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clyra Fluid Blob — Standalone</title>
+<style>
+  :root { color-scheme: light dark; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #f8fafc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    transition: background 0.3s ease;
+  }
+  body.dark { background: #0f172a; }
+
+  .demo-shell {
+    position: relative;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .demo-controls {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(10px);
+    padding: 14px 16px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    font-size: 13px;
+    color: #334155;
+  }
+  body.dark .demo-controls { background: rgba(15,23,42,0.85); color: #e2e8f0; }
+
+  .demo-controls label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .demo-label {
+    position: relative;
+    z-index: 5;
+    font-size: 15px;
+    color: #475569;
+    text-align: center;
+    padding: 0 24px;
+    max-width: 480px;
+    line-height: 1.5;
+  }
+  body.dark .demo-label { color: #cbd5e1; }
+  .demo-label code {
+    background: rgba(148,163,184,0.2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  /* ============================================================
+     Exact code copied from:
+       - src/App.tsx        (state + JSX, lines ~4520 / ~10887)
+       - src/index.css      (styles + keyframes, lines ~3515-3593)
+     bgAnimEnabled -> #bloub-container is only rendered when "on"
+     bgAnimColor   -> backgroundColor of each .clyra-fluid-blob
+     ============================================================ */
+
+  .clyra-fluid-bg-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+    opacity: 0.15;
+    filter: blur(90px);
+  }
+
+  .clyra-fluid-blob {
+    position: absolute;
+    border-radius: 50%;
+    mix-blend-mode: multiply;
+  }
+
+  body.dark .clyra-fluid-blob {
+    mix-blend-mode: screen;
+  }
+
+  .clyra-fluid-blob-1 {
+    width: 60vw;
+    height: 60vw;
+    top: -10vw;
+    left: -10vw;
+    animation: clyra-blob-float-1 25s ease-in-out infinite alternate;
+  }
+
+  .clyra-fluid-blob-2 {
+    width: 50vw;
+    height: 50vw;
+    top: 20vw;
+    right: -10vw;
+    animation: clyra-blob-float-2 30s ease-in-out infinite alternate;
+  }
+
+  .clyra-fluid-blob-3 {
+    width: 70vw;
+    height: 70vw;
+    bottom: -20vw;
+    left: 20vw;
+    animation: clyra-blob-float-3 35s ease-in-out infinite alternate;
+  }
+
+  @keyframes clyra-blob-float-1 {
+    0% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(10vw, 15vw) scale(1.1); }
+    100% { transform: translate(-5vw, 25vw) scale(0.9); }
+  }
+
+  @keyframes clyra-blob-float-2 {
+    0% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-20vw, 10vw) scale(1.2); }
+    100% { transform: translate(-10vw, -15vw) scale(0.8); }
+  }
+
+  @keyframes clyra-blob-float-3 {
+    0% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(15vw, -20vw) scale(0.9); }
+    100% { transform: translate(30vw, -10vw) scale(1.1); }
+  }
+  /* ============================ end copied code ============================ */
+</style>
+</head>
+<body>
+  <div class="demo-controls">
+    <strong>Clyra fluid blob — states</strong>
+    <label>
+      <input type="checkbox" id="enabledToggle" checked />
+      bgAnimEnabled
+    </label>
+    <label>
+      bgAnimColor
+      <input type="color" id="colorPicker" value="#8b5cf6" />
+    </label>
+    <label>
+      <input type="checkbox" id="darkToggle" />
+      dark mode
+    </label>
+  </div>
+
+  <div class="demo-shell">
+    <div class="pointer-events-none clyra-fluid-bg-container" id="bloub-container">
+      <div class="clyra-fluid-blob clyra-fluid-blob-1" style="background-color:#8b5cf6"></div>
+      <div class="clyra-fluid-blob clyra-fluid-blob-2" style="background-color:#8b5cf6"></div>
+      <div class="clyra-fluid-blob clyra-fluid-blob-3" style="background-color:#8b5cf6"></div>
+    </div>
+    <div class="demo-label">
+      Clyra chat app "fluid blob" background animation — fully standalone.<br />
+      In the real app this is gated behind <code>bgAnimEnabled</code> (defaults <code>false</code>,
+      no UI currently flips it) and tinted via <code>bgAnimColor</code> (defaults <code>#8b5cf6</code>).
+      Toggle the states above to see both live.
+    </div>
+  </div>
+
+  <script>
+    const container = document.getElementById('bloub-container');
+    const blobs = document.querySelectorAll('.clyra-fluid-blob');
+
+    document.getElementById('colorPicker').addEventListener('input', (e) => {
+      blobs.forEach(b => b.style.backgroundColor = e.target.value);
+    });
+
+    document.getElementById('darkToggle').addEventListener('change', (e) => {
+      document.body.classList.toggle('dark', e.target.checked);
+    });
+
+    document.getElementById('enabledToggle').addEventListener('change', (e) => {
+      container.style.display = e.target.checked ? '' : 'none';
+    });
+  </script>
+</body>
+</html>

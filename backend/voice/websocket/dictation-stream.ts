@@ -2,12 +2,14 @@ import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { loadVoiceConfig } from "../config";
 import { voiceSessions } from "../session/voice-session-manager";
+import { transcribePcm, warmSpeechEngine } from "../../speech/whisper-engine";
 
 /**
  * Dictation (Cmd+Shift+K global dictation + the in-composer mic button) only
  * ever needs speech-to-text -- no LLM, no TTS, no turn management -- so it
- * gets its own small WS bridge to Fish's batch `/v1/asr` REST endpoint
- * instead of going through the Pipecat/WebRTC voice-call pipeline. The wire
+ * gets its own small WS bridge to the local whisper.cpp worker instead of
+ * going through the call transport. The worker runs only while an utterance
+ * is being finalised; raw audio never leaves this machine. The wire
  * protocol here matches what `DictationController.tsx` and the composer's
  * `useComposerVoiceCapture` already speak.
  */
@@ -16,6 +18,8 @@ type DictationSocket = {
   ws: WebSocket;
   sessionId: string;
   chunks: Buffer[];
+  busy?: boolean;
+  partialBusy?: boolean;
 };
 
 const sockets = new Map<string, DictationSocket>();
@@ -42,33 +46,17 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
-async function transcribe(wav: Buffer, apiKey: string): Promise<string> {
-  const form = new FormData();
-  form.append("audio", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "utterance.wav");
-  form.append("language", "en");
-  form.append("ignore_timestamps", "true");
-  const response = await fetch("https://api.fish.audio/v1/asr", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Fish ASR failed (${response.status}): ${detail.slice(0, 200)}`);
-  }
-  const data = (await response.json()) as { text?: string };
-  return String(data.text || "").trim();
-}
-
 function attachSocketHandlers(sessionId: string, ws: WebSocket) {
   const config = loadVoiceConfig();
   const active: DictationSocket = { ws, sessionId, chunks: [] };
+  // Load the model while the user is still talking, so stopping feels instant.
+  void warmSpeechEngine();
   sockets.set(sessionId, active);
 
   send(ws, {
     type: "pipeline_mode",
     sessionId,
-    mode: config.fishApiKey ? "pipeline" : "browser",
+    mode: "pipeline",
     sampleRate: config.sampleRate,
   });
 
@@ -86,35 +74,64 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
       return;
     }
 
+    // Live captions for the voice call: decode what has been heard so far
+    // without consuming it. Skipped while a final decode or an earlier partial
+    // is still running so partials can never queue up behind real work.
+    if (message.type === "partial") {
+      // Always acknowledge so the client only asks for the next caption once
+      // this one is done; partials can then never queue ahead of a final decode.
+      const ack = () => send(ws, { type: "partial_done", sessionId });
+      if (active.busy || active.partialBusy || !active.chunks.length) { ack(); return; }
+      const snapshot = Buffer.concat(active.chunks);
+      // Keep partials cheap and bounded: the most recent ~12s is enough context.
+      const maxBytes = config.sampleRate * 2 * 12;
+      const pcm = snapshot.length > maxBytes ? snapshot.subarray(snapshot.length - maxBytes) : snapshot;
+      if (pcm.length < config.sampleRate * 2 * 0.8) { ack(); return; }
+      active.partialBusy = true;
+      try {
+        const result = await transcribePcm(pcm, config.sampleRate, {});
+        if (result.text && !active.busy) send(ws, { type: "transcript_partial", sessionId, text: result.text });
+      } catch {
+        // Partials are best-effort; the final decode reports real errors.
+      } finally {
+        active.partialBusy = false;
+        ack();
+      }
+      return;
+    }
+
+    if (message.type === "reset") {
+      active.chunks.length = 0;
+      return;
+    }
+
     if (message.type === "flush") {
+      // A second flush while one is decoding would spawn a duplicate decoder
+      // process on the same audio.
+      if (active.busy) return;
       const pcm = Buffer.concat(active.chunks.splice(0));
       if (!pcm.length) {
         send(ws, { type: "dictation_final", sessionId, text: "" });
         return;
       }
-      if (!config.fishApiKey) {
-        // An empty successful final transcript is indistinguishable from a
-        // whisper/noise failure and leaves callers waiting for the full test
-        // timeout. Make this a capability error so the UI can explain what
-        // needs configuring and tests can terminate immediately.
-        send(ws, {
-          type: "error",
-          sessionId,
-          message: "Dictation needs Fish Audio ASR to be configured before it can transcribe speech.",
-        });
-        return;
-      }
+      active.busy = true;
       try {
-        const wav = pcmToWav(pcm, config.sampleRate);
-        const text = await transcribe(wav, config.fishApiKey);
+        console.log(`[dictation] transcribing ${(pcm.length / 2 / config.sampleRate).toFixed(1)}s of audio`);
+        const result = await transcribePcm(pcm, config.sampleRate, {
+          profile: typeof message.profile === "string" ? message.profile : undefined,
+        });
+        console.log(`[dictation] ${result.engine} ${result.elapsedMs}ms -> ${JSON.stringify(result.text.slice(0, 80))}`);
+        const text = result.text;
         voiceSessions.appendMessage(sessionId, "user", text);
-        send(ws, { type: "dictation_final", sessionId, text });
+        send(ws, { type: "dictation_final", sessionId, text, elapsedMs: result.elapsedMs, engine: result.engine });
       } catch (error) {
         send(ws, {
           type: "error",
           sessionId,
           message: error instanceof Error ? error.message : "Dictation transcription failed.",
         });
+      } finally {
+        active.busy = false;
       }
       return;
     }

@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://sdk.scdn.co https://*.scdn.co; connect-src https: wss:; media-src https: blob: data:; img-src https: data:; frame-src https://sdk.scdn.co https://*.spotify.com;">
+<title>Clyra Player</title>
+<script>
+  // Official Spotify Web Playback SDK: registers this hidden page as a
+  // Spotify Connect device named "Clyra", so playback needs no Spotify app.
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    const bridge = window.clyraPlayer;
+    const player = new Spotify.Player({
+      name: "Clyra",
+      volume: 0.8,
+      enableMediaSession: true,
+      getOAuthToken: (cb) => bridge.token().then(cb).catch(() => cb(""))
+    });
+    for (const kind of ["initialization_error", "authentication_error", "account_error", "playback_error"]) {
+      player.addListener(kind, (e) => bridge.status({ state: "error", kind, message: e?.message || kind }));
+    }
+    player.addListener("ready", ({ device_id }) => bridge.status({ state: "ready", deviceId: device_id }));
+    player.addListener("not_ready", () => bridge.status({ state: "offline" }));
+    player.addListener("autoplay_failed", () => player.activateElement?.());
+    player.connect().then((ok) => { if (!ok) bridge.status({ state: "error", kind: "connect_failed", message: "Spotify could not start the in-app player." }); });
+    window.addEventListener("beforeunload", () => player.disconnect());
+  };
+  if (!window.clyraPlayer) document.title = "no-bridge";
+  const s = document.createElement("script");
+  s.src = "https://sdk.scdn.co/spotify-player.js";
+  s.onerror = () => window.clyraPlayer?.status({ state: "error", kind: "sdk_load", message: "Couldn't load Spotify's player. Check your connection." });
+  document.head.appendChild(s);
+</script>

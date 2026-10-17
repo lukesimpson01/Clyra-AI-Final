@@ -1,5 +1,13 @@
 export type ElectronSurfaceBounds = { x: number; y: number; width: number; height: number };
 
+export type CareSnapshot = {
+  scannedAt: string;
+  disk?: { totalBytes: number; usedBytes: number; availableBytes: number; usedPercent: number; totalLabel: string; usedLabel: string; availableLabel: string } | null;
+  memory: { totalBytes: number; usedBytes: number; usedPercent: number; totalLabel: string; usedLabel: string };
+  cpu: { loadPercent: number; cores: number };
+  caches: { bytes: number; label: string; timedOut: boolean };
+};
+
 export type SpotifyProfile = { id: string; displayName: string; email?: string; image?: string; product?: string };
 export type SpotifyPlaylist = {
   id: string;
@@ -7,16 +15,56 @@ export type SpotifyPlaylist = {
   uri: string;
   images?: Array<{ url: string }>;
   tracks?: { total: number };
-  owner?: { display_name?: string };
+  owner?: { display_name?: string; id?: string };
+  collaborative?: boolean;
 };
-export type SpotifyDevice = { id: string; name: string; type: string; is_active: boolean; volume_percent?: number | null };
+export type SpotifyDevice = { id: string; name: string; type: string; is_active: boolean; is_restricted?: boolean; volume_percent?: number | null };
 export type SpotifyTrack = {
   id: string;
   name: string;
   uri: string;
   duration_ms: number;
-  artists: Array<{ name: string }>;
-  album: { name: string; images?: Array<{ url: string }> };
+  artists: Array<{ name: string; id?: string; uri?: string }>;
+  album: { name: string; id?: string; uri?: string; images?: Array<{ url: string }> };
+  explicit?: boolean;
+  played_at?: string;
+};
+export type SpotifyArtist = {
+  id: string;
+  name: string;
+  uri: string;
+  images?: Array<{ url: string }>;
+  followers?: { total: number };
+  genres?: string[];
+  popularity?: number;
+};
+export type SpotifyAlbum = {
+  id: string;
+  name: string;
+  uri: string;
+  images?: Array<{ url: string }>;
+  artists?: Array<{ name: string; id?: string }>;
+  release_date?: string;
+  total_tracks?: number;
+  album_type?: string;
+  label?: string;
+};
+export type SpotifyBrowseKind =
+  | "artist" | "artist-top-tracks" | "artist-albums" | "album" | "search-all"
+  | "followed-artists" | "saved-albums" | "top-artists" | "top-tracks" | "is-following"
+  | "follow-artist" | "unfollow-artist" | "create-playlist" | "add-to-playlist";
+export type SpotifyBrowseResult = {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  artist?: SpotifyArtist;
+  artists?: SpotifyArtist[];
+  album?: SpotifyAlbum;
+  albums?: SpotifyAlbum[];
+  tracks?: SpotifyTrack[];
+  playlists?: SpotifyPlaylist[];
+  playlist?: SpotifyPlaylist;
+  following?: boolean[];
 };
 export type SpotifyPlaybackState = {
   is_playing: boolean;
@@ -25,9 +73,18 @@ export type SpotifyPlaybackState = {
   device: SpotifyDevice | null;
   shuffle_state?: boolean;
   repeat_state?: "off" | "track" | "context";
+  context?: { uri: string; type?: string } | null;
 };
+/** Where a recent play came from (playlist, album, artist, Liked Songs). */
+export type SpotifyPlayContext = { uri: string; type: string; playedAt: string };
 export type SpotifyQueue = { currently_playing: SpotifyTrack | null; queue: SpotifyTrack[] };
 export type SpotifyPlaylistItem = { addedAt: string; track: SpotifyTrack };
+export type SpotifyLyrics = {
+  synced: boolean;
+  instrumental: boolean;
+  source: "LRCLIB";
+  lines: Array<{ timeMs: number | null; text: string }>;
+};
 
 export type ClyraDesktopBridge = {
   runtime: "electron";
@@ -42,7 +99,7 @@ export type ClyraDesktopBridge = {
     find: (text: string) => Promise<any>;
     zoom: (delta: number | "reset") => Promise<any>;
     updateSettings: (patch: unknown) => Promise<any>;
-    addBookmark: () => Promise<any>;
+    addBookmark: (input?: { url?: string; title?: string; folder?: string }) => Promise<any>;
     removeBookmark: (id: string) => Promise<any>;
     clearHistory: (ids?: string[]) => Promise<any>;
     inspect: () => Promise<any>;
@@ -64,6 +121,10 @@ export type ClyraDesktopBridge = {
     onFocusFind: (callback: () => void) => () => void;
     onAskSelection: (
       callback: (payload: { text: string; tabId: string; pageUrl?: string; pageTitle?: string }) => void,
+    ) => () => void;
+    /** Clicks on the in-page agent status pill (Take control / Stop). */
+    onAgentControl?: (
+      callback: (payload: { command: "take_control" | "return_control" | "resume" | "stop"; tabId: string }) => void,
     ) => () => void;
   };
   surfaces: {
@@ -112,6 +173,14 @@ export type ClyraDesktopBridge = {
     setEnabled: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>;
     onState: (callback: (state: { enabled: boolean }) => void) => () => void;
   };
+  care?: {
+    scan: () => Promise<{ ok: boolean; error?: string; snapshot?: CareSnapshot }>;
+  };
+  eye?: {
+    status: () => Promise<{ ok: boolean; url: string; reachable: boolean }>;
+    setSurface: (payload: { bounds?: { x: number; y: number; width: number; height: number }; visible: boolean }) => Promise<{ ok: boolean }>;
+    setLocation: (location: { lat: number; lon: number }) => Promise<{ ok: boolean }>;
+  };
   dictation: {
     toggle?: () => Promise<{ ok: boolean }>;
     shortcutStatus?: () => Promise<{ registered: boolean }>;
@@ -122,6 +191,8 @@ export type ClyraDesktopBridge = {
     ensureCamera?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string }>;
     openMicrophoneSettings?: () => Promise<{ ok: boolean }>;
     openCameraSettings?: () => Promise<{ ok: boolean }>;
+    setRendererReady?: (ready: boolean) => Promise<{ ok: boolean }>;
+    syncSettings?: (settings: { level?: string; dictionary?: string[] }) => Promise<{ ok: boolean }>;
     onTrigger: (callback: (payload: any) => void) => () => void;
     onAction: (callback: (payload: any) => void) => () => void;
   };
@@ -153,7 +224,7 @@ export type ClyraDesktopBridge = {
     onAgentProgress: (callback: (payload: { runId: string; service: "clyra" | "research" | "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive"; state: "running" | "completed" | "failed"; label: string; detail: string }) => void) => () => void;
   };
   spotify?: {
-    status: () => Promise<{ connected: boolean; profile?: SpotifyProfile | null }>;
+    status: () => Promise<{ connected: boolean; profile?: SpotifyProfile | null; missingScopes?: string[] }>;
     signIn: () => Promise<{ ok: boolean; pending?: boolean; error?: string }>;
     disconnect: () => Promise<{ ok: boolean }>;
     profile: () => Promise<{ ok: boolean; profile?: SpotifyProfile; error?: string; code?: string }>;
@@ -162,7 +233,9 @@ export type ClyraDesktopBridge = {
     devices: () => Promise<{ ok: boolean; devices?: SpotifyDevice[]; error?: string; code?: string }>;
     playbackState: () => Promise<{ ok: boolean; state?: SpotifyPlaybackState | null; error?: string; code?: string }>;
     queue: () => Promise<{ ok: boolean; queue?: SpotifyQueue | null; error?: string; code?: string }>;
-    recentlyPlayed: () => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; error?: string; code?: string }>;
+    recentlyPlayed: () => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; contexts?: SpotifyPlayContext[]; error?: string; code?: string }>;
+    prepareDevice?: (preferId?: string) => Promise<{ ok: boolean; device?: SpotifyDevice & { launched?: boolean }; error?: string; code?: string }>;
+    lyrics: (track: { trackName: string; artistName: string; albumName?: string; durationMs?: number }) => Promise<{ ok: boolean; lyrics?: SpotifyLyrics; error?: string; code?: string }>;
     savedTracks: () => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; error?: string; code?: string }>;
     libraryContains: (uris: string[]) => Promise<{ ok: boolean; contains?: boolean[]; error?: string; code?: string }>;
     saveLibrary: (uris: string[]) => Promise<{ ok: boolean; error?: string; code?: string }>;
@@ -172,6 +245,7 @@ export type ClyraDesktopBridge = {
       types?: string,
       limit?: number,
     ) => Promise<{ ok: boolean; tracks?: SpotifyTrack[]; playlists?: SpotifyPlaylist[]; error?: string; code?: string }>;
+    browse?: (kind: SpotifyBrowseKind, args?: Record<string, unknown>) => Promise<SpotifyBrowseResult>;
     control: (payload: {
       action: "play" | "pause" | "next" | "previous" | "seek" | "volume" | "transfer" | "shuffle" | "repeat" | "queue";
       deviceId?: string;
@@ -180,6 +254,8 @@ export type ClyraDesktopBridge = {
       contextUri?: string;
       uri?: string;
       uris?: string[];
+      offsetUri?: string;
+      offsetPosition?: number;
       play?: boolean;
       state?: boolean | "off" | "track" | "context";
     }) => Promise<{ ok: boolean; error?: string; code?: string }>;
@@ -234,7 +310,7 @@ export async function requestElectronBrowser(
   if (path === "/api/openbrowser/find") return desktop.browser.find(String(body.text || ""));
   if (path === "/api/openbrowser/zoom") return desktop.browser.zoom(body.delta);
   if (path === "/api/openbrowser/settings") return desktop.browser.updateSettings(body);
-  if (path === "/api/openbrowser/bookmarks") return desktop.browser.addBookmark();
+  if (path === "/api/openbrowser/bookmarks") return desktop.browser.addBookmark(body);
   if (path.startsWith("/api/openbrowser/bookmarks/")) {
     return desktop.browser.removeBookmark(decodeURIComponent(path.split("/").at(-1) || ""));
   }

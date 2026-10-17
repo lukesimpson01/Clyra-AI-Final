@@ -621,6 +621,7 @@ export class Toolbar {
          filtered rather than passed straight through. */
       append(actions, ...[
         el("span", { class: "save-state", text: this.saveLabel() }),
+        el("button", { class: "text-button", type: "button", onclick: () => this.context.askAboutPage(page) }, "Ask Clyra"),
         el("button", { class: "text-button", type: "button", onclick: (event) => this.context.shareMenu(page, event.currentTarget) }, "Share"),
         this.favoriteButton(page),
         iconButton("dots", "Page settings", (event) => this.context.pageMenu(page, event.currentTarget)),

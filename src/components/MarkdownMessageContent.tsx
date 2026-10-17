@@ -1,10 +1,10 @@
-import { useEffect, useState, type ComponentPropsWithoutRef } from "react";
+import { useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { createPortal } from "react-dom";
 import Markdown, { type Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light.js";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, ExternalLink, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useTerminalRunner } from "./terminal/TerminalRunnerProvider";
 import { getLanguageDisplayName, isPreviewableLanguage, isRunnableLanguage } from "../lib/runnableLanguages";
@@ -16,6 +16,35 @@ type CodeProps = ComponentPropsWithoutRef<"code"> & {
 };
 
 type PreviewPayload = { html: string; url: string };
+type PreviewHistoryEntry = { url: string; html: string | null };
+
+const LOCAL_PREVIEW_PATH = /^\/notes\/preview\//;
+
+/** Compact label for the address bar — a local preview shows its own path, an external URL shows host+path. */
+function previewAddressLabel(url: string): string {
+  const parsed = new URL(url, window.location.origin);
+  if (parsed.origin === window.location.origin && LOCAL_PREVIEW_PATH.test(parsed.pathname)) {
+    return `${parsed.pathname.slice(1)}${parsed.search}${parsed.hash}`;
+  }
+  return parsed.href.replace(/^https?:\/\//, "");
+}
+
+/** Same address-bar parsing as Clyra Notes: bare URL, bare domain, relative path, or a search query. */
+function previewDestination(value: string): string | null {
+  const query = value.trim();
+  if (!query) return null;
+  if (/^https?:\/\//i.test(query)) return new URL(query).href;
+  if (/^localhost(?::\d+)?(?:[/?#].*)?$/i.test(query)) return new URL(`http://${query}`).href;
+  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(query)) return new URL(`https://${query}`).href;
+  if (/^(?:\/|\.\/|\.\.\/)/.test(query)) return new URL(query, window.location.origin).href;
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
+/** srcDoc renders at an opaque origin, so a link click needs this bridge to reach the parent's address bar/history. */
+function addPreviewLinkBridge(html: string, sourceUrl: string): string {
+  const bridge = `<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[href]");if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target==="_blank")return;var h=a.getAttribute("href");if(!h||/^(?:#|mailto:|tel:|javascript:)/i.test(h))return;e.preventDefault();parent.postMessage({type:"clyra-chat-preview-link",url:new URL(h,${JSON.stringify(sourceUrl)}).href},"*");},true);</script>`;
+  return /<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, `${bridge}</body>`) : `${html}${bridge}`;
+}
 
 function CodePreviewDialog({
   language,
@@ -26,15 +55,29 @@ function CodePreviewDialog({
   text: string;
   onClose: () => void;
 }) {
-  const [preview, setPreview] = useState<PreviewPayload | null>(null);
+  const [history, setHistory] = useState<PreviewHistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [addressValue, setAddressValue] = useState("Starting preview…");
   const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const addressRef = useRef<HTMLInputElement>(null);
 
+  const current = historyIndex >= 0 ? history[historyIndex] : undefined;
+
+  const visit = (url: string, html: string | null = null) => {
+    setError(null);
+    setHistory((prev) => {
+      const next = [...prev.slice(0, historyIndex + 1), { url, html }];
+      setHistoryIndex(next.length - 1);
+      return next;
+    });
+  };
+
+  // The initial fetch to render the code as a live preview, once per code block instance.
   useEffect(() => {
     const controller = new AbortController();
-    setPreview(null);
-    setError(null);
     void fetch("/api/notes/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -42,18 +85,40 @@ function CodePreviewDialog({
       signal: controller.signal,
     })
       .then(async (response) => {
-        const payload = await response.json() as Partial<PreviewPayload> & { error?: string };
+        const payload = (await response.json()) as Partial<PreviewPayload> & { error?: string };
         if (!response.ok || payload.error || !payload.html || !payload.url) {
           throw new Error(payload.error || "Preview failed");
         }
-        setPreview({ html: payload.html, url: new URL(payload.url, window.location.origin).href });
+        const url = new URL(payload.url, window.location.origin).href;
+        setHistory([{ url, html: addPreviewLinkBridge(payload.html, url) }]);
+        setHistoryIndex(0);
       })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
         setError(reason instanceof Error ? reason.message : "Preview failed");
       });
     return () => controller.abort();
-  }, [language, text, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language, text]);
+
+  useEffect(() => {
+    if (current) {
+      setAddressValue(previewAddressLabel(current.url));
+      setError(null);
+    }
+  }, [current?.url]);
+
+  // Follows a link clicked inside the preview (via addPreviewLinkBridge's postMessage) the same way Notes does.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== "clyra-chat-preview-link") return;
+      const destination = previewDestination(String(event.data.url || ""));
+      if (destination) visit(destination);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyIndex]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -68,6 +133,25 @@ function CodePreviewDialog({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [fullscreen, onClose]);
 
+  const canGoBack = historyIndex > 0;
+  const canGoForward = historyIndex >= 0 && historyIndex < history.length - 1;
+
+  const goBack = () => canGoBack && setHistoryIndex((i) => i - 1);
+  const goForward = () => canGoForward && setHistoryIndex((i) => i + 1);
+  const reload = () => {
+    if (!current) return;
+    // Bumps the iframe's key so it actually remounts and re-renders from scratch.
+    setReloadNonce((n) => n + 1);
+  };
+
+  const handleAddressKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const destination = previewDestination(addressValue);
+    if (destination) visit(destination);
+    else if (current) setAddressValue(previewAddressLabel(current.url));
+  };
+
   const title = `${getLanguageDisplayName(language)} preview`;
   return createPortal(
     <div className="clyra-code-preview-backdrop" onMouseDown={(event) => {
@@ -80,15 +164,41 @@ function CodePreviewDialog({
         aria-label={title}
       >
         <header className="clyra-code-preview__header">
-          <span className="clyra-code-preview__address" title={preview?.url}>
-            {preview ? new URL(preview.url).pathname.replace(/^\//, "") : "Starting preview…"}
-          </span>
           <span className="clyra-code-preview__actions">
-            <button type="button" aria-label="Reload preview" onClick={() => setReloadKey((value) => value + 1)}>
+            <button type="button" aria-label="Go back" disabled={!canGoBack} onClick={goBack}>
+              <ArrowLeft />
+            </button>
+            <button type="button" aria-label="Go forward" disabled={!canGoForward} onClick={goForward}>
+              <ArrowRight />
+            </button>
+            <button type="button" aria-label="Reload preview" onClick={reload} disabled={!current}>
               <RefreshCw />
             </button>
-            {preview ? (
-              <button type="button" aria-label="Open preview externally" onClick={() => window.open(preview.url, "_blank", "noopener,noreferrer")}>
+          </span>
+          <input
+            ref={addressRef}
+            className="clyra-code-preview__address clyra-code-preview__address--input"
+            value={error ? error : addressValue}
+            onChange={(event) => setAddressValue(event.target.value)}
+            onFocus={() => addressRef.current?.select()}
+            onKeyDown={handleAddressKeyDown}
+            aria-label="Preview address or web search"
+            aria-invalid={Boolean(error)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <span className="clyra-code-preview__actions">
+            <button type="button" aria-label="Copy preview URL" disabled={!current} onClick={() => {
+              if (!current) return;
+              void navigator.clipboard?.writeText(current.url).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1600);
+              }).catch(() => undefined);
+            }}>
+              {copied ? <Check /> : <Copy />}
+            </button>
+            {current ? (
+              <button type="button" aria-label="Open preview externally" onClick={() => window.open(current.url, "_blank", "noopener,noreferrer")}>
                 <ExternalLink />
               </button>
             ) : null}
@@ -100,14 +210,26 @@ function CodePreviewDialog({
             </button>
           </span>
         </header>
-        {error ? <p className="clyra-code-preview__error">{error}</p> : null}
-        {!error ? (
-          <iframe
-            className="clyra-code-preview__frame"
-            title={title}
-            srcDoc={preview?.html}
-            sandbox="allow-scripts allow-forms allow-modals allow-popups"
-          />
+        {current ? (
+          current.html !== null ? (
+            <iframe
+              key={`${historyIndex}-${current.url}-${reloadNonce}`}
+              className="clyra-code-preview__frame"
+              title={title}
+              srcDoc={current.html}
+              sandbox="allow-scripts allow-forms allow-modals allow-popups"
+            />
+          ) : (
+            <iframe
+              key={`${historyIndex}-${current.url}-${reloadNonce}`}
+              className="clyra-code-preview__frame"
+              title={title}
+              src={current.url}
+              sandbox="allow-scripts allow-forms allow-modals allow-popups allow-same-origin"
+            />
+          )
+        ) : !error ? (
+          <div className="clyra-code-preview__frame" />
         ) : null}
       </section>
     </div>,

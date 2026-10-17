@@ -38,6 +38,13 @@ export function GitHubPopover({ projectId, projectName, onStatusChange }: Props)
 
   useEffect(() => { if (open) void refresh().catch((error) => setNotice(error instanceof Error ? error.message : "Could not load source control.")); }, [open, refresh]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   const initialize = async () => {
     const name = pendingName.trim();
     if (!name || isPlaceholderProjectName(name)) {
@@ -87,11 +94,12 @@ export function GitHubPopover({ projectId, projectName, onStatusChange }: Props)
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.985 }}
             transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => setOpen(false)}
             className="fixed inset-0 z-[90] flex items-center justify-center bg-black/[0.10] p-5 backdrop-blur-[1px]"
           >
             <motion.div
               initial={{ opacity: 0, y: 10, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(event) => event.stopPropagation()}
               className="w-full max-w-[380px] overflow-hidden rounded-[13px] border border-black/[0.09] bg-white shadow-[0_22px_60px_rgba(15,23,42,0.16)]"
             >
             <div className="flex items-start gap-2.5 px-4 pb-3 pt-4">

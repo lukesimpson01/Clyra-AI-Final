@@ -1,12 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { app, BrowserWindow, clipboard, globalShortcut, screen, shell, systemPreferences } from "electron";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { cleanDictation } from "./dictation-cleanup.mjs";
+import { createGestureMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_LABEL } from "./dictation-hotkey.mjs";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
 
 const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const PILL_WIDTH = 380;
-const PILL_HEIGHT = 96;
+const PILL_WIDTH = 270;
+const PILL_HEIGHT = 62;
 const PILL_MARGIN = 16;
 
 function snapshotClipboard() {
@@ -83,8 +87,18 @@ function isClyraProcessName(name) {
 }
 
 export class DictationManager {
-  constructor({ uiContents, preloadPath, pillPath }) {
+  constructor({ uiContents, preloadPath, pillPath, native = null, engine = null, settingsPath = "", cleanupViaService = null }) {
     this.uiContents = uiContents;
+    // Standalone ("Clyra closed") pipeline: hidden mic window + main-process
+    // speech engine. Used whenever the Clyra UI is not up to do the work itself.
+    this.native = native;
+    this.engine = engine;
+    this.settingsPath = settingsPath;
+    this.cleanupViaService = cleanupViaService;
+    this.rendererReady = false;
+    this.nativeActive = false;
+    this.nativeStartPromise = null;
+    if (this.native) this.native.onLevel = (level) => { if (this.nativeActive && this.phase === "listening") this.setState({ level: Math.max(0, Math.min(1, level)) }); };
     this.preloadPath = preloadPath;
     this.pillPath = pillPath;
     this.window = null;
@@ -94,7 +108,124 @@ export class DictationManager {
     this.escapeRegistered = false;
     this.shortcutRegistered = false;
     this.activationId = 0;
-    this.shortcut = process.platform === "darwin" ? "Command+Shift+K" : "Control+Shift+K";
+    // Primary hotkey: hold/tap Right Option (see dictation-hotkey.mjs). The
+    // global shortcut below is the fallback toggle used when the OS key hook
+    // is unavailable, and the first free candidate is picked at startup so it
+    // never steals a combo another app already owns. Cmd+L is deliberately not
+    // used: it is "focus address bar" in every browser.
+    this.shortcutCandidates = ["Control+Alt+Space", "Control+Alt+D", "Control+Shift+Space"];
+    this.shortcut = this.shortcutCandidates[0];
+    this.handsFree = false;
+    this.pendingStop = false;
+    this.captureRequested = false;
+    this.refocus = null;
+    this.hotkeyMode = "none";
+    this.stopHotkey = null;
+    this.machine = createGestureMachine({
+      onStart: () => void this.toggle({ manual: true }),
+      onStop: () => this.stopFromHotkey(),
+      onCancel: () => { if (this.phase !== "idle") this.cancel(); },
+      onHandsFree: () => { this.handsFree = true; if (this.phase === "listening") this.setState({ detail: "Hands-free — tap again to finish", handsFree: true }); },
+    });
+  }
+
+  stopFromHotkey() {
+    this.handsFree = false;
+    if (this.phase === "arming" && !this.captureRequested) { this.pendingStop = true; return; }
+    if (["arming", "listening"].includes(this.phase)) this.requestStop();
+  }
+
+  setRendererReady(ready) {
+    this.rendererReady = Boolean(ready);
+  }
+
+  /** The Clyra UI can do the work only while its renderer is alive and has said so. */
+  useRenderer() {
+    const contents = this.uiContents();
+    return Boolean(this.rendererReady && contents && !contents.isDestroyed());
+  }
+
+  requestStop() {
+    if (this.nativeActive) { void this.nativeFinish(); return; }
+    this.emitUi("dictation:trigger", { type: "stop" });
+  }
+
+  readFlowSettings() {
+    try {
+      const saved = JSON.parse(readFileSync(this.settingsPath, "utf8"));
+      return {
+        level: saved.level === "raw" || saved.level === "polished" ? saved.level : "light",
+        dictionary: Array.isArray(saved.dictionary) ? saved.dictionary.map(String).filter(Boolean).slice(0, 80) : [],
+      };
+    } catch {
+      return { level: "light", dictionary: [] };
+    }
+  }
+
+  writeFlowSettings(settings) {
+    if (!this.settingsPath) return;
+    try {
+      mkdirSync(path.dirname(this.settingsPath), { recursive: true });
+      writeFileSync(this.settingsPath, JSON.stringify({ level: settings?.level, dictionary: settings?.dictionary }), "utf8");
+    } catch { /* settings are best-effort */ }
+  }
+
+  async nativeStart(activationId) {
+    this.nativeActive = true;
+    const startedAt = Date.now();
+    this.nativeStartPromise = this.native.start();
+    // Warm the speech model while the user is already talking.
+    this.engine?.warm().catch(() => undefined);
+    try {
+      await this.nativeStartPromise;
+    } catch (error) {
+      this.nativeActive = false;
+      if (activationId === this.activationId) this.setState({ phase: "error", detail: error instanceof Error ? error.message : "Could not start the microphone." });
+      return;
+    }
+    if (activationId !== this.activationId || !this.nativeActive) { this.native.cancel(); this.nativeActive = false; return; }
+    console.log(`[flow] microphone live in ${Date.now() - startedAt}ms`);
+    this.setState({ phase: "listening", detail: "Listening", level: 0 });
+    if (this.pendingStop) { this.pendingStop = false; void this.nativeFinish(); }
+  }
+
+  async nativeFinish() {
+    if (!this.nativeActive) return;
+    this.nativeActive = false;
+    this.handsFree = false;
+    const activationId = this.activationId;
+    this.setState({ phase: "processing", detail: "Transcribing", level: 0 });
+    try {
+      await this.nativeStartPromise?.catch(() => undefined);
+      const pcm = await this.native.stop();
+      if (pcm.length < 16_000 * 2 * 0.25) throw new Error("No speech was detected.");
+      const raw = await this.engine.transcribe(pcm);
+      if (activationId !== this.activationId) return;
+      if (!raw) throw new Error("No speech was detected.");
+      this.setState({ phase: "processing", detail: "Cleaning up" });
+      const { level, dictionary } = this.readFlowSettings();
+      const application = this.target?.application || "";
+      const local = cleanDictation(raw, { level, dictionary, application });
+      let text = local.text || raw;
+      // Language-model polish only for messy self-corrections / "polished" mode, and only when
+      // the Clyra service happens to be up; otherwise the local pass above is the result.
+      if (local.needsModel && local.kind !== "code" && this.cleanupViaService) {
+        text = (await this.cleanupViaService({ transcript: raw, level, dictionary, application }).catch(() => "")) || text;
+      }
+      if (activationId !== this.activationId) return;
+      const result = await this.insert({ text, target: this.target || {} });
+      const copiedOnly = result?.method === "clipboard-only";
+      this.setState({ phase: "done", detail: copiedOnly ? String(result.note || "Copied — press ⌘V to paste") : "Inserted" });
+      setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "" }); }, copiedOnly ? 3200 : 850);
+    } catch (error) {
+      if (activationId !== this.activationId) return;
+      const message = (error instanceof Error ? error.message : String(error || "")).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+      this.setState({ phase: "error", detail: message || "Clyra dictation failed." });
+    }
+  }
+
+  hotkeyInfo() {
+    return { mode: this.hotkeyMode, hotkey: this.hotkeyMode === "hold" ? HOTKEY_LABEL : this.shortcut, fallback: this.shortcutRegistered ? this.shortcut : "" };
   }
 
   isSender(contents) {
@@ -102,12 +233,54 @@ export class DictationManager {
   }
 
   async initialize() {
-    globalShortcut.unregister(this.shortcut);
-    this.shortcutRegistered = globalShortcut.register(this.shortcut, () => void this.toggle());
-    if (!this.shortcutRegistered) console.warn("[dictation] global Cmd/Ctrl+Shift+K is already owned by another app.");
+    // The pill's buttons must work with no Clyra window, so this IPC lives here.
+    ipcMain.removeAllListeners("dictation:pill-action");
+    ipcMain.on("dictation:pill-action", (event, action) => {
+      if (!this.window || event.sender.id !== this.window.webContents.id) return;
+      void this.action(String(action || "cancel"));
+    });
+    this.shortcut = this.shortcutCandidates.find((candidate) => {
+      globalShortcut.unregister(candidate);
+      if (globalShortcut.isRegistered(candidate)) return false;
+      this.shortcutRegistered = globalShortcut.register(candidate, () => void this.toggle());
+      return this.shortcutRegistered;
+    }) || this.shortcutCandidates[0];
+    if (!this.shortcutRegistered) console.warn("[flow] every fallback dictation shortcut is owned by another app.");
+    this.stopHotkey = process.env.CLYRA_DISABLE_KEY_HOOK === "1" ? null : startHotkeyListener(this.machine);
+    this.hotkeyMode = this.stopHotkey ? "hold" : this.shortcutRegistered ? "toggle" : "none";
+    if (!this.stopHotkey && process.platform === "darwin" && process.env.CLYRA_DISABLE_KEY_HOOK !== "1") this.awaitHotkeyPermission();
+    console.log(`[flow] hotkey ready: ${this.hotkeyMode === "hold" ? HOTKEY_LABEL + " (hold = push-to-talk, tap = hands-free)" : this.shortcut}`);
+  }
+
+  /**
+   * Right-Option needs macOS Accessibility. Ask once, then keep checking so the
+   * better hotkey switches on the moment the user ticks Clyra in Settings
+   * (no relaunch), while the fallback shortcut works in the meantime.
+   */
+  awaitHotkeyPermission() {
+    let trusted = false;
+    try { trusted = systemPreferences.isTrustedAccessibilityClient(true); } catch { /* ignore */ }
+    let attempts = 0;
+    this.permissionTimer = setInterval(() => {
+      attempts += 1;
+      let ok = false;
+      try { ok = systemPreferences.isTrustedAccessibilityClient(false); } catch { /* ignore */ }
+      if (ok || trusted) {
+        this.stopHotkey = startHotkeyListener(this.machine);
+        if (this.stopHotkey) {
+          this.hotkeyMode = "hold";
+          console.log(`[flow] hotkey upgraded: ${HOTKEY_LABEL} (hold = push-to-talk, tap = hands-free)`);
+        }
+        if (this.stopHotkey || attempts > 5) { clearInterval(this.permissionTimer); this.permissionTimer = null; }
+      }
+      if (attempts > 200) { clearInterval(this.permissionTimer); this.permissionTimer = null; }
+    }, 3000);
   }
 
   destroy() {
+    if (this.permissionTimer) clearInterval(this.permissionTimer);
+    this.stopHotkey?.();
+    this.stopHotkey = null;
     globalShortcut.unregister(this.shortcut);
     this.shortcutRegistered = false;
     this.unregisterEscape();
@@ -325,6 +498,7 @@ export class DictationManager {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        autoplayPolicy: "no-user-gesture-required",
         backgroundThrottling: false,
       },
     });
@@ -356,8 +530,13 @@ export class DictationManager {
 
   setState(payload) {
     this.payload = { ...this.payload, ...payload };
+    if (payload.phase === "idle" || payload.phase === "arming") this.payload.handsFree = false;
     this.phase = this.payload.phase || "idle";
     if (this.phase === "idle") {
+      this.handsFree = false;
+      this.pendingStop = false;
+      this.captureRequested = false;
+      this.machine.reset();
       this.unregisterEscape();
       const current = this.window;
       if (current && !current.isDestroyed()) setTimeout(() => current.hide(), 650);
@@ -382,9 +561,10 @@ export class DictationManager {
     this.escapeRegistered = false;
   }
 
-  async toggle() {
-    if (["listening", "processing", "optimising"].includes(this.phase)) {
-      this.emitUi("dictation:trigger", { type: "stop" });
+  async toggle({ manual = false } = {}) {
+    if (["listening", "processing", "optimising"].includes(this.phase) || (this.phase === "arming" && this.captureRequested)) {
+      this.handsFree = false;
+      this.requestStop();
       return;
     }
     if (this.phase === "selection" || this.phase === "preview") {
@@ -394,12 +574,14 @@ export class DictationManager {
     if (this.phase === "error" || this.phase === "done") {
       // Same shortcut clears a prior failure and starts a fresh capture so the
       // user is not stuck on an error pill until Escape.
+      // The renderer is already idle in these phases, and sending it "cancel"
+      // makes it publish phase "idle" AFTER the new session below has begun,
+      // which used to hide the fresh pill (found by driving the real app).
       this.activationId += 1;
-      this.emitUi("dictation:trigger", { type: "cancel" });
       this.target = null;
     }
     // Do not wait on macOS accessibility APIs before showing the shortcut UI.
-    // They can be slow when another app is busy, which used to make Cmd+Shift+K
+    // They can be slow when another app is busy, which used to make Cmd+L
     // feel broken even though the global shortcut had fired.
     const activationId = ++this.activationId;
     this.target = { application: "", selectedText: "" };
@@ -412,24 +594,54 @@ export class DictationManager {
       return;
     }
 
+    // Open the mic FIRST. The frontmost-app / selection lookups go through
+    // AppleScript and can take hundreds of ms; they now run alongside mic
+    // start-up and are delivered as a "target" update before anything is inserted.
+    this.captureRequested = true;
+    this.target = { application: "", selectedText: "" };
+    this.setState({ phase: "arming", application: "", selectedText: "", detail: "" });
+    if (!this.useRenderer() && this.native && this.engine) {
+      // Clyra's UI isn't up (closed, hidden at login, or still booting): run the
+      // standalone pipeline so the hotkey works instantly regardless.
+      void this.nativeStart(activationId);
+    } else {
+      this.emitUi("dictation:trigger", { type: "start", target: { ...this.target }, manual: true });
+      if (this.pendingStop) {
+        // Released before the mic was requested: the renderer defers the stop
+        // until capture is live, so nothing said is lost and nothing hangs.
+        this.pendingStop = false;
+        this.emitUi("dictation:trigger", { type: "stop" });
+      }
+    }
+
     const [application, selectedText] = await Promise.all([
       frontmostApplication().catch(() => ""),
       readSelectedText().catch(() => ""),
     ]);
     if (activationId !== this.activationId || this.phase === "idle") return;
-    const target = { application, selectedText };
-    this.target = target;
-    if (selectedText.trim()) {
-      this.setState({ phase: "selection", selectedText: selectedText.slice(0, 260), application, detail: "Selected text ready" });
-      this.emitUi("dictation:trigger", { type: "selection", target });
-      return;
-    }
-    this.setState({ phase: "listening", application, detail: "Listening" });
-    this.emitUi("dictation:trigger", { type: "start", target });
+    // Selection is context, not a separate mode. This lets someone select a
+    // paragraph and simply say “make this friendlier” without learning UI.
+    this.target = { application, selectedText };
+    this.setState({ application, selectedText: selectedText.slice(0, 260) });
+    if (!this.nativeActive) this.emitUi("dictation:trigger", { type: "target", target: this.target });
   }
 
   async action(action) {
     if (action === "cancel") return this.cancel();
+    if (action === "stop") {
+      // The pill's stop button: end capture and transcribe right now. Clicking
+      // the pill can activate Clyra, so put the app being dictated into back in
+      // front while transcription runs; insert() waits for this before pasting.
+      this.handsFree = false;
+      const intended = this.target?.application;
+      if (intended && process.platform === "darwin" && !isClyraProcessName(intended)) {
+        this.refocus = frontmostApplication()
+          .then((current) => (current === intended ? undefined : focusApplication(intended)))
+          .catch(() => undefined);
+      }
+      if (["arming", "listening"].includes(this.phase)) this.requestStop();
+      return;
+    }
     // A click on the visible pill focuses Clyra temporarily. Restore the app
     // selected at activation before asking the renderer to open the mic so
     // the later paste cannot land in Clyra's own window.
@@ -447,24 +659,73 @@ export class DictationManager {
 
   cancel() {
     this.activationId += 1;
+    if (this.nativeActive) { this.native?.cancel(); this.nativeActive = false; }
     this.emitUi("dictation:trigger", { type: "cancel" });
     this.target = null;
     this.setState({ phase: "idle", detail: "" });
   }
 
+  /**
+   * macOS only allows synthetic Cmd+V with Accessibility permission. Without
+   * it, keep the transcript on the clipboard (never lose the user's words),
+   * ask macOS to show its permission prompt, and tell the pill to say so.
+   */
+  clipboardOnly(text) {
+    clipboard.writeText(text);
+    try { systemPreferences.isTrustedAccessibilityClient(true); } catch { /* prompt is best-effort */ }
+    return { ok: true, method: "clipboard-only", note: "Copied — press ⌘V to paste" };
+  }
+
   async insert({ text, target }) {
     if (!text?.trim()) throw new Error("Clyra received no text to insert.");
-    if (process.platform !== "darwin") {
-      throw new Error("Native insertion is not available on this platform yet. The text remains ready to copy.");
+    // Test hook: report instead of pasting into whatever app is in front.
+    if (process.env.CLYRA_FLOW_DRY_RUN === "1") {
+      console.log(`[flow] dry-run insert (${target?.application || "unknown app"}): ${JSON.stringify(text)}`);
+      return { ok: true, method: "dry-run" };
     }
-    const intended = String(target?.application || "").trim();
+    if (process.platform === "win32") {
+      // The Flow window is shown inactive, so the user's original field still
+      // owns focus. Clipboard is only a guarded fallback and is restored even
+      // if SendKeys fails, avoiding the old “text copied but not inserted” lie.
+      const saved = snapshotClipboard();
+      try {
+        clipboard.writeText(text);
+        await wait(30);
+        if (pasteWithKeyTap()) { await wait(120); return { ok: true, method: "keytap" }; }
+        await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"], { timeout: 4_000, windowsHide: true });
+        await wait(120);
+        return { ok: true, method: "clipboard-fallback" };
+      } catch (error) {
+        throw error instanceof Error ? error : new Error("Clyra could not paste into the active Windows field.");
+      } finally { restoreClipboard(saved); }
+    }
+    if (process.platform !== "darwin") throw new Error("Native insertion is currently supported on macOS and Windows only.");
+    // A click on the pill may have activated Clyra: wait for the refocus started
+    // in action("stop") so the paste lands in the app the user was typing in.
+    if (this.refocus) { await this.refocus; this.refocus = null; }
+    let trustedNow = true;
+    try { trustedNow = systemPreferences.isTrustedAccessibilityClient(false); } catch { trustedNow = true; }
+    if (!trustedNow) return this.clipboardOnly(text);
+    // Fast path (~150ms): the pill is a non-activating panel, so the app being
+    // dictated into is still frontmost; post Cmd+V directly with no AppleScript.
+    {
+      const savedFast = snapshotClipboard();
+      try {
+        clipboard.writeText(text);
+        await wait(30);
+        if (pasteWithKeyTap()) { await wait(140); return { ok: true, method: "keytap" }; }
+      } finally {
+        restoreClipboard(savedFast);
+      }
+    }
+    const intended = String(target?.application || this.target?.application || "").trim();
     let current = await frontmostApplication().catch(() => "");
 
     if (intended && current !== intended) {
       await focusApplication(intended).catch(() => undefined);
       current = await frontmostApplication().catch(() => "");
       if (current !== intended) {
-        throw new Error(`Focus moved away from ${intended}. Click back into that app, then press Cmd+Shift+K again.`);
+        throw new Error(`Focus moved away from ${intended}. Click back into that app, then use the dictation hotkey again.`);
       }
     } else if (!intended && isClyraProcessName(current)) {
       // We never learned the target app (usually missing Accessibility) and
@@ -473,7 +734,7 @@ export class DictationManager {
       if (!trusted) {
         throw new Error("Clyra needs Accessibility permission in System Settings → Privacy & Security → Accessibility to paste into other apps.");
       }
-      throw new Error("Click into the app where you want the text, then press Cmd+Shift+K again.");
+      throw new Error("Click into the app where you want the text, then use the dictation hotkey again.");
     }
 
     const saved = snapshotClipboard();
@@ -485,9 +746,7 @@ export class DictationManager {
       return { ok: true };
     } catch (error) {
       const trusted = systemPreferences.isTrustedAccessibilityClient(false);
-      if (!trusted) {
-        throw new Error("Clyra needs Accessibility permission in System Settings → Privacy & Security → Accessibility to paste into other apps.");
-      }
+      if (!trusted) return this.clipboardOnly(text);
       throw error instanceof Error ? error : new Error("Clyra could not paste the transcribed text.");
     } finally {
       restoreClipboard(saved);

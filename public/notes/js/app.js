@@ -255,6 +255,18 @@ class App {
 
   showRailPanel(id) { this.rail?.show(id); }
 
+  /* Clyra context is available wherever a page is open, not only after
+     navigating to the separate Chat view. This opens the compact Chat rail
+     with the page (and its outgoing links) already attached. */
+  askAboutPage(page = null) {
+    const pageId = page?.id ? String(page.id) : this.currentPageId();
+    if (!pageId) { toast("Open a page first"); return; }
+    if (String(this.currentPageId() || "") !== pageId) this.openPage(pageId);
+    if (!this.railOpen()) this.toggleRail();
+    this.showRailPanel("chat");
+    queueMicrotask(() => this.rail?.refresh());
+  }
+
   /* The "open the tools panel with every note" preference. Applied when a
      page tab becomes active rather than on every render, so closing the
      panel on a note does not have it spring straight back. */
@@ -459,6 +471,7 @@ class App {
         if (copy) { await refresh(); this.openPage(copy.id); }
       } },
       { label: "Copy link", icon: "link", onSelect: () => { navigator.clipboard.writeText(`${location.origin}/notes#${id}`); toast("Link copied"); } },
+      { label: "Ask Clyra about this page", icon: "comment", onSelect: () => this.askAboutPage(page) },
       { label: "Move to", icon: "move", onSelect: () => this.moveDialog(page, refresh) },
       { label: "Move to subject", icon: "book", onSelect: () => this.subjectPicker(page, anchor, refresh) },
       { type: "separator" },
@@ -646,7 +659,7 @@ class App {
         const tab = state.tabs[Number(event.key) - 1];
         if (tab) { event.preventDefault(); selectTab(tab.id); }
       }
-    });
+    }, true);
   }
 }
 

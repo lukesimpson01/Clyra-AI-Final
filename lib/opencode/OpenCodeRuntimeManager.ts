@@ -31,7 +31,8 @@ Project architecture rules — for every coding request:
 - For React/Next/Vite projects create proper files: components, styles, hooks, utilities, routes, and config.
 - Reuse existing components instead of rebuilding them. Revisit and edit multiple files during the run when needed.
 - Run the project's build/typecheck/tests after changes and fix every error before finishing.
-- For greenfield web apps, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files.
+- For web apps only, put index.html at the project root so the live preview can start, and keep it as a thin shell that loads the real source files. Native iOS and macOS projects (Swift, SwiftUI, Xcode, Package.swift) never get an index.html or any HTML preview page: their verification is native build and test, and runtime checks only where a real simulator or device run is available.
+- Never run commands that list the environment (env, printenv, export -p, set, Get-ChildItem Env:, dir env:). For machine facts, call GET /api/clyra-code/runtime-info. To check whether a variable is set, call GET /api/clyra-code/env-status?names=PATH,HOME. Those return presence and platform facts only; no secret values are ever returned.
 - Never navigate to a file: URL, start your own preview server, or kill background processes. Clyra owns project previews; complete the implementation and let Clyra provide the approved local preview for any visual check.
 
 Finished-product quality — the user judges the running product, not the diff. Before you finish, read the code you wrote as if you were the person using it:

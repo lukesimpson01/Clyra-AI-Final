@@ -1,0 +1,14 @@
+{
+  "id": "stripe",
+  "name": "Stripe",
+  "category": "Fintech & Crypto",
+  "description": "Payment infrastructure. Signature purple gradients, weight-300 elegance.",
+  "source": {
+    "type": "bundled",
+    "origin": "nexu-io/open-design (Apache-2.0)"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}

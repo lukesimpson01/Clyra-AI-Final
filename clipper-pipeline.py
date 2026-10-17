@@ -79,7 +79,7 @@ OUTPUT_HEIGHT = 1920
 # local fast path: it halves the final encode work without a visible loss in
 # normal talking-head and podcast footage.
 OUTPUT_FPS = 30
-MAX_CLIP_LENGTH = 60.0
+MAX_CLIP_LENGTH = 180.0
 # Clyra's automatic clips are complete, reviewable scenes rather than the
 # 6–15 second fragments used by the old picker. A directed whole-section
 # request remains allowed to end at the next real section boundary instead of
@@ -1599,7 +1599,19 @@ def download_adaptive_youtube_master(yt, job_dir, max_height=None):
         raise RuntimeError("youtube_adaptive_stream_mux_failed") from exc
     if not os.path.isfile(master_path) or os.path.getsize(master_path) <= 8_192:
         raise RuntimeError("youtube_adaptive_master_empty")
-    return master_path
+    return require_source_master_quality(master_path, max_height=max_height)
+
+
+def require_source_master_quality(path, max_height=1080):
+    """Reject low-resolution imports before they can become blurry exports."""
+    try:
+        _width, selected_height = probe_video_size(FFPROBE, FFMPEG, path)
+    except Exception as exc:
+        raise RuntimeError("public_source_master_quality_unreadable") from exc
+    minimum_height = min(720, int(max_height))
+    if selected_height < minimum_height:
+        raise RuntimeError(f"public_source_master_too_small_{selected_height}p")
+    return path
 
 
 def download_progressive_youtube_master(yt, job_dir, max_height=1080):
@@ -1616,10 +1628,87 @@ def download_progressive_youtube_master(yt, job_dir, max_height=1080):
     path = stream.download(job_dir, filename="source-master.mp4")
     if not path or not os.path.isfile(path) or os.path.getsize(path) <= 8_192:
         raise RuntimeError("youtube_progressive_stream_download_failed")
-    return path
+    return require_source_master_quality(path, max_height=max_height)
 
 
-def download_public_source_master(url, job_dir, max_height=1080):
+def resolve_ytdlp_cli_command():
+    """Prefer the maintained standalone yt-dlp runtime when available.
+
+    The desktop development bundle keeps yt-dlp as a zipapp under .clyra. New
+    releases require Python 3.10+, while macOS can still expose Python 3.9 as
+    `python3`, so resolve a compatible interpreter deliberately instead of
+    trusting the zipapp shebang. Packaged builds can provide the same paths via
+    CLYRA_YTDLP_BIN and CLYRA_YTDLP_PYTHON.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    resource_root = str(os.environ.get("CLYRA_RESOURCE_ROOT", "")).strip()
+    binary_candidates = [
+        str(os.environ.get("CLYRA_YTDLP_BIN", "")).strip(),
+        os.path.join(here, ".clyra", "bin", "yt-dlp"),
+        os.path.join(resource_root, "bin", "yt-dlp") if resource_root else "",
+        shutil.which("yt-dlp") or "",
+    ]
+    binary = next((item for item in binary_candidates if item and os.path.isfile(item)), "")
+    if not binary:
+        return None
+
+    python_candidates = [
+        str(os.environ.get("CLYRA_YTDLP_PYTHON", "")).strip(),
+        shutil.which("python3.11") or "",
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "python3.11"),
+    ]
+    for python_path in python_candidates:
+        if python_path and os.path.isfile(python_path) and os.access(python_path, os.X_OK):
+            return [python_path, binary]
+    if os.access(binary, os.X_OK):
+        return [binary]
+    return None
+
+
+def download_public_source_master_cli(command, url, job_dir, max_height=1080):
+    """Download a public source master with the newest available yt-dlp CLI."""
+    template = os.path.join(job_dir, "source-master.%(ext)s")
+    format_selector = (
+        f"bestvideo[vcodec^=avc1][height<={int(max_height)}]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={int(max_height)}]+bestaudio/"
+        f"best[height<={int(max_height)}]/best"
+    )
+    args = [
+        *command,
+        "--no-playlist",
+        "--no-warnings",
+        "--retries", "4",
+        "--fragment-retries", "4",
+        "--extractor-retries", "3",
+        "--merge-output-format", "mp4",
+        "--extractor-args", "youtube:player_client=android_vr,ios,android,web,tv",
+        "-f", format_selector,
+        "-o", template,
+    ]
+    node_path = shutil.which("node")
+    if node_path:
+        # Current YouTube extraction uses the EJS challenge solver. The
+        # official standalone executable contains the loader; Node supplies
+        # the runtime without adding another desktop dependency.
+        args.extend([
+            "--no-js-runtimes",
+            "--js-runtimes", f"node:{node_path}",
+            "--remote-components", "ejs:npm",
+        ])
+    cookies_file = str(os.environ.get("CLYRA_YTDLP_COOKIES_FILE", "")).strip()
+    if cookies_file and os.path.isfile(cookies_file):
+        args.extend(["--cookies", cookies_file])
+    args.append(url)
+    try:
+        subprocess.run(args, check=True, capture_output=True, text=True, timeout=1_800)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "yt-dlp download failed")[-2_000:].strip()
+        raise RuntimeError(f"public_source_master_cli_failed: {detail}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("public_source_master_cli_timed_out") from exc
+
+
+def _download_public_source_master_module(url, job_dir, max_height=1080):
     """Download the legal, highest available public source once for the job.
 
     Analysis proxies and expiring CDN stream URLs are never valid final-render
@@ -1630,7 +1719,14 @@ def download_public_source_master(url, job_dir, max_height=1080):
 
     template = os.path.join(job_dir, "source-master.%(ext)s")
     options = {
-        "format": f"bestvideo[height<={int(max_height)}]+bestaudio/best[height<={int(max_height)}]/best",
+        # Prefer an H.264 video-only master plus M4A audio. It is larger than
+        # AV1 at the same height, but decodes reliably in both FFmpeg and the
+        # OpenCV per-frame crop renderer on Intel and Apple Silicon Macs.
+        "format": (
+            f"bestvideo[vcodec^=avc1][height<={int(max_height)}]+bestaudio[ext=m4a]/"
+            f"bestvideo[height<={int(max_height)}]+bestaudio/"
+            f"best[height<={int(max_height)}]/best"
+        ),
         "merge_output_format": "mp4",
         "outtmpl": template,
         "quiet": True,
@@ -1653,7 +1749,11 @@ def download_public_source_master(url, job_dir, max_height=1080):
     # again. This is ordinary yt-dlp client selection, not an auth bypass:
     # private or member-only videos still require the consented cookie file
     # above.
-    youtube_args = {"player_client": ["android", "web", "tv"]}
+    # android_vr currently exposes the normal adaptive public formats on
+    # videos where the ordinary web/android clients return only format 18
+    # (640x360). It remains a public, unauthenticated YouTube client; private
+    # content still requires the explicit consented cookie file above.
+    youtube_args = {"player_client": ["android_vr", "ios", "android", "web", "tv"]}
     po_token = str(os.environ.get("CLYRA_YTDLP_PO_TOKEN", "")).strip()
     if po_token:
         youtube_args["po_token"] = [po_token]
@@ -1668,7 +1768,25 @@ def download_public_source_master(url, job_dir, max_height=1080):
     candidates = [path for path in candidates if os.path.isfile(path) and os.path.getsize(path) > 8_192]
     if not candidates:
         raise RuntimeError("public_source_master_download_failed")
-    return max(candidates, key=os.path.getsize)
+    selected = max(candidates, key=os.path.getsize)
+    return require_source_master_quality(selected, max_height=max_height)
+
+
+def download_public_source_master(url, job_dir, max_height=1080):
+    """Download and verify a durable public source master for this job."""
+    cli_command = resolve_ytdlp_cli_command()
+    if cli_command:
+        download_public_source_master_cli(cli_command, url, job_dir, max_height=max_height)
+        candidates = [
+            os.path.join(job_dir, name)
+            for name in os.listdir(job_dir)
+            if name.startswith("source-master.") and not name.endswith((".part", ".ytdl"))
+        ]
+        candidates = [path for path in candidates if os.path.isfile(path) and os.path.getsize(path) > 8_192]
+        if not candidates:
+            raise RuntimeError("public_source_master_download_failed")
+        return require_source_master_quality(max(candidates, key=os.path.getsize), max_height=max_height)
+    return _download_public_source_master_module(url, job_dir, max_height=max_height)
 
 
 def ass_color(hex_color):
@@ -2663,6 +2781,38 @@ def render_per_frame_crop_from_master(
             frame = last_frame
             timestamp_ms = (frame_index * 1000.0) / fps
             keyframe, cursor = _evaluate_crop_keyframe(ordered, timestamp_ms, cursor)
+            fit_mode = str(keyframe.get("fitMode") or "cover").lower()
+            if fit_mode == "contain":
+                # Preserve screen recordings, gameplay, title cards and other
+                # important no-person scenes in full. A dark blurred copy fills
+                # the vertical canvas while the sharp source remains complete.
+                cover_scale = max(OUTPUT_WIDTH / source_width, OUTPUT_HEIGHT / source_height)
+                cover_width = max(OUTPUT_WIDTH, int(round(source_width * cover_scale)))
+                cover_height = max(OUTPUT_HEIGHT, int(round(source_height * cover_scale)))
+                cover = cv2.resize(frame, (cover_width, cover_height), interpolation=cv2.INTER_LANCZOS4)
+                cover_x = max(0, (cover_width - OUTPUT_WIDTH) // 2)
+                cover_y = max(0, (cover_height - OUTPUT_HEIGHT) // 2)
+                background = cover[cover_y:cover_y + OUTPUT_HEIGHT, cover_x:cover_x + OUTPUT_WIDTH]
+                small = cv2.resize(
+                    background,
+                    (max(2, OUTPUT_WIDTH // 8), max(2, OUTPUT_HEIGHT // 8)),
+                    interpolation=cv2.INTER_AREA,
+                )
+                small = cv2.GaussianBlur(small, (0, 0), 5.5)
+                cropped = cv2.resize(small, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                cropped = cv2.convertScaleAbs(cropped, alpha=0.48, beta=0)
+
+                contain_scale = min(OUTPUT_WIDTH / source_width, OUTPUT_HEIGHT / source_height)
+                contain_width = max(2, min(OUTPUT_WIDTH, int(round(source_width * contain_scale))))
+                contain_height = max(2, min(OUTPUT_HEIGHT, int(round(source_height * contain_scale))))
+                foreground = cv2.resize(frame, (contain_width, contain_height), interpolation=cv2.INTER_LANCZOS4)
+                foreground_x = max(0, (OUTPUT_WIDTH - contain_width) // 2)
+                foreground_y = max(0, (OUTPUT_HEIGHT - contain_height) // 2)
+                cropped[foreground_y:foreground_y + contain_height, foreground_x:foreground_x + contain_width] = foreground
+                process.stdin.write(cropped.tobytes())
+                rendered += 1
+                continue
+
             zoom = max(1.0, min(1.6, float(keyframe.get("zoom", 1.0) or 1.0)))
             scale = base_scale * zoom
             scaled_width = max(OUTPUT_WIDTH, int(round(source_width * scale)))
@@ -2678,6 +2828,13 @@ def render_per_frame_crop_from_master(
             cropped = resized[crop_y:crop_y + OUTPUT_HEIGHT, crop_x:crop_x + OUTPUT_WIDTH]
             if cropped.shape[0] != OUTPUT_HEIGHT or cropped.shape[1] != OUTPUT_WIDTH:
                 raise RuntimeError("Per-frame crop escaped the source bounds")
+            # Lanczos is already the best reconstruction choice here. A very
+            # mild unsharp pass restores edge contrast only when the vertical
+            # crop required enlargement; it cannot manufacture missing detail
+            # and deliberately stays below halo-producing strengths.
+            if scale > 1.05:
+                softened = cv2.GaussianBlur(cropped, (0, 0), 0.8)
+                cropped = cv2.addWeighted(cropped, 1.10, softened, -0.10, 0)
             process.stdin.write(cropped.tobytes())
             rendered += 1
         process.stdin.close()
@@ -3478,11 +3635,33 @@ def transcribe_clip_words(clip_path):
 
 
 def caption_words_relative(words, clip_start, clip_end):
-    return [
-        {"word": word["word"], "start": max(0.0, word["start"] - clip_start), "end": max(0.05, word["end"] - clip_start)}
-        for word in words
-        if clip_start <= word["start"] <= clip_end
-    ]
+    """Clip-relative word timings that are sorted, non-overlapping and inside the clip.
+
+    YouTube caption tracks are often rolling auto-captions, where each word's
+    end runs into the next word's start. Those overlaps fail export validation
+    (and make the caption layer flash two words at once), so the previous word
+    is trimmed to the next word's start. Ends are clamped to the clip length so
+    a word cannot outlive the rendered file.
+    """
+    duration = max(0.05, float(clip_end) - float(clip_start))
+    selected = sorted(
+        (word for word in words if clip_start <= float(word["start"]) <= clip_end),
+        key=lambda word: (float(word["start"]), float(word["end"])),
+    )
+    relative = []
+    for word in selected:
+        start = max(0.0, float(word["start"]) - clip_start)
+        if start >= duration:
+            continue
+        end = min(duration, max(0.05, float(word["end"]) - clip_start))
+        # A word that starts at or before the previous word's start is a
+        # duplicate timing from the track; keep the later entry instead.
+        while relative and start <= relative[-1]["start"]:
+            relative.pop()
+        if relative and start < relative[-1]["end"]:
+            relative[-1]["end"] = start
+        relative.append({"word": word["word"], "start": start, "end": max(start + 0.05, min(duration, end))})
+    return relative
 
 
 def burn_subtitles(source_clip_path, output_path, subtitle_path, render_quality="premium", output_fps=OUTPUT_FPS, progress_callback=None, expected_duration=None):
@@ -4280,18 +4459,22 @@ def main():
     aspect = str(cfg.get("aspect_ratio", "9:16"))
     crop_focus = str(cfg.get("crop_focus", "center"))
     captions_enabled = bool(cfg.get("captions_enabled", True))
-    # Captions are rendered as a live editor overlay by default; pixels are
-    # only burned at export time. Callers may still opt into legacy burn-in.
-    burn_captions = config_flag(cfg.get("burn_captions", cfg.get("burnCaptions")), False)
+    # Automatic clip results are finished downloadable MP4s, so requested
+    # captions must be visible in those pixels. The editor refine endpoint can
+    # still opt out explicitly when it needs a clean video plus live overlay.
+    burn_captions = config_flag(cfg.get("burn_captions", cfg.get("burnCaptions")), True)
     remove_fillers = bool(cfg.get("remove_fillers", True))
     render_quality = normalise_render_quality(cfg.get("render_quality") or cfg.get("renderQuality") or "premium")
     # Ten distinct suggestions is the standard full-video review set. Keep a
     # modest upper bound so an accidental value cannot queue an unbounded
     # number of expensive renders.
     clip_count = min(12, max(1, int(cfg.get("clip_count", 3))))
-    # The 720p option is a genuine fast lane: avoid downloading and decoding
-    # pixels the final delivery cannot use.
-    source_max_height = 720 if render_quality == "balanced" else 1080
+    # A landscape source loses most of its horizontal pixels when reframed to
+    # 9:16. Even a 720p vertical delivery therefore needs at least a 1080p
+    # master. A reliable 1080p H.264 master is preferred for both output lanes;
+    # it is materially sharper than the old 360p fallback without forcing a
+    # multi-gigabyte 4K download for every short.
+    source_max_height = 1080
     face_cfg = face_tracking_config(cfg)
     OUTPUT_WIDTH, OUTPUT_HEIGHT = output_dimensions(aspect, render_quality)
     base_name = clean_name(str(cfg.get("clip_name", "clip")))
@@ -4328,29 +4511,19 @@ def main():
                 duration = float(yt.length or requested_duration)
                 words = load_caption_words(yt)
                 stream_url = select_progressive_stream(yt, max_height=source_max_height).url
-                if render_quality == "balanced":
-                    # The one-minute path renders directly from the temporary
-                    # progressive stream. FFmpeg fetches only the selected
-                    # 15-second range instead of first downloading a whole
-                    # long-form YouTube master to disk.
-                    emit("captions", "running", message="Opening the fast social-video stream...")
-                    source = stream_url
-                    fallback_path = stream_url
-                    local_source = False
-                else:
-                    emit("captions", "running", message="Retaining a local source master for analysis and final rendering...")
+                emit("captions", "running", message="Retaining a high-resolution local source master for analysis and final rendering...")
+                try:
+                    source = download_public_source_master(source, job_tmp, max_height=source_max_height)
+                except Exception:
+                    emit("captions", "running", message="Retaining the best available adaptive YouTube video and audio streams...")
                     try:
-                        source = download_public_source_master(source, job_tmp, max_height=source_max_height)
+                        source = download_adaptive_youtube_master(yt, job_tmp, max_height=source_max_height)
                     except Exception:
-                        emit("captions", "running", message="Retaining the best available adaptive YouTube video and audio streams...")
-                        try:
-                            source = download_adaptive_youtube_master(yt, job_tmp, max_height=source_max_height)
-                        except Exception:
-                            emit("captions", "running", message="Using the accessible progressive YouTube stream fallback for real video analysis...")
-                            source = download_progressive_youtube_master(yt, job_tmp, max_height=source_max_height)
-                    stream_url = source
-                    fallback_path = source
-                    local_source = True
+                        emit("captions", "running", message="Using the accessible progressive YouTube stream fallback for real video analysis...")
+                        source = download_progressive_youtube_master(yt, job_tmp, max_height=source_max_height)
+                stream_url = source
+                fallback_path = source
+                local_source = True
             except Exception as primary_exc:
                 emit("captions", "running", message="Preparing the public video source...")
                 try:
@@ -4358,6 +4531,12 @@ def main():
                 except Exception as exc:
                     detail = f"{type(primary_exc).__name__}: {primary_exc}; {type(exc).__name__}: {exc}"
                     lowered = detail.lower()
+                    if "public_source_master_too_small_" in lowered:
+                        fail(
+                            "YouTube only exposed a low-resolution source on this connection. "
+                            "Clyra requires at least 720p so it will not create a blurry export. "
+                            "Upload the HD video file, or set CLYRA_YTDLP_COOKIES_FILE to a consented cookies.txt and retry."
+                        )
                     if any(token in lowered for token in ("bot", "sign in", "login_required", "confirm you’re not", "confirm you're not")):
                         fail(
                             "YouTube blocked this download (bot check). "

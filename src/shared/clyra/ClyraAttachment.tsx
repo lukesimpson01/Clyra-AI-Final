@@ -1,0 +1,2 @@
+import { X } from "lucide-react";
+export function ClyraAttachment({ name, meta, onOpen, onRemove }: { name: string; meta?: string; onOpen?: () => void; onRemove?: () => void }) { return <div className="clyra-attachment"><button type="button" className="clyra-attachment__copy" onClick={onOpen} disabled={!onOpen}><strong>{name}</strong>{meta ? <small>{meta}</small> : null}</button>{onRemove ? <button type="button" className="clyra-attachment__remove" aria-label={`Remove ${name}`} onClick={onRemove}><X size={12} /></button> : null}</div>; }

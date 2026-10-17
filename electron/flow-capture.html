@@ -1,0 +1,61 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Clyra Flow capture</title></head>
+<body>
+<script>
+  // Hidden microphone host for Clyra Flow. Lives in its own tiny window so the
+  // dictation hotkey can record with no Clyra window or service running.
+  let stream = null, ctx = null, source = null, node = null, mute = null, lastLevel = 0;
+  const TARGET = 16000;
+
+  function level(samples) {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    const rms = Math.sqrt(sum / (samples.length || 1));
+    return Math.max(0, Math.min(1, (rms - 0.006) / 0.1));
+  }
+
+  // Build the audio context ahead of time (it stays suspended and silent), so pressing the
+  // hotkey only has to open the microphone itself.
+  const warmContext = new AudioContext();
+  warmContext.suspend().catch(() => {});
+
+  async function start() {
+    if (stream) return;
+    const opening = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false });
+    ctx = warmContext.state === 'closed' ? new AudioContext() : warmContext;
+    if (ctx.state === 'suspended') await ctx.resume();
+    stream = await opening;
+    source = ctx.createMediaStreamSource(stream);
+    node = ctx.createScriptProcessor(2048, 1, 1);
+    mute = ctx.createGain(); mute.gain.value = 0;
+    node.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const now = performance.now();
+      if (now - lastLevel > 70) { lastLevel = now; window.flowCapture.level(level(input)); }
+      const ratio = ctx.sampleRate / TARGET;
+      const length = Math.floor(input.length / ratio);
+      const out = new Int16Array(length);
+      for (let i = 0; i < length; i++) {
+        const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] || 0));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      window.flowCapture.chunk(out.buffer);
+    };
+    source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    window.flowCapture.live();
+  }
+
+  function stop() {
+    try { node && (node.onaudioprocess = null); node && node.disconnect(); source && source.disconnect(); mute && mute.disconnect(); } catch {}
+    stream && stream.getTracks().forEach((t) => t.stop());
+    // Keep the context for the next press; just silence it.
+    if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
+    stream = source = node = mute = null;
+    window.flowCapture.stopped();
+  }
+
+  window.flowCapture.onStart(() => { start().catch((error) => window.flowCapture.failed(String(error && error.message || error))); });
+  window.flowCapture.onStop(stop);
+  window.flowCapture.ready();
+</script>
+</body></html>

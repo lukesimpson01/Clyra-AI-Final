@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { normalizeDecisionAction } from "../lib/openbrowser/browser-runtime";
+import { normalizeBrowserInput, normalizeDecisionAction } from "../lib/openbrowser/browser-runtime";
 
 const appBase =
   process.env.CLYRA_URL ||
@@ -90,6 +90,22 @@ async function api(path: string, init: RequestInit = {}) {
   return payload;
 }
 
+async function waitForAgentControl(manualControl: boolean, paused: boolean) {
+  const deadline = Date.now() + 3_000;
+  let lastState: JsonObject | undefined;
+  while (Date.now() < deadline) {
+    const payload = await api("/api/openbrowser/state");
+    lastState = payload.state?.agent as JsonObject | undefined;
+    if (lastState?.manualControl === manualControl && lastState?.paused === paused) return lastState;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.deepEqual(
+    { manualControl: lastState?.manualControl, paused: lastState?.paused },
+    { manualControl, paused },
+    "Electron browser state did not receive the ownership update",
+  );
+}
+
 async function action(value: JsonObject) {
   const payload = await api("/api/openbrowser/action", { method: "POST", body: JSON.stringify({ action: value }) });
   assert.equal(payload.verification?.ok, true, `${value.type} was not verified: ${payload.verification?.summary}`);
@@ -129,6 +145,36 @@ assert.equal(
   "Agent search targets must normalize into a query",
 );
 assert.equal(normalizeDecisionAction({ type: "navigate" }), null, "Malformed navigation actions must be rejected before execution");
+assert.equal(
+  normalizeBrowserInput("Clyra AI official"),
+  "https://www.google.com/search?q=Clyra%20AI%20official",
+  "A manual multi-word query must navigate directly to Google",
+);
+assert.equal(
+  normalizeBrowserInput("clyra.ai"),
+  "https://clyra.ai",
+  "A manual hostname must remain a direct navigation rather than a search",
+);
+
+// Cowork's Take Control button must transfer ownership immediately to the
+// person, and Resume agent must return it to Clyra. These use the real
+// Electron browser bridge when the desktop app is running (rather than a
+// mocked browser state), then leave the browser in the safe resumed state.
+const takenControl = await api("/api/openbrowser/control", {
+  method: "POST",
+  body: JSON.stringify({ command: "take_control" }),
+});
+assert.equal(takenControl.agent?.manualControl, true, "Take Control did not give the person browser ownership");
+assert.equal(takenControl.agent?.paused, true, "Take Control did not pause the agent");
+await waitForAgentControl(true, true);
+
+const resumedControl = await api("/api/openbrowser/control", {
+  method: "POST",
+  body: JSON.stringify({ command: "return_control" }),
+});
+assert.equal(resumedControl.agent?.manualControl, false, "Resume agent did not return ownership to Clyra");
+assert.equal(resumedControl.agent?.paused, false, "Resume agent left the agent paused");
+await waitForAgentControl(false, false);
 
 let originalUrl = "https://www.bing.com/";
 let originalTabId = "";
@@ -255,7 +301,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    assertions: 30,
+    assertions: 36,
     observedElements: observation.elements.length,
     promptInjectionSignals: observation.promptInjectionSignals.length,
     findMatches: findPayload.result.total,

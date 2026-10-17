@@ -108,10 +108,44 @@ export type ClyraCodeState = {
   model: string | null;
   tokens: { input: number; output: number } | null;
   restored: boolean;
+  /** A saved task is open while its runtime and transcript are still loading. */
+  loadingSession?: boolean;
   platform: ProjectPlatform;
 };
 
 const STORAGE_KEY = "clyra-code:last-session";
+const UNTITLED_PROJECT_NAME = "Untitled project";
+
+/** Make a compact, human-readable project title from the user's first ask. */
+export function projectNameFromFirstPrompt(prompt: string): string {
+  const cleaned = prompt
+    .replace(/\[[^\]]+\]/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:please\s+)?(?:can you|could you|would you|i want(?: you)? to|help me(?: to)?|build(?: me)?|create(?: me)?|make(?: me)?|design(?: me)?|develop(?: me)?|code(?: me)?|implement(?: me)?|generate(?: me)?|write(?: me)?|ship(?: me)?)\s+/i, "")
+    .replace(/^(?:an?|the)\s+/i, "")
+    .replace(/^(?:(?:polished|complete|fully working|working|modern|responsive|production[- ]ready|beautiful|professional)[,\s]+)*/i, "")
+    .split(/[.!?;]/, 1)[0]
+    .replace(/\s+(?:with|using|that|which)\s+.*/i, "")
+    .replace(/[^\p{L}\p{N}&+/' -]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 56);
+
+  if (cleaned.length < 3) return UNTITLED_PROJECT_NAME;
+  const minorWords = new Set(["a", "an", "and", "as", "at", "for", "in", "of", "on", "or", "the", "to", "with"]);
+  return cleaned
+    .split(" ")
+    .map((word, index) => {
+      if (/^[A-Z0-9]{2,}$/.test(word)) return word;
+      const normalized = word.toLocaleLowerCase();
+      return index > 0 && minorWords.has(normalized)
+        ? normalized
+        : `${normalized.slice(0, 1).toLocaleUpperCase()}${normalized.slice(1)}`;
+    })
+    .join(" ");
+}
 
 const INITIAL: ClyraCodeState = {
   projects: [],
@@ -139,27 +173,32 @@ function stripProjectPrefix(path: string) {
 }
 
 /** The platform the user is asking to build for, or null when it is ambiguous. */
-export type DetectedPlatform = "web" | "desktop" | null;
+export type DetectedPlatform = "web" | "desktop" | "ios" | null;
 
 const PLATFORM_STYLE_ONLY =
-  /\b(apple|macos|mac|windows|android|material|apple-style)\s+(theme|style|styles|look|looks|feel|design|ui|ux|vibe|aesthetic|inspired|flavou?r|polish)\b/i;
+  /\b(apple|macos|mac|windows|android|material|apple-style|ios|iphone)[\s-]+(theme|style|styles|look|looks|feel|design|ui|ux|vibe|aesthetic|inspired|flavou?r|polish)\b/i;
 
 const DESKTOP_RE =
   /\b(desktop\s+app|electron|tauri|menubar|menu\s+bar|system\s+tray|macos\s+app|windows\s+app|linux\s+app|native\s+desktop)\b/i;
 const WEB_RE =
   /\b(website|web\s+app|webapp|landing\s+page|homepage|portfolio\s+site|react|next\.?js|vite|svelte|vue|angular|pwa|spa|html|css|javascript|typescript|browser|chrome\s+extension)\b/i;
+const IOS_RE =
+  /\b(ios|iphone|ipad|ios\s+app|iphone\s+app|ipad\s+app|swiftui|uikit|xcode|native\s+ios)\b/i;
 
 /**
  * Detect the intended target platform from a prompt. Styling-only mentions of a
- * platform (e.g. "Apple theme") are ignored so they never select a platform. When
- * the intent is unclear the result is null and the caller should ask the user.
+ * platform (e.g. "Apple theme", "iOS-style") are ignored so they never select a
+ * platform. When the intent is unclear, or the prompt names two platforms, the
+ * result is null and the caller should ask the user.
  */
 export function detectPlatformIntent(prompt: string): DetectedPlatform {
   const stripped = prompt.toLowerCase().replace(PLATFORM_STYLE_ONLY, " ");
   const desktop = DESKTOP_RE.test(stripped);
   const web = WEB_RE.test(stripped);
-  const hits = [desktop, web].filter(Boolean).length;
-  if (hits === 0 || hits > 1) return null;
+  const ios = IOS_RE.test(stripped);
+  const hits = [desktop, web, ios].filter(Boolean).length;
+  if (hits !== 1) return null;
+  if (ios) return "ios";
   if (desktop) return "desktop";
   return "web";
 }
@@ -298,9 +337,12 @@ export function useClyraCode() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const activeSessionRef = useRef<string | null>(null);
   const activeProjectRef = useRef<string | null>(null);
+  /** A message already shown in the transcript whose run has not started yet. */
+  const pendingPromptRef = useRef<LogEntry | null>(null);
   const runStateRef = useRef<RunState>("idle");
   const diffTimerRef = useRef<number | null>(null);
   const projectsRef = useRef<VibeProject[]>([]);
+  const autoNamingProjectsRef = useRef(new Set<string>());
 
   useEffect(() => {
     runStateRef.current = state.runState;
@@ -692,12 +734,16 @@ export function useClyraCode() {
       closeStream();
       activeSessionRef.current = null;
       activeProjectRef.current = projectId;
+      // A prompt that was sent before its project existed must survive the
+      // switch into that project, or the send would vanish mid-flight.
+      const pending = pendingPromptRef.current;
       setState((prev) => ({
         ...INITIAL,
         projects: prev.projects,
         model: prev.model,
         activeProjectId: projectId,
         platform: "web",
+        ...(pending ? { runState: "starting" as const, runStartedAt: pending.ts, log: [pending] } : {}),
       }));
       try {
         if (projectId) localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId }));
@@ -707,27 +753,71 @@ export function useClyraCode() {
     [closeStream],
   );
 
-  const startRun = useCallback(
-    async (prompt: string, agent?: string, options?: { userText?: string; answers?: UserAnswer[]; effort?: "low" | "medium" | "high" }) => {
-      const projectId = activeProjectRef.current;
-      if (!projectId || !prompt.trim()) return false;
-      const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
-      const userEntry: LogEntry = {
-        type: "user",
-        id: `user-${Date.now()}`,
-        text: options?.userText ?? prompt,
-        ts: Date.now(),
-        answers: options?.answers,
-      };
-      setState((prev) => ({
+  /**
+   * Shows the user's message in the transcript at once. Creating a project,
+   * uploading attachments and starting the runtime all take time, and the
+   * send must visibly land before any of them. startRun({ optimistic: true })
+   * then skips appending the message a second time.
+   */
+  const beginOptimisticPrompt = useCallback((userText: string, answers?: UserAnswer[]) => {
+    const now = Date.now();
+    const userEntry: LogEntry = { type: "user", id: `user-${now}`, text: userText, ts: now, answers };
+    pendingPromptRef.current = userEntry;
+    setState((prev) => {
+      const followUp = prev.runState === "running" || prev.runState === "starting";
+      return {
         ...prev,
         runState: "starting",
-        runStartedAt: followUp ? prev.runStartedAt ?? Date.now() : Date.now(),
+        runStartedAt: followUp ? prev.runStartedAt ?? now : now,
         runEndedAt: null,
         error: null,
         restored: false,
         log: [...prev.log, userEntry],
-      }));
+      };
+    });
+  }, []);
+
+  const failOptimisticPrompt = useCallback((message: string) => {
+    pendingPromptRef.current = null;
+    setState((prev) => ({
+      ...prev,
+      runState: "failed",
+      runEndedAt: Date.now(),
+      error: message,
+    }));
+  }, []);
+
+  const startRun = useCallback(
+    async (prompt: string, agent?: string, options?: { userText?: string; answers?: UserAnswer[]; effort?: "low" | "medium" | "high"; optimistic?: boolean }) => {
+      const projectId = activeProjectRef.current;
+      if (!projectId || !prompt.trim()) {
+        // An optimistic message is already on screen, so the run must not be
+        // left in "starting" when nothing can be sent.
+        if (options?.optimistic) failOptimisticPrompt("Clyra could not open a project for this task.");
+        return false;
+      }
+      let autoName: string | null = null;
+      const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
+      if (options?.optimistic) {
+        pendingPromptRef.current = null;
+      } else {
+        const userEntry: LogEntry = {
+          type: "user",
+          id: `user-${Date.now()}`,
+          text: options?.userText ?? prompt,
+          ts: Date.now(),
+          answers: options?.answers,
+        };
+        setState((prev) => ({
+          ...prev,
+          runState: "starting",
+          runStartedAt: followUp ? prev.runStartedAt ?? Date.now() : Date.now(),
+          runEndedAt: null,
+          error: null,
+          restored: false,
+          log: [...prev.log, userEntry],
+        }));
+      }
 
       try {
         await api.startRuntime(projectId);
@@ -739,25 +829,36 @@ export function useClyraCode() {
           sessionId = session.id;
           activeSessionRef.current = sessionId;
           setState((prev) => ({ ...prev, sessionId, sessionTitle: session.title ?? prompt.slice(0, 72) }));
-          // First message names the project: a fresh project created without
-          // a name takes the request as its title.
+          // The first prompt names an untitled project after the request has
+          // started, so creation stays immediate and naming never blocks it.
           const fresh = projectsRef.current.find((p) => p.id === projectId);
-          if (fresh && /^(new project|untitled)$/i.test(fresh.name.trim())) {
-            void api
-              .renameProject(projectId, session.title ?? prompt.slice(0, 60))
-              .then((renamed) => {
-                setState((prev) => ({
-                  ...prev,
-                  projects: prev.projects.map((p) => (p.id === renamed.id ? renamed : p)),
-                }));
-              })
-              .catch(() => undefined);
+          if (fresh && /^(new project|untitled(?: project)?)$/i.test(fresh.name.trim()) && !autoNamingProjectsRef.current.has(projectId)) {
+            const proposedName = projectNameFromFirstPrompt(options?.userText ?? prompt);
+            if (proposedName !== UNTITLED_PROJECT_NAME) {
+              autoNamingProjectsRef.current.add(projectId);
+              autoName = proposedName;
+              setState((prev) => ({
+                ...prev,
+                projects: prev.projects.map((project) => project.id === projectId ? { ...project, name: "Naming project…" } : project),
+              }));
+            }
           }
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, sessionId }));
           } catch { /* storage unavailable */ }
         }
         await api.sendPrompt(projectId, sessionId, prompt, agent, options?.effort);
+        if (autoName && autoName !== UNTITLED_PROJECT_NAME) {
+          window.setTimeout(() => {
+            void api.renameProject(projectId, autoName!).then((renamed) => {
+              projectsRef.current = projectsRef.current.map((project) => (project.id === renamed.id ? renamed : project));
+              setState((prev) => ({
+                ...prev,
+                projects: prev.projects.map((project) => (project.id === renamed.id ? renamed : project)),
+              }));
+            }).catch(() => undefined);
+          }, 1800);
+        }
         setState((prev) =>
           prev.runState === "starting" ? { ...prev, runState: "running" } : prev,
         );
@@ -881,39 +982,85 @@ export function useClyraCode() {
   /** Rebuild the work log from persisted session messages after a reload. */
   const restoreSession = useCallback(
     async (projectId: string, sessionId: string) => {
+      // Open the task at once in its loading state. Starting the runtime can take
+      // several seconds, and the user must not be left on the welcome screen meanwhile.
+      activeSessionRef.current = sessionId;
+      setState((prev) => ({
+        ...prev,
+        sessionId,
+        log: [],
+        actions: {},
+        diffs: [],
+        error: null,
+        restored: true,
+        loadingSession: true,
+      }));
       // Bring the runtime up so persisted sessions can be queried again.
       await api.startRuntime(projectId).catch(() => undefined);
+      if (activeSessionRef.current !== sessionId) return false;
       const messages = await api.sessionMessages(projectId, sessionId).catch(() => null);
-      if (!messages) return false;
+      if (activeSessionRef.current !== sessionId) return false;
+      if (!messages) {
+        // Open the task anyway and say why it is empty, rather than leaving the user where they were.
+        setState((prev) => ({
+          ...prev,
+          sessionId,
+          log: [],
+          actions: {},
+          diffs: [],
+          runState: "idle",
+          restored: true,
+          loadingSession: false,
+          error: "This task could not be loaded. Choose it again, or start a new task.",
+        }));
+        return false;
+      }
       const log: LogEntry[] = [];
       const actions: Record<string, AgentAction> = {};
       for (const message of messages) {
-        rebuildMessage(message, log, actions);
-      }
-      activeSessionRef.current = sessionId;
-      const diffs = await api.sessionDiff(projectId, sessionId).catch(() => [] as FileDiff[]);
-      for (const key of Object.keys(actions)) {
-        const action = actions[key];
-        const match = diffs.find((d) => stripProjectPrefix(d.file) === action.target);
-        if (match && /^(edit|create|delete)$/.test(action.kind)) {
-          actions[key] = {
-            ...action,
-            additions: match.additions,
-            deletions: match.deletions,
-            before: match.before || action.before,
-            after: match.after || action.after,
-          };
+        try {
+          rebuildMessage(message, log, actions);
+        } catch (error) {
+          // One malformed message must not stop the whole task from opening.
+          console.error("Could not read one message in this task.", message?.info?.id, error);
         }
       }
+      activeSessionRef.current = sessionId;
       setState((prev) => ({
         ...prev,
         sessionId,
         log,
         actions,
-        diffs,
+        diffs: [],
         runState: "complete",
         restored: true,
+        loadingSession: false,
       }));
+      // The conversation is on screen before the changes are loaded. A slow diff
+      // must never keep a task from opening, and its result is merged only if the
+      // same task is still selected.
+      void api.sessionDiff(projectId, sessionId)
+        .then((diffs) => {
+          if (activeSessionRef.current !== sessionId) return;
+          setState((prev) => {
+            const enriched: Record<string, AgentAction> = { ...prev.actions };
+            for (const key of Object.keys(enriched)) {
+              const action = enriched[key];
+              const match = diffs.find((d) => stripProjectPrefix(d.file) === action.target);
+              if (match && /^(edit|create|delete)$/.test(action.kind)) {
+                enriched[key] = {
+                  ...action,
+                  additions: match.additions,
+                  deletions: match.deletions,
+                  before: match.before || action.before,
+                  after: match.after || action.after,
+                };
+              }
+            }
+            return { ...prev, diffs, actions: enriched };
+          });
+        })
+        .catch(() => undefined);
       // If the harness is still busy, reattach to the live stream. Replayed
       // buffered events reconcile into the same rows by stable id.
       openStream(projectId);
@@ -1032,6 +1179,8 @@ export function useClyraCode() {
     selectThread,
     newChat,
     startRun,
+    beginOptimisticPrompt,
+    failOptimisticPrompt,
     cancelRun,
     undoLastCheckpoint,
     replyPermission,
