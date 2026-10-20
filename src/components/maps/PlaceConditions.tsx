@@ -19,7 +19,7 @@ function WeatherIcon({ condition, isDay }: { condition: string; isDay: boolean }
 }
 
 /** Current weather and air quality at the selected point (Open-Meteo). */
-export function PlaceConditions({ coordinates }: { coordinates: Coordinate }) {
+export function PlaceConditions({ coordinates, compact }: { coordinates: Coordinate; compact?: boolean }) {
   const key = `${coordinates[0].toFixed(2)},${coordinates[1].toFixed(2)}`;
   const [data, setData] = useState<Conditions | null>(() => cache.get(key) ?? null);
 
@@ -47,6 +47,20 @@ export function PlaceConditions({ coordinates }: { coordinates: Coordinate }) {
   }, [key]);
 
   if (!data || (!data.weather && !data.air)) return null;
+  if (compact) {
+    return (
+      <div className="shrink-0 text-right text-[12px] leading-snug text-slate-600" aria-label="Current conditions">
+        {data.weather ? (
+          <p className="flex items-center justify-end gap-1.5 font-medium text-slate-700">
+            <WeatherIcon condition={data.weather.condition} isDay={data.weather.isDay} />
+            {Math.round(data.weather.tempC)}°C
+          </p>
+        ) : null}
+        {data.weather ? <p>{data.weather.condition}</p> : null}
+        {data.air ? <p className={"mt-0.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold " + aqiTone(data.air.aqi)}>AQI {data.air.aqi}</p> : null}
+      </div>
+    );
+  }
   return (
     <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Current conditions">
       {data.weather ? (

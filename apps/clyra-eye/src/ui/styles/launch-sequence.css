@@ -1,0 +1,11 @@
+/* Launch sequence: HUD panels fade in once the camera reaches full Earth. */
+#left-panel-stack, #command-dock, #pp-toggles, #right-context-rail, #intel-hud {
+  transition: opacity 1.4s ease;
+}
+body.eye-intro #left-panel-stack,
+body.eye-intro #command-dock,
+body.eye-intro #pp-toggles,
+body.eye-intro #right-context-rail,
+body.eye-intro #intel-hud {
+  opacity: 0;
+}

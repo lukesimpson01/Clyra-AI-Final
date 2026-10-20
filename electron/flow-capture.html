@@ -14,43 +14,97 @@
     return Math.max(0, Math.min(1, (rms - 0.006) / 0.1));
   }
 
-  // Build the audio context ahead of time (it stays suspended and silent), so pressing the
-  // hotkey only has to open the microphone itself.
-  const warmContext = new AudioContext();
+  // The context runs at the speech model's own rate, so Chromium's high-quality resampler does the conversion
+  // (picking every Nth sample aliased a 48 kHz mic and blurred consonants). It is built ahead of time and kept
+  // suspended, so a press only has to open the microphone.
+  const makeContext = () => { try { return new AudioContext({ sampleRate: TARGET }); } catch { return new AudioContext(); } };
+  const warmContext = makeContext();
   warmContext.suspend().catch(() => {});
 
+  // Prefer the Mac's built-in microphone. A Bluetooth headset (AirPods) has to switch into its call profile
+  // first, which takes one to two seconds, records narrowband audio and garbles the first words — and it drops
+  // any music to phone quality. The system default is still used when there is no built-in mic.
+  let preferredId = null;
+  async function pickDevice() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+      const builtIn = inputs.find((d) => /built-?in|macbook|imac|mac mini|mac studio|studio display/i.test(d.label) && !/airpods|bluetooth|headset|beats/i.test(d.label));
+      preferredId = builtIn ? builtIn.deviceId : null;
+    } catch { preferredId = null; }
+  }
+  void pickDevice();
+  navigator.mediaDevices.addEventListener?.('devicechange', () => { void pickDevice(); });
+
+  // Speech recognition wants the raw signal: call-style processing (echo cancellation, noise suppression and a
+  // gain ramp) softens the first syllables, which is exactly where the misheard words were.
+  const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
+  async function openMic() {
+    if (preferredId) {
+      try { return await navigator.mediaDevices.getUserMedia({ audio: { ...RAW, deviceId: { exact: preferredId } }, video: false }); }
+      catch { preferredId = null; }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: RAW, video: false });
+  }
+
+  // After a dictation the microphone stays open (but nothing is captured or sent) for a short warm window, so the
+  // next press is live instantly instead of waiting ~0.7 s for the device to start again. It then closes fully.
+  const WARM_MS = 25_000;
+  let warmTimer = 0, capturing = false;
+  function closeMic() {
+    clearTimeout(warmTimer); warmTimer = 0;
+    try { node && (node.onaudioprocess = null); node && node.disconnect(); source && source.disconnect(); mute && mute.disconnect(); } catch {}
+    stream && stream.getTracks().forEach((t) => t.stop());
+    if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
+    stream = source = node = mute = null;
+  }
+
   async function start() {
-    if (stream) return;
-    const opening = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false });
-    ctx = warmContext.state === 'closed' ? new AudioContext() : warmContext;
+    clearTimeout(warmTimer); warmTimer = 0;
+    if (stream && stream.getAudioTracks().some((t) => t.readyState === 'live') && node) {
+      if (ctx.state === 'suspended') await ctx.resume();
+      capturing = true;
+      window.flowCapture.live();
+      return;
+    }
+    closeMic();
+    const opening = openMic();
+    ctx = warmContext.state === 'closed' ? makeContext() : warmContext;
     if (ctx.state === 'suspended') await ctx.resume();
     stream = await opening;
     source = ctx.createMediaStreamSource(stream);
     node = ctx.createScriptProcessor(2048, 1, 1);
     mute = ctx.createGain(); mute.gain.value = 0;
     node.onaudioprocess = (event) => {
+      if (!capturing) return;   // warm, not recording: audio is dropped here and never leaves this page
       const input = event.inputBuffer.getChannelData(0);
       const now = performance.now();
       if (now - lastLevel > 70) { lastLevel = now; window.flowCapture.level(level(input)); }
       const ratio = ctx.sampleRate / TARGET;
       const length = Math.floor(input.length / ratio);
       const out = new Int16Array(length);
-      for (let i = 0; i < length; i++) {
-        const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] || 0));
-        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (ratio === 1) {
+        for (let i = 0; i < length; i++) { const s = Math.max(-1, Math.min(1, input[i])); out[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+      } else {
+        // Fallback when the context could not run at 16 kHz: average each window instead of dropping samples.
+        for (let i = 0; i < length; i++) {
+          const from = Math.floor(i * ratio), to = Math.min(input.length, Math.floor((i + 1) * ratio));
+          let sum = 0; for (let k = from; k < to; k++) sum += input[k];
+          const s = Math.max(-1, Math.min(1, sum / Math.max(1, to - from)));
+          out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
       }
       window.flowCapture.chunk(out.buffer);
     };
     source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    capturing = true;
     window.flowCapture.live();
   }
 
   function stop() {
-    try { node && (node.onaudioprocess = null); node && node.disconnect(); source && source.disconnect(); mute && mute.disconnect(); } catch {}
-    stream && stream.getTracks().forEach((t) => t.stop());
-    // Keep the context for the next press; just silence it.
-    if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
-    stream = source = node = mute = null;
+    capturing = false;
+    clearTimeout(warmTimer);
+    warmTimer = setTimeout(closeMic, WARM_MS);
     window.flowCapture.stopped();
   }
 

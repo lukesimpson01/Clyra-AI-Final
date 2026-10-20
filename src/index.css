@@ -3242,9 +3242,9 @@ body,
 .clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window:not(.is-active) { visibility: hidden; }
 .clyra-task-view__backdrop { position: absolute; inset: 0; z-index: 0; background: radial-gradient(82% 65% at 50% -8%, #fff 0%, #f7f7f5 58%, #f1f2f1 100%); opacity: 0; transition: opacity 260ms cubic-bezier(.45,.05,.15,1); }
 .clyra-task-view--open .clyra-task-view__backdrop { opacity: 1; }
-.clyra-task-view__window { position: absolute; transform-origin: top left; will-change: transform, opacity; transition: transform 640ms cubic-bezier(.45,.05,.15,1), opacity 240ms ease; transform: translate3d(var(--task-view-x), var(--task-view-y), 0) scale(1); }
+.clyra-task-view__window { position: absolute; transform-origin: top left; will-change: transform, opacity; transition: transform 440ms cubic-bezier(.32,.72,0,1), opacity 200ms ease; transform: translate3d(var(--task-view-x), var(--task-view-y), 0) scale(1); }
 .clyra-task-view--open .clyra-task-view__window { transform: translate3d(0,0,0) scale(var(--task-view-target-scale)); }
-.clyra-task-view--open .clyra-task-view__window { transition-delay: calc(var(--task-view-order) * 18ms); }
+.clyra-task-view--open .clyra-task-view__window { transition-delay: calc(var(--task-view-order) * 10ms); }
 .clyra-task-view--closing .clyra-task-view__window { transform: translate3d(var(--task-view-x), var(--task-view-y), 0) scale(1); transition-delay: 0ms; }
 .clyra-task-view--closing[data-task-view-selecting="true"] .clyra-task-view__window:not(.is-selected),
 .clyra-task-view--closing[data-task-view-selecting="false"] .clyra-task-view__window:not(.is-active) { transform: translate3d(0,6px,0) scale(calc(var(--task-view-target-scale) * .97)); opacity: 0; }
@@ -3253,30 +3253,32 @@ body,
    not ride the same longer curve as the big zoom — that read as sluggish for
    a ~1% scale nudge. This only takes hold after settle, so the initial
    zoom-in/out always keeps the slower, deliberate transform transition above. */
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 560ms cubic-bezier(.45,.05,.15,1), opacity 260ms ease; transition-delay: 0ms; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 380ms cubic-bezier(.32,.72,0,1), opacity 200ms ease; transition-delay: 0ms; }
 /* pointer-events is set per-render as an inline style in WorkspaceTaskView.tsx
    (auto only for the active window outside the grid overview) — it must not
    be hardcoded here as a static "none". That single static declaration used
    to always win, since nothing overrode it, and made every mounted app's
    content unreachable by a real mouse click. */
-.clyra-task-view__surface { position: absolute; inset: 0; overflow: hidden; background: #fbfbfa; border: 1px solid transparent; border-radius: 0; box-shadow: none; transition: border-radius 640ms cubic-bezier(.45,.05,.15,1), border-color 240ms ease, box-shadow 240ms ease; }
+.clyra-task-view__surface { position: absolute; inset: 0; overflow: hidden; background: #fbfbfa; border: 1px solid transparent; border-radius: 0; box-shadow: none; transition: border-radius 160ms ease, border-color 200ms ease, box-shadow 200ms ease; }
 .clyra-task-view--open .clyra-task-view__surface { border-color: rgba(37,39,43,.11); border-radius: 12px; box-shadow: 0 16px 38px rgba(26,29,35,.12), 0 2px 7px rgba(26,29,35,.05); }
 .clyra-task-view__window.is-hovered { z-index: 4 !important; }
 .clyra-task-view:not(.clyra-task-view--mode-3d).clyra-task-view--open .clyra-task-view__window.is-hovered { transform: translate3d(0,-3px,0) scale(calc(var(--task-view-target-scale) * 1.012)); }
 .clyra-task-view__window.is-hovered .clyra-task-view__surface { border-color: rgba(57,119,246,.28); box-shadow: 0 20px 42px rgba(26,29,35,.13), 0 2px 7px rgba(26,29,35,.05); }
 .clyra-task-view:not(.clyra-task-view--mode-3d)[data-task-view-phase="open"] .clyra-task-view__window:has(.clyra-task-view__hit-area:active) { transform: translate3d(0,-1px,0) scale(calc(var(--task-view-target-scale) * .994)); transition-duration: 100ms; }
-.clyra-task-view--open .clyra-task-view__window.is-closing-tab { transform: translate3d(0,-22px,0) scale(calc(var(--task-view-target-scale) * .94)); opacity: 0; pointer-events: none; transition: transform 320ms cubic-bezier(.45,.05,.15,1), opacity 220ms ease; }
+.clyra-task-view--open .clyra-task-view__window.is-closing-tab { transform: translate3d(0,-22px,0) scale(calc(var(--task-view-target-scale) * .94)); opacity: 0; pointer-events: none; transition: transform 260ms cubic-bezier(.32,.72,0,1), opacity 180ms ease; }
 .clyra-task-view--open .clyra-task-view__window:not(.is-active) *,
 .clyra-task-view--open .clyra-task-view__window:not(.is-active) *::before,
 .clyra-task-view--open .clyra-task-view__window:not(.is-active) *::after { animation-play-state: paused !important; }
 .clyra-task-view__hit-area { position: absolute; inset: 0; z-index: 2; cursor: pointer; border: 0; background: transparent; outline: 0; }
 .clyra-task-view__hit-area:focus-visible { box-shadow: inset 0 0 0 3px rgba(57,119,246,.45); border-radius: 12px; }
-.clyra-task-view__label { position: absolute; left: 0; top: calc(100% + 9px); z-index: 3; color: #5d6067; font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; letter-spacing: -.01em; opacity: 0; transform: translateY(-4px); transition: opacity 180ms ease, transform 220ms cubic-bezier(.45,.05,.15,1), color 160ms ease; transition-delay: calc(var(--task-view-order) * 18ms + 110ms); pointer-events: none; }
+.clyra-task-view__label { position: absolute; left: 0; top: calc(100% + 10px / var(--task-view-target-scale, 1)); z-index: 3; color: #5d6067; font: 600 calc(12.5px / var(--task-view-target-scale, 1))/1.2 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; letter-spacing: -.01em; opacity: 0; transform: translateY(-4px); transition: opacity 180ms ease, transform 220ms cubic-bezier(.45,.05,.15,1), color 160ms ease; transition-delay: calc(var(--task-view-order) * 10ms + 90ms); pointer-events: none; }
 .clyra-task-view--open .clyra-task-view__label { opacity: 1; transform: translateY(0); }
 .clyra-task-view__window.is-hovered .clyra-task-view__label { color: #31343a; transform: translateY(1px); }
 .clyra-task-view--closing .clyra-task-view__label { opacity: 0; transform: translateY(-3px); transition-delay: 0ms; }
 .clyra-task-view__tab-close { position: absolute; z-index: 7; display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 5px 14px rgba(15,23,42,.10); color: #64748b; cursor: pointer; opacity: 0; pointer-events: none; transform: scale(.92); transition: opacity 140ms ease, transform 180ms cubic-bezier(.45,.05,.15,1), background 140ms ease, color 140ms ease, box-shadow 160ms ease; backdrop-filter: blur(10px); }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close { pointer-events: auto; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered + .clyra-task-view__tab-close,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close:hover,
 .clyra-task-view__tab-close:focus-visible { opacity: 1; transform: scale(1); pointer-events: auto; }
 .clyra-task-view__tab-close:hover { background: #f1f5f9; color: #0f172a; box-shadow: 0 8px 18px rgba(15,23,42,.14); transform: scale(1.06); }
 .clyra-task-view__tab-close:active { transform: scale(.94); box-shadow: 0 2px 7px rgba(15,23,42,.12); }
@@ -3336,7 +3338,7 @@ body,
   border-color: rgba(57,119,246,.32);
 }
 .clyra-task-view--mode-3d .clyra-task-view__hit-area { touch-action: none; }
-.clyra-task-view--mode-3d .clyra-task-view__label { top: calc(100% + 11px); text-align: center; left: 50%; transform: translate(-50%,-4px); font-size: 12px; font-weight: 500; }
+.clyra-task-view--mode-3d .clyra-task-view__label { top: calc(100% + 12px / var(--task-view-target-scale, 1)); text-align: center; left: 50%; transform: translate(-50%,-4px); font-size: calc(12.5px / var(--task-view-target-scale, 1)); font-weight: 500; white-space: nowrap; }
 .clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__label { transform: translate(-50%,0); }
 .clyra-task-view__mode-toggle { display: flex; align-items: center; gap: 16px; padding: 0; margin: 0; background: none; }
 .clyra-task-view__mode-toggle button { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 0 4px; border: 0; border-radius: 0; background: none; color: #9aa0a8; font: 600 13px/1 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: -.01em; transition: color 160ms ease; }
@@ -5744,7 +5746,7 @@ body,
   --text-tertiary: #96989D;
   --text-disabled: #B7B9BD;
   --accent-blue: #3977F6;
-  --clyra-code-user-bubble: #F3F3F2;
+  --clyra-code-user-bubble: #E8F3FE;
   --addition-green: #268A50;
   --deletion-red: #C24949;
   --warning-amber: #b87918;
@@ -5799,9 +5801,9 @@ body,
 
 /* User prompt: subtle rounded surface only — not a chat bubble or card */
 .clyra-code-root .cc-user-prompt {
-  background: var(--clyra-code-user-bubble, #F3F3F2);
+  background: var(--clyra-code-user-bubble, #E8F3FE);
   border: none;
-  border-radius: 11px;
+  border-radius: 20px;
   box-shadow: none;
 }
 
@@ -11165,3 +11167,59 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .clyra-chat-page .clyra-message-actions > button.is-active svg { animation: none; }
 }
+
+/* Persistent workspace portals: each app lives in its own node, adopted by whichever slot shows it. */
+.clyra-workspace-slot { position: absolute; inset: 0; min-height: 0; min-width: 0; }
+.clyra-workspace-portal { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.clyra-workspace-portal:empty { pointer-events: none; }
+.clyra-workspace-placeholder { position: absolute; inset: 0; display: flex; background: #fbfbfa; }
+.clyra-workspace-placeholder__rail { width: 18%; max-width: 260px; background: #f3f3f1; border-right: 1px solid rgba(15,23,42,.05); }
+.clyra-workspace-placeholder__body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
+.clyra-workspace-placeholder__mark { display: grid; place-items: center; width: 132px; height: 132px; border-radius: 36px; background: linear-gradient(180deg, #4b8bfa, #2f6bdb); color: #fff; font: 700 64px/1 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; box-shadow: 0 18px 40px rgba(47,107,219,.25); }
+.clyra-workspace-placeholder__name { color: #2b2d32; font: 650 46px/1.1 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; letter-spacing: -.03em; }
+.clyra-workspace-placeholder__line { width: 38%; height: 22px; border-radius: 11px; background: linear-gradient(100deg, rgba(0,0,0,.05) 30%, rgba(0,0,0,.09) 50%, rgba(0,0,0,.05) 70%); background-size: 200% 100%; animation: cc-lib-shimmer 1.4s linear infinite; }
+.clyra-workspace-placeholder__line--short { width: 24%; margin-top: -14px; }
+
+/* ───────── Task View · Mission Control presentation ─────────
+   One dimmed backdrop, every window moving together on a single fast-settling curve (no stagger), macOS window
+   corners and shadows at their final on-screen size, a blue outline on hover, titles in a pill under each window
+   and the close button at the window's top-left. Shadows and outlines live on pseudo-elements and only fade, so
+   the zoom itself is a pure compositor transform. */
+.clyra-task-view { background: #1d1e22; }
+.clyra-task-view__backdrop { background: radial-gradient(120% 95% at 50% -10%, #4a4d55 0%, #2e3036 48%, #1b1c20 100%); transition: opacity 300ms cubic-bezier(.2,.8,.2,1); }
+.clyra-task-view__window,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 360ms cubic-bezier(.22,.9,.24,1), opacity 220ms ease; transition-delay: 0ms; }
+.clyra-task-view--open .clyra-task-view__window { transition-delay: 0ms; }
+.clyra-task-view--closing .clyra-task-view__window { transition: transform 340ms cubic-bezier(.22,.9,.24,1), opacity 200ms ease; }
+.clyra-task-view--closing[data-task-view-selecting="true"] .clyra-task-view__window:not(.is-selected),
+.clyra-task-view--closing[data-task-view-selecting="false"] .clyra-task-view__window:not(.is-active) { transform: translate3d(0,0,0) scale(calc(var(--task-view-target-scale) * .94)); opacity: 0; }
+.clyra-task-view__surface,
+.clyra-task-view--open .clyra-task-view__surface { border: 0; box-shadow: none; transition: none; }
+.clyra-task-view--open .clyra-task-view__surface,
+.clyra-task-view--closing .clyra-task-view__surface { border-radius: calc(11px / var(--task-view-target-scale, 1)); }
+.clyra-task-view[data-task-view-phase="closing"] .clyra-task-view__window.is-selected .clyra-task-view__surface,
+.clyra-task-view[data-task-view-phase="closing"][data-task-view-selecting="false"] .clyra-task-view__window.is-active .clyra-task-view__surface { border-radius: 0; transition: border-radius 340ms cubic-bezier(.22,.9,.24,1); }
+.clyra-task-view__window::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: calc(11px / var(--task-view-target-scale, 1)); box-shadow: 0 calc(22px / var(--task-view-target-scale, 1)) calc(48px / var(--task-view-target-scale, 1)) rgba(0,0,0,.42), 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(255,255,255,.08); opacity: 0; transition: opacity 260ms ease; pointer-events: none; }
+.clyra-task-view--open .clyra-task-view__window::before { opacity: 1; }
+.clyra-task-view__window::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: calc(11px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(3.5px / var(--task-view-target-scale, 1)) #3d8bfd; opacity: 0; transition: opacity 140ms ease; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered::after { opacity: 1; }
+.clyra-task-view:not(.clyra-task-view--mode-3d).clyra-task-view--open .clyra-task-view__window.is-hovered { transform: translate3d(0,0,0) scale(calc(var(--task-view-target-scale) * 1.018)); }
+.clyra-task-view__window.is-hovered .clyra-task-view__surface { border-color: transparent; box-shadow: none; }
+.clyra-task-view__label,
+.clyra-task-view--mode-3d .clyra-task-view__label { left: 50%; right: auto; top: calc(100% + 14px / var(--task-view-target-scale, 1)); transform: translate(-50%, calc(-4px / var(--task-view-target-scale, 1))); padding: calc(4px / var(--task-view-target-scale, 1)) calc(11px / var(--task-view-target-scale, 1)); border-radius: 999px; color: rgba(255,255,255,.92); font: 600 calc(12.5px / var(--task-view-target-scale, 1))/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; letter-spacing: -.01em; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.35); background: transparent; transition: opacity 200ms ease, transform 260ms cubic-bezier(.22,.9,.24,1), background-color 160ms ease; transition-delay: 120ms; }
+.clyra-task-view--open .clyra-task-view__label { transform: translate(-50%, 0); }
+.clyra-task-view__window.is-hovered .clyra-task-view__label { color: #fff; background: rgba(255,255,255,.16); transform: translate(-50%, 0); transition-delay: 0ms; }
+.clyra-task-view__tab-close { width: 26px; height: 26px; background: rgba(54,56,62,.88); color: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.35), inset 0 0 0 .5px rgba(255,255,255,.18); backdrop-filter: blur(12px); }
+.clyra-task-view__tab-close:hover { background: rgba(70,72,79,.95); color: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.4), inset 0 0 0 .5px rgba(255,255,255,.25); transform: scale(1.06); }
+.clyra-task-view__tab-close svg { width: 13px; height: 13px; }
+
+/* The floating Music notch sits top-centre; Maps' category chips step down beneath it while it is showing. */
+.clyra-maps-chips { transition: top 260ms cubic-bezier(.22,1,.36,1); }
+:root[data-music-notch="on"] .clyra-maps-chips { top: 64px; }
+
+/* Clyra Agents boot screen: the mark breathes while the engine starts; an indeterminate bar sweeps. */
+.cc-agents-orbit { animation: cc-agents-orbit 2.4s cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes cc-agents-orbit { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.94); opacity: .82; } }
+.cc-agents-indeterminate { animation: cc-agents-indeterminate 1.4s cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes cc-agents-indeterminate { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
+@media (prefers-reduced-motion: reduce) { .cc-agents-orbit, .cc-agents-indeterminate { animation: none; } }

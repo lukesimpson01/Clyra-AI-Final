@@ -58,6 +58,9 @@ function saveHistory(entry: Record<string, unknown>) {
   }
 }
 
+/** Forwarded to the desktop log (see main.mjs "[flow-ui]") so stuck states can be diagnosed. */
+const flowLog = (message: string) => { try { console.log(`[flow-ui] ${message}`); } catch { /* ignore */ } };
+
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 function micSettingsAppLabel() {
@@ -104,6 +107,7 @@ export function DictationController() {
   const speechStartedAtRef = useRef(0);
   const pipelineRetryRef = useRef(0);
   const manualRef = useRef(false);
+  const autoStopRef = useRef(false);
   const startingRef = useRef(false);
   const socketReadyRef = useRef(false);
   const flushWhenReadyRef = useRef(false);
@@ -173,15 +177,17 @@ export function DictationController() {
     updateNative({ phase: "idle", detail: "" });
   }, [release, updateNative]);
 
-  const insert = useCallback(async (text: string, target: DictationTarget, raw: string, startedAt: number) => {
+  const insert = useCallback(async (text: string, target: DictationTarget, raw: string, startedAt: number, diffBase?: string) => {
     const desktop = getElectronDesktop();
     if (!desktop) return;
     try {
-      const result = await desktop.dictation.insert({ text, target });
+      // diffBase: for a rewrite, the animation compares the selection being replaced with the new text.
+      const result = await desktop.dictation.insert({ text, target, raw: diffBase ?? raw });
       saveHistory({ original: target.selectedText || "", raw, inserted: text, application: target.application || "", at: Date.now(), durationMs: Date.now() - startedAt });
       const copiedOnly = result?.method === "clipboard-only";
-      updateNative({ phase: "done", detail: copiedOnly ? String(result?.note || "Copied — press ⌘V to paste") : "Inserted" });
-      window.setTimeout(() => updateNative({ phase: "idle", detail: "" }), copiedOnly ? 3200 : 850);
+      updateNative({ phase: "done", detail: String(result?.note || "Inserted"), clipboard: copiedOnly });
+      // Stay on screen long enough to read (longer when the text went to the clipboard instead of a field).
+      window.setTimeout(() => updateNative({ phase: "idle", detail: "", clipboard: false }), copiedOnly ? 4200 : 2600);
     } catch (error) {
       updateNative({ phase: "error", detail: userFacingDictationError(error) });
     }
@@ -219,8 +225,10 @@ export function DictationController() {
   }, [cancel, insert, postJson, updateNative]);
 
   const start = useCallback(async (mode: DictationMode, target: DictationTarget, manual = false) => {
+    flowLog(`start mode=${mode} manual=${manual}`);
     release();
     manualRef.current = manual;
+    autoStopRef.current = false;
     startingRef.current = true;
     pendingStopRef.current = false;
     previewRef.current = null;
@@ -278,12 +286,12 @@ export function DictationController() {
         // trailing pause. This avoids cutting off the first word while
         // still handing a finished sentence to transcription promptly.
         if (now - speechStartedAtRef.current < VOICE_MIN_UTTERANCE_MS) return;
-        const remaining = remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
+        const remaining = autoStopRef.current ? Math.max(120, 1500 - (now - lastSpeechAtRef.current)) : remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
         silenceTimerRef.current = window.setTimeout(() => {
           silenceTimerRef.current = null;
           const current = activeRef.current;
           if (!current || !heardSpeechRef.current) return;
-          if (performance.now() - lastSpeechAtRef.current < VOICE_TRAILING_SILENCE_MS) return;
+          if (performance.now() - lastSpeechAtRef.current < (autoStopRef.current ? 1400 : VOICE_TRAILING_SILENCE_MS)) return;
           heardSpeechRef.current = false;
           stopRef.current();
         }, remaining);
@@ -291,7 +299,8 @@ export function DictationController() {
       active.capture = capture;
       if (manualRef.current && maxTimerRef.current == null) maxTimerRef.current = window.setTimeout(() => { maxTimerRef.current = null; stopRef.current(); }, MAX_MANUAL_MS);
       void capture.start().then(() => {
-        if (activeRef.current !== active) return;
+        flowLog(`capture live (current=${activeRef.current === active})`);
+        if (activeRef.current !== active) { capture.stop(); return; }
         startingRef.current = false;
         updateNative({ phase: mode === "optimise" ? "optimising" : "listening", detail: mode === "optimise" ? "Tell Clyra how to rewrite this" : "Listening", application: target.application || "", level: 0 });
         if (pendingStopRef.current) { pendingStopRef.current = false; stopRef.current(); }
@@ -366,8 +375,22 @@ export function DictationController() {
 
   const stop = useCallback(() => {
     const active = activeRef.current;
-    if (!active || startingRef.current) {
-      if (startingRef.current) pendingStopRef.current = true;
+    flowLog(`stop requested active=${Boolean(active)} starting=${startingRef.current}`);
+    if (!active) {
+      // Nothing is recording here, so a stop must never leave the pill hanging on "Listening".
+      startingRef.current = false;
+      updateNative({ phase: "idle", detail: "" });
+      return;
+    }
+    if (startingRef.current) {
+      pendingStopRef.current = true;
+      // Safety net: if the recorder never reports in, give up instead of waiting forever.
+      window.setTimeout(() => {
+        if (pendingStopRef.current && startingRef.current) {
+          pendingStopRef.current = false;
+          cancel();
+        }
+      }, 4000);
       return;
     }
     clearSilenceTimer();
@@ -386,6 +409,7 @@ export function DictationController() {
     if (!desktop) return;
     const removeTrigger = desktop.dictation.onTrigger((event) => {
       if (event?.type === "start") void start("normal", event.target || {}, Boolean(event.manual));
+      else if (event?.type === "autostop") { manualRef.current = false; autoStopRef.current = true; }
       else if (event?.type === "target") { if (activeRef.current) Object.assign(activeRef.current.target, event.target || {}); }
       else if (event?.type === "stop") stop();
       else if (event?.type === "cancel") cancel();
@@ -397,7 +421,7 @@ export function DictationController() {
       else if (event?.action === "try-again") void start("optimise", previewRef.current?.target || target);
       else if (event?.action === "replace-preview" && previewRef.current) {
         const preview = previewRef.current;
-        void insert(preview.text, preview.target, preview.raw, preview.startedAt);
+        void insert(preview.text, preview.target, preview.raw, preview.startedAt, preview.target.selectedText || undefined);
       } else if (event?.action === "copy" && previewRef.current) {
         void navigator.clipboard.writeText(previewRef.current.text).then(() => updateNative({ phase: "preview", preview: previewRef.current?.text.slice(0, 240), detail: "Copied" }));
       } else if (event?.action === "stop") stop();

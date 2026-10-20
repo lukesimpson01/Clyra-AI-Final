@@ -1,4 +1,15 @@
 import {
+  BedDouble,
+  Bus,
+  Camera,
+  Coffee,
+  Fuel,
+  Hospital,
+  ParkingSquare,
+  Pill,
+  ShoppingCart,
+  Utensils,
+  Zap,
   ArrowUp,
   ArrowUpLeft,
   ArrowUpRight,
@@ -26,6 +37,20 @@ export const MANEUVER_ICON: Record<NavigationStep["type"], typeof ArrowUp> = {
   roundabout: RotateCw,
   exit: Signpost,
   arrive: Flag,
+};
+
+export const CATEGORY_ICONS: Record<string, typeof ArrowUp> = {
+  food: Utensils,
+  coffee: Coffee,
+  petrol: Fuel,
+  parking: ParkingSquare,
+  groceries: ShoppingCart,
+  hotels: BedDouble,
+  attractions: Camera,
+  pharmacy: Pill,
+  hospitals: Hospital,
+  "ev-charging": Zap,
+  transport: Bus,
 };
 
 export const CATEGORY_CHIPS: Array<{ id: string; label: string }> = [

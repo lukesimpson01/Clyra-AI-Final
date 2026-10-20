@@ -12,6 +12,7 @@ import type { PlaceInfo } from "./placeInfo";
 import type { PlaceReviews } from "./reviews";
 import { openingState } from "./openingHours";
 import { haversineMeters } from "./providers";
+import type { TransitItinerary } from "./transit";
 
 const MAX_STEPS = 6;
 
@@ -44,6 +45,7 @@ export interface AgentDeps {
   placeInfo(name: string, at: Coordinate): Promise<PlaceInfo>;
   reviews(osmId: string | undefined): Promise<PlaceReviews | null>;
   webSearch(query: string): Promise<string>;
+  transit(origin: Coordinate, destination: Coordinate, when?: string, arriveBy?: boolean): Promise<TransitItinerary[]>;
 }
 
 export type MapAction =
@@ -54,7 +56,12 @@ export type MapAction =
   | { type: "clear_results" }
   | { type: "zoom"; delta: 1 | -1 }
   | { type: "show_comparison"; rows: ComparisonRow[] }
-  | { type: "save_preference"; key: "travel_mode" | "avoid_tolls"; value: string | boolean };
+  | { type: "save_preference"; key: "travel_mode" | "avoid_tolls"; value: string | boolean }
+  | { type: "show_transit"; itineraries: TransitItinerary[]; destinationName: string; destination: Coordinate }
+  | { type: "map_command"; command: MapCommand }
+  | { type: "add_to_guide"; place: ClyraPlace; guide: string };
+
+export type MapCommand = "satellite" | "default_map" | "driving_map" | "tilt_3d" | "flat_2d" | "flyover" | "stop_flyover" | "start_navigation" | "look_around" | "locate_me" | "offline_download";
 
 export interface ComparisonRow {
   name: string;
@@ -145,12 +152,28 @@ const TOOLS = [
     type: "function",
     function: {
       name: "map_control",
-      description: "Simple map actions: zoom in/out, fit the results on screen, or clear the results from the map.",
+      description: "Map actions: zoom, fit/clear results, switch the map style (satellite, default, driving), tilt to 3D or back to 2D, start/stop a Flyover tour, start navigation on the active route, open Look Around street imagery, centre on the user's location, or download the visible area for offline use.",
       parameters: {
         type: "object",
-        properties: { action: { type: "string", enum: ["zoom_in", "zoom_out", "fit_results", "clear_results"] } },
+        properties: { action: { type: "string", enum: ["zoom_in", "zoom_out", "fit_results", "clear_results", "satellite", "default_map", "driving_map", "tilt_3d", "flat_2d", "flyover", "stop_flyover", "start_navigation", "look_around", "locate_me", "offline_download"] } },
         required: ["action"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_transit",
+      description: "Plan a public-transport trip (bus, train, metro, tram, ferry) from the user's location to a result or the selected place, using real timetables. Shows the options in the directions panel. when is an ISO time (optional); arrive_by makes it an arrival time.",
+      parameters: { type: "object", properties: { ref: { type: "string" }, when: { type: "string" }, arrive_by: { type: "boolean" } }, required: ["ref"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_to_guide",
+      description: "Add a place to one of the user's Guides (creates the guide if it doesn't exist). Use when the user asks to save a place to a list or guide.",
+      parameters: { type: "object", properties: { ref: { type: "string" }, guide: { type: "string" } }, required: ["ref", "guide"] },
     },
   },
   {
@@ -343,6 +366,32 @@ export async function runMapsAgent(
           tollAvoidance: args.avoid_tolls ? "requested, but not enforced by the current routing provider" : "not requested",
         };
       }
+      case "get_transit": {
+        const dest = resolve(args.ref) ?? context.selectedPlace ?? null;
+        const origin = context.userLocation ?? context.center;
+        if (!dest || !origin) return { error: "Need a destination and a starting location." };
+        const itineraries = await deps.transit(origin, dest.coordinates, typeof args.when === "string" ? args.when : undefined, Boolean(args.arrive_by));
+        if (!itineraries.length) return { error: "No public transport options were found for this trip. Transit data may not cover the area; walking or driving may be better." };
+        actions.push({ type: "show_transit", itineraries, destinationName: dest.name ?? "Destination", destination: dest.coordinates });
+        return {
+          source: "Transitous open transit data",
+          options: itineraries.map((it) => ({
+            minutes: Math.round(it.durationSeconds / 60),
+            departs: it.startTime,
+            arrives: it.endTime,
+            transfers: it.transfers,
+            walkMinutes: Math.round(it.walkSeconds / 60),
+            legs: it.legs.filter((l) => l.mode !== "WALK").map((l) => `${l.mode} ${l.routeName ?? ""} ${l.from.name} → ${l.to.name}`.trim()),
+          })),
+        };
+      }
+      case "add_to_guide": {
+        const place = resolve(args.ref) ?? context.selectedPlace ?? null;
+        const guide = String(args.guide ?? "").trim();
+        if (!place || !guide) return { error: "Need a place and a guide name." };
+        actions.push({ type: "add_to_guide", place, guide });
+        return { added: place.name, guide };
+      }
       case "get_weather": {
         const at = args.ref === "here" ? context.userLocation ?? context.center : resolve(args.ref)?.coordinates ?? context.selectedPoint;
         if (!at) return { error: "No location to check weather for." };
@@ -387,7 +436,11 @@ export async function runMapsAgent(
         else if (a === "zoom_out") actions.push({ type: "zoom", delta: -1 });
         else if (a === "fit_results") actions.push({ type: "fit_results" });
         else if (a === "clear_results") actions.push({ type: "clear_results" });
-        else return { error: "Unsupported map action." };
+        else if (["satellite", "default_map", "driving_map", "tilt_3d", "flat_2d", "flyover", "stop_flyover", "look_around", "locate_me", "offline_download"].includes(a)) actions.push({ type: "map_command", command: a as MapCommand });
+        else if (a === "start_navigation") {
+          if (!context.activeRoute) return { error: "There is no active route to navigate. Calculate a route first." };
+          actions.push({ type: "map_command", command: "start_navigation" });
+        } else return { error: "Unsupported map action." };
         return { done: a };
       }
       case "web_search":
@@ -406,6 +459,7 @@ export async function runMapsAgent(
     context.selectedPlace ? `The user has selected: ${context.selectedPlace.name ?? "a dropped pin"}.` : "",
     context.selectedPoint && !context.selectedPlace ? "The user has a point selected on the map (use identify_point or 'selected')." : "",
     context.activeRoute ? "A route is active; route-based search is available." : "",
+    "You can also plan transit trips, change the map style, tilt to 3D, run a Flyover tour, start navigation, open Look Around, and add places to Guides. Do these when the user asks.",
   ]
     .filter(Boolean)
     .join("\n");

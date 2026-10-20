@@ -10,7 +10,7 @@
  * edits are kept; the harness's cordis/i18n plumbing is not.
  */
 
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   Braces,
@@ -31,7 +31,8 @@ import {
 import { cn } from "../../lib/utils";
 import type { AgentAction } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
-import { DisclosureRow, IoCard, StateDot } from "./harness";
+import { DisclosureRow, InlineDiffCard, IoCard, StateDot, TerminalCard } from "./harness";
+import { computeLineDiff, linesFromPatch } from "./diff";
 import { AGENT_EASE, ROW_ENTER } from "./motion";
 
 /** Title verb per phase. The harness row keeps the title short and constant
@@ -111,8 +112,14 @@ export const AgentActionRow = memo(function AgentActionRow({
   /** Only the current live action gets the running treatment. */
   primaryActive?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const reduced = useReducedMotion();
+  const isFileKind = /^(edit|create|delete)$/.test(action.kind);
+  const isTerminalKind = /^(command|build|check|test|preview)$/.test(action.kind);
+  // Codex-style: edits show their diff inline as soon as they land; a running command shows its live output.
+  const [expanded, setExpanded] = useState(() => {
+    const fresh = !settled && Date.now() - (action.endedAt ?? action.startedAt) < 4000;
+    return (isFileKind && fresh && action.status !== "error") || (isTerminalKind && (action.status === "active" || action.status === "queued"));
+  });
   const verbs = VERBS[action.kind] ?? VERBS.generic;
   const Icon = ICONS[action.kind] ?? ICONS.generic;
   const isActive = action.status === "active" || action.status === "queued";
@@ -216,7 +223,14 @@ export const AgentActionRow = memo(function AgentActionRow({
   ]
     .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
     .join("\n\n");
-  const hasDetails = Boolean(detailOutput);
+  const diffLines = useMemo(() => {
+    if (!/^(edit|create|delete)$/.test(action.kind)) return [];
+    if (action.patch?.trim()) return linesFromPatch(action.patch);
+    if (action.before !== undefined || action.after !== undefined) return computeLineDiff(action.before ?? "", action.after ?? "");
+    if (action.contentAfter) return action.contentAfter.split("\n").slice(0, 400).map((text) => ({ kind: "add" as const, text }));
+    return [];
+  }, [action.kind, action.patch, action.before, action.after, action.contentAfter]);
+  const hasDetails = Boolean(detailOutput) || diffLines.length > 0 || (isTerminalAction && Boolean(action.target));
   const canOpenFile = isFileAction && Boolean(onOpenFile) && !isError;
 
   // The trailing fragment, kept outside the summary's ellipsis so it survives
@@ -306,12 +320,31 @@ export const AgentActionRow = memo(function AgentActionRow({
         }
       >
         <div className="dsh-body">
-          <IoCard
-            input={isTerminalAction ? action.target : null}
-            output={detailOutput}
-            error={isError}
-            outputLabel={isFileAction && changeDetails ? "DIFF" : "OUT"}
-          />
+          {isFileAction && diffLines.length ? (
+            <InlineDiffCard
+              path={action.target}
+              lines={diffLines}
+              additions={action.additions}
+              deletions={action.deletions}
+              onOpen={canOpenFile ? () => onOpenFile?.(action.target) : undefined}
+            />
+          ) : isTerminalAction ? (
+            <TerminalCard
+              command={action.target}
+              output={[action.output?.trim(), action.error?.trim()].filter(Boolean).join("\n")}
+              error={isError}
+              running={isActive}
+              passed={passConfirmed}
+              duration={duration !== null && duration > 900 ? formatDuration(duration) : null}
+            />
+          ) : (
+            <IoCard
+              input={null}
+              output={detailOutput}
+              error={isError}
+              outputLabel={isFileAction && changeDetails ? "DIFF" : "OUT"}
+            />
+          )}
           {isError || canOpenFile || (onOpenTerminal && isTerminalAction) ? (
             <div className="dsh-row-actions">
               {isError && onRetry ? (

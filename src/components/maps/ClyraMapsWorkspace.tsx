@@ -1,4 +1,4 @@
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MapView, type MapViewHandle } from "../../maps/MapView";
 import { MapsComposer } from "./MapsComposer";
@@ -6,7 +6,9 @@ import { PlaceResultsList } from "./PlaceResultsList";
 import { PlaceDetailSheet } from "./PlaceDetailSheet";
 import { RouteOverviewPanel, type TransitState, type TransitWhen } from "./RouteOverviewPanel";
 import { LookAroundViewer } from "./LookAroundViewer";
+import { addToGuide, createGuide, readLibrary } from "../../maps/library";
 import { VoiceGuide } from "../../navigation/VoiceGuide";
+import { fetchTilePois } from "../../maps/tilePois";
 import { downloadArea, saveArea } from "../../maps/offline";
 import type { TransitItinerary } from "../../../lib/maps/transit";
 import { NavigationHud } from "./NavigationHud";
@@ -14,15 +16,16 @@ import { MapsAgentPanel, type ComparisonRow, type MapsAgentTurn } from "./MapsAg
 import { MapControls } from "./MapControls";
 import { MapsHome, pushRecent } from "./MapsHome";
 import type { Basemap } from "../../maps/MapController";
-import { CATEGORY_CHIPS } from "./mapsIcons";
+import { CATEGORY_CHIPS, CATEGORY_ICONS } from "./mapsIcons";
 import { prefetchPlaceDetail } from "./placeDetailCache";
 import { NavigationSimulationEngine, type SimulationState } from "../../navigation/NavigationSimulationEngine";
 import { NavigationCameraController, overviewBoundsOf } from "../../navigation/NavigationCameraController";
 import { bearingBetween } from "../../navigation/RouteInterpolator";
 import type { ClyraPlace, Coordinate, Route, TravelMode } from "../../../lib/maps/types";
+import { getElectronDesktop } from "../../lib/electron-runtime";
 
 /** Space the left place/route panel takes, so fitted routes stay fully visible. */
-const ROUTE_PADDING = { top: 96, bottom: 40, left: 440, right: 40 };
+const ROUTE_PADDING = { top: 96, bottom: 40, left: 440, right: 90 };
 const PREFS_KEY = "clyra.mapsPrefs";
 
 interface MapsPrefs {
@@ -96,7 +99,10 @@ type AgentAction =
   | { type: "clear_results" }
   | { type: "zoom"; delta: 1 | -1 }
   | { type: "show_comparison"; rows: ComparisonRow[] }
-  | { type: "save_preference"; key: "travel_mode" | "avoid_tolls"; value: string | boolean };
+  | { type: "save_preference"; key: "travel_mode" | "avoid_tolls"; value: string | boolean }
+  | { type: "show_transit"; itineraries: TransitItinerary[]; destinationName: string; destination: Coordinate }
+  | { type: "map_command"; command: "satellite" | "default_map" | "driving_map" | "tilt_3d" | "flat_2d" | "flyover" | "stop_flyover" | "start_navigation" | "look_around" | "locate_me" | "offline_download" }
+  | { type: "add_to_guide"; place: ClyraPlace; guide: string };
 
 type AgentEvent =
   | { type: "status"; label: string }
@@ -163,6 +169,8 @@ export function ClyraMapsWorkspace() {
   const [downloadLabel, setDownloadLabel] = useState<string | null>(null);
   const activeCategoryRef = useRef<{ id: string; label: string } | null>(null);
   const [userMoved, setUserMoved] = useState(false);
+  const categoryReqRef = useRef(0);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [basemap, setBasemapState] = useState<Basemap>("explore");
   const [locating, setLocating] = useState(false);
 
@@ -182,8 +190,12 @@ export function ClyraMapsWorkspace() {
     // fixes update the blue dot but never steal the camera after the user has
     // begun exploring. If an approximate IP location won the startup race,
     // the first precise fix gets one calm, interruptible fly-in.
+    let hadPrecise = false;
     const onFix = (coord: Coordinate, source: "precise" | "approximate") => {
       if (cancelled || !validCoordinate(coord)) return;
+      // A late network (IP) answer must never replace a real fix.
+      if (source === "approximate" && hadPrecise) return;
+      if (source === "precise") hadPrecise = true;
       realPositionRef.current = coord;
       if (!initialLocationRef.current) {
         initialLocationRef.current = coord;
@@ -247,6 +259,15 @@ export function ClyraMapsWorkspace() {
       () => fallbackToIp(),
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 },
     );
+    // In the desktop app, also ask macOS Location Services directly (Wi-Fi/GPS grade). Whichever precise source
+    // answers first wins; the browser API in a dev Electron build often never receives a system fix.
+    const nativeLocation = getElectronDesktop()?.location;
+    if (nativeLocation) {
+      void nativeLocation.get({ timeoutSeconds: 12 }).then((result) => {
+        if (result?.ok && typeof result.lat === "number" && typeof result.lon === "number") onFix([result.lon, result.lat], "precise");
+        else if (!cancelled && result?.error === "denied") setLocationHint("Location is off for Clyra. Turn it on in System Settings → Privacy & Security → Location Services.");
+      }).catch(() => {});
+    }
 
     // Never strand the interface while an OS location service is warming up.
     // This is only a last resort: IP lookup continues in the background and
@@ -284,6 +305,8 @@ export function ClyraMapsWorkspace() {
     }
   }, [controller, locationStatus, map, mapReady]);
 
+  const [locationHint, setLocationHint] = useState<string | null>(null);
+
   const handleLocate = useCallback(() => {
     const m = map();
     const go = (c: Coordinate) => {
@@ -293,41 +316,76 @@ export function ClyraMapsWorkspace() {
     };
     if (realPositionRef.current) go(realPositionRef.current);
     setLocating(true);
+    const nativeLocation = getElectronDesktop()?.location;
+    if (nativeLocation) {
+      void nativeLocation.get({ timeoutSeconds: 10 }).then((result) => {
+        if (result?.ok && typeof result.lat === "number" && typeof result.lon === "number") {
+          setLocating(false);
+          setLocationStatus("precise");
+          setLocationHint(null);
+          go([result.lon, result.lat]);
+        } else if (result?.error === "denied") {
+          setLocating(false);
+          setLocationHint("Location is off for Clyra. Turn it on in System Settings → Privacy & Security → Location Services.");
+          window.setTimeout(() => setLocationHint(null), 7000);
+        }
+      }).catch(() => {});
+    }
     navigator.geolocation?.getCurrentPosition(
       (pos) => {
         setLocating(false);
         go([pos.coords.longitude, pos.coords.latitude]);
       },
-      () => setLocating(false),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 15_000 },
+      (err) => {
+        setLocating(false);
+        setLocationHint(
+          err.code === 1
+            ? "Location is blocked. Allow Clyra in System Settings → Privacy & Security → Location Services."
+            : "Couldn't get a precise fix. Check that Location Services is on, then try again.",
+        );
+        window.setTimeout(() => setLocationHint(null), 6000);
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 15_000 },
     );
   }, [controller, map]);
 
   /* -------------------------------- data fetchers -------------------------------- */
+  // Autocomplete and Enter share results, so submitting a query you just saw
+  // suggestions for is instant instead of a second round-trip.
+  const searchCacheRef = useRef(new Map<string, { at: number; places: ClyraPlace[] }>());
   const fetchSuggestions = useCallback(async (query: string): Promise<ClyraPlace[]> => {
+    const key = query.trim().toLowerCase();
+    const hit = searchCacheRef.current.get(key);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.places;
     try {
       const data = await postJson<{ places: ClyraPlace[] }>("/api/maps/search", {
         query,
         near: centerRef.current,
+        limit: 12,
       });
-      return data.places || [];
+      const places = data.places || [];
+      if (places.length) searchCacheRef.current.set(key, { at: Date.now(), places });
+      return places;
     } catch {
       return [];
     }
   }, []);
 
   const showPlacesOnMap = useCallback(
-    (list: ClyraPlace[], title?: string) => {
+    (list: ClyraPlace[], title?: string, fit = true) => {
       setPlaces(list);
       setResultsTitle(title);
       controller()?.setPois(list);
-      if (list.length) {
+      if (fit && list.length) {
         const lons = list.map((p) => p.coordinates[0]);
         const lats = list.map((p) => p.coordinates[1]);
-        controller()?.fitToBounds([
-          [Math.min(...lons), Math.min(...lats)],
-          [Math.max(...lons), Math.max(...lats)],
-        ]);
+        controller()?.fitToBounds(
+          [
+            [Math.min(...lons), Math.min(...lats)],
+            [Math.max(...lons), Math.max(...lats)],
+          ],
+          ROUTE_PADDING,
+        );
       }
     },
     [controller],
@@ -335,23 +393,39 @@ export function ClyraMapsWorkspace() {
 
   const handleCategoryClick = useCallback(
     async (categoryId: string, label: string) => {
-      setThinking(true);
-      setThinkingLabel(`Finding ${label.toLowerCase()}…`);
-      try {
-        const data = await postJson<{ places: ClyraPlace[] }>("/api/maps/nearby", {
-          center: centerRef.current,
-          category: categoryId,
-        });
-        showPlacesOnMap(data.places || [], label);
-        activeCategoryRef.current = { id: categoryId, label };
-        setUserMoved(false);
-      } catch {
-        showPlacesOnMap([], label);
-      } finally {
+      const token = ++categoryReqRef.current;
+      activeCategoryRef.current = { id: categoryId, label };
+      setActiveCategory(categoryId);
+      setUserMoved(false);
+      setSelectedPlace(null);
+      // Instant answer from tiles already on screen, then from the z14 tiles around the view.
+      let instant = controller()?.queryTilePois(categoryId, centerRef.current) ?? [];
+      if (instant.length) showPlacesOnMap(instant, label);
+      else setThinking(true);
+      const tileList = await fetchTilePois(categoryId, centerRef.current);
+      if (token !== categoryReqRef.current) return;
+      if (tileList.length) {
+        instant = tileList;
+        showPlacesOnMap(tileList, label);
         setThinking(false);
       }
+      setThinkingLabel(`Finding ${label.toLowerCase()}…`);
+      try {
+        const data = await postJson<{ places: ClyraPlace[] }>("/api/maps/nearby", { center: centerRef.current, category: categoryId });
+        if (token !== categoryReqRef.current) return;
+        const rich = data.places || [];
+        // Richer Overpass results (hours, phone…) replace the quick ones; tile-only
+        // places the service missed are kept after them.
+        const names = new Set(rich.map((p) => p.name.toLowerCase()));
+        const merged = [...rich, ...instant.filter((p) => !names.has(p.name.toLowerCase()))].slice(0, 25);
+        if (merged.length || !instant.length) showPlacesOnMap(merged, label, !instant.length);
+      } catch {
+        if (token === categoryReqRef.current && !instant.length) showPlacesOnMap([], label);
+      } finally {
+        if (token === categoryReqRef.current) setThinking(false);
+      }
     },
-    [showPlacesOnMap],
+    [controller, showPlacesOnMap],
   );
 
   /* ----------------------- selection, routing & map clicks ----------------------- */
@@ -461,6 +535,7 @@ export function ClyraMapsWorkspace() {
       pushRecent(place);
       resetStops();
       activeCategoryRef.current = null;
+      setActiveCategory(null);
       setNearby([]);
       setIdentifying(false);
       setPlaces([]);
@@ -492,14 +567,14 @@ export function ClyraMapsWorkspace() {
   /** Any click on the map identifies what is there. The pin appears at once;
    * the card fills in when the identify service answers. */
   const handleMapClick = useCallback(
-    async (coord: Coordinate) => {
+    async (coord: Coordinate, hint?: { name: string; kind?: string }) => {
       if (navActiveRef.current) return;
       const id = ++selectionRef.current;
       const pin: ClyraPlace = {
         id: `pin-${coord[1].toFixed(6)}-${coord[0].toFixed(6)}`,
-        name: "Dropped pin",
+        name: hint?.name ?? "Dropped pin",
         coordinates: coord,
-        categories: [],
+        categories: hint?.kind ? [hint.kind] : [],
         sourceLinks: [],
       };
       setSelectedPlace(pin);
@@ -631,6 +706,57 @@ export function ClyraMapsWorkspace() {
         step(action.key === "travel_mode" ? `Saved travel preference: ${action.value}` : `Saved preference: ${action.value ? "avoid tolls" : "tolls allowed"}`);
         return;
       }
+      case "show_transit": {
+        if (!Array.isArray(action.itineraries) || !action.itineraries.length) return;
+        const first = action.itineraries[0];
+        setMode("transit");
+        setSelectedPlace(null);
+        setPlaces([]);
+        controller()?.setPois([]);
+        controller()?.setSelectionPin(null);
+        setRoute(null);
+        setAlternatives([]);
+        controller()?.setRoute(null);
+        controller()?.setAlternativeRoutes([]);
+        destRef.current = { name: action.destinationName, coordinates: action.destination };
+        setDestinationName(action.destinationName);
+        setTransit({ itineraries: action.itineraries, selectedId: first.id, loading: false });
+        controller()?.setTransit(first.legs);
+        controller()?.fitToBounds(overviewBoundsOf(first.legs.flatMap((l) => l.geometry)), ROUTE_PADDING);
+        step(`Planned transit to ${action.destinationName} · ${Math.round(first.durationSeconds / 60)} min`);
+        return;
+      }
+      case "map_command": {
+        const m = map();
+        const ctrl = controller();
+        const basemaps = { satellite: "satellite", default_map: "explore", driving_map: "driving" } as const;
+        const c = action.command;
+        if (c in basemaps) {
+          const b = basemaps[c as keyof typeof basemaps] as Basemap;
+          setBasemapState(b);
+          ctrl?.setBasemap(b);
+        } else if (c === "tilt_3d") m?.easeTo({ pitch: 60, duration: 600 });
+        else if (c === "flat_2d") m?.easeTo({ pitch: 0, bearing: 0, duration: 600 });
+        else if (c === "flyover") {
+          if (ctrl && !ctrl.flying) toggleFlyover();
+        } else if (c === "stop_flyover") {
+          if (ctrl?.flying) toggleFlyover();
+        } else if (c === "start_navigation") handleGo();
+        else if (c === "look_around") handleLookAround();
+        else if (c === "locate_me") handleLocate();
+        else if (c === "offline_download") void handleDownload();
+        else return;
+        step(`Map: ${c.replace(/_/g, " ")}`);
+        return;
+      }
+      case "add_to_guide": {
+        if (!isPlace(action.place)) return;
+        const existing = readLibrary().guides.find((g) => g.name.toLowerCase() === String(action.guide).toLowerCase());
+        if (existing) addToGuide(existing.id, action.place);
+        else createGuide(String(action.guide), action.place);
+        step(`Added ${action.place.name} to “${action.guide}”`);
+        return;
+      }
       default:
         return;
     }
@@ -703,6 +829,34 @@ export function ClyraMapsWorkspace() {
     }
   };
 
+  /** Plain place search (Enter on a place name): a ranked results list on the map. */
+  const submitSearch = useCallback(
+    async (text: string) => {
+      setThinking(true);
+      setThinkingLabel(`Searching for “${text}”…`);
+      try {
+        const list = await fetchSuggestions(text);
+        if (list.length === 1) {
+          selectPlace(list[0]);
+        } else if (list.length > 1) {
+          setSelectedPlace(null);
+          activeCategoryRef.current = null;
+          showPlacesOnMap(list, `Results for “${text}”`);
+        } else {
+          setAgentOpen(true);
+          void runAgent(text);
+        }
+      } catch {
+        setAgentOpen(true);
+        void runAgent(text);
+      } finally {
+        setThinking(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectPlace, showPlacesOnMap, fetchSuggestions],
+  );
+
   /** Top search bar: whatever is typed opens Ask Clyra and runs the agent. */
   const submitFromSearch = (text: string) => {
     setAgentOpen(true);
@@ -774,7 +928,7 @@ export function ClyraMapsWorkspace() {
       pollRef.current = setInterval(() => {
         if (!engineRef.current) return;
         setSimState(engineRef.current.getSnapshot());
-      }, 300);
+      }, 500);
 
       engine.start();
     }, 1650);
@@ -847,7 +1001,13 @@ export function ClyraMapsWorkspace() {
     const b = m.getBounds();
     setDownloadLabel("0%");
     try {
-      const bounds: [Coordinate, Coordinate] = [[b.getWest(), b.getSouth()], [b.getEast(), b.getNorth()]];
+      // Like a city download: at least ~20 km square around the view, not just what is on screen.
+      const c0 = m.getCenter();
+      const half = 0.09;
+      const bounds: [Coordinate, Coordinate] = [
+        [Math.min(b.getWest(), c0.lng - half), Math.min(b.getSouth(), c0.lat - half)],
+        [Math.max(b.getEast(), c0.lng + half), Math.max(b.getNorth(), c0.lat + half)],
+      ];
       const result = await downloadArea(bounds, (done, total) => setDownloadLabel(`${Math.round((done / total) * 100)}%`));
       const c = m.getCenter();
       saveArea({ id: `area-${Date.now().toString(36)}`, name: `Area near ${c.lat.toFixed(2)}, ${c.lng.toFixed(2)}`, bounds, tiles: result.total, savedAt: Date.now() });
@@ -881,6 +1041,7 @@ export function ClyraMapsWorkspace() {
   // Re-derived on every render, which the 300ms simulation poll keeps fresh.
   const upcoming = navActive ? engineRef.current?.nextManeuver() : undefined;
   // The left column hosts one card at a time: a place, or a route overview.
+  const sidebarOpen = !navActive && (Boolean(selectedPlace) || Boolean(route || transit) || places.length > 0);
   const leftPanelOpen = !navActive && (Boolean(selectedPlace) || Boolean((route || transit) && !selectedPlace));
 
   return (
@@ -892,8 +1053,8 @@ export function ClyraMapsWorkspace() {
           initialZoom={13.2}
           onReady={() => setMapReady(true)}
           onUserMove={() => setUserMoved(true)}
-          onClick={(c) => {
-            void handleMapClick(c);
+          onClick={(c, hint) => {
+            void handleMapClick(c, hint);
           }}
           onMoveEnd={(c) => {
             centerRef.current = c;
@@ -906,7 +1067,7 @@ export function ClyraMapsWorkspace() {
         />
       ) : (
         <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_50%_30%,#ffffff_0%,#f1f5f9_62%,#e7edf5_100%)]">
-          <div className="flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/85 px-3 py-2 text-[12px] font-medium text-slate-500 shadow-sm backdrop-blur-md" aria-live="polite">
+          <div className="flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/85 px-3 py-2 text-[12px] font-medium text-slate-500 shadow-sm" aria-live="polite">
             <span className="h-2 w-2 animate-pulse rounded-full bg-[#3b82f6]" />
             Finding your location…
           </div>
@@ -927,38 +1088,54 @@ export function ClyraMapsWorkspace() {
           onDownload={() => void handleDownload()}
           downloadLabel={downloadLabel}
           flying={flying}
+          rightInset={agentOpen ? 428 : 16}
+          leftInset={sidebarOpen ? 408 : 0}
           onFlyover={toggleFlyover}
         />
       ) : null}
 
       {!navActive && !selectedPlace && !route && places.length === 0 ? <MapsHome onSelect={focusPlace} /> : null}
 
+      <AnimatePresence>
+        {sidebarOpen ? (
+          <motion.div
+            key="sidebar-backdrop"
+            initial={{ x: -40, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: -40, opacity: 0 }}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            className="pointer-events-auto absolute bottom-0 left-0 top-0 z-10 w-[408px] max-w-[100vw] rounded-r-[20px] bg-white shadow-[2px_0_16px_rgba(15,23,42,.2)]"
+          />
+        ) : null}
+      </AnimatePresence>
+
       {!navActive ? (
         <>
           <MapsComposer
             onSubmit={submitFromSearch}
+            onSearch={(t) => void submitSearch(t)}
             onSuggestionPick={focusPlace}
             fetchSuggestions={fetchSuggestions}
             thinking={thinking}
             thinkingLabel={thinkingLabel}
           />
 
-          <div
-            className={
-              "pointer-events-auto absolute left-1/2 top-[76px] z-20 flex w-[min(560px,92vw)] -translate-x-1/2 gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] " +
-              (leftPanelOpen ? "invisible" : "")
-            }
-          >
-            {CATEGORY_CHIPS.map((chip) => (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => handleCategoryClick(chip.id, chip.label)}
-                className="shrink-0 rounded-full border border-slate-200/90 bg-white/90 px-3 py-1.5 text-[12px] font-semibold text-slate-600 shadow-sm backdrop-blur-md transition-colors hover:bg-white hover:text-slate-900"
-              >
-                {chip.label}
-              </button>
-            ))}
+          <div className="clyra-maps-chips pointer-events-auto absolute left-[412px] right-[84px] top-4 z-20 flex gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] max-md:hidden">
+            {CATEGORY_CHIPS.map((chip) => {
+              const Icon = CATEGORY_ICONS[chip.id];
+              const active = activeCategory === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => handleCategoryClick(chip.id, chip.label)}
+                  className={"flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium shadow-[0_1px_6px_rgba(15,23,42,.25)] outline-none transition-all duration-150 hover:shadow-[0_2px_10px_rgba(15,23,42,.3)] active:scale-95 " + (active ? "bg-[#e8f0fe] text-[#1a5fb4]" : "bg-white text-slate-700")}
+                >
+                  {Icon ? <Icon className="h-4 w-4" /> : null}
+                  {chip.label}
+                </button>
+              );
+            })}
           </div>
         </>
       ) : null}
@@ -970,7 +1147,7 @@ export function ClyraMapsWorkspace() {
             const c = activeCategoryRef.current;
             if (c) void handleCategoryClick(c.id, c.label);
           }}
-          className="pointer-events-auto absolute left-1/2 top-[118px] z-30 -translate-x-1/2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-[#2563eb] shadow-[0_6px_20px_rgba(15,23,42,.18)] hover:bg-slate-50"
+          className="pointer-events-auto absolute left-[calc(50%+204px)] top-[68px] z-30 -translate-x-1/2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-[#2563eb] shadow-[0_6px_20px_rgba(15,23,42,.18)] hover:bg-slate-50"
         >
           Search this area
         </button>
@@ -1003,6 +1180,10 @@ export function ClyraMapsWorkspace() {
             onStart={handleGo}
             onDirections={(p) => void computeRoute(p)}
             onSelectNearby={focusPlace}
+            onNearby={(p) => {
+              setAgentOpen(true);
+              void runAgent(`What's worth visiting or eating within a short walk of ${p.name}?`);
+            }}
             onAskClyra={(p) => {
               setAgentOpen(true);
               void runAgent(`Tell me about ${p.name}: what it is, whether it's open now and its hours, what people say about it, and whether it's worth going.`);
@@ -1024,6 +1205,7 @@ export function ClyraMapsWorkspace() {
           onSelectPlace={focusPlace}
           onHoverPlace={prefetchPlaceDetail}
           selectedName={selectedPlace?.name}
+          hasRoute={Boolean(route)}
         />
       ) : null}
 
@@ -1076,6 +1258,20 @@ export function ClyraMapsWorkspace() {
           />
         ) : null}
       </AnimatePresence>
+
+      {!navActive && (locationStatus === "approximate" || locationHint) ? (
+        <motion.button
+          type="button"
+          onClick={handleLocate}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          className="pointer-events-auto absolute bottom-[92px] right-[64px] z-30 flex max-w-[300px] items-center gap-2 rounded-full bg-white/92 py-1.5 pl-2.5 pr-3.5 text-left text-[12px] font-medium text-[#3c4043] shadow-[0_2px_10px_rgba(15,23,42,.16)] ring-1 ring-black/[0.06] backdrop-blur-xl transition-transform active:scale-[0.98]"
+        >
+          <span className={locating ? "h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#1a73e8]" : "h-2 w-2 shrink-0 rounded-full bg-[#f9ab00]"} aria-hidden />
+          <span className="truncate">{locationHint ?? (locating ? "Finding your precise location…" : "Approximate location · Use precise")}</span>
+        </motion.button>
+      ) : null}
 
       {lookAround ? <LookAroundViewer coordinates={lookAround.coordinates} title={lookAround.title} onClose={() => setLookAround(null)} /> : null}
 

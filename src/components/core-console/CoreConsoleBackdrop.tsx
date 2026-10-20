@@ -684,7 +684,7 @@ export function CoreConsoleBackdrop({
         <button type="button" onClick={() => openWorkspace("browser")} aria-label="Open browser" data-tooltip="Browser">
           <Globe2 aria-hidden="true" />
         </button>
-        <button type="button" onClick={() => openWorkspace("cowork")} aria-label="Open Cowork" data-tooltip="Cowork">
+        <button type="button" onClick={() => openWorkspace("cowork")} aria-label="Open Agents" data-tooltip="Agents">
           <Users aria-hidden="true" />
         </button>
         <button type="button" onClick={() => openWorkspace("maps")} aria-label="Open maps" data-tooltip="Maps">

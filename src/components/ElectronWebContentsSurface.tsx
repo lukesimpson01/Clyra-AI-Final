@@ -6,8 +6,12 @@ type ElectronWebContentsSurfaceProps = {
   source?: string;
   title: string;
   surfaceId: string;
-  kind: "browser" | "preview" | "vibe-runtime";
+  kind: "browser" | "preview" | "vibe-runtime" | "agents";
   className?: string;
+  /** Stylesheet layered onto the embedded page (applied on every navigation). */
+  css?: string;
+  /** Presentation script run once per document of the embedded page. */
+  script?: string;
   active?: boolean;
   fallback?: ReactNode;
 };
@@ -25,6 +29,8 @@ export function ElectronWebContentsSurface({
   className,
   active = true,
   fallback,
+  css,
+  script,
 }: ElectronWebContentsSurfaceProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef<ElectronSurfaceBounds | null>(null);
@@ -73,7 +79,12 @@ export function ElectronWebContentsSurface({
         if (kind === "browser") {
           void desktop.browser.setSurface({ bounds, visible: nextVisible });
         } else if (source) {
-          void desktop.surfaces.update({ id: surfaceId, url: source, kind, bounds, visible: nextVisible });
+          // Native surfaces need an absolute URL; previews are served from this origin as relative paths.
+          let url = source;
+          try { url = new URL(source, window.location.href).toString(); } catch { /* keep as given */ }
+          void desktop.surfaces.update({ id: surfaceId, url, kind, bounds, visible: nextVisible, css, script }).catch((error: unknown) => {
+            console.warn("[surface] could not show", surfaceId, error);
+          });
         }
       });
     };
@@ -112,7 +123,7 @@ export function ElectronWebContentsSurface({
       if (kind === "browser") void desktop.browser.setSurface({ visible: false });
       else void desktop.surfaces.hide(surfaceId);
     };
-  }, [active, electron, kind, source, surfaceId]);
+  }, [active, css, electron, kind, script, source, surfaceId]);
 
   if (!electron) return <>{fallback}</>;
   return <div ref={hostRef} className={cn("relative h-full min-h-0 w-full overflow-hidden bg-white", className)} aria-label={title} />;

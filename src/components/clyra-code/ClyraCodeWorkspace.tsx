@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
+import { FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "./api";
 import { shouldAskPlatform, useClyraCode, type AgentAction } from "./store";
@@ -27,7 +27,8 @@ const MIN_CONVERSATION = 400;
 const MIN_PREVIEW = 520;
 /** Below this workspace width the sidebar becomes a drawer and the panes take turns. */
 const NARROW_BREAKPOINT = 720;
-const PANEL_SPRING = { type: "spring" as const, stiffness: 420, damping: 38, mass: 0.82 };
+// Panels glide on one calm curve (no spring overshoot); while the divider is dragged they follow the pointer exactly.
+const PANEL_EASE = { duration: 0.34, ease: [0.22, 1, 0.36, 1] as const };
 const UNTITLED_PROJECT_NAME = "Untitled project";
 
 const WELCOME_SUBTITLES = [
@@ -494,6 +495,10 @@ export default function ClyraCodeWorkspace({
   /* -------------------- helpers -------------------- */
   const activeProject = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const taskTitle = state.sessionTitle || (state.log.length ? "Task" : "");
+  const diffTotals = useMemo(
+    () => state.diffs.reduce((acc, diff) => ({ files: acc.files + 1, additions: acc.additions + (diff.additions || 0), deletions: acc.deletions + (diff.deletions || 0) }), { files: 0, additions: 0, deletions: 0 }),
+    [state.diffs],
+  );
   const agentStatus = useMemo(() => {
     if (state.connection === "reconnecting") return { label: "Reconnecting", tone: "warning" as const };
     if (state.runState === "failed") return { label: "Needs attention", tone: "error" as const };
@@ -547,11 +552,16 @@ export default function ClyraCodeWorkspace({
   const welcomeComposerRef = useRef<HTMLDivElement | null>(null);
   const conversationComposerRef = useRef<HTMLDivElement | null>(null);
   const welcomeComposerTop = useRef<number | null>(null);
+  // Runs only when the screen flips between welcome and conversation. Measuring on every render forced a full
+  // document layout each time anything re-rendered (hundreds of ms while Task View was laying out every app).
   useLayoutEffect(() => {
     if (!hasConversation) {
       welcomeComposerTop.current = welcomeComposerRef.current?.getBoundingClientRect().top ?? null;
       return;
     }
+    // The outgoing welcome screen is still mounted while it exits, so its composer gives the freshest start point.
+    const welcomeNode = welcomeComposerRef.current;
+    if (welcomeNode?.isConnected) welcomeComposerTop.current = welcomeNode.getBoundingClientRect().top;
     const from = welcomeComposerTop.current;
     welcomeComposerTop.current = null;
     const node = conversationComposerRef.current;
@@ -562,7 +572,7 @@ export default function ClyraCodeWorkspace({
       [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
       { duration: 380, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
     );
-  });
+  }, [hasConversation, reducedMotion]);
   const recentProjects = useMemo(
     () => state.projects.filter((project) => !project.archivedAt && project.id !== activeProject?.id && (project.kind === "design") === (mode === "design")).slice(0, 3),
     [mode, state.projects, activeProject?.id],
@@ -714,6 +724,25 @@ export default function ClyraCodeWorkspace({
     },
     [activeProject, beginOptimisticPrompt, catalog, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
   );
+
+  // "Open in Clyra Code" from the Library: select the installed project, bring up
+  // the live preview (usePreview starts the dev server for the active project),
+  // then send one setup prompt once that project is actually active so the
+  // message can never land in a different project.
+  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
+  useEffect(() => {
+    if (!autoStart || state.activeProjectId !== autoStart.projectId || running) return;
+    const { name, repositoryUrl } = autoStart;
+    setAutoStart(null);
+    setRightPanelOpen(true);
+    setRightTab("browser");
+    void submitPrompt(
+      `I just installed ${name} (source: ${repositoryUrl}) into this project from the Clyra Library. Set it up to run: read its README and package files, install dependencies, start the dev server and confirm the live preview loads, fixing any setup problems you hit. When it is running, give me a two-line summary of what the app does, then ask what I would like to change, and offer to publish it when I am happy.`,
+      [],
+      undefined,
+      { userText: `Set up and run ${name}` },
+    );
+  }, [autoStart, running, state.activeProjectId, submitPrompt]);
 
   // The welcome composer sends with the chosen app type. The brief clears only
   // after a send succeeds, so a rejected send keeps the user's choice.
@@ -873,9 +902,8 @@ export default function ClyraCodeWorkspace({
     <motion.div
       ref={shellRef}
       className="clyra-code-root flex h-full w-full flex-col overflow-hidden"
-      initial={{ opacity: 0 }}
+      initial={false}
       animate={{ opacity: 1 }}
-      transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
     >
       {/* One switcher for the whole workspace: it always sits at the same
           top-left spot whether the Code or Design surface is showing, so
@@ -1005,13 +1033,14 @@ export default function ClyraCodeWorkspace({
       <motion.section
         initial={false}
         animate={{ width: conversationTargetWidth }}
-        transition={reducedMotion ? { duration: 0 } : PANEL_SPRING}
+        transition={reducedMotion || dragging ? { duration: 0 } : PANEL_EASE}
         className="cc-conversation-panel flex min-h-0 shrink-0 flex-col overflow-hidden bg-[color:var(--main-background)]"
       >
         {state.connection === "reconnecting" && running ? (
           <motion.div
-            initial={{ y: -28 }}
-            animate={{ y: 0 }}
+            initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             className="border-b border-[color:var(--border-subtle)] bg-[#fff8ec] px-4 py-1.5 text-center text-[11.5px] text-[color:var(--warning-amber)]"
           >
             Connection interrupted. Reconnecting…
@@ -1052,6 +1081,32 @@ export default function ClyraCodeWorkspace({
                 </h1>
                 <div className="cc-project-context truncate">{activeProject.name}</div>
               </div>
+              {running ? (
+                <span className="cc-thread-status" aria-live="polite">
+                  <span className="cc-thread-status-dot" aria-hidden />
+                  {agentStatus.label}
+                </span>
+              ) : null}
+              {diffTotals.files ? (
+                <button
+                  type="button"
+                  title="Review changes"
+                  onClick={() => { setRightTab("changes"); setFocusFile(null); setRightPanelOpen(true); }}
+                  className="cc-thread-chip"
+                >
+                  <span className="text-[#1a7f37]">+{diffTotals.additions}</span>
+                  <span className="text-[#cf222e]">−{diffTotals.deletions}</span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                title="Open project folder"
+                onClick={() => void api.openProjectFolder(activeProject.id).catch((error) => console.error("Could not open the project folder:", error))}
+                className="cc-thread-chip"
+              >
+                <FolderOpen className="h-[13px] w-[13px]" strokeWidth={1.7} />
+                Open
+              </button>
             </>
           ) : <span className="flex-1" aria-hidden />}
         </header>
@@ -1062,7 +1117,7 @@ export default function ClyraCodeWorkspace({
             {!hasConversation ? (
               <motion.div
                 key="welcome"
-                initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+                initial={{ opacity: 0, y: reducedMotion ? 0 : 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
                 transition={{ duration: reducedMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
@@ -1264,7 +1319,7 @@ export default function ClyraCodeWorkspace({
         animate={rightPanelOpen
           ? { width: previewTargetWidth, x: 0, opacity: 1 }
           : { width: 0, x: 8, opacity: 0 }}
-        transition={reducedMotion ? { duration: 0 } : PANEL_SPRING}
+        transition={reducedMotion || dragging ? { duration: 0 } : PANEL_EASE}
         className={cn("flex min-h-0 shrink-0 overflow-hidden", !rightPanelOpen && "pointer-events-none")}
         aria-hidden={!rightPanelOpen || undefined}
       >
@@ -1303,6 +1358,16 @@ export default function ClyraCodeWorkspace({
         onImported={(projectId) => {
           setLibraryOpen(false);
           void loadProjects().then(() => selectProject(projectId));
+        }}
+        existingProjectIds={state.projects.map((project) => project.id)}
+        onOpenInstalled={(projectId, entry) => {
+          setLibraryOpen(false);
+          void loadProjects().then(() => {
+            selectProject(projectId);
+            setRightPanelOpen(true);
+            setRightTab("browser");
+            setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+          });
         }}
         onAskClyra={(entry) => {
           void submitPrompt(

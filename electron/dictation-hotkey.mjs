@@ -11,40 +11,56 @@ const require = createRequire(import.meta.url);
  * never hijacked. Needs the OS key-event hook (Input Monitoring on macOS);
  * when that is unavailable the caller falls back to a global-shortcut toggle.
  */
-export const HOLD_THRESHOLD_MS = 280;
+export const TAP_MAX_MS = 700;
 export const HOTKEY_LABEL = process.platform === "darwin" ? "Right ⌥ Option" : "Right Alt";
 
-export function createGestureMachine({ now = () => Date.now(), onStart, onStop, onCancel, onHandsFree }) {
+const mac = process.platform === "darwin";
+/**
+ * Hotkey choices (tray -> "Dictation hotkey"). A "tap" preset toggles dictation when you tap a single
+ * modifier key on its own (needs the OS key hook); the global-shortcut combos are the always-available
+ * backup and are registered alongside it, so dictation is reachable even if the key hook is blocked.
+ */
+export const HOTKEY_PRESETS = [
+  { id: "right-option", label: `Tap ${mac ? "Right ⌥ Option" : "Right Alt"}`, tap: "AltRight", tapLabel: mac ? "Right ⌥ Option" : "Right Alt", combos: ["Control+Space", "Control+Alt+Space"] },
+  { id: "right-command", label: `Tap ${mac ? "Right ⌘ Command" : "Right Win"}`, tap: "MetaRight", tapLabel: mac ? "Right ⌘ Command" : "Right Win", combos: ["Control+Space", "Control+Alt+Space"] },
+  { id: "right-control", label: "Tap Right ⌃ Control", tap: "CtrlRight", tapLabel: "Right ⌃ Control", combos: ["Control+Space", "Control+Alt+Space"] },
+  { id: "ctrl-space", label: "⌃ Space", tap: null, tapLabel: "", combos: ["Control+Space", "Control+Alt+Space", "Control+Alt+D"] },
+  { id: "alt-space", label: mac ? "⌥ Space" : "Alt Space", tap: null, tapLabel: "", combos: ["Alt+Space", "Control+Space", "Control+Alt+Space"] },
+];
+export const DEFAULT_HOTKEY = "right-option";
+
+/**
+ * A "tap" is a clean press-and-release of the key by itself: no other key in between and
+ * released within TAP_MAX_MS. Each tap toggles dictation (tap to start, tap to stop). Holding the
+ * key, or using it with another key (Option+letter typing), is never mistaken for the hotkey.
+ */
+export function createTapMachine({ now = () => Date.now(), onTap }) {
   let downAt = null;
-  let mode = "idle"; // idle | hold | handsfree
-  let stopOnRelease = false;
-  let swallowRelease = false;
+  let dirty = false;
   return {
-    get mode() { return mode; },
     press() {
-      if (downAt !== null) return; // auto-repeat
+      // Ignore auto-repeat, but never trust a key-down older than 30s: its key-up was lost,
+      // and honouring it would lock the hotkey forever.
+      if (downAt !== null && now() - downAt < 30_000) return;
       downAt = now();
-      if (mode === "handsfree") { mode = "idle"; swallowRelease = true; onStop(); return; }
-      mode = "hold"; stopOnRelease = false; swallowRelease = false;
-      onStart();
+      dirty = false;
     },
     release() {
-      const held = downAt !== null ? now() - downAt : 0;
+      const held = downAt === null ? Infinity : now() - downAt;
+      const clean = !dirty && held <= TAP_MAX_MS;
       downAt = null;
-      if (swallowRelease) { swallowRelease = false; return; }
-      if (mode !== "hold") return;
-      if (held >= HOLD_THRESHOLD_MS) { mode = "idle"; onStop(); return; }
-      mode = "handsfree"; onHandsFree?.();
+      dirty = false;
+      if (clean) onTap();
     },
     otherKey() {
-      if (downAt !== null && mode === "hold" && now() - downAt < 4000) { mode = "idle"; downAt = null; swallowRelease = false; onCancel(); }
+      if (downAt !== null) dirty = true;
     },
-    reset() { mode = "idle"; downAt = null; swallowRelease = false; stopOnRelease = false; },
+    reset() { downAt = null; dirty = false; },
   };
 }
 
 /** Starts the OS key hook. Returns a stop() function, or null if unavailable. */
-export function startHotkeyListener(machine, log = console) {
+export function startHotkeyListener(machine, log = console, keyName = "AltRight") {
   let hook;
   let keys;
   try {
@@ -53,7 +69,7 @@ export function startHotkeyListener(machine, log = console) {
     log.warn("[flow] key hook unavailable:", error?.message || error);
     return null;
   }
-  const target = keys.AltRight;
+  const target = keys[keyName] ?? keys.AltRight;
   hook.on("keydown", (event) => {
     if (event.keycode === target) machine.press();
     else machine.otherKey();

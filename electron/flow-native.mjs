@@ -103,6 +103,19 @@ export class FlowNative {
     return pcm;
   }
 
+  /** Audio captured so far from byte offset `start` (and optionally up to `end`) without stopping. */
+  slice(start = 0, end = Infinity) {
+    const all = Buffer.concat(this.chunks);
+    const from = Math.max(0, start - (start % 2));
+    return all.subarray(from, Math.min(all.length, end));
+  }
+
+  /** The most recent audio so far (without stopping), for live partial transcripts. */
+  snapshot(maxBytes = 16_000 * 2 * 14) {
+    const all = Buffer.concat(this.chunks);
+    return all.length > maxBytes ? all.subarray(all.length - maxBytes) : all;
+  }
+
   cancel() {
     this.capturing = false;
     this.chunks = [];

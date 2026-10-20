@@ -158,6 +158,113 @@ export function IoCard({
 }
 
 /* ============================================================
+   Codex-style inline cards: a file diff and a terminal run.
+   ============================================================ */
+
+export type InlineDiffLine = { kind: "context" | "add" | "del"; text: string };
+
+/** A compact unified diff shown right in the transcript, with a header naming the file and its +/- counts. */
+export function InlineDiffCard({
+  path,
+  lines,
+  additions,
+  deletions,
+  onOpen,
+  maxLines = 12,
+}: {
+  path: string;
+  lines: InlineDiffLine[];
+  additions?: number;
+  deletions?: number;
+  onOpen?: () => void;
+  maxLines?: number;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? lines : lines.slice(0, maxLines);
+  const hidden = lines.length - shown.length;
+  const name = path.split("/").pop() || path;
+  const dir = path.slice(0, path.length - name.length);
+  let oldNo = 0;
+  let newNo = 0;
+  return (
+    <div className="cx-diff-card">
+      <div className="cx-diff-head">
+        <span className="cx-diff-path" title={path}>{dir ? <span className="cx-diff-dir">{dir}</span> : null}{name}</span>
+        <span className="cx-diff-stat">
+          {additions ? <span className="cx-add">+{additions}</span> : null}
+          {deletions ? <span className="cx-del">−{deletions}</span> : null}
+        </span>
+        {onOpen ? <button type="button" className="cx-diff-open" onClick={onOpen}>Open</button> : null}
+      </div>
+      <div className="cx-diff-body" role="table" aria-label={`Changes in ${path}`}>
+        {shown.map((line, index) => {
+          if (line.kind === "context" && line.text.startsWith("@@")) {
+            const match = /@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line.text);
+            if (match) { oldNo = Number(match[1]) - 1; newNo = Number(match[2]) - 1; }
+            return <div key={index} className="cx-diff-hunk" role="row">{line.text}</div>;
+          }
+          if (line.kind !== "add") oldNo += 1;
+          if (line.kind !== "del") newNo += 1;
+          return (
+            <div key={index} className="cx-diff-line" data-kind={line.kind} role="row">
+              <span className="cx-diff-no">{line.kind === "add" ? "" : oldNo}</span>
+              <span className="cx-diff-no">{line.kind === "del" ? "" : newNo}</span>
+              <span className="cx-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</span>
+              <span className="cx-diff-text">{line.text || " "}</span>
+            </div>
+          );
+        })}
+      </div>
+      {hidden > 0 ? (
+        <button type="button" className="cx-diff-more" onClick={() => setAll(true)}>Show {hidden} more line{hidden === 1 ? "" : "s"}</button>
+      ) : null}
+    </div>
+  );
+}
+
+/** A command run: the prompt line, its output (tail first when long), and how it ended. */
+export function TerminalCard({
+  command,
+  output,
+  error = false,
+  running = false,
+  passed = false,
+  duration,
+}: {
+  command: string;
+  output?: string | null;
+  error?: boolean;
+  running?: boolean;
+  passed?: boolean;
+  duration?: string | null;
+}) {
+  const [all, setAll] = useState(false);
+  const text = (output || "").replace(/\u001b\[[0-9;]*m/g, "").replace(/\s+$/, "");
+  const lines = text ? text.split("\n") : [];
+  const LIMIT = 14;
+  const shown = all || lines.length <= LIMIT ? lines : lines.slice(-LIMIT);
+  const hidden = lines.length - shown.length;
+  return (
+    <div className="cx-term-card" data-error={error || undefined}>
+      <div className="cx-term-head">
+        <span className="cx-term-prompt" aria-hidden>$</span>
+        <span className="cx-term-cmd">{command}</span>
+        <span className="cx-term-status">
+          {running ? <span className="cx-term-live" aria-label="Running" /> : error ? <span className="cx-del">Failed</span> : passed ? <span className="cx-add">Passed</span> : <span>Done</span>}
+          {duration ? <span className="cx-term-dur">{duration}</span> : null}
+        </span>
+      </div>
+      {lines.length ? (
+        <div className="cx-term-body">
+          {hidden > 0 ? <button type="button" className="cx-term-more" onClick={() => setAll(true)}>Show {hidden} earlier line{hidden === 1 ? "" : "s"}</button> : null}
+          <pre>{shown.join("\n")}</pre>
+        </div>
+      ) : running ? <div className="cx-term-body"><pre className="cx-term-waiting">Waiting for output…</pre></div> : null}
+    </div>
+  );
+}
+
+/* ============================================================
    Todo status glyphs — the 14×14 harness artboard.
    ============================================================ */
 

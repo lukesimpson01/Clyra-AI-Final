@@ -6,6 +6,7 @@ import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import { ShiningText } from "../ShiningText";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
+import { ActivityGroup, ActivityRow } from "./CodexActivity";
 import { DisclosureRow, StateDot } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
@@ -36,7 +37,7 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
     <motion.div layout className="dsh-row-root" data-state={completed ? "ok" : "running"}>
       <DisclosureRow
         icon={<Sparkle />}
-        title={completed ? "Thought" : <ShiningText text="Thinking" play duration={1.6} />}
+        title={completed ? "Thought" : <ShiningText text="Thinking" play duration={2} />}
         open={expanded && text !== ""}
         expandable={text !== ""}
         expandOnRowClick
@@ -80,10 +81,21 @@ function WorkingStatus({ since }: { since: number }) {
       className="mt-3 flex h-6 items-center gap-2 text-[13px] text-[#73757A]"
     >
       <span className="cc-running-dot cc-running-dot--inline" aria-hidden />
-      <ShiningText text="Working…" play={!reduced} duration={1.6} className="text-[13px] font-normal text-[#73757A]" />
+      <ShiningText text="Working…" play={!reduced} duration={2} className="text-[13px] font-normal text-[#73757A]" />
       <span className="cc-counter text-[11.5px] text-[#A0A2A6]">{seconds}s</span>
     </motion.div>
   );
+}
+
+/** Codex-style centred day stamp: "Today 17:50", "Wednesday 17:50", or a date for older turns. */
+function formatStamp(ts: number) {
+  const date = new Date(ts);
+  const now = new Date();
+  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (date.toDateString() === now.toDateString()) return `Today ${time}`;
+  const days = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
+  if (days < 7) return `${date.toLocaleDateString(undefined, { weekday: "long" })} ${time}`;
+  return `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
 }
 
 /** Consecutive identical assistant chunks are transport retries, not user-visible prose. */
@@ -514,13 +526,69 @@ export function Conversation({
     ? primaryActiveAction.entry.actionId
     : undefined;
 
+  // Codex groups consecutive tool calls into one activity block; approvals stay standalone because they need a
+  // decision, and user / assistant messages break a run.
+  type Block =
+    | { type: "group"; id: string; actionIds: string[] }
+    | { type: "entry"; id: string; entry: VisibleLogEntry; previousUserTs: number | null };
+  const blocks = useMemo<Block[]>(() => {
+    const out: Block[] = [];
+    let lastUserTs: number | null = null;
+    for (const item of visibleItems) {
+      const entry = item.entry;
+      if (entry.type === "action") {
+        const action = state.actions[entry.actionId];
+        if (action && action.kind !== "permission") {
+          const last = out[out.length - 1];
+          if (last?.type === "group") last.actionIds.push(action.id);
+          else out.push({ type: "group", id: `group:${entry.id}`, actionIds: [action.id] });
+          continue;
+        }
+      }
+      out.push({ type: "entry", id: item.id, entry, previousUserTs: entry.type === "user" ? lastUserTs : null });
+      if (entry.type === "user") lastUserTs = entry.ts;
+    }
+    return out;
+  }, [visibleItems, state.actions]);
+  const lastGroupId = useMemo(() => {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) if (blocks[index].type === "group") return blocks[index].id;
+    return null;
+  }, [blocks]);
+
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} className="cc-scroll absolute inset-0 overflow-y-auto px-6 pb-4 pt-3 sm:px-7">
         <div className="mx-auto flex w-full max-w-[760px] flex-col">
-          {visibleItems.map((item, index) => {
-            const entry = item.entry;
-            const prev = visibleItems[index - 1]?.entry;
+          {blocks.map((block, index) => {
+            const prevBlock = blocks[index - 1];
+            if (block.type === "group") {
+              const groupActions = block.actionIds.map((id) => state.actions[id]).filter(Boolean) as AgentAction[];
+              if (!groupActions.length) return null;
+              const fresh = !state.restored && Date.now() - (groupActions[0].startedAt || 0) < 10 * 60_000;
+              const spacing = prevBlock?.type === "group" ? "mt-1" : "mt-2.5";
+              if (groupActions.length === 1) {
+                return (
+                  <div key={block.id} className={spacing}>
+                    <ActivityRow action={groupActions[0]} live={groupActions[0].id === primaryActiveActionId} fresh={fresh} onOpenFile={onOpenFile} onRetry={onRetry} onOpenTerminal={onOpenTerminal} />
+                  </div>
+                );
+              }
+              return (
+                <div key={block.id} className={spacing}>
+                  <ActivityGroup
+                    actions={groupActions}
+                    liveId={primaryActiveActionId}
+                    fresh={fresh}
+                    defaultOpen={fresh && block.id === lastGroupId}
+                    onOpenFile={onOpenFile}
+                    onRetry={onRetry}
+                    onOpenTerminal={onOpenTerminal}
+                  />
+                </div>
+              );
+            }
+            const entry = block.entry;
+            const prev = prevBlock?.type === "entry" ? prevBlock.entry : prevBlock?.type === "group" ? ({ type: "action" } as const) : undefined;
             const nextKindGap =
               prev &&
               ((prev.type === "action" && entry.type === "assistant") ||
@@ -530,31 +598,35 @@ export function Conversation({
             const fresh = Date.now() - entry.ts < 4000;
 
             if (entry.type === "user") {
+              const previousUserTs = block.previousUserTs;
+              const showStamp = previousUserTs === null || entry.ts - previousUserTs > 30 * 60_000;
               return (
-                <motion.div
-                  key={entry.id}
-                  {...(reduced || !fresh
-                    ? {}
-                    : { initial: { opacity: 0, y: 18, scale: 0.985 }, animate: { opacity: 1, y: 0, scale: 1 }, transition: { duration: 0.34, ease: AGENT_EASE } })}
-                  className="mb-2.5 mt-[16px] flex w-full justify-end first:mt-2"
-                >
-                  <div
-                    data-invert-ignore="true"
-                    className="cc-user-prompt max-w-[82%] rounded-[11px] px-[12px] py-[8px] text-[14px] leading-[21px] text-[#2F3033]"
+                <div key={entry.id}>
+                  {showStamp ? <div className="cxa-stamp">{formatStamp(entry.ts)}</div> : null}
+                  <motion.div
+                    {...(reduced || !fresh
+                      ? {}
+                      : { initial: { opacity: 0, y: 4 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.28, ease: AGENT_EASE } })}
+                    className="mb-2.5 mt-[14px] flex w-full justify-end first:mt-2"
                   >
-                    {entry.answers?.length ? (
-                      <div className="mb-1.5 flex flex-col gap-[3px] rounded-[7px] border border-black/[0.05] bg-white/55 px-2 py-1.5">
-                        {entry.answers.map((row) => (
-                          <div key={row.question} className="flex items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate text-[11px] text-[#8B8D92]">{row.question}</span>
-                            <span className="shrink-0 text-[12px] font-medium text-[#303136]">{row.answer}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <span className="whitespace-pre-wrap">{entry.text}</span>
-                  </div>
-                </motion.div>
+                    <div
+                      data-invert-ignore="true"
+                      className="cc-user-prompt max-w-[82%] px-[14px] py-[8px] text-[14px] leading-[21px] text-[#1A1C1F]"
+                    >
+                      {entry.answers?.length ? (
+                        <div className="mb-1.5 flex flex-col gap-[3px] rounded-[10px] bg-white/60 px-2 py-1.5">
+                          {entry.answers.map((row) => (
+                            <div key={row.question} className="flex items-center gap-2">
+                              <span className="min-w-0 flex-1 truncate text-[11px] text-[#8B8D92]">{row.question}</span>
+                              <span className="shrink-0 text-[12px] font-medium text-[#303136]">{row.answer}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <span className="whitespace-pre-wrap">{entry.text}</span>
+                    </div>
+                  </motion.div>
+                </div>
               );
             }
             if (entry.type === "assistant") {
@@ -573,10 +645,7 @@ export function Conversation({
             const action = state.actions[entry.actionId];
             if (!action) return null;
             return (
-              <div
-                key={entry.id}
-                className={cn(prev?.type === "action" ? "mt-[3px]" : nextKindGap ? "mt-2" : "mt-1")}
-              >
+              <div key={entry.id} className={nextKindGap ? "mt-2" : "mt-1"}>
                 <AgentActionRow
                   action={action}
                   onReplyPermission={onReplyPermission}
@@ -619,6 +688,9 @@ export function Conversation({
             </div>
           ) : null}
 
+          {state.runState === "complete" && state.runStartedAt && state.runEndedAt && state.runEndedAt - state.runStartedAt > 2000 ? (
+            <div className="cx-worked" role="separator">Worked for {(() => { const s = Math.round((state.runEndedAt - state.runStartedAt) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; })()}</div>
+          ) : null}
           {showCompletion ? (
             <CompletionSummary
               diffs={state.diffs}
@@ -637,9 +709,9 @@ export function Conversation({
           <motion.button
             key="jump-to-latest"
             type="button"
-            initial={{ opacity: 0, y: 6, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 3 }}
             transition={{ duration: 0.18, ease: AGENT_EASE }}
             onClick={jumpToLatest}
             aria-label="Jump to latest"

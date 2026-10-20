@@ -10,7 +10,8 @@ import path from "node:path";
  * Keeps NVIDIA Parakeet-TDT loaded in a tiny native worker (parakeet-daemon),
  * decodes a short utterance in ~0.4s, and unloads itself when idle.
  */
-const IDLE_UNLOAD_MS = 20 * 60_000;
+// The ~480MB model unloads after a few idle minutes (it reloads while you start speaking), so Flow is light on RAM.
+const IDLE_UNLOAD_MS = 4 * 60_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 const MODELS = ["ggml-parakeet-tdt-0.6b-v3-q4_k.bin", "ggml-parakeet-tdt-0.6b-v3-q4_0.bin", "ggml-parakeet-tdt-0.6b-v3-q8_0.bin"];
 

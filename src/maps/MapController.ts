@@ -1,5 +1,6 @@
 import maplibregl from "maplibre-gl";
 import type { Coordinate, ClyraPlace, Route } from "../../lib/maps/types";
+import { TILE_CATEGORIES } from "./categories";
 import type { TransitLeg } from "../../lib/maps/transit";
 import type { CameraFrame } from "../navigation/NavigationCameraController";
 
@@ -67,6 +68,43 @@ export class MapController {
   private flyoverStop: (() => void) | null = null;
 
   constructor(private map: maplibregl.Map) {}
+
+  /** Places already sitting in the loaded vector tiles, so a category chip can
+   * answer instantly while the slower Overpass lookup fills in richer details. */
+  queryTilePois(category: string, near: Coordinate, limit = 25): ClyraPlace[] {
+    const rule = TILE_CATEGORIES[category];
+    if (!rule || !this.map.getSource("openmaptiles")) return [];
+    const seen = new Set<string>();
+    const out: ClyraPlace[] = [];
+    for (const f of this.map.querySourceFeatures("openmaptiles", { sourceLayer: "poi" })) {
+      const p = f.properties ?? {};
+      if (!rule.classes.includes(String(p.class)) || (rule.subclasses && !rule.subclasses.includes(String(p.subclass)))) continue;
+      const name = String(p.name ?? "").trim() || rule.fallbackName;
+      if (!name || f.geometry.type !== "Point") continue;
+      const c = f.geometry.coordinates as Coordinate;
+      const key = `${name}|${c[0].toFixed(5)},${c[1].toFixed(5)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: `tile-${String(p.class)}-${c[0].toFixed(5)}-${c[1].toFixed(5)}`,
+        name,
+        coordinates: c,
+        categories: [String(p.subclass || p.class)],
+        distanceMeters: this.distanceMeters(near, c),
+        sourceLinks: [{ provider: "OpenStreetMap" }],
+      });
+    }
+    return out.sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0)).slice(0, limit);
+  }
+
+  /** 3D buildings are the single most expensive layer; draw them only when the
+   * camera is tilted enough for them to be visible. */
+  applyDetail() {
+    const map = this.map;
+    if (!map.getLayer("building-3d")) return;
+    const want = map.getPitch() > 12 ? "visible" : "none";
+    if (map.getLayoutProperty("building-3d", "visibility") !== want) map.setLayoutProperty("building-3d", "visibility", want);
+  }
 
   ensureLayers() {
     const map = this.map;
@@ -295,6 +333,7 @@ export class MapController {
     const map = this.map;
     map.once("style.load", () => {
       this.ensureLayers();
+      this.applyDetail();
       this.ensureConeImage();
       const { route, alts, pois, pin, transit, stops } = this.cache;
       this.setTransit(transit);

@@ -114,6 +114,18 @@ export type ClyraCodeState = {
 };
 
 const STORAGE_KEY = "clyra-code:last-session";
+const PROJECTS_CACHE_KEY = "clyra-code:projects-cache";
+/** The last known project list: the sidebar paints from it on the very first frame while the fresh list loads behind it. */
+function readProjectsCache(): VibeProject[] {
+  try {
+    const raw = localStorage.getItem(PROJECTS_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? (parsed as VibeProject[]) : [];
+  } catch { return []; }
+}
+function writeProjectsCache(projects: VibeProject[]) {
+  try { localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(projects.slice(0, 80))); } catch { /* storage unavailable */ }
+}
 const UNTITLED_PROJECT_NAME = "Untitled project";
 
 /** Make a compact, human-readable project title from the user's first ask. */
@@ -333,7 +345,7 @@ function looksLikeInternalScratchpad(text: string) {
 }
 
 export function useClyraCode() {
-  const [state, setState] = useState<ClyraCodeState>(INITIAL);
+  const [state, setState] = useState<ClyraCodeState>(() => ({ ...INITIAL, projects: readProjectsCache() }));
   const eventSourceRef = useRef<EventSource | null>(null);
   const activeSessionRef = useRef<string | null>(null);
   const activeProjectRef = useRef<string | null>(null);
@@ -341,7 +353,7 @@ export function useClyraCode() {
   const pendingPromptRef = useRef<LogEntry | null>(null);
   const runStateRef = useRef<RunState>("idle");
   const diffTimerRef = useRef<number | null>(null);
-  const projectsRef = useRef<VibeProject[]>([]);
+  const projectsRef = useRef<VibeProject[]>(readProjectsCache());
   const autoNamingProjectsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -720,6 +732,7 @@ export function useClyraCode() {
       try {
         const projects = await api.listProjects();
         projectsRef.current = projects;
+        writeProjectsCache(projects);
         setState((prev) => ({ ...prev, projects }));
         return projects;
       } catch {

@@ -7,6 +7,7 @@
  * data stays missing. */
 import type { ClyraPlace, Coordinate } from "./types";
 import { haversineMeters } from "./providers";
+import { overpassQuery } from "./overpass";
 
 export interface ClickAddress {
   formatted?: string;
@@ -61,9 +62,12 @@ async function fetchJson<T>(url: string, init?: RequestInit, timeoutMs = TIMEOUT
 /* Nominatim allows one request per second from a given client. Calls are
  * chained so bursts from rapid clicks queue up instead of being rejected. */
 let nominatimChain: Promise<unknown> = Promise.resolve();
+let lastNominatim = 0;
 function nominatimReverse(c: Coordinate) {
   const run = async () => {
-    await new Promise((r) => setTimeout(r, 1100));
+    const wait = lastNominatim + 1100 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastNominatim = Date.now();
     const url = new URL("https://nominatim.openstreetmap.org/reverse");
     url.search = new URLSearchParams({
       format: "jsonv2",
@@ -169,16 +173,7 @@ function scoreElement(el: OverpassEl, click: Coordinate): { score: number; dista
 async function overpassNearby(c: Coordinate): Promise<OverpassEl[]> {
   const [lon, lat] = c;
   const query = `[out:json][timeout:10];(nwr(around:60,${lat},${lon})[name];);out center tags 40;`;
-  // Overpass answers 406 unless Accept is set explicitly, and takes the raw query as the body.
-  const data = await fetchJson<{ elements?: OverpassEl[] }>(
-    "https://overpass-api.de/api/interpreter",
-    {
-      method: "POST",
-      headers: { "Content-Type": "text/plain", Accept: "application/json" },
-      body: query,
-    },
-    15000,
-  );
+  const data = await overpassQuery<{ elements?: OverpassEl[] }>(query, 3500);
   return data?.elements ?? [];
 }
 
@@ -266,6 +261,7 @@ export async function identifyPoint(c: Coordinate): Promise<IdentifyResult> {
     .filter((p): p is ClyraPlace => p !== null);
 
   const value: IdentifyResult = { kind, coordinates: c, place, address, nearby, sources };
-  cache.set(key, { at: Date.now(), value });
+  // An empty Overpass answer may just be an overloaded mirror: keep it only briefly.
+  cache.set(key, { at: elements.length ? Date.now() : Date.now() - CACHE_TTL_MS + 30_000, value });
   return value;
 }

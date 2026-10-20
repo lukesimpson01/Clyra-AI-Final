@@ -4,7 +4,7 @@ import { addToGuide, createGuide, readLibrary, setParked, setSlot, LIBRARY_EVENT
 import type { ClyraPlace } from "../../../lib/maps/types";
 
 /** "Add to…" menu on the place card: Guides, Home, Work and parked car. */
-export function PlaceLibraryMenu({ place }: { place: ClyraPlace }) {
+export function PlaceLibraryMenu({ place, variant = "pill" }: { place: ClyraPlace; variant?: "pill" | "circle" }) {
   const [open, setOpen] = useState(false);
   const [lib, setLib] = useState<Library>(() => readLibrary());
   const [name, setName] = useState("");
@@ -26,15 +26,20 @@ export function PlaceLibraryMenu({ place }: { place: ClyraPlace }) {
 
   return (
     <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-100 px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-200"
-      >
-        <BookMarked className="h-4 w-4" /> {note ?? "Add to…"}
-      </button>
+      {variant === "circle" ? (
+        <button type="button" onClick={() => setOpen((v) => !v)} className="group flex w-[60px] flex-col items-center gap-1.5 text-[11.5px] font-semibold text-[#1a5fb4] outline-none">
+          <span className="grid h-11 w-11 place-items-center rounded-full bg-[#e8f0fe] text-[#1a5fb4] transition-all duration-150 group-hover:scale-105 group-hover:bg-[#d3e3fd] group-active:scale-90 group-focus-visible:ring-2 group-focus-visible:ring-blue-400">
+            <BookMarked className="h-[18px] w-[18px]" />
+          </span>
+          {note ?? "Add to"}
+        </button>
+      ) : (
+        <button type="button" onClick={() => setOpen((v) => !v)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-100 px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-200">
+          <BookMarked className="h-4 w-4" /> {note ?? "Add to…"}
+        </button>
+      )}
       {open ? (
-        <div className="absolute bottom-11 left-0 z-40 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,.2)]">
+        <div className="absolute left-1/2 top-[68px] z-40 w-64 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,.2)]">
           <button type="button" className={item} onClick={() => (setSlot("home", place), done("Set as Home"))}>
             <Home className="h-4 w-4" /> Set as Home
           </button>

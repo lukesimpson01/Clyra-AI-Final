@@ -126,12 +126,12 @@ export function RouteOverviewPanel({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 12, scale: 0.98 }}
+      initial={{ opacity: 0, x: -16 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -16 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       aria-label="Directions"
-      className="pointer-events-auto absolute bottom-4 left-4 top-[88px] z-30 flex w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-y-auto rounded-2xl border border-slate-200/90 bg-white/97 shadow-[0_16px_48px_rgba(15,23,42,.16)] backdrop-blur-xl"
+      className="pointer-events-auto absolute bottom-0 left-0 top-[68px] z-30 flex w-[408px] max-w-[100vw] flex-col overflow-y-auto bg-white"
     >
       <div className="flex items-start justify-between gap-2 px-4 pt-3.5">
         <div className="min-w-0">

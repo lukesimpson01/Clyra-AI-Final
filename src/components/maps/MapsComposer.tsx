@@ -1,14 +1,34 @@
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, MapPin, Search, X } from "lucide-react";
+import { Clock, Loader2, MapPin, Search, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ShiningText } from "../ui/shining-text";
 import type { ClyraPlace } from "../../../lib/maps/types";
 import { prefetchPlaceDetail } from "./placeDetailCache";
+import { formatDistance } from "./mapsIcons";
+
+/** True when the text reads as a request rather than a place name, so it goes to the AI agent. */
+export function looksConversational(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.endsWith("?")) return true;
+  if (t.split(/\s+/).length >= 5) return true;
+  return /\b(best|cheapest|closest|nearest|on the way|along my route|open now|open late|plan|compare|recommend|should i|how (do|long|far)|take me|navigate)\b/.test(t);
+}
+
+function recentPlaces(): ClyraPlace[] {
+  try {
+    const v = JSON.parse(localStorage.getItem("clyra.recentPlaces") || "[]");
+    return Array.isArray(v) ? v.slice(0, 5) : [];
+  } catch {
+    return [];
+  }
+}
 
 const COMPOSER_EASE = [0.22, 1, 0.36, 1] as const;
 
 interface MapsComposerProps {
   onSubmit: (text: string) => void;
+  /** Plain place search: shows a results list instead of starting an AI conversation. */
+  onSearch: (text: string) => void;
   onSuggestionPick: (place: ClyraPlace) => void;
   fetchSuggestions: (query: string) => Promise<ClyraPlace[]>;
   thinking: boolean;
@@ -22,7 +42,7 @@ interface MapsComposerProps {
  * state model is tightly coupled to the chat transcript. A single input
  * accepts both plain place lookups and natural-language requests — Clyra
  * decides which on the server, the user never picks a mode. */
-export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thinking, thinkingLabel, placeholder }: MapsComposerProps) {
+export function MapsComposer({ onSubmit, onSearch, onSuggestionPick, fetchSuggestions, thinking, thinkingLabel, placeholder }: MapsComposerProps) {
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<ClyraPlace[]>([]);
   const [open, setOpen] = useState(false);
@@ -47,20 +67,23 @@ export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const submit = () => {
+  const submit = (forceAi = false) => {
     const text = value.trim();
     if (!text) return;
     setOpen(false);
-    onSubmit(text);
+    inputRef.current?.blur();
+    if (forceAi || looksConversational(text)) onSubmit(text);
+    else onSearch(text);
   };
+  const recents = value.trim().length < 2 ? recentPlaces() : [];
 
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-4 z-40 w-[min(560px,92vw)] -translate-x-1/2">
+    <div className="pointer-events-auto absolute left-4 top-4 z-40 w-[380px] max-w-[calc(100vw-32px)]">
       <motion.div
         layout
         transition={{ duration: 0.22, ease: COMPOSER_EASE }}
         className={
-          "overflow-hidden rounded-[26px] border bg-white/95 backdrop-blur-xl transition-[border-color,box-shadow] duration-200 " +
+          "overflow-hidden rounded-[26px] border bg-white transition-[border-color,box-shadow] duration-200 " +
           (focused
             ? "border-slate-300/90 shadow-[0_16px_44px_rgba(15,23,42,.18)]"
             : "border-slate-200/90 shadow-[0_12px_40px_rgba(15,23,42,.14)]")
@@ -91,13 +114,13 @@ export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thi
             }}
             onBlur={() => setFocused(false)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
+              if (e.key === "Enter") submit(e.shiftKey || e.metaKey);
               if (e.key === "Escape") {
                 setOpen(false);
                 inputRef.current?.blur();
               }
             }}
-            placeholder={placeholder || "Search or ask Clyra — “Italian food on the way home”"}
+            placeholder={placeholder || "Search places or ask Clyra"}
             className="h-6 min-w-0 flex-1 bg-transparent text-[14.5px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
           />
           {value ? (
@@ -123,7 +146,7 @@ export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thi
         ) : null}
 
         <AnimatePresence>
-          {open && suggestions.length > 0 && !thinking ? (
+          {open && (suggestions.length > 0 || recents.length > 0 || value.trim().length >= 2) && !thinking ? (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
@@ -131,6 +154,22 @@ export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thi
               transition={{ duration: 0.16, ease: COMPOSER_EASE }}
               className="overflow-hidden border-t border-slate-100"
             >
+              {recents.length ? <p className="px-4 pb-1 pt-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recents</p> : null}
+              {recents.map((place) => (
+                <button
+                  key={`recent-${place.id}`}
+                  type="button"
+                  onMouseEnter={() => prefetchPlaceDetail(place)}
+                  onClick={() => {
+                    setOpen(false);
+                    onSuggestionPick(place);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-slate-50"
+                >
+                  <Clock className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span className="block min-w-0 flex-1 truncate text-[13px] font-medium text-slate-900">{place.name}</span>
+                </button>
+              ))}
               {suggestions.map((place) => (
                 <button
                   key={place.id}
@@ -153,8 +192,15 @@ export function MapsComposer({ onSubmit, onSuggestionPick, fetchSuggestions, thi
                       </span>
                     ) : null}
                   </span>
+                  {place.distanceMeters != null ? <span className="shrink-0 text-[11.5px] text-slate-400">{formatDistance(place.distanceMeters)}</span> : null}
                 </button>
               ))}
+              {value.trim().length >= 2 ? (
+                <button type="button" onClick={() => submit(true)} className="flex w-full items-center gap-2.5 border-t border-slate-100 px-4 py-2.5 text-left transition-colors hover:bg-slate-50">
+                  <Sparkles className="h-4 w-4 shrink-0 text-[#3b82f6]" />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-slate-900">Ask Clyra: “{value.trim()}”</span>
+                </button>
+              ) : null}
             </motion.div>
           ) : null}
         </AnimatePresence>

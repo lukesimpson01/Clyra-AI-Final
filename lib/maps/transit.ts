@@ -30,7 +30,7 @@ export interface TransitItinerary {
   legs: TransitLeg[];
 }
 
-const TIMEOUT_MS = 12000;
+const TIMEOUT_MS = 20000;
 const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map<string, { at: number; value: TransitItinerary[] }>();
 
@@ -103,31 +103,37 @@ export async function planTransit(origin: Coordinate, destination: Coordinate, w
   url.searchParams.set("time", when && !Number.isNaN(Date.parse(when)) ? new Date(when).toISOString() : new Date().toISOString());
   url.searchParams.set("numItineraries", "4");
   if (arriveBy) url.searchParams.set("arriveBy", "true");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "ClyraMaps/1.0 (transit planner)" } });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { itineraries?: Array<Record<string, any>> };
-    const out: TransitItinerary[] = [];
-    for (const [i, it] of (data.itineraries ?? []).entries()) {
-      const legs = (Array.isArray(it.legs) ? it.legs : []).map(parseLeg).filter((l): l is TransitLeg => l !== null);
-      if (!legs.length || !finite(it.duration)) continue;
-      out.push({
-        id: `transit-${i}-${String(it.startTime)}`,
-        startTime: String(it.startTime),
-        endTime: String(it.endTime),
-        durationSeconds: it.duration,
-        transfers: finite(it.transfers) ? it.transfers : 0,
-        walkSeconds: legs.filter((l) => l.mode === "WALK").reduce((s, l) => s + l.durationSeconds, 0),
-        legs,
-      });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "ClyraMaps/1.0 (transit planner)" } });
+      if (!res.ok) {
+        console.warn(`[maps.transit] Transitous responded ${res.status}`);
+        continue;
+      }
+      const data = (await res.json()) as { itineraries?: Array<Record<string, any>> };
+      const out: TransitItinerary[] = [];
+      for (const [i, it] of (data.itineraries ?? []).entries()) {
+        const legs = (Array.isArray(it.legs) ? it.legs : []).map(parseLeg).filter((l): l is TransitLeg => l !== null);
+        if (!legs.length || !finite(it.duration)) continue;
+        out.push({
+          id: `transit-${i}-${String(it.startTime)}`,
+          startTime: String(it.startTime),
+          endTime: String(it.endTime),
+          durationSeconds: it.duration,
+          transfers: finite(it.transfers) ? it.transfers : 0,
+          walkSeconds: legs.filter((l) => l.mode === "WALK").reduce((s, l) => s + l.durationSeconds, 0),
+          legs,
+        });
+      }
+      cache.set(key, { at: Date.now(), value: out });
+      return out;
+    } catch (err) {
+      console.warn("[maps.transit] request failed:", err instanceof Error ? err.message : err);
+    } finally {
+      clearTimeout(timer);
     }
-    cache.set(key, { at: Date.now(), value: out });
-    return out;
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
   }
+  return [];
 }

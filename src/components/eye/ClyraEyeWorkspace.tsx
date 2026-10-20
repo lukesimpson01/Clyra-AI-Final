@@ -98,12 +98,12 @@ export function ClyraEyeWorkspace({ suspended = false }: { suspended?: boolean }
   }
 
   if (state === "offline") {
+    // The desktop app starts the Eye server itself; this is only the short boot window (or a real failure after a minute).
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <p className="text-[15px] font-semibold text-[#303136]">Clyra Eye isn’t running</p>
-        <p className="max-w-sm text-[13px] text-[#77787d]">
-          Start it with <code>npm run eye:dev</code> from the project root, then reopen this app.
-        </p>
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#05070a] p-6 text-center">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-white/80" aria-hidden />
+        <p className="text-[14px] font-medium text-white/85">Starting Clyra Eye…</p>
+        <p className="max-w-sm text-[12px] text-white/45">Loading the globe and live data layers.</p>
       </div>
     );
   }

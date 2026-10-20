@@ -25,9 +25,12 @@ test("the workspace opens a searchable source library with an explicit verificat
   await page.getByRole("button", { name: "Library", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Clyra source library" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Build from real starting points")).toBeVisible();
-  await dialog.getByRole("button", { name: /Excalidraw/ }).click();
+  await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
+  await dialog.getByRole("searchbox").or(dialog.getByPlaceholder(/Search apps/)).fill("Excalidraw");
+  await dialog.getByRole("button", { name: /Excalidraw/ }).first().click();
   await expect(dialog.getByText("Alternative to Miro · FigJam")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
+  await dialog.getByText("Advanced import options").click();
   await expect(dialog.getByRole("button", { name: "Verify repository" })).toBeVisible();
-  await expect(dialog.getByText(/No authorised or locally captured screenshot is available yet/)).toBeVisible();
+  await expect(dialog.getByText(/public preview card from GitHub/)).toBeVisible();
 });

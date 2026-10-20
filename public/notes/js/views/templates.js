@@ -74,17 +74,56 @@ export function templatePreview(template) {
   return canvas;
 }
 
+const CATEGORY_ICONS = { All: "sparkle", Notes: "page", Study: "book", Planning: "calendar", Writing: "pencil", Research: "search" };
+
+/* App Store style "Get" control: a pill that collapses into a progress ring while the page is created, then
+   reopens as "Open". Clicking Open takes the reader to the new page. */
+function getButton(template, state, onGet, onOpen, { large = false } = {}) {
+  const button = el("button", { class: `as-get${large ? " large" : ""}`, type: "button", "aria-label": `Get ${template.name}` });
+  const label = el("span", { class: "as-get-label", text: "Get" });
+  const ring = el("span", { class: "as-ring", "aria-hidden": "true" });
+  ring.innerHTML = '<svg viewBox="0 0 28 28"><circle class="as-ring-track" cx="14" cy="14" r="11.5"/><circle class="as-ring-fill" cx="14" cy="14" r="11.5"/></svg><i class="as-ring-stop"></i>';
+  append(button, label, ring);
+  const paint = () => {
+    const created = state.created.get(template.id);
+    button.classList.toggle("is-busy", state.busy.has(template.id));
+    button.classList.toggle("is-open", Boolean(created));
+    label.textContent = created ? "Open" : "Get";
+    button.setAttribute("aria-label", `${created ? "Open" : "Get"} ${template.name}`);
+  };
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (state.busy.has(template.id)) return;
+    if (state.created.get(template.id)) onOpen(template);
+    else onGet(template);
+  });
+  state.paints.add(paint);
+  paint();
+  return button;
+}
+
+function appIcon(template, size = 44) {
+  return el("span", {
+    class: "as-icon", "aria-hidden": "true",
+    style: { width: `${size}px`, height: `${size}px`, "--tpl-accent": template.accent || "#2383e2" },
+  }, icon(template.icon, Math.round(size * 0.46)));
+}
+
 export function openTemplates(app, parentId) {
   let entry;
   let category = "All";
   let query = "";
+  const state = { busy: new Set(), created: new Map(), paints: new Set() };
+  const repaintButtons = () => state.paints.forEach((paint) => paint());
 
-  const grid = el("div", { class: "template-grid" });
-  const rail = el("div", { class: "template-rail" });
-  const search = el("input", { class: "input template-search", placeholder: "Search templates…", type: "search" });
+  const main = el("div", { class: "template-main as-main scroll" });
+  const rail = el("div", { class: "template-rail as-rail" });
+  const search = el("input", { class: "input template-search as-search", placeholder: "Search", type: "search", "aria-label": "Search templates" });
 
-  const use = async (template) => {
-    entry.close("used");
+  const create = async (template) => {
+    state.busy.add(template.id);
+    repaintButtons();
+    const started = Date.now();
     const created = await withError(
       () => api.post("/api/notes/pages", {
         parentId: parentId || null,
@@ -93,62 +132,114 @@ export function openTemplates(app, parentId) {
       }),
       "Could not create the page",
     );
-    if (!created) return;
-    await refreshPages();
-    app.openPage(created.id);
-    toast(template.id === "blank" ? "New page created" : `${template.name} created`);
+    // Let the ring complete one honest sweep, the way an App Store download settles before it reads Open.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, 900 - (Date.now() - started))));
+    state.busy.delete(template.id);
+    if (created) {
+      state.created.set(template.id, created.id);
+      await refreshPages();
+      toast(template.id === "blank" ? "New page ready" : `${template.name} is ready`);
+    }
+    repaintButtons();
+  };
+  const open = (template) => {
+    const id = state.created.get(template.id);
+    if (!id) return;
+    entry.close("used");
+    app.openPage(id);
+  };
+
+  const card = (template, index, { wide = false } = {}) => {
+    const node = el("div", {
+      class: `as-card${wide ? " wide" : ""}`, role: "button", tabindex: "0",
+      style: { animationDelay: `${Math.min(index, 10) * 22}ms`, "--tpl-accent": template.accent || "var(--accent)" },
+      onclick: () => (state.created.get(template.id) ? open(template) : create(template)),
+      onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); node.click(); } },
+    },
+      el("div", { class: "as-art" }, templatePreview(template)),
+      el("div", { class: "as-lockup" },
+        appIcon(template, 40),
+        el("span", { class: "as-text" },
+          el("span", { class: "as-name", text: template.name }),
+          el("span", { class: "as-sub", text: template.desc })),
+        getButton(template, state, create, open)),
+    );
+    return node;
+  };
+
+  const hero = (template) => el("section", { class: "as-hero", style: { "--tpl-accent": template.accent || "var(--accent)" } },
+    el("div", { class: "as-hero-text" },
+      el("span", { class: "as-eyebrow", text: `Featured · ${template.category}` }),
+      el("h3", { class: "as-hero-title", text: template.name }),
+      el("p", { class: "as-hero-desc", text: template.desc }),
+      el("div", { class: "as-hero-lockup" },
+        appIcon(template, 46),
+        el("span", { class: "as-text" },
+          el("span", { class: "as-name", text: template.name }),
+          el("span", { class: "as-sub", text: `${template.category} template` })),
+        getButton(template, state, create, open, { large: true }))),
+    el("div", { class: "as-hero-art" }, templatePreview(template)));
+
+  const shelf = (title, list) => {
+    const row = el("div", { class: "as-shelf-row" });
+    list.forEach((template, index) => row.append(card(template, index, { wide: true })));
+    return el("section", { class: "as-shelf" },
+      el("div", { class: "as-shelf-head" },
+        el("h4", { class: "as-shelf-title", text: title }),
+        el("button", { class: "as-see-all", type: "button", text: "See All", onclick: () => { category = title; paintRail(); paint(); } })),
+      row);
   };
 
   const paintRail = () => {
     clear(rail);
     for (const name of ["All", ...TEMPLATE_CATEGORIES]) {
-      const count = name === "All" ? TEMPLATES.length : TEMPLATES.filter((t) => t.category === name).length;
       rail.append(el("button", {
-        class: `template-tab${category === name ? " active" : ""}`, type: "button",
-        onclick: () => { category = name; paintRail(); paintGrid(); },
-      }, el("span", { text: name }), el("span", { class: "template-count", text: String(count) })));
+        class: `as-tab${category === name ? " active" : ""}`, type: "button",
+        onclick: () => { category = name; paintRail(); paint(); },
+      }, el("span", { class: "as-tab-icon" }, icon(CATEGORY_ICONS[name] || "page", 15)), el("span", { text: name === "All" ? "Discover" : name })));
     }
   };
 
-  const paintGrid = () => {
-    clear(grid);
+  const paint = () => {
+    state.paints.clear();
+    clear(main);
+    main.scrollTop = 0;
     const needle = query.trim().toLowerCase();
+    if (category === "All" && !needle) {
+      main.append(el("h2", { class: "as-page-title", text: "Discover" }));
+      const featured = TEMPLATES.find((t) => t.id !== "blank" && t.category === "Study") || TEMPLATES[1] || TEMPLATES[0];
+      if (featured) main.append(hero(featured));
+      for (const name of TEMPLATE_CATEGORIES) {
+        const list = TEMPLATES.filter((t) => t.category === name);
+        if (list.length) main.append(shelf(name, list));
+      }
+      return;
+    }
     const list = TEMPLATES.filter((template) =>
       (category === "All" || template.category === category) &&
       (!needle || template.name.toLowerCase().includes(needle) || template.desc.toLowerCase().includes(needle)));
+    main.append(el("h2", { class: "as-page-title", text: needle ? "Results" : category }));
     if (!list.length) {
-      grid.append(el("div", { class: "template-empty", text: `No templates match "${query}"` }));
+      main.append(el("div", { class: "template-empty", text: `No templates match "${query}"` }));
       return;
     }
-    list.forEach((template, index) => {
-      const card = el("button", {
-        class: "template-card", type: "button",
-        style: { animationDelay: `${Math.min(index, 8) * 18}ms`, "--tpl-accent": template.accent || "var(--accent)" },
-        onclick: () => use(template),
-      },
-        templatePreview(template),
-        el("div", { class: "template-meta" },
-          el("span", { class: "template-icon" }, icon(template.icon, 15)),
-          el("span", { class: "template-text" },
-            el("span", { class: "template-name", text: template.name }),
-            el("span", { class: "template-desc", text: template.desc }))),
-      );
-      grid.append(card);
-    });
+    const grid = el("div", { class: "as-grid" });
+    list.forEach((template, index) => grid.append(card(template, index)));
+    main.append(grid);
   };
 
-  search.addEventListener("input", () => { query = search.value; paintGrid(); });
+  search.addEventListener("input", () => { query = search.value; paint(); });
 
   entry = modal({
     title: "Templates",
-    width: 920,
-    className: "template-modal",
-    body: el("div", { class: "template-layout" },
-      el("aside", { class: "template-side" }, search, rail),
-      el("div", { class: "template-main scroll" }, grid)),
+    width: 1120,
+    className: "template-modal appstore",
+    body: el("div", { class: "template-layout as-layout" },
+      el("aside", { class: "template-side as-side" }, search, rail),
+      main),
   });
   paintRail();
-  paintGrid();
+  paint();
   queueMicrotask(() => search.focus());
   return entry;
 }

@@ -37,7 +37,7 @@ export function ShimmerText({
     <ShiningText
       text={text}
       play
-      duration={long ? 1.75 : 1.65}
+      duration={2}
       className={cn(
         "truncate text-[12px]",
         tone === "blue" && "text-[#3977F6]",

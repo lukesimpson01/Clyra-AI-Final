@@ -12,7 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { Boxes, Command, Square, X } from "lucide-react";
+import { X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { BloubPauseContext } from "./bloub/BloubPauseContext";
 
@@ -38,18 +38,20 @@ type Fan3D = { fanX: number; fanY: number; fanZ: number; fanRot: number; opacity
 // that re-enables clicks / calls onSelect/onClose never preempts the visual
 // animation. That small margin prevents the phase change from clipping the
 // tail of the zoom with a visible snap as the window settles.
-const TRANSFORM_MS = 640;
+const TRANSFORM_MS = 360;
 const SETTLE_BUFFER_MS = 30;
 // Card entrances are offset by at most six 18ms beats. Keep the opening
 // phase through that final beat so a card never becomes interactive midway
 // through its arrival.
-const OPEN_MS = TRANSFORM_MS + 6 * 18 + SETTLE_BUFFER_MS;
+const OPEN_MS = TRANSFORM_MS + SETTLE_BUFFER_MS;
 const CLOSE_MS = TRANSFORM_MS + SETTLE_BUFFER_MS;
 // The outgoing card and the remaining grid move together as one gesture.
-const TAB_CLOSE_MS = 320;
-const GAP = 26;
+const TAB_CLOSE_MS = 260;
+const GAP = 40;
 const PAD_X = 44;
-const PAD_Y = 42;
+const PAD_Y = 54;
+// The Task View / 2D / 3D / Done bar sits across the top; cards start below it.
+const PAD_TOP = 58;
 const LABEL_H = 25;
 const emptyRect: Rect = { left: 0, top: 0, width: 1, height: 1 };
 
@@ -87,7 +89,7 @@ function clamp(value: number, min: number, max: number) {
 export function computeTaskViewCards(count: number, source: Rect, viewport: Rect): Rect[] {
   if (!count) return [];
   const availableW = Math.max(240, viewport.width - PAD_X * 2);
-  const availableH = Math.max(180, viewport.height - PAD_Y * 2);
+  const availableH = Math.max(180, viewport.height - PAD_TOP - PAD_Y);
   aspectOf(source); // clamps pathological source measurements before solving.
   let best: { columns: number; scale: number } | null = null;
   for (let columns = 1; columns <= Math.min(count, 6); columns += 1) {
@@ -105,7 +107,7 @@ export function computeTaskViewCards(count: number, source: Rect, viewport: Rect
   const width = source.width * scale;
   const height = source.height * scale;
   const usedH = rows * cellH + GAP * (rows - 1);
-  const topOffset = Math.max(PAD_Y, (viewport.height - usedH) / 2);
+  const topOffset = PAD_TOP + Math.max(0, (availableH - usedH) / 2);
   return Array.from({ length: count }, (_, index) => {
     const col = index % columns;
     const row = Math.floor(index / columns);
@@ -371,7 +373,23 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
     if (phase === "closed") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeToActive(); return; }
-      if (modeRef.current !== "3d" || phaseRef.current !== "open") return;
+      if (phaseRef.current !== "open") return;
+      // 2D grid: arrows walk the cards (rows by column count), Enter opens the highlighted one.
+      if (modeRef.current === "2d") {
+        if (!orderedTabs.length) return;
+        const columns = Math.max(1, new Set(cards.map((card) => Math.round(card.top))).size ? cards.filter((card) => Math.round(card.top) === Math.round(cards[0]?.top ?? 0)).length : 1);
+        const currentIndex = Math.max(0, orderedTabs.findIndex((tab) => tab.id === (hoveredId ?? activeId)));
+        const moves: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
+        if (event.key in moves) {
+          event.preventDefault();
+          const next = clamp(currentIndex + moves[event.key], 0, orderedTabs.length - 1);
+          setHoveredId(orderedTabs[next]?.id ?? null);
+        } else if (event.key === "Enter") {
+          const tab = orderedTabs[currentIndex];
+          if (tab) { event.preventDefault(); select(tab.id); }
+        }
+        return;
+      }
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
         setFocusIndex((current) => clamp(Math.round(current) + (event.key === "ArrowLeft" ? -1 : 1), 0, Math.max(0, orderedTabs.length - 1)));
@@ -383,7 +401,7 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [closeToActive, focusIndex, orderedTabs, phase, select]);
+  }, [activeId, cards, closeToActive, focusIndex, hoveredId, orderedTabs, phase, select]);
 
   // Trackpad / wheel: horizontal swipe (or shift+wheel) scrubs focus through
   // the fan. Fast swipes cover several cards; slow ones stay precise, since
@@ -593,22 +611,10 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
         <button type="button" aria-label={`Switch to ${tab.label}`} aria-current={isActive ? "true" : undefined} className="clyra-task-view__hit-area" style={{ pointerEvents: hitAreaInteractive ? "auto" : "none", cursor: mode === "3d" ? (isDraggingThis ? "grabbing" : "grab") : "pointer" }} tabIndex={hitAreaInteractive ? 0 : -1} onPointerDown={(event) => hitAreaInteractive && handleCardPointerDown(tab, index, event)} onClick={() => { if (navSuppressClickRef.current) return; if (dragRef.current?.moved && dragRef.current.id === tab.id) return; select(tab.id); }} />
         <div className="clyra-task-view__surface" style={{ pointerEvents: contentInteractive ? "auto" : "none" }}><BloubPauseContext.Provider value={mode === "3d" && !isActive}>{tab.content}</BloubPauseContext.Provider></div>
         <div className="clyra-task-view__label" aria-hidden style={mode === "3d" ? { opacity: fanActive ? Math.max(0.25, 1 - Math.min(Math.abs(index - focusIndex) * 0.25, 0.75)) : undefined } : undefined}>{tab.label}</div>
-      </div>{!isExiting ? <button type="button" className="clyra-task-view__tab-close" aria-label={`Close ${tab.label}`} title={`Close ${tab.label}`} style={{ left: target.left + target.width - 38, top: target.top + 8, opacity: isClosing ? 0 : undefined, visibility: isCulled || (fanActive && fanDistance >= 0.5) ? "hidden" : undefined }} tabIndex={isCulled || (fanActive && fanDistance >= 0.5) ? -1 : tabCloseInteractive ? 0 : -1} onPointerEnter={() => setHoveredId(tab.id)} onPointerLeave={() => setHoveredId((current) => current === tab.id ? null : current)} onClick={(event) => { event.preventDefault(); event.stopPropagation(); closeTab(tab.id); }}>
+      </div>{!isExiting ? <button type="button" className="clyra-task-view__tab-close" aria-label={`Close ${tab.label}`} title={`Close ${tab.label}`} style={{ left: target.left - 11, top: target.top - 11, opacity: isClosing ? 0 : undefined, visibility: isCulled || (fanActive && fanDistance >= 0.5) ? "hidden" : undefined }} tabIndex={isCulled || (fanActive && fanDistance >= 0.5) ? -1 : tabCloseInteractive ? 0 : -1} onPointerEnter={() => setHoveredId(tab.id)} onPointerLeave={() => setHoveredId((current) => current === tab.id ? null : current)} onClick={(event) => { event.preventDefault(); event.stopPropagation(); closeTab(tab.id); }}>
         <X aria-hidden className="h-4 w-4" strokeWidth={2.15} />
       </button> : null}</Fragment>;
     })}
-    {overview && tabs.length > 0 ? <div className="clyra-task-view__controls" aria-hidden={phase !== "open"}>
-      <span><Command className="h-3.5 w-3.5" /> Task View</span>
-      <div className="clyra-task-view__mode-toggle" role="radiogroup" aria-label="Task View layout">
-        <button type="button" role="radio" aria-checked={mode === "2d"} className={cn(mode === "2d" && "is-active")} tabIndex={phase === "open" ? 0 : -1} onClick={() => switchMode("2d")}>
-          <Square className="h-3 w-3" strokeWidth={2.3} /> 2D
-        </button>
-        <button type="button" role="radio" aria-checked={mode === "3d"} className={cn(mode === "3d" && "is-active")} tabIndex={phase === "open" ? 0 : -1} onClick={() => switchMode("3d")}>
-          <Boxes className="h-3 w-3" strokeWidth={2.3} /> 3D
-        </button>
-      </div>
-      <button type="button" onClick={closeToActive} tabIndex={phase === "open" ? 0 : -1}>Done <kbd>⌘ J</kbd></button>
-    </div> : null}
     {transitioning ? <button type="button" aria-label="Close Task View" className="clyra-task-view__dismiss" onClick={closeToActive} tabIndex={-1} /> : null}
   </div>;
 });

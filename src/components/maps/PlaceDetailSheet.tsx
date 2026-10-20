@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, Clock, ExternalLink, Globe, ImageOff, Eye, MapPin, Navigation2, Phone, Share2, Sparkles, Star, X } from "lucide-react";
+import { Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, Clock, Compass, ExternalLink, Globe, ImageOff, Eye, MapPin, Navigation2, Phone, Share2, Sparkles, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../ui/Button";
 import { PlaceLibraryMenu } from "./PlaceLibraryMenu";
@@ -21,6 +21,50 @@ interface PlaceDetailSheetProps {
   onDirections: (place: ClyraPlace) => void;
   onSelectNearby: (place: ClyraPlace) => void;
   onAskClyra: (place: ClyraPlace) => void;
+  onNearby: (place: ClyraPlace) => void;
+}
+
+/** Satellite backdrop centred on the place, used when it has no photos: a 3×3 grid of
+ * imagery tiles positioned so the exact point sits in the middle of the hero. */
+function SatelliteHero({ coordinates }: { coordinates: [number, number] }) {
+  const z = 17;
+  const n = 2 ** z;
+  const fx = ((coordinates[0] + 180) / 360) * n;
+  const latRad = (coordinates[1] * Math.PI) / 180;
+  const fy = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+  const tx = Math.floor(fx);
+  const ty = Math.floor(fy);
+  const left = 204 - (1 + (fx - tx)) * 256;
+  const top = 115 - (1 + (fy - ty)) * 256;
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-[#dfe6dc]" aria-hidden>
+      <div className="absolute" style={{ left, top, width: 768, height: 768 }}>
+        {[-1, 0, 1].flatMap((dy) =>
+          [-1, 0, 1].map((dx) => (
+            <img
+              key={`${dx}-${dy}`}
+              src={`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty + dy}/${tx + dx}`}
+              alt=""
+              draggable={false}
+              className="absolute h-[256px] w-[256px]"
+              style={{ left: (dx + 1) * 256, top: (dy + 1) * 256 }}
+            />
+          )),
+        )}
+      </div>
+      <span className="absolute left-1/2 top-[115px] h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-[#ea4335] shadow-md" />
+    </div>
+  );
+}
+
+/** Google-style round action: a tinted circle with a label underneath. */
+function CircleAction({ label, onClick, primary, pressed, children }: { label: string; onClick: () => void; primary?: boolean; pressed?: boolean; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={pressed} className="group flex w-[60px] flex-col items-center gap-1.5 text-[11.5px] font-semibold text-[#1a5fb4] outline-none">
+      <span className={"grid h-11 w-11 place-items-center rounded-full transition-all duration-150 group-hover:scale-105 group-active:scale-90 group-focus-visible:ring-2 group-focus-visible:ring-blue-400 " + (primary ? "bg-[#1a73e8] text-white shadow-[0_4px_12px_rgba(26,115,232,.4)]" : pressed ? "bg-[#d3e3fd] text-[#0b57d0]" : "bg-[#e8f0fe] text-[#1a5fb4] group-hover:bg-[#d3e3fd]")}>{children}</span>
+      {label}
+    </button>
+  );
 }
 
 const SAVED_KEY = "clyra.savedPlaces";
@@ -65,7 +109,7 @@ function reveal(index = 0) {
 /** Google-Maps-style place panel on the left. Sections render only when a real
  * source supplied them. Opening state comes from parsed OSM hours; unparseable
  * hours hide the state rather than guessing. */
-export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoading, onClose, onStart, onDirections, onSelectNearby, onAskClyra }: PlaceDetailSheetProps) {
+export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoading, onClose, onStart, onDirections, onSelectNearby, onAskClyra, onNearby }: PlaceDetailSheetProps) {
   const isPin = place.id.startsWith("pin-");
   const [info, setInfo] = useState<PlaceInfoResult | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(true);
@@ -160,9 +204,10 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
       exit={{ opacity: 0, x: -16 }}
       transition={{ duration: 0.26, ease: EASE }}
       aria-label={`${place.name ?? "Place"} details`}
-      className="pointer-events-auto absolute bottom-4 left-4 top-[88px] z-30 flex w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white/97 shadow-[0_16px_48px_rgba(15,23,42,.16)] backdrop-blur-xl"
+      className="pointer-events-auto absolute bottom-0 left-0 top-0 z-30 flex w-[408px] max-w-[100vw] flex-col overflow-hidden bg-white"
     >
-      <div className="relative h-[190px] w-full shrink-0 overflow-hidden bg-[#f4f1ea]">
+      <div className="relative h-[230px] w-full shrink-0 overflow-hidden bg-[#f4f1ea]">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/45 to-transparent" />
         <AnimatePresence initial={false}>
           {photo ? (
             <motion.img
@@ -202,15 +247,8 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
               />
             </motion.div>
           ) : (
-            <motion.div
-              key="empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.16 }}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-[12px] text-slate-400"
-            >
-              <ImageOff className="h-5 w-5" /> No photos found here
+            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="absolute inset-0">
+              <SatelliteHero coordinates={place.coordinates} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -221,7 +259,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
               type="button"
               aria-label="Previous photo"
               onClick={() => setPhotoIndex((i) => (i - 1 + photos.length) % photos.length)}
-              className="absolute left-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-slate-700 shadow transition-transform hover:bg-white active:scale-90"
+              className="absolute left-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-white text-slate-700 shadow transition-transform hover:bg-white active:scale-90"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -229,7 +267,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
               type="button"
               aria-label="Next photo"
               onClick={() => setPhotoIndex((i) => (i + 1) % photos.length)}
-              className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-slate-700 shadow transition-transform hover:bg-white active:scale-90"
+              className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-white text-slate-700 shadow transition-transform hover:bg-white active:scale-90"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -243,7 +281,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           <span className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">Street imagery · {streetImages[0].provider}</span>
         ) : null}
 
-        <button type="button" aria-label="Close" onClick={onClose} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full bg-white/95 text-slate-600 shadow transition-transform hover:bg-white hover:text-slate-900 active:scale-90">
+        <button type="button" aria-label="Close" onClick={onClose} className="absolute bottom-3 right-3 z-20 grid h-8 w-8 place-items-center rounded-full bg-white text-slate-600 shadow transition-transform hover:bg-white hover:text-slate-900 active:scale-90">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -257,7 +295,10 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
             </div>
           ) : (
             <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease: EASE }}>
-              <h3 className="text-[20px] font-bold leading-tight text-slate-950">{place.name}</h3>
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-[22px] font-medium leading-tight text-slate-950">{place.name}</h3>
+                <PlaceConditions coordinates={place.coordinates} compact />
+              </div>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[12.5px] text-slate-500">
                 {isPin ? null : category ? <span className="capitalize">{category}</span> : null}
                 {typeof place.distanceMeters === "number" ? <span>· {formatDistance(place.distanceMeters)} away</span> : null}
@@ -281,8 +322,6 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
             </motion.div>
           )}
 
-          {!identifying ? <PlaceConditions coordinates={place.coordinates} /> : null}
-
           {route ? (
             <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#3b82f6]/[0.07] px-3 py-2.5">
               <div>
@@ -304,29 +343,16 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           ) : null}
 
           {!identifying ? (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {!isPin ? (
-                <Button size="lg" variant="secondary" className="rounded-full" onClick={() => onDirections(place)}>
-                  <Navigation2 className="h-4 w-4" /> Directions
-                </Button>
-              ) : null}
-              <PlaceLibraryMenu place={place} />
-              {place.website ? (
-                <Button size="lg" variant="secondary" className="rounded-full" onClick={() => window.open(place.website, "_blank", "noopener,noreferrer")}>
-                  <Globe className="h-4 w-4" /> Website
-                </Button>
-              ) : null}
-              {place.phone ? (
-                <Button size="lg" variant="secondary" className="rounded-full" onClick={() => window.open(`tel:${place.phone}`)}>
-                  <Phone className="h-4 w-4" /> Call
-                </Button>
-              ) : null}
-              <Button size="lg" variant="secondary" className="rounded-full" onClick={toggleSave} aria-pressed={saved}>
-                {saved ? <BookmarkCheck className="h-4 w-4 text-[#3b82f6]" /> : <Bookmark className="h-4 w-4" />} {saved ? "Saved" : "Save"}
-              </Button>
-              <Button size="lg" variant="secondary" className="rounded-full" onClick={share}>
-                <Share2 className="h-4 w-4" /> Share
-              </Button>
+            <div className="mt-4 flex items-start justify-between gap-1" role="toolbar" aria-label="Place actions">
+              {!isPin ? <CircleAction label="Directions" primary onClick={() => onDirections(place)}><Navigation2 className="h-[18px] w-[18px]" /></CircleAction> : null}
+              <CircleAction label={saved ? "Saved" : "Save"} pressed={saved} onClick={toggleSave}>
+                {saved ? <BookmarkCheck className="h-[18px] w-[18px]" /> : <Bookmark className="h-[18px] w-[18px]" />}
+              </CircleAction>
+              <CircleAction label="Nearby" onClick={() => onNearby(place)}><Compass className="h-[18px] w-[18px]" /></CircleAction>
+              <PlaceLibraryMenu place={place} variant="circle" />
+              {place.phone ? <CircleAction label="Call" onClick={() => window.open(`tel:${place.phone}`)}><Phone className="h-[18px] w-[18px]" /></CircleAction> : null}
+              {place.website ? <CircleAction label="Website" onClick={() => window.open(place.website, "_blank", "noopener,noreferrer")}><Globe className="h-[18px] w-[18px]" /></CircleAction> : null}
+              <CircleAction label="Share" onClick={share}><Share2 className="h-[18px] w-[18px]" /></CircleAction>
             </div>
           ) : null}
           {shareNote ? <p className="mt-2 text-[12px] text-slate-500">{shareNote}</p> : null}
@@ -364,7 +390,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
             {streetImages.length ? (
               <button type="button" onClick={() => setStreetIndex(0)} className="group relative block w-full overflow-hidden rounded-xl">
                 <img src={streetImages[0].url} alt="" loading="lazy" className="h-[110px] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" />
-                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-[12px] font-semibold text-slate-900 shadow">
+                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-900 shadow">
                   <Eye className="h-3.5 w-3.5" /> Street Look
                 </span>
               </button>

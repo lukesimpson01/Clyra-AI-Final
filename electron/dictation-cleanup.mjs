@@ -20,14 +20,79 @@ function removeStutters(text) {
   return out;
 }
 const STRONG_CORRECTION = /^(?:no[,.]? wait|wait[,.]? no|actually[,.]? no|sorry[,.]?|rather[,.]?|correction[,.]?)\s*/i;
+const NUMBER_WORDS = new Set("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred".split(" "));
+const isNumberWord = (word) => {
+  const w = word.toLowerCase().replace(/[^\p{L}\p{N}:.]/gu, "").replace(/\.$/, "");
+  return /^\d+(?:[.:]\d+)?(?:[ap]\.?m\.?)?$/i.test(w) || NUMBER_WORDS.has(w);
+};
+const STOP_AFTER_NUMBER = new Set("and or so but then to for at in on the a an it that this".split(" "));
+const CORRECTION_CUE = /\s*[,.]?\s+(?:actually|no[,.]? wait|wait[,.]? no|i mean|make that|or rather|rather|sorry|correction)[,.]?\s+/i;
+
+/**
+ * "set a timer for 5 minutes, actually 6" -> "set a timer for 6 minutes"
+ * "let's meet at 5pm, actually let's do 6pm" -> "let's meet at 6pm"
+ * The correction swaps the last number (and its unit, if you gave a new one) in what came before.
+ */
+function applyNumberCorrections(text) {
+  const sentenceCue = new RegExp(`([^.!?]*?)${CORRECTION_CUE.source}([^.!?]+)`, "gi");
+  return text.replace(sentenceCue, (match, before, after) => {
+    // The correction is only the clause that follows the cue ("actually six"); whatever comes after a
+    // comma or conjunction ("..., and remind me to call Priya") is a new thought and must survive untouched.
+    const split = String(after).match(/^(.*?)(\s*(?:,|;|\s(?:and|but|then|so|also|because|while)\s)[\s\S]*)$/i);
+    const head = split ? split[1] : after;
+    const rest = split ? split[2] : "";
+    const b = before.trim().split(/\s+/);
+    const a = head.trim().split(/\s+/);
+    if (a.length > 6 || !b.length) return match;
+    let ai = -1;
+    for (let i = a.length - 1; i >= 0; i -= 1) if (isNumberWord(a[i])) { ai = i; break; }
+    let bi = -1;
+    for (let i = b.length - 1; i >= 0; i -= 1) if (isNumberWord(b[i])) { bi = i; break; }
+    if (ai < 0 || bi < 0) return match;
+    // The new number must be (nearly) the end of the correction, otherwise it is a different sentence.
+    const trailing = a.slice(ai + 1);
+    if (trailing.length > 1 || (trailing[0] && STOP_AFTER_NUMBER.has(trailing[0].toLowerCase().replace(/[^\p{L}]/gu, "")))) return match;
+    const unitAfter = trailing[0];
+    const replaced = [...b];
+    // New unit given ("6 hours") replaces number+old unit; otherwise only the number changes.
+    const oldUnit = b[bi + 1] && !STOP_AFTER_NUMBER.has(b[bi + 1].toLowerCase().replace(/[^\p{L}]/gu, "")) ? 1 : 0;
+    replaced.splice(bi, unitAfter ? 1 + oldUnit : 1, unitAfter ? `${a[ai]} ${unitAfter}` : a[ai]);
+    return replaced.join(" ") + rest;
+  });
+}
+
 function applyCorrections(text) {
+  text = applyNumberCorrections(text);
   let out = text;
   out = out.replace(/(?:^|[.!?]\s+)([^.!?]*?[.!?]?)\s*(?:scratch that|delete that|ignore that|never mind that)[.!?,]?\s*/gi, (_m, _prev, offset) => offset === 0 ? "" : ". ");
-  out = out.replace(/([^,.;!?]+)[,.]?\s+(?:no[,.]? wait|wait[,.]? no|actually[,.]? no|sorry|correction)[,.]?\s+([^.!?]+)/gi, (match, before, after) => {
+  // "<before> no wait <after>": drop the part of <before> that the correction replaces.
+  //  - If <after> starts with a word that also appears in <before> ("... to Sam, no wait, to Priya"),
+  //    cut <before> at that word's last occurrence and keep everything earlier intact.
+  //  - Otherwise replace only the trailing words of <before> (at most as many as <after> has, max 3).
+  out = out.replace(/([^.;!?]+?)[,.]?\s+(?:no[,.]? wait|wait[,.]? no|actually[,.]? no|sorry|correction)[,.]?\s+([^.!?]+)/gi, (_match, before, after) => {
     const lead = before.trim().split(/\s+/);
-    const afterWords = after.trim().split(/\s+/);
-    const keep = Math.max(0, lead.length - Math.min(afterWords.length, lead.length));
-    return `${lead.slice(0, keep).join(" ")} ${after.trim()}`.trim();
+    const tail = after.trim().split(/\s+/);
+    const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+    const anchor = norm(tail[0] || "");
+    let cut = -1;
+    if (anchor) {
+      for (let i = lead.length - 1; i > 0; i -= 1) {
+        if (norm(lead[i]) === anchor) { cut = i; break; }
+      }
+    }
+    if (cut < 0) cut = Math.max(0, lead.length - Math.min(tail.length, 3, lead.length));
+    return `${lead.slice(0, cut).join(" ")} ${after.trim()}`.trim();
+  });
+  // ", actually to Priya" / ", I mean at six pm": a softer cue, so only act when it clearly
+  // restarts a phrase the earlier part also contained (shared anchor word).
+  out = out.replace(/([^.;!?]+?),\s*(?:actually|i mean|or rather|make that)[,.]?\s+([^.!?]+)/gi, (match, before, after) => {
+    const lead = before.trim().split(/\s+/);
+    const tail = after.trim().split(/\s+/);
+    const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+    const anchor = norm(tail[0] || "");
+    if (!anchor || tail.length > 8) return match;
+    for (let i = lead.length - 1; i > 0; i -= 1) if (norm(lead[i]) === anchor) return `${lead.slice(0, i).join(" ")} ${after.trim()}`.trim();
+    return match;
   });
   return out;
 }
@@ -141,9 +206,28 @@ function cleanDictation(input, options = {}) {
     text = capitalize(text);
     text = ensureTerminalPunctuation(text, kind);
   }
-  return { text, changed: text !== original, kind, needsModel: NEEDS_MODEL.test(original) || level === "polished" };
+  return { text, changed: text !== original, kind, needsModel: NEEDS_MODEL.test(text) || level === "polished" };
+}
+// With text selected, speech is either replacement text ("see you at six") or an instruction for the
+// selection ("make it sound smarter", "make it longer", "translate to French"). Instructions are short
+// and open with an editing verb or an "it/this" request; anything else just replaces the selection.
+const INSTRUCTION_VERBS = "make|rewrite|rephrase|reword|reply|respond|shorten|lengthen|expand|elaborate|condense|summari[sz]e|simplify|clarify|improve|enhance|polish|proofread|fix|correct|translate|convert|turn|change|edit|revise|tweak|tighten|soften|formali[sz]e|humani[sz]e|capitali[sz]e|uppercase|lowercase|bold|italici[sz]e|format|add|remove|delete|replace|insert|continue|finish|complete|shorter|longer|clearer|better|smarter|funnier|nicer|more|less|sound|use|write|expand|bullet|list|organi[sz]e|restructure|paraphrase|spell|check|can you|could you|please|would you";
+const INSTRUCTION_RE = new RegExp(`^(?:(?:ok(?:ay)?|hey|clyra|so|now|and|then)[ ,]+)?(?:${INSTRUCTION_VERBS})\\b`, "i");
+function looksLikeInstruction(spoken) {
+  const text = String(spoken || "").trim().replace(/[.!?]+$/g, "");
+  if (!text) return false;
+  const words = text.split(/\s+/).length;
+  if (words > 24) return false;
+  if (!INSTRUCTION_RE.test(text)) return false;
+  // "Add milk to the list" or "Replace the filter" can also be plain sentences: require an object that
+  // refers to the selection, or a clearly editorial request, for the ambiguous verbs.
+  if (/^(?:add|remove|delete|replace|insert|use|write|check|list|bold|format|more|less|sound|turn|change|fix|correct|continue|finish|complete)\b/i.test(text)) {
+    return /\b(?:it|this|that|these|those|selection|selected|text|sentence|paragraph|message|email|wording|tone|here|everything)\b/i.test(text) || /\b(?:shorter|longer|formal|casual|friendly|professional|polite|clearer|concise|detail|punctuation|grammar|spelling|bullets?|capital|caps)\b/i.test(text);
+  }
+  return true;
 }
 export {
   classifyApp,
-  cleanDictation
+  cleanDictation,
+  looksLikeInstruction
 };

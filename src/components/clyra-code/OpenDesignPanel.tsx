@@ -35,15 +35,32 @@ export function OpenDesignPanel({
   const onDeployRef = useRef(onDeploy);
   onDeployRef.current = onDeploy;
 
+  const [startError, setStartError] = useState<string | null>(null);
   const check = () => {
     setChecking(true);
+    setStartError(null);
     fetch("/api/open-design/status")
       .then((response) => (response.ok ? response.json() : { running: false, url: "" }))
-      .then((body: OpenDesignStatus) => {
-        setStatus(body);
-        if (body.running) setFrameKey((key) => key + 1);
+      .then(async (body: OpenDesignStatus) => {
+        if (body.running) {
+          setStatus(body);
+          setFrameKey((key) => key + 1);
+          return;
+        }
+        // Not running yet: start the local daemon for the user instead of asking them to open a terminal.
+        const started = await fetch("/api/open-design/start", { method: "POST" })
+          .then(async (response) => ({ ok: response.ok, body: await response.json().catch(() => ({})) }))
+          .catch(() => ({ ok: false, body: {} as Record<string, unknown> }));
+        const next = started.body as Partial<OpenDesignStatus> & { error?: string };
+        if (next.running && next.url) {
+          setStatus({ running: true, url: next.url });
+          setFrameKey((key) => key + 1);
+        } else {
+          setStatus({ running: false, url: "" });
+          setStartError(next.error || "Clyra Design didn’t start. Its log is in your temp folder as clyra-open-design.log.");
+        }
       })
-      .catch(() => setStatus({ running: false, url: "" }))
+      .catch(() => { setStatus({ running: false, url: "" }); setStartError("Couldn’t reach the Clyra server."); })
       .finally(() => setChecking(false));
   };
 
@@ -92,24 +109,25 @@ export function OpenDesignPanel({
   if (!status?.running) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        {checking ? <LoaderCircle className="h-4 w-4 animate-spin text-[#9A9CA0]" /> : null}
+        {checking || !startError ? <LoaderCircle className="h-4 w-4 animate-spin text-[#9A9CA0]" /> : null}
         <p className="text-[13px] font-medium text-[#45474C]">
-          {checking ? "Starting Clyra Design…" : "Clyra Design is not running"}
+          {checking || !startError ? "Starting Clyra Design…" : "Clyra Design couldn’t start"}
         </p>
-        <p className="max-w-[380px] text-[11.5px] leading-[1.55] text-[#96989D]">
-          The Design tab embeds the Clyra Design workspace. Start its local daemon with{" "}
-          <span className="cc-mono rounded bg-black/[0.045] px-1 py-0.5 text-[10.5px] text-[#55575C]">npm run dev</span>{" "}
-          (or <span className="cc-mono rounded bg-black/[0.045] px-1 py-0.5 text-[10.5px] text-[#55575C]">npm run dev:open-design</span>),
-          and build it once with <span className="cc-mono rounded bg-black/[0.045] px-1 py-0.5 text-[10.5px] text-[#55575C]">npm run setup:open-design</span>.
-        </p>
-        <button
-          type="button"
-          onClick={check}
-          className="mt-2 inline-flex h-[30px] items-center gap-1.5 rounded-[8px] bg-[#3977F6] px-3.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
-        >
-          <RefreshCw className="h-3 w-3" strokeWidth={2} />
-          Retry
-        </button>
+        {startError && !checking ? (
+          <>
+            <p className="max-w-[380px] text-[11.5px] leading-[1.55] text-[#96989D]">{startError}</p>
+            <button
+              type="button"
+              onClick={check}
+              className="mt-2 inline-flex h-[30px] items-center gap-1.5 rounded-[8px] bg-[#3977F6] px-3.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
+            >
+              <RefreshCw className="h-3 w-3" strokeWidth={2} />
+              Try again
+            </button>
+          </>
+        ) : (
+          <p className="max-w-[380px] text-[11.5px] leading-[1.55] text-[#96989D]">This takes a few seconds the first time.</p>
+        )}
       </div>
     );
   }

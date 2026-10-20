@@ -101,7 +101,7 @@ export function MapsHome({ onSelect }: { onSelect: (p: ClyraPlace) => void }) {
     ) : null;
 
   return (
-    <div className="pointer-events-auto absolute bottom-20 left-4 z-20 max-h-[44vh] w-[340px] overflow-y-auto rounded-2xl border border-slate-200/80 bg-white/92 p-2 shadow-[0_12px_40px_rgba(15,23,42,.16)] backdrop-blur-xl">
+    <div className="pointer-events-auto absolute left-4 top-[68px] z-20 max-h-[calc(100%-150px)] w-[380px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-2xl border border-slate-200/80 bg-white p-2 shadow-[0_12px_40px_rgba(15,23,42,.16)]">
       <button type="button" onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center justify-between px-2.5 py-1 text-[13px] font-bold text-slate-800">
         Library
         <ChevronDown className={"h-4 w-4 text-slate-400 transition-transform " + (collapsed ? "-rotate-90" : "")} />

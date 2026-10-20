@@ -59,6 +59,7 @@ export function patchElectronApp({
   microphoneDescription,
   cameraDescription,
   screenDescription,
+  locationDescription,
   resign = process.env.CLYRA_ELECTRON_CODESIGN === "1",
 }) {
   if (process.platform !== "darwin") return { ok: false, reason: "not-darwin" };
@@ -78,6 +79,13 @@ export function patchElectronApp({
   }
   if (screenDescription) {
     setOrAdd(plist, "NSScreenCaptureUsageDescription", "string", screenDescription);
+  }
+
+  if (locationDescription) {
+    // Chromium's macOS geolocation goes through CoreLocation, which stays
+    // unauthorised (and getCurrentPosition just times out) without these keys.
+    setOrAdd(plist, "NSLocationWhenInUseUsageDescription", "string", locationDescription);
+    setOrAdd(plist, "NSLocationUsageDescription", "string", locationDescription);
   }
 
   const helpers = listHelperApps(appPath);
@@ -151,6 +159,7 @@ export function patchClyraElectron() {
     microphoneDescription: "Clyra needs microphone access for Voice Call and Cmd+Shift+K dictation.",
     cameraDescription: "Clyra needs camera access for Voice Call camera vision.",
     screenDescription: "Clyra needs screen recording access to share your screen in Voice Call.",
+    locationDescription: "Clyra Maps uses your location to show where you are and give accurate directions.",
   });
 }
 

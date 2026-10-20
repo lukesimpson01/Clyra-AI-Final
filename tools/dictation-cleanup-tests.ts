@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifyApp, cleanDictation } from "../electron/dictation-cleanup.mjs";
+import { classifyApp, cleanDictation, looksLikeInstruction } from "../electron/dictation-cleanup.mjs";
 
 const c = (text: string, opts = {}) => cleanDictation(text, opts).text;
 
@@ -15,6 +15,19 @@ assert.match(c("it was a period of growth"), /period of growth/);
 // Self-corrections
 assert.equal(c("meet me at five no wait six"), "Meet me at six.");
 assert.equal(c("send it today. scratch that. send it tomorrow"), "Send it tomorrow.");
+// The correction replaces only what it corrects, keeping everything before it
+assert.equal(c("send the the quarterly report to sam no wait to priya before friday"), "Send the quarterly report to priya before friday.");
+assert.equal(c("meet at five no wait at six pm"), "Meet at six pm.");
+// Number / time corrections (the "5 minutes... actually 6" case)
+assert.equal(c("set a timer for 5 minutes actually 6"), "Set a timer for 6 minutes.");
+assert.equal(c("Set a timer for 5 minutes, actually 6."), "Set a timer for 6 minutes.");
+assert.equal(c("hey let's meet at 5pm, actually let's do 6pm"), "Hey let's meet at 6pm.");
+assert.equal(c("call me at 5 no wait 6 pm"), "Call me at 6 pm.");
+assert.equal(c("it costs 5 dollars actually 6 dollars"), "It costs 6 dollars.");
+assert.equal(c("remind me in five minutes actually ten minutes"), "Remind me in ten minutes.");
+assert.equal(c("set a timer for 5 minutes actually 6 hours"), "Set a timer for 6 hours.");
+assert.equal(cleanDictation("i actually like it").text, "I actually like it.");
+assert.equal(c("send it to sam, actually to priya"), "Send it to priya.");
 // Emails and URLs
 assert.equal(c("email me at sam at gmail dot com"), "Email me at sam@gmail.com.");
 assert.match(c("go to clyra dot ai"), /clyra\.ai/);
@@ -35,4 +48,12 @@ assert.equal(c("um hello comma there", { level: "raw" }), "um hello comma there"
 // Model escalation flag
 assert.equal(cleanDictation("i want pizza actually make it pasta").needsModel, true);
 assert.equal(cleanDictation("i want pasta").needsModel, false);
+// A correction the rules resolved no longer needs the model (it could only undo it)
+assert.equal(cleanDictation("set a timer for 5 minutes actually 6").needsModel, false);
+// A correction only replaces its own clause; the rest of the sentence survives
+assert.equal(c("Set a timer for five minutes, actually six, and remind me to call Priya before Friday."), "Set a timer for six minutes, and remind me to call Priya before Friday.");
+assert.equal(c("meet at three actually four pm, then lunch"), "Meet at four pm, then lunch.");
+// Selection routing: instruction vs replacement text
+for (const yes of ["make it sound smarter", "Make it longer.", "rewrite this more formally", "translate to French", "shorten it", "fix the grammar", "can you make this friendlier", "turn this into bullet points", "add more detail", "summarize"]) assert.equal(looksLikeInstruction(yes), true, yes);
+for (const no of ["see you at six tomorrow", "add milk to the list", "the quarterly numbers look strong", "I think we should make a plan for the trip next week because it will be fun", "thanks for your help"]) assert.equal(looksLikeInstruction(no), false, no);
 console.log("dictation-cleanup-tests: all assertions passed");

@@ -25,6 +25,8 @@ import { ArrowUp } from "lucide-react";
 import { VoiceWaveIcon } from "../voice/VoiceWaveIcon";
 import { ClyraFace } from "../../voice/ClyraFace";
 import { setOrbAnchor } from "../../voice/orbAnchor";
+import { FlowComposerOverlay, type FlowSession } from "./FlowComposerOverlay";
+import { EffortSlider } from "./EffortSlider";
 import {
   canStartDictation,
   formatDictationElapsed,
@@ -134,6 +136,8 @@ export interface ComposerDictationState {
   onStop: () => void;
   /** Discards the audio and any partial text; the existing draft is kept. */
   onCancel?: () => void;
+  /** Present while the desktop app's Flow engine is driving this dictation (live words, edits, final text). */
+  flow?: FlowSession | null;
 }
 
 export interface ClyraComposerShellProps {
@@ -192,6 +196,8 @@ export interface ClyraComposerShellProps {
 
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  /** false hides the shell's own "Chats" drawer and its toggle (Chat uses the app-level sidebar instead). */
+  historyPanel?: boolean;
   /** Opens the app-wide settings sheet from the persistent sidebar footer. */
   onOpenSettings: () => void;
   chats: ComposerChatRow[];
@@ -383,6 +389,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onFilesSelected,
     dictation,
     sidebarOpen,
+    historyPanel = true,
     onToggleSidebar,
     onOpenSettings,
     chats,
@@ -560,6 +567,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // Matches the artboard's step==="connected" height (384) exactly — the
   // real detail view (email + scope rows) is the same shape as that step.
   const selectionRows = selections.length;
+  // While Flow dictation covers the card, give it room for live words / edits (more when a selection header shows).
+  // The composer keeps its normal size while Flow dictation covers it.
   const barHeight = dt
     ? 384
     : mg
@@ -771,7 +780,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           top: 18,
           left: 18,
           zIndex: 48,
-          display: "flex",
+          display: historyPanel ? "flex" : "none",
           alignItems: "center",
           justifyContent: "center",
           width: 38,
@@ -863,6 +872,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           position: "absolute",
           inset: 0,
           zIndex: 44,
+          display: historyPanel ? "block" : "none",
           background: "transparent",
           pointerEvents: sidebarOpen ? "auto" : "none",
         }}
@@ -876,7 +886,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           left: 16,
           bottom: 16,
           zIndex: 46,
-          display: "flex",
+          display: historyPanel ? "flex" : "none",
           flexDirection: "column",
           width: 290,
           borderRadius: 24,
@@ -1695,6 +1705,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             isolation: "isolate",
           }}
         >
+          {/* Flow dictation: covers the whole composer card (same shape), the controls underneath soften away. */}
+          {dictation.flow ? (
+            <FlowComposerOverlay flow={dictation.flow} onStop={dictation.onStop} onCancel={() => dictation.onCancel?.()} />
+          ) : null}
           {/* Compose face */}
           <div
             className="clyra-composer-shell__face"
@@ -2095,8 +2109,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               </div>
             ) : null}
 
-            {!dictationBusy ? (
+            {!dictationBusy || dictation.flow ? (
               <textarea
+                className={dictation.flow?.phase === "closing" ? "clyra-flow-land" : undefined}
                 ref={textareaRef}
                 rows={2}
                 placeholder={placeholder}
@@ -2118,6 +2133,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                   letterSpacing: "-0.011em",
                   padding: "0 4px",
                   boxSizing: "border-box",
+                  visibility: dictation.flow && dictation.flow.phase !== "closing" ? "hidden" : "visible",
                 }}
               />
             ) : (
@@ -2355,132 +2371,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       <path d="M6 9l6 6 6-6" />
                     </svg>
                   </button>
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: "calc(100% + 12px)",
-                      left: -4,
-                      width: 250,
-                      padding: 4,
-                      borderRadius: 20,
-                      background: "#FFFFFF",
-                      zIndex: 20,
-                      boxShadow:
-                        "0 1px 1px rgba(16,18,24,0.04), 0 20px 48px -14px rgba(16,18,24,0.26), inset 0 0 0 1px rgba(16,18,24,0.07)",
-                      opacity: effortMenuOpen ? 1 : 0,
-                      transform: `translateY(${effortMenuOpen ? 0 : 8}px) scale(${effortMenuOpen ? 1 : 0.94})`,
-                      pointerEvents: effortMenuOpen ? "auto" : "none",
-                      visibility: effortMenuOpen ? "visible" : "hidden",
-                      transition: `opacity .22s ease, transform .3s ${SHELL_EASE}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: "9px 12px 6px",
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        letterSpacing: "0.05em",
-                        textTransform: "uppercase",
-                        color: "#5F636B",
-                      }}
-                    >
-                      Reasoning effort
-                    </div>
-                    {efforts.map((e) => {
-                      const on = e.value === currentEffort;
-                      return (
-                        <button
-                          key={e.value}
-                          type="button"
-                          onClick={() => {
-                            e.onPick();
-                            setEffortMenuOpen(false);
-                          }}
-                          style={{
-                            display: "flex",
-                            alignItems: "flex-start",
-                            gap: 10,
-                            width: "100%",
-                            padding: "8px 11px",
-                            borderRadius: 14,
-                            border: "none",
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                            textAlign: "left",
-                            background: on
-                              ? "rgba(16,18,24,0.05)"
-                              : "transparent",
-                          }}
-                        >
-                          <span
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 18,
-                              height: 18,
-                              flexShrink: 0,
-                              marginTop: 2,
-                            }}
-                          >
-                            {e.icon}
-                          </span>
-                          <span
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 2,
-                              textAlign: "left",
-                              flex: 1,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 13,
-                                fontWeight: 500,
-                                color: "#15171C",
-                                letterSpacing: "-0.009em",
-                              }}
-                            >
-                              {e.label}
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                color: "#63676F",
-                                lineHeight: 1.35,
-                              }}
-                            >
-                              {e.hint}
-                            </span>
-                          </span>
-                          <span
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              marginTop: 2,
-                              color: accentColor,
-                              transform: `scale(${on ? 1 : 0.6})`,
-                              opacity: on ? 1 : 0,
-                            }}
-                          >
-                            <svg
-                              width={14}
-                              height={14}
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth={2.5}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M20 6L9 17l-5-5" />
-                            </svg>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <EffortSlider efforts={efforts} current={currentEffort} accentColor={accentColor} open={effortMenuOpen} defaultValue="medium" />
                 </div>
 
                 {shownPills.map((s) => {
@@ -2856,8 +2747,8 @@ function ComposerVoiceSendSlot({
     transition: "opacity 220ms ease, transform 320ms cubic-bezier(.16,1,.3,1)",
   });
   const background =
-    mode === "stop" ? "#15171C" : mode === "send" ? (canSend ? accentColor : "#EDEEF1") : "transparent";
-  const color = mode === "stop" ? "#FFFFFF" : mode === "send" ? (canSend ? "#FFFFFF" : "#AFB3BB") : "#5F636B";
+    mode === "stop" ? "#15171C" : mode === "send" ? (canSend ? accentColor : "#EDEEF1") : accentColor;
+  const color = mode === "stop" ? "#FFFFFF" : mode === "send" ? (canSend ? "#FFFFFF" : "#AFB3BB") : "#FFFFFF";
 
   return (
     <button
@@ -2884,7 +2775,7 @@ function ComposerVoiceSendSlot({
         cursor: disabled ? "not-allowed" : "pointer",
         background,
         color,
-        boxShadow: mode === "send" && canSend ? "0 2px 10px -2px rgba(30,111,255,0.55)" : "none",
+        boxShadow: mode === "voice" || (mode === "send" && canSend) ? "0 2px 10px -2px rgba(30,111,255,0.55)" : "none",
         transition: "background 240ms cubic-bezier(.2,.8,.3,1), color 240ms ease, box-shadow 240ms ease",
       }}
     >

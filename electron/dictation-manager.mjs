@@ -2,8 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { cleanDictation } from "./dictation-cleanup.mjs";
-import { createGestureMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_LABEL } from "./dictation-hotkey.mjs";
+import { cleanDictation, looksLikeInstruction } from "./dictation-cleanup.mjs";
+import { hasEdits, wordDiff } from "./word-diff.mjs";
+import { createTapMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_PRESETS, DEFAULT_HOTKEY } from "./dictation-hotkey.mjs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
 
 const execFileAsync = promisify(execFile);
@@ -12,6 +13,11 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const PILL_WIDTH = 270;
 const PILL_HEIGHT = 62;
 const PILL_MARGIN = 16;
+// While the transcript is shown the transparent canvas grows; the capsule stays anchored to the bottom.
+const PREVIEW_WIDTH = 420;
+const PREVIEW_HEIGHT = 212;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const PREVIEW_PHASES = new Set(["refining", "revealing"]);
 
 function snapshotClipboard() {
   const formats = clipboard.availableFormats();
@@ -22,6 +28,18 @@ function snapshotClipboard() {
       return [];
     }
   });
+}
+
+/**
+ * Put the user's clipboard back AFTER the target app has had time to read our paste. Restoring right
+ * after Cmd+V races slow apps (they read the pasteboard late and paste the old contents instead).
+ * Only restores if the clipboard still holds what we put there, so a copy made meanwhile is never lost.
+ */
+function restoreClipboardLater(snapshot, pasted, delay = 1_400) {
+  const timer = setTimeout(() => {
+    try { if (clipboard.readText() === pasted) restoreClipboard(snapshot); } catch { /* best effort */ }
+  }, delay);
+  timer.unref?.();
 }
 
 function restoreClipboard(snapshot) {
@@ -47,6 +65,63 @@ async function runAppleScript(script) {
 async function frontmostApplication() {
   if (process.platform !== "darwin") return "";
   return runAppleScript('tell application "System Events" to get name of first process whose frontmost is true');
+}
+
+/** Frontmost app name plus its front window rectangle (to put the pill on the right display). */
+async function frontmostContext() {
+  if (process.platform !== "darwin") return { application: "", rect: null };
+  const script = `tell application "System Events"
+  set p to first process whose frontmost is true
+  set n to name of p
+  -- Chromium/Electron apps only build their accessibility tree when asked; do it now so
+  -- "is a text field focused?" can be answered reliably when the paste happens seconds later.
+  try
+    set value of attribute "AXManualAccessibility" of p to true
+  end try
+  try
+    set {px, py} to position of front window of p
+    set {sw, sh} to size of front window of p
+    return n & "|" & px & "," & py & "," & sw & "," & sh
+  on error
+    return n & "|"
+  end try
+end tell`;
+  const out = await runAppleScript(script);
+  const [application, rectText = ""] = out.split("|");
+  const nums = rectText.split(",").map((value) => Number(value.trim()));
+  const rect = nums.length === 4 && nums.every((value) => Number.isFinite(value)) ? { x: nums[0], y: nums[1], width: nums[2], height: nums[3] } : null;
+  return { application: application.trim(), rect };
+}
+
+/**
+ * What has keyboard focus in the frontmost app? Decides between pasting and "saved to clipboard".
+ *  editable  -> a real text field/area: paste
+ *  ambiguous -> a web area / group (could be a rich editor): paste, and keep a copy on the clipboard
+ *  none / blocked -> nothing editable is focused: do NOT paste, save to the clipboard
+ */
+async function focusedElementKind() {
+  if (process.platform !== "darwin") return { kind: "unknown", role: "" };
+  const script = `tell application "System Events"
+  set p to first process whose frontmost is true
+  try
+    set value of attribute "AXManualAccessibility" of p to true
+  end try
+  try
+    set fe to value of attribute "AXFocusedUIElement" of p
+    return value of attribute "AXRole" of fe
+  on error errMsg
+    return "ERR:" & errMsg
+  end try
+end tell`;
+  let out = "";
+  try { out = await runAppleScript(script); } catch { return { kind: "unknown", role: "" }; }
+  if (out.startsWith("ERR:")) return /missing value/i.test(out) ? { kind: "none", role: "" } : { kind: "unknown", role: "" };
+  const role = out.trim();
+  if (["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField"].includes(role)) return { kind: "editable", role };
+  // Only controls that can never take typed text are "blocked". Everything else (web areas, rich editors,
+  // custom canvases, table cells...) may well be a text field, so we paste and keep a copy on the clipboard.
+  if (["AXButton", "AXImage", "AXRadioButton", "AXCheckBox", "AXMenuItem", "AXMenuBarItem", "AXMenu", "AXMenuButton", "AXToolbar", "AXSlider", "AXProgressIndicator", "AXScrollBar", "AXPopUpButton", "AXTabGroup", "AXDisclosureTriangle", "AXStaticText"].includes(role)) return { kind: "blocked", role };
+  return { kind: "ambiguous", role };
 }
 
 async function focusApplication(name) {
@@ -86,8 +161,24 @@ function isClyraProcessName(name) {
   return /^clyra$/i.test(String(name || "").trim());
 }
 
+// Phrases are transcribed separately (so live words and the final text are fast); a cut can land mid-sentence, and the model
+// then ends the piece with a full stop ("...lunch with. Priya..."). Drop that stop when the piece ends on a connecting word.
+const OPEN_ENDINGS = new Set("a an the and or but so to of in on at for with from by as that which who whom whose if than then because while when where into onto over under about between through during before after is are was were be been am will would can could should may might do does did have has had my your his her its our their this these those not no".split(" "));
+export function joinPhrases(pieces) {
+  const out = [];
+  pieces.filter(Boolean).forEach((piece, index, all) => {
+    let text = String(piece).trim();
+    if (index < all.length - 1) {
+      const last = text.replace(/[.,?!;:]+$/, "").split(/\s+/).pop()?.toLowerCase() || "";
+      if (OPEN_ENDINGS.has(last)) text = text.replace(/[.,?!;:]+$/, "");
+    }
+    out.push(text);
+  });
+  return out.join(" ").replace(/\s+/g, " ").trim();
+}
+
 export class DictationManager {
-  constructor({ uiContents, preloadPath, pillPath, native = null, engine = null, settingsPath = "", cleanupViaService = null }) {
+  constructor({ uiContents, preloadPath, pillPath, native = null, engine = null, settingsPath = "", cleanupViaService = null, optimiseViaService = null }) {
     this.uiContents = uiContents;
     // Standalone ("Clyra closed") pipeline: hidden mic window + main-process
     // speech engine. Used whenever the Clyra UI is not up to do the work itself.
@@ -95,10 +186,48 @@ export class DictationManager {
     this.engine = engine;
     this.settingsPath = settingsPath;
     this.cleanupViaService = cleanupViaService;
+    this.optimiseViaService = optimiseViaService;
+    this.userPosition = null; // set when the user drags the pill; null = default centred near the bottom
     this.rendererReady = false;
     this.nativeActive = false;
     this.nativeStartPromise = null;
-    if (this.native) this.native.onLevel = (level) => { if (this.nativeActive && this.phase === "listening") this.setState({ level: Math.max(0, Math.min(1, level)) }); };
+    if (this.native) this.native.onLevel = (level) => {
+      if (!this.nativeActive || this.phase !== "listening") return;
+      this.setState({ level: Math.max(0, Math.min(1, level)) });
+      const now = Date.now();
+      // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
+      // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
+      // More sensitive than before: the first soft word of a sentence must count as speech, or it gets clipped.
+      const threshold = Math.max(0.03, this.noiseFloor * 1.9 + 0.016);
+      const bytes = this.native.bytes;
+      // The start cue plays as the microphone opens. Its sound must neither count as speech nor end up in the
+      // first phrase, or the model "hears" a word that was never said.
+      if (now < this.cueGuardUntil) return;
+      if (level >= threshold) {
+        if (!this.heardSpeech) this.speechStartedAt = now;
+        if (!this.segHasSpeech) {
+          this.segHasSpeech = true;
+          this.segSpeechAt = now;
+          // A short pre-roll keeps the first syllable, but never reaches back into the start cue.
+          const preRoll = 16_000 * 2 * (this.segments.length ? 0.4 : 0.45);
+          this.segStart = Math.max(this.segStart, this.cueEndBytes || 0, bytes - preRoll);
+        }
+        this.heardSpeech = true;
+        this.lastSpeechAt = now;
+        // Very long unbroken speech: commit at the next natural dip so partials stay fast.
+        if (now - this.segSpeechAt >= 8_000) this.commitSegment();
+        return;
+      }
+      this.noiseFloor = level < this.noiseFloor ? level : this.noiseFloor + (level - this.noiseFloor) * 0.04;
+      // A short pause closes the current phrase: it is transcribed once, in the background, and kept.
+      // A phrase under ~0.9 s ("So", "Hey Sam") is kept open and joined to what follows: decoded alone it has no
+      // context and is the most common source of a misheard opening word.
+      if (this.segHasSpeech && now - this.lastSpeechAt >= 420 && this.lastSpeechAt - this.segSpeechAt >= 900) this.commitSegment();
+      else if (this.segHasSpeech && now - this.segSpeechAt >= 4_500 && level < threshold * 2.2) this.commitSegment();
+      if (!this.autoStop) return;
+      if (this.heardSpeech && now - this.lastSpeechAt >= 1_150 && this.lastSpeechAt - this.speechStartedAt >= 250) void this.nativeFinish();
+      else if (!this.heardSpeech && now - this.nativeStartedAt >= 12_000) this.forceReset("No speech was detected.");
+    };
     this.preloadPath = preloadPath;
     this.pillPath = pillPath;
     this.window = null;
@@ -113,26 +242,38 @@ export class DictationManager {
     // is unavailable, and the first free candidate is picked at startup so it
     // never steals a combo another app already owns. Cmd+L is deliberately not
     // used: it is "focus address bar" in every browser.
-    this.shortcutCandidates = ["Control+Alt+Space", "Control+Alt+D", "Control+Shift+Space"];
+    this.shortcutCandidates = ["Control+Space", "Control+Alt+Space", "Control+Alt+D", "Control+Shift+Space"];
     this.shortcut = this.shortcutCandidates[0];
     this.handsFree = false;
     this.pendingStop = false;
     this.captureRequested = false;
     this.refocus = null;
+    this.autoStop = false;
+    this.fellBack = false;
+    this.watchdog = null;
+    this.spare = null;
+    this.previewActive = false;
+    this.targetDisplayId = null;
     this.hotkeyMode = "none";
     this.stopHotkey = null;
-    this.machine = createGestureMachine({
-      onStart: () => void this.toggle({ manual: true }),
-      onStop: () => this.stopFromHotkey(),
-      onCancel: () => { if (this.phase !== "idle") this.cancel(); },
-      onHandsFree: () => { this.handsFree = true; if (this.phase === "listening") this.setState({ detail: "Hands-free — tap again to finish", handsFree: true }); },
-    });
+    // Every press of the hotkey toggles: press to start, press again to stop. (Hands-free and
+    // silence auto-stop apply to every session; there is no hold-to-talk.)
+    this.machine = createTapMachine({ onTap: () => this.hotkeyPressed() });
   }
 
-  stopFromHotkey() {
+  hotkeyPressed() {
     this.handsFree = false;
+    // A second press before the recorder has even been requested: remember it and stop as soon as it is live.
     if (this.phase === "arming" && !this.captureRequested) { this.pendingStop = true; return; }
-    if (["arming", "listening"].includes(this.phase)) this.requestStop();
+    void this.toggle({ manual: false });
+  }
+
+  /** Hands-free / toggle sessions end on their own once you stop talking. */
+  enableAutoStop() {
+    this.autoStop = true;
+    this.heardSpeech = false;
+    this.lastSpeechAt = Date.now();
+    this.emitUi("dictation:trigger", { type: "autostop" });
   }
 
   setRendererReady(ready) {
@@ -146,8 +287,14 @@ export class DictationManager {
   }
 
   requestStop() {
+    console.log(`[flow] stop requested (phase=${this.phase}, ${this.nativeActive ? "native" : "renderer"})`);
     if (this.nativeActive) { void this.nativeFinish(); return; }
     this.emitUi("dictation:trigger", { type: "stop" });
+    // If the UI recorder never acknowledges (reloading, crashed), don't leave the pill stuck.
+    const activation = this.activationId;
+    setTimeout(() => {
+      if (activation === this.activationId && (this.phase === "listening" || this.phase === "arming")) this.forceReset("Dictation stopped responding. Press the hotkey to try again.");
+    }, 5_000);
   }
 
   readFlowSettings() {
@@ -156,9 +303,10 @@ export class DictationManager {
       return {
         level: saved.level === "raw" || saved.level === "polished" ? saved.level : "light",
         dictionary: Array.isArray(saved.dictionary) ? saved.dictionary.map(String).filter(Boolean).slice(0, 80) : [],
+        hotkey: typeof saved.hotkey === "string" ? saved.hotkey : DEFAULT_HOTKEY,
       };
     } catch {
-      return { level: "light", dictionary: [] };
+      return { level: "light", dictionary: [], hotkey: DEFAULT_HOTKEY };
     }
   }
 
@@ -166,13 +314,28 @@ export class DictationManager {
     if (!this.settingsPath) return;
     try {
       mkdirSync(path.dirname(this.settingsPath), { recursive: true });
-      writeFileSync(this.settingsPath, JSON.stringify({ level: settings?.level, dictionary: settings?.dictionary }), "utf8");
+      let existing = {};
+      try { existing = JSON.parse(readFileSync(this.settingsPath, "utf8")); } catch { /* first write */ }
+      const merged = { ...existing };
+      for (const key of ["level", "dictionary", "hotkey"]) if (settings?.[key] !== undefined) merged[key] = settings[key];
+      writeFileSync(this.settingsPath, JSON.stringify(merged), "utf8");
     } catch { /* settings are best-effort */ }
   }
 
   async nativeStart(activationId) {
     this.nativeActive = true;
     const startedAt = Date.now();
+    this.nativeStartedAt = startedAt;
+    this.heardSpeech = false;
+    this.lastSpeechAt = startedAt;
+    this.noiseFloor = 0.008;
+    this.segments = [];
+    this.segStart = 0;
+    this.segHasSpeech = false;
+    this.segGen = 0;
+    this.partialText = "";
+    this.cueGuardUntil = Number.POSITIVE_INFINITY;
+    this.cueEndBytes = 0;
     this.nativeStartPromise = this.native.start();
     // Warm the speech model while the user is already talking.
     this.engine?.warm().catch(() => undefined);
@@ -185,26 +348,104 @@ export class DictationManager {
     }
     if (activationId !== this.activationId || !this.nativeActive) { this.native.cancel(); this.nativeActive = false; return; }
     console.log(`[flow] microphone live in ${Date.now() - startedAt}ms`);
-    this.setState({ phase: "listening", detail: "Listening", level: 0 });
+    // The pill's start cue (~0.2 s, after a short render delay) ends within 0.3 s of here; skip that slice of audio for speech detection and decoding.
+    this.cueGuardUntil = Date.now() + 300;
+    this.cueEndBytes = this.native.bytes + 16_000 * 2 * 0.3;
+    this.setState({ phase: "listening", detail: "Listening", level: 0, partial: "" });
+    this.startPartials(activationId);
     if (this.pendingStop) { this.pendingStop = false; void this.nativeFinish(); }
+  }
+
+  /** Close the current phrase and transcribe it once, in the background (final-quality text, kept). */
+  commitSegment() {
+    if (!this.segHasSpeech || !this.nativeActive) return;
+    const end = this.native.bytes - (this.native.bytes % 2);
+    const pcm = this.native.slice(this.segStart, end);
+    this.segStart = end;
+    this.segHasSpeech = false;
+    this.segGen += 1;
+    this.partialText = "";
+    const segment = { text: null };
+    segment.promise = pcm.length >= 16_000 * 2 * 0.25
+      ? this.engine.transcribe(pcm).then((text) => { segment.text = text || ""; this.pushLive(); return segment.text; }).catch(() => { segment.text = ""; return ""; })
+      : Promise.resolve((segment.text = ""));
+    this.segments.push(segment);
+  }
+
+  /** Everything transcribed so far (finished phrases + the phrase in progress) as one string. */
+  liveText() {
+    const parts = [];
+    for (const segment of this.segments) { if (segment.text === null) break; if (segment.text) parts.push(segment.text); }
+    if (this.partialText && this.segments.every((segment) => segment.text !== null)) parts.push(this.partialText);
+    return joinPhrases(parts);
+  }
+
+  pushLive() {
+    if (!this.nativeActive || this.phase !== "listening") return;
+    const text = this.liveText();
+    if (text && text !== this.payload.partial) this.setState({ partial: text });
+  }
+
+  /** Live words while you talk: only the phrase in progress is re-transcribed, so each update is fast. */
+  startPartials(activationId) {
+    clearInterval(this.partialTimer);
+    let busy = false;
+    let lastBytes = 0;
+    this.partialTimer = setInterval(async () => {
+      if (busy || activationId !== this.activationId || !this.nativeActive || this.phase !== "listening" || !this.segHasSpeech) return;
+      const pcm = this.native.slice(this.segStart);
+      // Live words wait for ~0.6 s of a phrase: shorter clips are mostly guesses that flash and then change.
+      if (pcm.length < 16_000 * 2 * 0.6 || pcm.length - lastBytes < 16_000 * 2 * 0.14) return;
+      busy = true;
+      lastBytes = pcm.length;
+      const gen = this.segGen;
+      try {
+        const text = await this.engine.transcribe(pcm);
+        if (gen === this.segGen && activationId === this.activationId && this.nativeActive && text) { this.partialText = text; this.pushLive(); }
+      } catch { /* partials are best-effort; the final transcript is what counts */ } finally { busy = false; if (gen !== this.segGen) lastBytes = 0; }
+    }, 170);
   }
 
   async nativeFinish() {
     if (!this.nativeActive) return;
     this.nativeActive = false;
     this.handsFree = false;
+    clearInterval(this.partialTimer);
     const activationId = this.activationId;
-    this.setState({ phase: "processing", detail: "Transcribing", level: 0 });
+    this.setState({ phase: "processing", detail: "Thinking", level: 0 });
     try {
       await this.nativeStartPromise?.catch(() => undefined);
       const pcm = await this.native.stop();
       if (pcm.length < 16_000 * 2 * 0.25) throw new Error("No speech was detected.");
-      const raw = await this.engine.transcribe(pcm);
+      let raw = "";
+      if (this.segments.length || this.segHasSpeech) {
+        // Finished phrases were transcribed while you spoke; only the last phrase is left to decode.
+        const tail = this.segHasSpeech && pcm.length - this.segStart >= 16_000 * 2 * 0.25 ? this.engine.transcribe(pcm.subarray(this.segStart - (this.segStart % 2))).catch(() => "") : Promise.resolve("");
+        const done = await Promise.all(this.segments.map((segment) => segment.promise));
+        raw = joinPhrases([...done, await tail]);
+      }
+      // Quiet speaker or no phrase boundaries detected: fall back to decoding the whole recording.
+      if (!raw) raw = await this.engine.transcribe(this.cueEndBytes && pcm.length > this.cueEndBytes + 16_000 * 2 * 0.3 ? pcm.subarray(this.cueEndBytes - (this.cueEndBytes % 2)) : pcm);
       if (activationId !== this.activationId) return;
       if (!raw) throw new Error("No speech was detected.");
-      this.setState({ phase: "processing", detail: "Cleaning up" });
+      this.setState({ phase: "processing", detail: "Thinking", partial: raw });
       const { level, dictionary } = this.readFlowSettings();
       const application = this.target?.application || "";
+      // Text is selected: speech that sounds like an instruction ("make it sound smarter") is applied to
+      // the selection by the AI; anything else simply replaces the selection when pasted.
+      const selected = String(this.target?.selectedText || "").trim();
+      if (selected && looksLikeInstruction(raw) && this.optimiseViaService) {
+        this.setState({ phase: "optimising", detail: "Rewriting", partial: raw, edit: "rewrite" });
+        const rewritten = await this.optimiseViaService({ selectedText: selected, instruction: raw }).catch(() => "");
+        if (activationId !== this.activationId) return;
+        if (!rewritten) throw new Error("Couldn't reach Clyra's AI to rewrite the selection. Your selection is unchanged.");
+        const rewrittenResult = await this.presentAndInsert({ raw: selected, text: rewritten, target: this.target || {} });
+        const clipOnly = rewrittenResult?.method === "clipboard-only";
+        this.setState({ phase: "done", detail: String(rewrittenResult?.note || "Rewritten"), clipboard: clipOnly, resultText: rewritten });
+        setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : clipOnly ? 4_200 : 2_600);
+        return;
+      }
+      if (selected) this.setState({ edit: "replace" });
       const local = cleanDictation(raw, { level, dictionary, application });
       let text = local.text || raw;
       // Language-model polish only for messy self-corrections / "polished" mode, and only when
@@ -213,10 +454,10 @@ export class DictationManager {
         text = (await this.cleanupViaService({ transcript: raw, level, dictionary, application }).catch(() => "")) || text;
       }
       if (activationId !== this.activationId) return;
-      const result = await this.insert({ text, target: this.target || {} });
+      const result = await this.presentAndInsert({ raw, text, target: this.target || {} });
       const copiedOnly = result?.method === "clipboard-only";
-      this.setState({ phase: "done", detail: copiedOnly ? String(result.note || "Copied — press ⌘V to paste") : "Inserted" });
-      setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "" }); }, copiedOnly ? 3200 : 850);
+      this.setState({ phase: "done", detail: String(result?.note || "Inserted"), clipboard: copiedOnly, resultText: text });
+      setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : copiedOnly ? 4_200 : 2_600);
     } catch (error) {
       if (activationId !== this.activationId) return;
       const message = (error instanceof Error ? error.message : String(error || "")).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
@@ -224,8 +465,14 @@ export class DictationManager {
     }
   }
 
+  pillInfo() {
+    const w = this.window;
+    if (!w || w.isDestroyed()) return { exists: false };
+    return { exists: true, visible: w.isVisible(), bounds: w.getBounds(), alwaysOnTop: w.isAlwaysOnTop(), onAllWorkspaces: w.isVisibleOnAllWorkspaces(), display: screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea };
+  }
+
   hotkeyInfo() {
-    return { mode: this.hotkeyMode, hotkey: this.hotkeyMode === "hold" ? HOTKEY_LABEL : this.shortcut, fallback: this.shortcutRegistered ? this.shortcut : "" };
+    return { mode: this.hotkeyMode, hotkey: this.hotkeyLabel(), fallback: this.shortcutRegistered ? this.shortcut : "" };
   }
 
   isSender(contents) {
@@ -233,27 +480,76 @@ export class DictationManager {
   }
 
   async initialize() {
+    this.prepareSpare();
     // The pill's buttons must work with no Clyra window, so this IPC lives here.
+    ipcMain.removeAllListeners("dictation:pill-interactive");
+    ipcMain.on("dictation:pill-interactive", (event, interactive) => {
+      if (!this.window || this.window.isDestroyed() || event.sender.id !== this.window.webContents.id) return;
+      if (process.platform !== "linux") this.window.setIgnoreMouseEvents(!interactive, { forward: true });
+    });
+    ipcMain.removeAllListeners("dictation:pill-move");
+    ipcMain.on("dictation:pill-move", (event, delta) => {
+      if (!this.window || this.window.isDestroyed() || event.sender.id !== this.window.webContents.id) return;
+      const dx = Math.round(Number(delta?.dx) || 0);
+      const dy = Math.round(Number(delta?.dy) || 0);
+      if (!dx && !dy) return;
+      const b = this.window.getBounds();
+      const next = { x: b.x + dx, y: b.y + dy };
+      // Keep the capsule reachable: its anchor (bottom centre of the canvas) must stay on a screen.
+      const anchor = { x: next.x + Math.round(b.width / 2), y: next.y + b.height - 30 };
+      if (!screen.getAllDisplays().some((d) => anchor.x >= d.bounds.x && anchor.x < d.bounds.x + d.bounds.width && anchor.y >= d.bounds.y && anchor.y < d.bounds.y + d.bounds.height)) return;
+      this.window.setBounds({ ...next, width: b.width, height: b.height });
+      this.userPosition = next;
+    });
     ipcMain.removeAllListeners("dictation:pill-action");
     ipcMain.on("dictation:pill-action", (event, action) => {
       if (!this.window || event.sender.id !== this.window.webContents.id) return;
       void this.action(String(action || "cancel"));
     });
-    this.shortcut = this.shortcutCandidates.find((candidate) => {
+    this.applyHotkey(this.readFlowSettings().hotkey, { persist: false });
+  }
+
+  /** Switch the dictation hotkey (tray -> Dictation hotkey). Persists the choice. */
+  applyHotkey(id, { persist = true } = {}) {
+    const preset = HOTKEY_PRESETS.find((candidate) => candidate.id === id) || HOTKEY_PRESETS.find((candidate) => candidate.id === DEFAULT_HOTKEY);
+    this.hotkeyPreset = preset;
+    if (this.shortcutRegistered) { try { globalShortcut.unregister(this.shortcut); } catch { /* already gone */ } }
+    this.shortcutRegistered = false;
+    this.stopHotkey?.();
+    this.stopHotkey = null;
+    clearInterval(this.permissionTimer);
+    this.permissionTimer = null;
+    this.machine.reset();
+    // Always-available backup combo: the first one no other app owns.
+    this.shortcut = preset.combos.find((candidate) => {
       globalShortcut.unregister(candidate);
       if (globalShortcut.isRegistered(candidate)) return false;
-      this.shortcutRegistered = globalShortcut.register(candidate, () => void this.toggle());
+      this.shortcutRegistered = globalShortcut.register(candidate, () => this.hotkeyPressed());
       return this.shortcutRegistered;
-    }) || this.shortcutCandidates[0];
+    }) || preset.combos[0];
     if (!this.shortcutRegistered) console.warn("[flow] every fallback dictation shortcut is owned by another app.");
-    this.stopHotkey = process.env.CLYRA_DISABLE_KEY_HOOK === "1" ? null : startHotkeyListener(this.machine);
-    this.hotkeyMode = this.stopHotkey ? "hold" : this.shortcutRegistered ? "toggle" : "none";
-    if (!this.stopHotkey && process.platform === "darwin" && process.env.CLYRA_DISABLE_KEY_HOOK !== "1") this.awaitHotkeyPermission();
-    console.log(`[flow] hotkey ready: ${this.hotkeyMode === "hold" ? HOTKEY_LABEL + " (hold = push-to-talk, tap = hands-free)" : this.shortcut}`);
+    // A single-key tap needs the OS key hook, which can be unavailable (permissions, secure input).
+    if (preset.tap && process.env.CLYRA_DISABLE_KEY_HOOK !== "1") {
+      this.stopHotkey = startHotkeyListener(this.machine, console, preset.tap);
+      if (!this.stopHotkey && process.platform === "darwin") this.awaitHotkeyPermission();
+    }
+    this.hotkeyMode = this.stopHotkey ? "tap" : this.shortcutRegistered ? "combo" : "none";
+    if (persist) this.writeFlowSettings({ hotkey: preset.id });
+    console.log(`[flow] hotkey ready: ${this.hotkeyLabel()} starts/stops dictation`);
+  }
+
+  /** "⌃⌥Space" on macOS; extras (tap Right Option) appended when the key hook is running. */
+  hotkeyLabel() {
+    const mac = process.platform === "darwin";
+    const combo = this.shortcutRegistered
+      ? (mac ? this.shortcut.replace(/Control|Ctrl/g, "⌃").replace(/Alt|Option/g, "⌥").replace(/Shift/g, "⇧").replace(/Command|Cmd|Super/g, "⌘").replace(/\+/g, "") : this.shortcut)
+      : "";
+    const extra = this.stopHotkey && this.hotkeyPreset?.tapLabel ? `tap ${this.hotkeyPreset.tapLabel}` : "";
+    return [extra, combo].filter(Boolean).join(" or ") || "no hotkey available";
   }
 
   /**
-   * Right-Option needs macOS Accessibility. Ask once, then keep checking so the
+   * The Right-Option tap needs macOS Accessibility. Ask once, then keep checking so the
    * better hotkey switches on the moment the user ticks Clyra in Settings
    * (no relaunch), while the fallback shortcut works in the meantime.
    */
@@ -266,11 +562,8 @@ export class DictationManager {
       let ok = false;
       try { ok = systemPreferences.isTrustedAccessibilityClient(false); } catch { /* ignore */ }
       if (ok || trusted) {
-        this.stopHotkey = startHotkeyListener(this.machine);
-        if (this.stopHotkey) {
-          this.hotkeyMode = "hold";
-          console.log(`[flow] hotkey upgraded: ${HOTKEY_LABEL} (hold = push-to-talk, tap = hands-free)`);
-        }
+        this.stopHotkey = startHotkeyListener(this.machine, console, this.hotkeyPreset?.tap || "AltRight");
+        if (this.stopHotkey) console.log(`[flow] key hook ready: tap ${this.hotkeyPreset?.tapLabel || "the hotkey"} also toggles dictation`);
         if (this.stopHotkey || attempts > 5) { clearInterval(this.permissionTimer); this.permissionTimer = null; }
       }
       if (attempts > 200) { clearInterval(this.permissionTimer); this.permissionTimer = null; }
@@ -278,6 +571,9 @@ export class DictationManager {
   }
 
   destroy() {
+    clearTimeout(this.watchdog);
+    try { this.spare?.destroy(); } catch { /* gone */ }
+    this.spare = null;
     if (this.permissionTimer) clearInterval(this.permissionTimer);
     this.stopHotkey?.();
     this.stopHotkey = null;
@@ -411,12 +707,39 @@ export class DictationManager {
    */
   positionPill() {
     if (!this.window || this.window.isDestroyed()) return;
-    const cursor = screen.getCursorScreenPoint();
-    const display = screen.getDisplayNearestPoint(cursor);
+    const known = this.targetDisplayId != null ? screen.getAllDisplays().find((d) => d.id === this.targetDisplayId) : null;
+    const display = known || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const { x, y, width, height } = display.workArea;
-    const px = Math.round(x + (width - PILL_WIDTH) / 2);
-    const py = Math.round(y + height - PILL_HEIGHT - Math.max(PILL_MARGIN, 28));
-    this.window.setBounds({ x: px, y: py, width: PILL_WIDTH, height: PILL_HEIGHT });
+    // One fixed, transparent canvas for the whole life of the pill: the capsule morphs inside it, so
+    // the window itself is never resized mid-animation (that is what made the old one lurch).
+    const w = Math.min(PREVIEW_WIDTH, width - 16);
+    const h = Math.min(PREVIEW_HEIGHT, height - 16);
+    if (this.userPosition) {
+      const anchor = { x: this.userPosition.x + Math.round(w / 2), y: this.userPosition.y + h - 30 };
+      if (screen.getAllDisplays().some((d) => anchor.x >= d.bounds.x && anchor.x < d.bounds.x + d.bounds.width && anchor.y >= d.bounds.y && anchor.y < d.bounds.y + d.bounds.height)) {
+        this.window.setBounds({ x: this.userPosition.x, y: this.userPosition.y, width: w, height: h });
+        return;
+      }
+      this.userPosition = null;
+    }
+    this.window.setBounds({
+      x: Math.round(x + (width - w) / 2),
+      y: Math.round(y + height - h + 12),
+      width: w,
+      height: h,
+    });
+  }
+
+  /** Put the pill on the display of the window being dictated into (not just where the cursor is). */
+  followFocusedWindow(rect) {
+    if (!rect || this.userPosition) return;
+    try {
+      const display = screen.getDisplayMatching({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) });
+      if (display && display.id !== this.targetDisplayId) {
+        this.targetDisplayId = display.id;
+        this.positionPill();
+      }
+    } catch { /* keep the current display */ }
   }
 
   async openPrivacySettings(kind = "microphone") {
@@ -467,21 +790,23 @@ export class DictationManager {
     return this.openPrivacySettings("camera");
   }
 
-  ensurePill() {
-    if (this.window && !this.window.isDestroyed()) {
-      this.positionPill();
-      return this.window;
-    }
+  /**
+   * The pill is a FRESH window for every dictation. A window that has lived through a Space
+   * change (full-screen app, desktop switch) can stay stranded on the old Space and never
+   * reappear; a never-shown window always opens on the Space you are in right now. A spare is
+   * pre-loaded so a new window costs nothing at hotkey time.
+   */
+  createPillWindow() {
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
     const { x, y, width, height } = display.workArea;
-    this.window = new BrowserWindow({
+    const win = new BrowserWindow({
       // The content grows from a circle within this transparent canvas, which
       // keeps the expansion optically centred on any display.
-      width: PILL_WIDTH,
-      height: PILL_HEIGHT,
-      x: Math.round(x + (width - PILL_WIDTH) / 2),
-      y: Math.round(y + height - PILL_HEIGHT - Math.max(PILL_MARGIN, 28)),
+      width: PREVIEW_WIDTH,
+      height: PREVIEW_HEIGHT,
+      x: Math.round(x + (width - PREVIEW_WIDTH) / 2),
+      y: Math.round(y + height - PREVIEW_HEIGHT + 12),
       show: false,
       frame: false,
       transparent: true,
@@ -502,20 +827,41 @@ export class DictationManager {
         backgroundThrottling: false,
       },
     });
-    this.window.setAlwaysOnTop(true, "floating");
-    this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setFullScreenable(false);
+    // Click-through everywhere except over the capsule itself (the page reports hover via IPC),
+    // so the big transparent canvas never blocks the app underneath.
+    if (process.platform !== "linux") win.setIgnoreMouseEvents(true, { forward: true });
     if (process.platform === "darwin") {
-      try {
-        this.window.setWindowButtonVisibility(false);
-      } catch {
-        // Older Electron builds may not expose this helper.
-      }
+      try { win.setWindowButtonVisibility(false); } catch { /* older Electron */ }
     }
+    win.loadFile(this.pillPath).catch(() => undefined);
+    return win;
+  }
+
+  prepareSpare() {
+    if (this.spare && !this.spare.isDestroyed()) return;
+    this.spare = this.createPillWindow();
+  }
+
+  ensurePill() {
+    if (this.window && !this.window.isDestroyed()) return this.window;
+    const win = this.spare && !this.spare.isDestroyed() ? this.spare : this.createPillWindow();
+    this.spare = null;
+    this.window = win;
+    this.pinPill(win, { first: true });
     this.positionPill();
-    this.window.loadFile(this.pillPath).catch(() => undefined);
-    this.window.webContents.once("did-finish-load", () => this.emitPill());
-    this.window.on("closed", () => { this.window = null; });
-    return this.window;
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", () => this.emitPill());
+    win.on("closed", () => { if (this.window === win) this.window = null; });
+    // Next dictation's window, ready and never shown.
+    setTimeout(() => this.prepareSpare(), 400);
+    return win;
+  }
+
+  /** Done with this dictation: throw the window away so the next one opens on the current Space. */
+  retirePill() {
+    const win = this.window;
+    this.window = null;
+    if (win && !win.isDestroyed()) win.destroy();
   }
 
   emitPill() {
@@ -529,25 +875,104 @@ export class DictationManager {
   }
 
   setState(payload) {
+    const previousPhase = this.phase;
     this.payload = { ...this.payload, ...payload };
     if (payload.phase === "idle" || payload.phase === "arming") this.payload.handsFree = false;
     this.phase = this.payload.phase || "idle";
     if (this.phase === "idle") {
       this.handsFree = false;
+      this.autoStop = false;
       this.pendingStop = false;
       this.captureRequested = false;
+      this.previewActive = false;
       this.machine.reset();
       this.unregisterEscape();
+      clearTimeout(this.watchdog);
       const current = this.window;
-      if (current && !current.isDestroyed()) setTimeout(() => current.hide(), 650);
-    } else {
+      // Retire only if nothing new started in the meantime.
+      if (current && !current.isDestroyed()) setTimeout(() => { if (this.phase === "idle" && this.window === current) this.retirePill(); }, 1_500);
+    } else if (!this.inline) {
       const pill = this.ensurePill();
-      this.positionPill();
+      if (this.phase !== previousPhase) {
+        this.positionPill();
+        this.pinPill(pill);
+      }
+
       // showInactive keeps the user's target app focused while the overlay appears.
       pill.showInactive();
+      // Keep it above everything for the whole session, even if you switch apps, tabs or Spaces mid-dictation.
+      if (!this.topTimer) this.topTimer = setInterval(() => {
+        const win = this.window;
+        if (!win || win.isDestroyed() || this.phase === "idle") return;
+        try { win.moveTop(); if (!win.isVisible()) win.showInactive(); } catch { /* window closing */ }
+      }, 700);
+      this.registerEscape();
+    } else {
       this.registerEscape();
     }
+    if (this.phase !== previousPhase) this.armWatchdog();
+    if (this.phase === "idle") { clearInterval(this.topTimer); this.topTimer = null; }
+    if (this.inline) {
+      this.emitUi("dictation:state", this.payload);
+      if (this.phase === "idle") this.inline = false;
+      return;
+    }
     this.emitPill();
+  }
+
+  /**
+   * No phase may last forever: a stuck pill that can't be closed is the worst failure
+   * a system-wide tool can have. Every phase has a ceiling after which it recovers on its own.
+   */
+  armWatchdog() {
+    clearTimeout(this.watchdog);
+    // The UI recorder normally starts in ~300ms; after 2.5s switch to the standalone recorder.
+    const limits = { arming: this.fellBack ? 8_000 : (this.native && this.engine ? 2_500 : 6_000), processing: 45_000, optimising: 45_000, error: 5_000, done: 4_000, preview: 60_000, selection: 30_000, listening: 330_000 };
+    const ms = limits[this.phase];
+    if (!ms) return;
+    const phase = this.phase;
+    const activation = this.activationId;
+    this.watchdog = setTimeout(() => {
+      if (this.phase !== phase || activation !== this.activationId) return;
+      if (phase === "arming" && this.captureRequested && !this.nativeActive && this.native && this.engine && !this.fellBack) {
+        // The Clyra window never started recording (stalled or reloading): record natively instead.
+        console.warn("[flow] UI recorder did not start in time; switching to the standalone recorder");
+        this.fellBack = true;
+        this.emitUi("dictation:trigger", { type: "cancel" });
+        void this.nativeStart(activation);
+        this.armWatchdog();
+        return;
+      }
+      if (phase === "listening") { this.requestStop(); return; }
+      if (phase === "error" || phase === "done") { this.setState({ phase: "idle", detail: "" }); return; }
+      if (phase === "preview" || phase === "selection") { this.cancel(); return; }
+      this.forceReset(phase === "arming" ? "Dictation could not start. Press the hotkey to try again." : "Dictation took too long and was stopped.");
+    }, ms);
+  }
+
+  /**
+   * Keep the pill above everything and on every Space / full-screen app. ORDER MATTERS on
+   * macOS: setAlwaysOnTop() rewrites the window's collection behaviour, so "all workspaces"
+   * must be (re)applied AFTER it. Re-levelling without re-applying it silently strands the
+   * pill on one Space — the "spawns randomly behind things / doesn't appear" bug.
+   */
+  pinPill(pill, { first = false } = {}) {
+    if (!pill || pill.isDestroyed()) return;
+    pill.setAlwaysOnTop(true, "screen-saver", 1);
+    // skipTransformProcessType after the first call: re-transforming on every show makes the Dock icon flicker.
+    pill.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: !first });
+    pill.moveTop();
+  }
+
+  /** Hard reset from any state: stop recorders, clear the gesture, tell the UI, close the pill. */
+  forceReset(message = "") {
+    this.activationId += 1;
+    if (this.nativeActive) { this.native?.cancel(); this.nativeActive = false; }
+    this.emitUi("dictation:trigger", { type: "cancel" });
+    this.machine.reset();
+    this.fellBack = false;
+    this.target = null;
+    this.setState(message ? { phase: "error", detail: message } : { phase: "idle", detail: "" });
   }
 
   registerEscape() {
@@ -561,7 +986,7 @@ export class DictationManager {
     this.escapeRegistered = false;
   }
 
-  async toggle({ manual = false } = {}) {
+  async toggle({ manual = false, inline = false, selection = "" } = {}) {
     if (["listening", "processing", "optimising"].includes(this.phase) || (this.phase === "arming" && this.captureRequested)) {
       this.handsFree = false;
       this.requestStop();
@@ -584,6 +1009,14 @@ export class DictationManager {
     // They can be slow when another app is busy, which used to make Cmd+L
     // feel broken even though the global shortcut had fired.
     const activationId = ++this.activationId;
+    // Started from Clyra's chat composer: the composer shows its own inline bar (same animations), so no floating
+    // pill is created and the text goes straight into the draft instead of being pasted.
+    this.inline = Boolean(inline);
+    this.inlineSelection = this.inline ? String(selection || "").trim().slice(0, 20_000) : "";
+    this.targetDisplayId = null;
+    this.fellBack = false;
+    this.autoStop = !manual;
+    this.heardSpeech = false;
     this.target = { application: "", selectedText: "" };
     this.setState({ phase: "arming", detail: "" });
 
@@ -599,13 +1032,14 @@ export class DictationManager {
     // start-up and are delivered as a "target" update before anything is inserted.
     this.captureRequested = true;
     this.target = { application: "", selectedText: "" };
-    this.setState({ phase: "arming", application: "", selectedText: "", detail: "" });
-    if (!this.useRenderer() && this.native && this.engine) {
+    this.setState({ phase: "arming", application: "", selectedText: this.inlineSelection.slice(0, 600), edit: null, detail: "", partial: "", diff: null, finalText: "", clipboard: false, resultText: "" });
+    if (this.native && this.engine?.available) {
       // Clyra's UI isn't up (closed, hidden at login, or still booting): run the
       // standalone pipeline so the hotkey works instantly regardless.
       void this.nativeStart(activationId);
     } else {
       this.emitUi("dictation:trigger", { type: "start", target: { ...this.target }, manual: true });
+      if (this.autoStop) this.emitUi("dictation:trigger", { type: "autostop" });
       if (this.pendingStop) {
         // Released before the mic was requested: the renderer defers the stop
         // until capture is live, so nothing said is lost and nothing hangs.
@@ -614,11 +1048,14 @@ export class DictationManager {
       }
     }
 
-    const [application, selectedText] = await Promise.all([
-      frontmostApplication().catch(() => ""),
+    if (this.inline) { this.target = { application: "Clyra", selectedText: this.inlineSelection }; return; }
+    const [context, selectedText] = await Promise.all([
+      frontmostContext().catch(() => ({ application: "", rect: null })),
       readSelectedText().catch(() => ""),
     ]);
+    const application = context.application;
     if (activationId !== this.activationId || this.phase === "idle") return;
+    this.followFocusedWindow(context.rect);
     // Selection is context, not a separate mode. This lets someone select a
     // paragraph and simply say “make this friendlier” without learning UI.
     this.target = { application, selectedText };
@@ -627,6 +1064,7 @@ export class DictationManager {
   }
 
   async action(action) {
+    console.log(`[flow] pill action: ${action} (phase=${this.phase})`);
     if (action === "cancel") return this.cancel();
     if (action === "stop") {
       // The pill's stop button: end capture and transcribe right now. Clicking
@@ -638,6 +1076,13 @@ export class DictationManager {
         this.refocus = frontmostApplication()
           .then((current) => (current === intended ? undefined : focusApplication(intended)))
           .catch(() => undefined);
+      } else if (isClyraProcessName(intended)) {
+        // Dictating into Clyra's own composer: the pill click took focus, hand it back to the chat window.
+        const contents = this.uiContents();
+        if (contents && !contents.isDestroyed()) {
+          const owner = BrowserWindow.fromWebContents(contents) || BrowserWindow.getAllWindows().find((w) => w.webContents.id === contents.id);
+          this.refocus = Promise.resolve().then(() => { owner?.focus(); contents.focus(); }).then(() => wait(80)).catch(() => undefined);
+        }
       }
       if (["arming", "listening"].includes(this.phase)) this.requestStop();
       return;
@@ -662,6 +1107,8 @@ export class DictationManager {
     if (this.nativeActive) { this.native?.cancel(); this.nativeActive = false; }
     this.emitUi("dictation:trigger", { type: "cancel" });
     this.target = null;
+    this.fellBack = false;
+    this.machine.reset();
     this.setState({ phase: "idle", detail: "" });
   }
 
@@ -670,18 +1117,74 @@ export class DictationManager {
    * it, keep the transcript on the clipboard (never lose the user's words),
    * ask macOS to show its permission prompt, and tell the pill to say so.
    */
-  clipboardOnly(text) {
+  clipboardOnly(text, { reason = "no-field" } = {}) {
     clipboard.writeText(text);
-    try { systemPreferences.isTrustedAccessibilityClient(true); } catch { /* prompt is best-effort */ }
-    return { ok: true, method: "clipboard-only", note: "Copied — press ⌘V to paste" };
+    if (reason === "no-permission") { try { systemPreferences.isTrustedAccessibilityClient(true); } catch { /* prompt is best-effort */ } }
+    return {
+      ok: true,
+      method: "clipboard-only",
+      note: reason === "no-permission" ? "Saved to clipboard — press ⌘V to paste" : "Saved to clipboard — click a text field, then ⌘V",
+    };
   }
 
-  async insert({ text, target }) {
+  /**
+   * Show what is about to happen, then do it: the heard words appear, removed words are struck
+   * through and generated/corrected words glow blue, then the final text sweeps in with a gradient
+   * as it is pasted into the app you are in. Returns insert()'s result.
+   */
+  async presentAndInsert({ raw = "", text = "", target }) {
     if (!text?.trim()) throw new Error("Clyra received no text to insert.");
+    const activation = this.activationId;
+    const live = () => activation === this.activationId && this.phase !== "idle";
+    const diff = raw && raw.trim() !== text.trim() ? wordDiff(raw, text) : null;
+    const display = text.length > 420 ? `${text.slice(0, 420).trimEnd()}…` : text;
+    // The paste is released when the final text starts to sweep in (right away if there are no edits to show).
+    const probe = focusedElementKind();
+    let result = null;
+    let failure = null;
+    let startPaste = () => undefined;
+    const pasteGate = new Promise((resolve) => { startPaste = resolve; });
+    const insertion = (async () => { await pasteGate; await sleep(60); if (!live()) throw new Error("Cancelled."); return this.insert({ text, target, probe }); })()
+      .then((value) => { result = value; }, (error) => { failure = error; });
+    // Wait up to `ms`, surfacing a failed paste immediately instead of after the animation.
+    const settle = async (ms) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { if (failure) throw failure; if (!live()) throw new Error("Cancelled."); await sleep(40); }
+    };
+    // Long text glides inside the fixed-height pill; give it time to be read.
+    const overflowMs = Math.min(3_000, Math.max(0, Math.ceil(display.length / 60) - 2) * 800);
+    if (hasEdits(diff) && process.env.CLYRA_FLOW_NO_PREVIEW !== "1") {
+      const count = (type) => diff.filter((segment) => segment.type === type).reduce((n, segment) => n + String(segment.text).split(/\s+/).filter(Boolean).length, 0);
+      this.setState({ phase: "refining", detail: "", diff, finalText: display });
+      // Long enough for every removed word to be crossed out and every new word to appear, plus time to read it.
+      await settle(Math.min(6_000, 650 + count("del") * 110 + 280 + count("add") * 140 + 1_200 + overflowMs));
+    }
+    this.setState({ phase: "revealing", detail: "", diff: null, finalText: display });
+    startPaste();   // the paste lands as the final text sweeps in
+    await settle(1_100 + overflowMs);
+    await insertion;
+    if (failure) throw failure;
+    console.log(`[flow] insert result: ${result?.method || "ok"}${result?.note ? ` (${result.note})` : ""}`);
+    return result;
+  }
+
+  async insert({ text, target, probe }) {
+    if (!text?.trim()) throw new Error("Clyra received no text to insert.");
+    if (this.inline) { this.emitUi("dictation:inline-result", { text, edit: this.payload.edit || null }); return { ok: true, method: "composer" }; }
+    // A click on the pill may have activated Clyra: wait for the refocus started in
+    // action("stop") (and discard any focus probe taken while the pill had focus).
+    if (this.refocus) { await this.refocus; this.refocus = null; probe = null; }
+    const field = process.platform === "darwin" ? await (probe || focusedElementKind()) : { kind: "unknown", role: "" };
+    // "No focused element" is common for apps whose accessibility tree is still waking up (browsers, Electron),
+    // so only treat it as "nowhere" for the desktop itself; everywhere else we try the paste.
+    const desktopApp = /^(Finder|loginwindow|Dock|Window Server)$/i.test(String(target?.application || this.target?.application || ""));
+    const nowhere = field.kind === "blocked" || (field.kind === "none" && (desktopApp || !(target?.application || this.target?.application)));
+    console.log(`[flow] insert into ${target?.application || "unknown app"}: focus=${field.kind}${field.role ? `:${field.role}` : ""}, ${text.length} chars${target?.selectedText ? ", replacing selection" : ""}`);
+    const keepCopy = field.kind === "ambiguous" || field.kind === "unknown" || field.kind === "none";
     // Test hook: report instead of pasting into whatever app is in front.
     if (process.env.CLYRA_FLOW_DRY_RUN === "1") {
-      console.log(`[flow] dry-run insert (${target?.application || "unknown app"}): ${JSON.stringify(text)}`);
-      return { ok: true, method: "dry-run" };
+      console.log(`[flow] dry-run insert (${target?.application || "unknown app"}, focus=${field.kind}${field.role ? `:${field.role}` : ""}${nowhere ? ", would save to clipboard" : ""}): ${JSON.stringify(text)}`);
+      return nowhere ? { ok: true, method: "clipboard-only", note: "Saved to clipboard — click a text field, then ⌘V" } : { ok: true, method: "dry-run" };
     }
     if (process.platform === "win32") {
       // The Flow window is shown inactive, so the user's original field still
@@ -697,25 +1200,32 @@ export class DictationManager {
         return { ok: true, method: "clipboard-fallback" };
       } catch (error) {
         throw error instanceof Error ? error : new Error("Clyra could not paste into the active Windows field.");
-      } finally { restoreClipboard(saved); }
+      } finally { restoreClipboardLater(saved, text); }
     }
     if (process.platform !== "darwin") throw new Error("Native insertion is currently supported on macOS and Windows only.");
-    // A click on the pill may have activated Clyra: wait for the refocus started
-    // in action("stop") so the paste lands in the app the user was typing in.
-    if (this.refocus) { await this.refocus; this.refocus = null; }
     let trustedNow = true;
     try { trustedNow = systemPreferences.isTrustedAccessibilityClient(false); } catch { trustedNow = true; }
-    if (!trustedNow) return this.clipboardOnly(text);
+    if (!trustedNow) return this.clipboardOnly(text, { reason: "no-permission" });
+    // Nothing editable is focused (desktop, Finder, a page that isn't a field...): never fire a
+    // blind Cmd+V. Save the text where it can't be lost and tell the user.
+    if (nowhere) return this.clipboardOnly(text);
     // Fast path (~150ms): the pill is a non-activating panel, so the app being
     // dictated into is still frontmost; post Cmd+V directly with no AppleScript.
     {
       const savedFast = snapshotClipboard();
+      let pasted = false;
       try {
         clipboard.writeText(text);
+        // If one of Clyra's own windows still holds keyboard focus, the key tap would go to it instead of the
+        // target app (even while the OS reports the target frontmost). Hand focus back first.
+        const intendedApp = String(target?.application || this.target?.application || "").trim();
+        if (intendedApp && !isClyraProcessName(intendedApp) && BrowserWindow.getFocusedWindow()) await focusApplication(intendedApp).catch(() => undefined);
         await wait(30);
-        if (pasteWithKeyTap()) { await wait(140); return { ok: true, method: "keytap" }; }
+        console.log(`[flow] pasting via key tap; frontmost=${await frontmostApplication().catch(() => "?")} focusedWindow=${BrowserWindow.getFocusedWindow()?.getTitle() || "none"}`);
+        if (pasteWithKeyTap()) { pasted = true; await wait(140); return { ok: true, method: "keytap", ...(keepCopy ? { note: "Inserted · copy kept on clipboard" } : {}) }; }
       } finally {
-        restoreClipboard(savedFast);
+        // A clear text field: put the user's previous clipboard back. Unsure (web editors): keep the dictated text there.
+        if (!(pasted && keepCopy)) restoreClipboardLater(savedFast, text);
       }
     }
     const intended = String(target?.application || this.target?.application || "").trim();
@@ -746,10 +1256,10 @@ export class DictationManager {
       return { ok: true };
     } catch (error) {
       const trusted = systemPreferences.isTrustedAccessibilityClient(false);
-      if (!trusted) return this.clipboardOnly(text);
+      if (!trusted) return this.clipboardOnly(text, { reason: "no-permission" });
       throw error instanceof Error ? error : new Error("Clyra could not paste the transcribed text.");
     } finally {
-      restoreClipboard(saved);
+      restoreClipboardLater(saved, text);
     }
   }
 }

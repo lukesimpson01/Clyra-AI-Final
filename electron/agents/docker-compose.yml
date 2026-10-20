@@ -1,0 +1,121 @@
+# Clyra Agents — a local Rakazo stack (https://github.com/elie222/rakazo, Apache-2.0).
+# Derived from Rakazo's infra/compose/docker-compose.images.yml: the published images, Postgres and the
+# api/worker/web services. Clyra runs it with SANDBOX_PROVIDER=none (no sandbox supervisor or computer image), on
+# loopback-only ports that do not collide with Clyra's own dev server. Rakazo's model calls go to Clyra's
+# OpenAI-compatible relay on the host (RAKAZO_LOCAL_MODELS_URL), so no model key is stored in this stack.
+name: clyra-agents
+
+services:
+  postgres:
+    image: postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rakazo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-rakazo}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rakazo} -d ${POSTGRES_DB:-rakazo}"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  data-init:
+    image: ${BUSYBOX_IMAGE:-busybox:1}
+    command: ["chown", "-R", "1000:1000", "/data"]
+    network_mode: none
+    restart: "no"
+    volumes: [appdata:/data]
+
+  api:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
+    restart: unless-stopped
+    command: ["bash", "-lc", "pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start"]
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1536m
+    env_file: [.env]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    environment:
+      NODE_ENV: production
+      API_HOST: "0.0.0.0"
+      DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rakazo}
+      DATA_DIR: /data
+      SANDBOX_PROVIDER: none
+      CLOUD_AGENT_PROVIDER: none
+      WAKEUP_DRIVER: graphile
+      AGENT_RUNTIME: pi
+    ports: ["127.0.0.1:${RAKAZO_API_PORT:-47661}:3100"]
+    # Clyra runs without sandbox computers (SANDBOX_PROVIDER=none). Upstream stores those computers with kind "none"
+    # but its schema omits that value, so every thread snapshot failed validation. The manager writes a copy of the
+    # schema file with "none" added (patches/ids.ts) from the installed image; nothing else is changed.
+    volumes: [appdata:/data, ./patches/ids.ts:/app/packages/contracts/src/ids.ts:ro]
+    networks: [app, data]
+    depends_on:
+      postgres: { condition: service_healthy }
+      data-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  worker:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
+    restart: unless-stopped
+    command: ["pnpm", "--filter", "@rakazo/worker", "start"]
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1536m
+    env_file: [.env]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    environment:
+      BETTER_AUTH_SECRET: ""
+      SCREEN_PROXY_SECRET: ""
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rakazo}
+      DATA_DIR: /data
+      SANDBOX_PROVIDER: none
+      CLOUD_AGENT_PROVIDER: none
+      WAKEUP_DRIVER: graphile
+      AGENT_RUNTIME: pi
+    volumes: [appdata:/data, ./patches/ids.ts:/app/packages/contracts/src/ids.ts:ro]
+    networks: [app, data]
+    depends_on:
+      postgres: { condition: service_healthy }
+      data-init: { condition: service_completed_successfully }
+      api: { condition: service_healthy }
+
+  web:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
+    restart: unless-stopped
+    command: ["pnpm", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    environment:
+      NODE_ENV: production
+      API_PROXY_TARGET: http://api:3100
+      RAKAZO_HOST: localhost
+      RAKAZO_DESKTOP_STACK_TOKEN: ${RAKAZO_DESKTOP_STACK_TOKEN:-}
+      RAKAZO_IMAGE_TAG: ${RAKAZO_IMAGE_TAG:-edge}
+      SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET}
+    ports: ["127.0.0.1:${RAKAZO_WEB_PORT:-47660}:5173"]
+    networks: [app]
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  appdata:
+
+networks:
+  app:
+  data:
+    internal: true

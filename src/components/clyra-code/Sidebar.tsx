@@ -1,24 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  FilePlus2,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  PanelLeftClose,
-  Plus,
-  Search,
-  Settings2,
-  Trash2,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { VibeProject } from "./api";
 
@@ -29,6 +11,24 @@ export type ChatThread = {
 };
 
 export const SIDEBAR_DEFAULT_WIDTH = 280;
+
+/** A title that ellipsizes at rest and, like Codex, glides to reveal its end while its row is hovered. */
+function MarqueeText({ children, className }: { children: React.ReactNode; className?: string }) {
+  const outer = useRef<HTMLSpanElement | null>(null);
+  const inner = useRef<HTMLSpanElement | null>(null);
+  const [shift, setShift] = useState(0);
+  const measure = () => {
+    const o = outer.current;
+    const i = inner.current;
+    if (!o || !i) return;
+    setShift(Math.max(0, Math.ceil(i.scrollWidth - o.clientWidth)));
+  };
+  return (
+    <span ref={outer} onMouseEnter={measure} className={cn("cc-marquee relative block overflow-hidden whitespace-nowrap", className)} style={{ ["--marquee-shift" as string]: `${-shift}px`, ["--marquee-time" as string]: `${Math.min(4.5, Math.max(1.2, shift / 38))}s` }} data-overflow={shift > 0 || undefined}>
+      <span ref={inner} className="cc-marquee__inner inline-block">{children}</span>
+    </span>
+  );
+}
 export const SIDEBAR_MIN_WIDTH = 238;
 export const SIDEBAR_MAX_WIDTH = 344;
 export type SidebarSort = "recent" | "name";
@@ -225,14 +225,14 @@ export function Sidebar({
 
   // `isolate` keeps the shared selection surface below each row's content. The
   // neutral fill is intentionally quiet: hierarchy comes from space and type.
-  const rowBase = "group/row isolate relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1 rounded-[10px] text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#3977F6]/35";
+  const rowBase = "group/row isolate relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1 rounded-[12.5px] text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#3977F6]/35";
   /** The shared id lets the active surface move between rows without a flash. */
   const selectionHighlight = (layoutId: string) => (
     <motion.span
       layoutId={reduceMotion ? undefined : layoutId}
       aria-hidden
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-      className="pointer-events-none absolute inset-0 -z-10 rounded-[10px] bg-[#E8E9E8]"
+      className="pointer-events-none absolute inset-0 -z-10 rounded-[12.5px] bg-[rgba(26,28,31,0.055)]"
     />
   );
 
@@ -254,19 +254,10 @@ export function Sidebar({
           onClick={() => { toggleExpanded(project.id); onSelectProject(project.id); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSelectProject(project.id); } }}
           onContextMenu={(event) => { event.preventDefault(); openMenu(event, { kind: "project", projectId: project.id }); }}
-          className={cn(rowBase, "h-[40px] px-2", selected ? "text-[#222327]" : "text-[#45474C] hover:bg-black/[0.035]")}
+          className={cn(rowBase, "h-[30px] gap-[9px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !selected && "hover:bg-[rgba(26,28,31,0.04)]")}
         >
           {selected ? selectionHighlight("sidebar-project-selection") : null}
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label={isExpanded ? `Collapse ${displayName}` : `Expand ${displayName}`}
-            onClick={(event) => { event.stopPropagation(); toggleExpanded(project.id); }}
-            className="flex h-6 w-4 shrink-0 items-center justify-center rounded-[5px] text-[#A0A2A6] transition-colors duration-150 hover:text-[#5F6368]"
-          >
-            <ChevronRight className={cn("h-3 w-3 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]", isExpanded && "rotate-90")} strokeWidth={1.8} />
-          </button>
-          <Folder className="h-[17px] w-[17px] shrink-0 text-[#55585D]" strokeWidth={1.65} aria-hidden />
+          {isExpanded ? <FolderOpen className="h-[16px] w-[16px] shrink-0 text-[rgba(26,28,31,0.72)]" strokeWidth={1.6} aria-hidden /> : <Folder className="h-[16px] w-[16px] shrink-0 text-[rgba(26,28,31,0.72)]" strokeWidth={1.6} aria-hidden />}
           {editing?.kind === "project" && editing.projectId === project.id ? (
             <input
               ref={editRef}
@@ -284,7 +275,7 @@ export function Sidebar({
               initial={reduceMotion ? false : { opacity: 0, y: 2 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              className={cn("min-w-0 flex-1 truncate text-[13px] tracking-[-0.008em]", selected ? "font-medium" : "font-normal")}
+              className="min-w-0 flex-1 truncate text-[14px] font-[430] leading-[21px] tracking-[-0.01em]"
             >
               {highlight(displayName)}
             </motion.span>
@@ -322,7 +313,7 @@ export function Sidebar({
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               className="overflow-hidden"
             >
-              <div className="ml-[21px] border-l border-black/[0.06] py-1 pl-[8px]">
+              <div className="py-px pl-[25px]">
                 {projectThreads.length ? projectThreads.map((thread, index) => {
                   const threadSelected = project.id === activeProjectId && thread.id === activeSessionId;
                   const chatEditing = editing?.kind === "chat" && editing.projectId === project.id && editing.chatId === thread.id;
@@ -340,7 +331,7 @@ export function Sidebar({
                       onClick={() => onSelectChat(project.id, thread.id)}
                       onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSelectChat(project.id, thread.id); } }}
                       onContextMenu={(event) => { event.preventDefault(); openMenu(event, { kind: "chat", projectId: project.id, chatId: thread.id }); }}
-                      className={cn(rowBase, "h-[38px] pl-2.5 pr-1", threadSelected ? "text-[#222327]" : "text-[#5B5D62] hover:bg-black/[0.035]")}
+                      className={cn(rowBase, "h-[30px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !threadSelected && "hover:bg-[rgba(26,28,31,0.04)]")}
                     >
                       {threadSelected ? selectionHighlight("sidebar-thread-selection") : null}
                       {chatEditing ? (
@@ -355,7 +346,7 @@ export function Sidebar({
                           className="min-w-0 flex-1 rounded-[4px] bg-white px-1 text-[12px] text-[#303136] outline-none ring-1 ring-[#3977F6]/35"
                         />
                       ) : (
-                        <span className={cn("min-w-0 flex-1 truncate text-[12.5px] tracking-[-0.006em]", threadSelected && "font-medium")}>{highlight(threadTitle)}</span>
+                        <MarqueeText className="min-w-0 flex-1 text-[14px] font-[430] leading-[21px] tracking-[-0.01em]">{highlight(threadTitle)}</MarqueeText>
                       )}
                       {/* One state per thread. Each state has a text label, so colour is never the only signal. */}
                       {failedSessionId === thread.id ? (
@@ -446,19 +437,19 @@ export function Sidebar({
       animate={{ width: collapsed ? 0 : expandedWidth, opacity: collapsed ? 0 : 1 }}
       transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "relative flex h-full min-w-0 shrink-0 flex-col overflow-hidden border-r border-black/[0.07] bg-[#FAFAF9] font-[-apple-system,BlinkMacSystemFont,Inter,Segoe_UI,sans-serif]",
+        "relative flex h-full min-w-0 shrink-0 flex-col overflow-hidden border-r border-black/[0.06] bg-[#F9F9F8] font-[-apple-system,BlinkMacSystemFont,Inter,Segoe_UI,sans-serif]",
         drawer && "fixed inset-y-0 left-0 z-50 border-r-black/[0.08] shadow-[0_18px_40px_rgba(15,23,42,0.14)]",
         collapsed && "pointer-events-none border-r-0",
       )}
     >
       {/* Spacious product header with only controls that perform real actions. */}
       <div
-        className={cn("shrink-0 border-b border-black/[0.07] px-3 pb-2.5 pt-3", macInset && "pl-[78px]")}
+        className="shrink-0 px-2.5 pb-1 pt-3"
         style={macInset ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
       >
-        <div className="flex h-[36px] items-center gap-1.5">
+        <div className="flex h-[32px] items-center gap-1">
           {searchOpen ? (
-            <div className="flex h-[34px] min-w-0 flex-1 items-center gap-1.5 rounded-[9px] bg-white px-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.08]" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
+            <div className="flex h-[30px] min-w-0 flex-1 items-center gap-1.5 rounded-[8px] bg-white px-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.08]" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
               <Search className="h-3.5 w-3.5 shrink-0 text-[#77797E]" strokeWidth={1.7} aria-hidden />
               <input
                 autoFocus
@@ -475,14 +466,14 @@ export function Sidebar({
             </div>
           ) : (
             <>
-              <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-[18px] font-semibold tracking-[-0.035em] text-[#34363A]">Clyra <ChevronDown className="h-4 w-4 shrink-0 text-[#85878C]" strokeWidth={1.9} aria-hidden /></span>
+              <span className="flex min-w-0 flex-1 items-center gap-1 truncate px-1.5 text-[18px] font-semibold leading-6 tracking-[-0.02em] text-[rgba(26,28,31,0.85)]">Clyra Code <ChevronDown className="h-4 w-4 shrink-0 text-[rgba(26,28,31,0.45)]" strokeWidth={2} aria-hidden /></span>
               <div className="flex shrink-0 items-center gap-0.5" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
-                <button type="button" aria-label="Search" title="Search projects and tasks" onClick={() => setSearchOpen(true)} className="flex h-[32px] w-[32px] items-center justify-center rounded-[9px] text-[#686A6F] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[#34363A] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
-                  <Search className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                <button type="button" aria-label="Search" title="Search projects and tasks" onClick={() => setSearchOpen(true)} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#686A6F] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[#34363A] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
+                  <Search className="h-[15px] w-[15px]" strokeWidth={1.8} />
                 </button>
                 {onToggleCollapsed ? (
                   <button type="button" aria-label="Collapse sidebar" title="Collapse sidebar" onClick={onToggleCollapsed} className="flex h-[32px] w-[32px] items-center justify-center rounded-[9px] text-[#686A6F] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[#34363A] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
-                    <PanelLeftClose className="h-[17px] w-[17px]" strokeWidth={1.75} />
+                    <PanelLeftClose className="h-[15px] w-[15px]" strokeWidth={1.8} />
                   </button>
                 ) : null}
               </div>
@@ -494,11 +485,11 @@ export function Sidebar({
           type="button"
           onClick={() => (activeProjectId ? onNewChat(activeProjectId) : onNewProject())}
           aria-label={activeProjectId ? "New task" : newProjectLabel}
-          className="group mt-2 flex h-[42px] w-full items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium tracking-[-0.012em] text-[#3E4045] transition-[background-color,transform] duration-150 hover:bg-[#F0F0EF] active:scale-[0.992] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/35"
+          className="group mt-2 flex h-[30px] w-full items-center gap-[9px] rounded-[12.5px] px-2 text-left text-[14px] font-[430] tracking-[-0.01em] text-[rgba(26,28,31,0.85)] transition-[background-color,transform] duration-150 hover:bg-[rgba(26,28,31,0.04)] active:scale-[0.992] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/35"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
-          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center" aria-hidden>
-            <FilePlus2 className="h-[21px] w-[21px]" strokeWidth={1.85} />
+          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center" aria-hidden>
+            <SquarePen className="h-[16px] w-[16px]" strokeWidth={1.7} />
           </span>
           <span className="min-w-0 flex-1 truncate">{activeProjectId ? "New task" : newProjectLabel}</span>
           {activeProjectId ? null : <kbd className="rounded-[5px] bg-[#EEEEED] px-1.5 py-[1px] font-sans text-[10px] font-medium text-[#7A7C80]">⌘N</kbd>}
@@ -506,18 +497,18 @@ export function Sidebar({
       </div>
 
       {/* Scrolling body. The footer below stays anchored. */}
-      <div ref={listRef} onKeyDown={onListKeyDown} onClick={() => { setMenu(null); setAddMenu(null); }} className="cc-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <div ref={listRef} onKeyDown={onListKeyDown} onClick={() => { setMenu(null); setAddMenu(null); }} className="cc-scroll mt-1.5 min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {!needle && pinned.length ? (
           <section aria-label="Pinned projects" className="mb-3">
-            <h2 className="px-2 pb-1.5 pt-2 text-[10.5px] font-medium uppercase tracking-[0.09em] text-[#9A9CA0]">Pinned</h2>
+            <h2 className="px-2 pb-1 pt-2 text-[14px] font-medium text-[rgba(26,28,31,0.49)]">Pinned</h2>
             {pinned.map(renderProject)}
           </section>
         ) : null}
 
         {needle ? renderSearchResults() : null}
         {!needle ? <section aria-label="Projects">
-          <div className="flex h-[34px] items-center gap-1 px-2 pb-1 pt-2">
-            <h2 className="min-w-0 flex-1 truncate text-[10.5px] font-medium uppercase tracking-[0.09em] text-[#9A9CA0]">{noun}</h2>
+          <div className="flex h-[34px] items-center gap-1 px-2 pb-0.5 pt-3">
+            <h2 className="min-w-0 flex-1 truncate text-[14px] font-medium text-[rgba(26,28,31,0.49)]">{noun}</h2>
             {runningCount ? (
               <span className="flex items-center gap-1 rounded-full bg-[#3977F6]/[0.08] px-1.5 py-[1px] text-[10.5px] font-medium text-[#3977F6]" title={`${runningCount} agent${runningCount === 1 ? "" : "s"} working`}>
                 <span className="cc-running-dot cc-running-dot--inline" aria-hidden /> {runningCount}
@@ -589,7 +580,7 @@ export function Sidebar({
       </div>
 
       {/* Footer: one restrained row. Settings has a tooltip; the account is not a large card. */}
-      <div className={cn("flex h-[42px] shrink-0 items-center border-t border-black/[0.05]", collapsed ? "justify-center px-1" : "gap-2 px-2.5")}>
+      <div className={cn("flex h-[38px] shrink-0 items-center border-t border-black/[0.05]", collapsed ? "justify-center px-1" : "gap-2 px-2.5")}>
         <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-[#E8E8E7] text-[10px] font-semibold text-[#505258]" aria-hidden>L</span>
         {!collapsed ? (
           <>

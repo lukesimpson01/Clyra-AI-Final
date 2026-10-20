@@ -178,7 +178,9 @@ export class NavigationSimulationEngine {
     if (this.status !== "driving") return;
     const now = performance.now();
     if (this.lastTickAt == null) this.lastTickAt = now;
-    const dtSeconds = Math.min(0.25, (now - this.lastTickAt) / 1000);
+    // Wall-clock based so a throttled frame rate (background tab, slow GPU) does
+    // not slow the trip down; the cap only guards against a long suspend.
+    const dtSeconds = Math.min(1, (now - this.lastTickAt) / 1000);
     this.lastTickAt = now;
 
     const metersPerSecond = this.avgSpeedMps() * this.speed;

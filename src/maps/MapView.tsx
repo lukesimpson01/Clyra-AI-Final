@@ -21,7 +21,7 @@ interface MapViewProps {
   initialCenter: Coordinate;
   initialZoom?: number;
   onReady?: (controller: MapController, map: maplibregl.Map) => void;
-  onClick?: (coordinate: Coordinate) => void;
+  onClick?: (coordinate: Coordinate, hint?: { name: string; kind?: string }) => void;
   onMoveEnd?: (center: Coordinate, zoom: number) => void;
   /** Fires only for gestures the user made (drag, wheel, pinch), not programmatic camera moves. */
   onUserMove?: () => void;
@@ -61,6 +61,11 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       // is wasted GPU work here. A bounded tile cache also prevents a long
       // exploratory session from holding an ever-growing texture set.
       antialias: false,
+      // Lighter on the GPU: cap device pixel ratio, skip cross-source label
+      // collision work, and never fetch CJK glyph ranges from the network.
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.75),
+      crossSourceCollisions: false,
+      localIdeographFontFamily: "sans-serif",
       fadeDuration: 120,
       refreshExpiredTiles: false,
       maxTileCacheSize: 72,
@@ -102,6 +107,8 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       performance.mark("clyra-maps-load");
       const controller = new MapController(map);
       controller.ensureLayers();
+      controller.applyDetail();
+      map.on("pitchend", () => controller.applyDetail());
       controller.ensureConeImage();
       controllerRef.current = controller;
       onReady?.(controller, map);
@@ -111,7 +118,14 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       if ((e as { originalEvent?: unknown }).originalEvent) onUserMoveRef.current?.();
     });
 
-    map.on("click", (e) => onClickRef.current?.([e.lngLat.lng, e.lngLat.lat]));
+    map.on("click", (e) => {
+      // The vector tiles already carry names for POIs and buildings, so the card
+      // can show a real name instantly while the identify service fills in the rest.
+      const box: [maplibregl.PointLike, maplibregl.PointLike] = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+      const hit = map.queryRenderedFeatures(box).find((f) => f.properties?.name && /poi|housenumber|aerodrome|place/.test(f.sourceLayer ?? ""));
+      const hint = hit ? { name: String(hit.properties.name), kind: String(hit.properties.class ?? hit.properties.subclass ?? "") || undefined } : undefined;
+      onClickRef.current?.([e.lngLat.lng, e.lngLat.lat], hint);
+    });
     if (onMoveEnd) {
       map.on("moveend", () => {
         const c = map.getCenter();

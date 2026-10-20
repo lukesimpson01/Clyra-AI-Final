@@ -10,6 +10,7 @@ const AUTH_TIMEOUT_MS = 10 * 60_000;
 const SCOPES = [
   "user-read-private",
   "user-read-email",
+  "streaming",
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
@@ -30,7 +31,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Playlist editing and followed-artist reads were added later; existing
 // connections keep working without them and only see a reconnect hint when they
 // try one of those actions, so they are requested but not "required".
-const OPTIONAL_SCOPES = new Set(["user-follow-read", "playlist-modify-public", "playlist-modify-private"]);
+const OPTIONAL_SCOPES = new Set(["streaming", "user-follow-read", "playlist-modify-public", "playlist-modify-private"]);
 const REQUIRED_SCOPES = SCOPES.split(" ").filter((scope) => !OPTIONAL_SCOPES.has(scope));
 const successPage = `<!doctype html><title>Spotify connected to Clyra</title><style>body{margin:0;display:grid;min-height:100vh;place-items:center;background:#f8fafc;color:#162033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:min(340px,calc(100% - 48px));padding:32px;border:1px solid #e2e8f0;border-radius:24px;background:#fff;box-shadow:0 20px 50px #0f172a18;text-align:center}.logo{width:42px;height:42px;border-radius:50%}h1{margin:14px 0 7px;font-size:21px}p{margin:0;color:#64748b;line-height:1.55;font-size:14px}</style><main class="card"><svg class="logo" viewBox="0 0 24 24" fill="#1E6FFF"><circle cx="12" cy="12" r="12"/><path d="M17.2 16.6c-.2.3-.6.4-.9.2-2.5-1.5-5.6-1.9-9.3-1-.4.1-.7-.1-.8-.5-.1-.4.1-.7.5-.8 4-.9 7.5-.5 10.3 1.2.3.2.4.6.2.9zm1.2-2.7c-.3.4-.8.5-1.1.3-2.9-1.8-7.3-2.3-10.7-1.3-.4.1-.9-.1-1-.5-.1-.4.1-.9.5-1 3.9-1.2 8.7-.6 12 1.4.4.2.5.8.3 1.1zm.1-2.8C15.3 8.9 9.6 8.7 6.3 9.7c-.5.1-1-.2-1.1-.6-.1-.5.2-1 .6-1.1 3.8-1.2 10.1-.9 14 1.4.4.3.6.9.3 1.3-.3.4-.9.5-1.3.3z"/></svg><h1>Spotify is connected</h1><p>Return to Clyra — your music controls are ready.</p></main>`;
 
@@ -64,7 +65,8 @@ function safeFailure(stage, status, errorCode) {
  * on Linux) and never leave the main process.
  */
 export class SpotifyManager {
-  constructor({ tokenPath, uiContents, development = false, clientId, redirectPort }) {
+  constructor({ tokenPath, uiContents, development = false, clientId, redirectPort, playerHost = null }) {
+    this.playerHost = playerHost;
     this.tokenPath = tokenPath;
     this.uiContents = uiContents;
     // Provided solely by Electron main from its ignored .env / .env.local.
@@ -662,6 +664,17 @@ export class SpotifyManager {
     const pick = (devices) => devices.find((device) => device.id === preferId) || devices.find((device) => device.is_active) || devices.find((device) => /computer/i.test(device.type)) || devices[0];
     let devices = usable(await this.getDevices());
     let launched = false;
+    if (!devices.length && this.playerHost) {
+      // Preferred: Clyra's own in-app Connect device (official Web Playback SDK),
+      // so nothing else has to be installed or opened.
+      const playerId = await this.playerHost.ensure().catch(() => null);
+      if (playerId) {
+        for (let attempt = 0; attempt < 8 && !devices.length; attempt += 1) {
+          devices = usable(await this.getDevices().catch(() => []));
+          if (!devices.length) await delay(400);
+        }
+      }
+    }
     if (!devices.length) {
       launched = await this.launchApp();
       if (!launched) throw Object.assign(new Error("Install the Spotify app or open Spotify on any device, then press play again."), { code: "SPOTIFY_NO_DEVICE" });

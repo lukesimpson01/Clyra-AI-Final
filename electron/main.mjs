@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
-import { copyFileSync, existsSync, promises as fs, statSync } from "node:fs";
+import { copyFileSync, existsSync, openSync, promises as fs, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,12 +15,15 @@ const keepRunningInBackground = () => isAnywhereEnabled() || isFlowBackgroundEna
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
 import { EyeView } from "./eye-view.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
+import { AgentsManager } from "./agents/agents-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
+import { HOTKEY_PRESETS } from "./dictation-hotkey.mjs";
 import { FlowEngine } from "./flow-engine.mjs";
 import { FlowNative } from "./flow-native.mjs";
 import { SmartToolbarManager } from "./smart-toolbar-manager.mjs";
 import { GoogleWorkspaceManager } from "./google-workspace-manager.mjs";
 import { SpotifyManager } from "./spotify-manager.mjs";
+import { SpotifyPlayerHost } from "./spotify-player.mjs";
 import { DeepResearchManager } from "./deep-research-manager.mjs";
 import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
@@ -67,6 +71,52 @@ let browserManager = null;
 let eyeView = null;
 
 /** Reachability of the Clyra Eye server, for the workspace's offline message. */
+let locationRequest = null;
+async function getPreciseLocation(timeoutSeconds) {
+  if (process.platform !== "darwin") return { ok: false, error: "unsupported" };
+  if (locationRequest) return locationRequest;
+  locationRequest = (async () => {
+    const helperRoot = path.join(projectRoot, "native", "location-helper");
+    const appPath = path.join(helperRoot, "Clyra Location.app");
+    if (!existsSync(path.join(appPath, "Contents", "MacOS", "clyra-location"))) {
+      await new Promise((resolve) => execFile("/bin/sh", [path.join(helperRoot, "build.sh")], { timeout: 180_000 }, () => resolve(undefined)));
+    }
+    if (!existsSync(appPath)) return { ok: false, error: "unavailable" };
+    const out = path.join(tmpdir(), `clyra-location-${process.pid}-${Date.now()}.json`);
+    await new Promise((resolve) => execFile("/usr/bin/open", ["-W", "-n", "-g", "--stdout", out, appPath, "--args", String(timeoutSeconds)], { timeout: (timeoutSeconds + 8) * 1000 }, () => resolve(undefined)));
+    try {
+      const text = await fs.readFile(out, "utf8");
+      await fs.unlink(out).catch(() => {});
+      const parsed = JSON.parse(text.trim().split("\n").pop() || "{}");
+      return parsed && typeof parsed === "object" ? parsed : { ok: false, error: "unavailable" };
+    } catch {
+      return { ok: false, error: "timeout" };
+    }
+  })().finally(() => { locationRequest = null; });
+  return locationRequest;
+}
+
+let eyeServerChild = null;
+/** Spawns the Clyra Eye dev server (apps/clyra-eye) once per app session; returns true while it is starting. */
+function ensureEyeServer() {
+  if (process.env.CLYRA_EYE_URL) return false;
+  if (eyeServerChild && eyeServerChild.exitCode === null) return true;
+  const eyeRoot = path.join(projectRoot, "apps", "clyra-eye");
+  if (!existsSync(path.join(eyeRoot, "node_modules"))) return false;
+  try {
+    const log = openSync(path.join(tmpdir(), "clyra-eye.log"), "a");
+    const env = { ...process.env, BROWSER: "none" };
+    delete env.ELECTRON_RUN_AS_NODE;
+    eyeServerChild = spawn("npm", ["--prefix", eyeRoot, "run", "dev", "--", "--port", "5179", "--strictPort"], { cwd: projectRoot, env, stdio: ["ignore", log, log] });
+    eyeServerChild.once("exit", () => { eyeServerChild = null; });
+    app.once("will-quit", () => { try { eyeServerChild?.kill(); } catch { /* gone */ } });
+    return true;
+  } catch (error) {
+    console.warn("[eye] could not start the Clyra Eye server:", error?.message || error);
+    return false;
+  }
+}
+
 function probeEyeUrl(url) {
   return new Promise((resolve) => {
     const request = http.get(url, { timeout: 1500 }, (response) => {
@@ -78,6 +128,8 @@ function probeEyeUrl(url) {
   });
 }
 let surfaceManager = null;
+/** Clyra Agents: the local Rakazo stack (electron/agents). */
+let agentsManager = null;
 let dictationManager = null;
 let flowEngine = null;
 let flowNative = null;
@@ -88,6 +140,7 @@ const backgroundLaunch = process.argv.includes("--background") || Boolean(app.ge
 let smartToolbarManager = null;
 let googleWorkspaceManager = null;
 let spotifyManager = null;
+let spotifyPlayerHost = null;
 let deepResearchManager = null;
 let localMemoryManager = null;
 let companionManager = null;
@@ -116,6 +169,7 @@ let nativeManagersDestroyed = false;
  * way to reach it or quit it, which is not "runs in the background," it is
  * a leak.
  */
+let rebuildTrayMenu = null;
 function syncAnywhereTray() {
   const enabled = keepRunningInBackground();
   // Start hidden at login so the dictation hotkey is ready the moment you sit down.
@@ -137,6 +191,16 @@ function syncAnywhereTray() {
       anywhereTray?.setContextMenu(Menu.buildFromTemplate([
         { label: "Open Clyra", click: () => void showOrCreateWindow() },
         { label: `Dictation: ${dictationManager ? dictationManager.hotkeyInfo().hotkey : "starting…"}`, enabled: false },
+        {
+          label: "Dictation hotkey",
+          submenu: HOTKEY_PRESETS.map((preset) => ({
+            label: preset.label,
+            type: "radio",
+            checked: dictationManager?.hotkeyPreset?.id === preset.id,
+            click: () => { dictationManager?.applyHotkey(preset.id); rebuildTrayMenu?.(); },
+          })),
+        },
+        { label: "Reset dictation", click: () => dictationManager?.forceReset() },
         { type: "separator" },
         {
           label: "Keep dictation running in the background",
@@ -163,6 +227,7 @@ function syncAnywhereTray() {
         { label: "Quit Clyra Completely", click: () => { forceQuit = true; app.quit(); } },
       ]));
     };
+    rebuildTrayMenu = rebuildMenu;
     rebuildMenu();
     anywhereTray.on("click", () => void showOrCreateWindow());
   } catch (error) {
@@ -176,8 +241,14 @@ async function showOrCreateWindow() {
     mainWindow.focus();
     return;
   }
-  await ensureFullBoot();
-  await createWindow();
+  try {
+    await ensureFullBoot();
+    await createWindow();
+  } catch (error) {
+    console.error("[boot] could not open Clyra:", error);
+    dialog.showErrorBox("Clyra could not open", error instanceof Error ? error.message : String(error));
+    return;
+  }
   app.dock?.show?.();
   mainWindow?.show();
   mainWindow?.focus();
@@ -190,6 +261,12 @@ async function showOrCreateWindow() {
  * feel broken outside Clyra.
  */
 async function activateClyraShortcut(channel) {
+  // Fast path: Clyra is already in front, so there is nothing to restore — send the chord straight to the page.
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused() && uiView && !uiView.webContents.isDestroyed()) {
+    let onShellPage = true;
+    try { const path_ = new URL(uiView.webContents.getURL()).pathname; onShellPage = !(path_ === "/notes" || path_.startsWith("/notes/")); } catch { /* fall through to the full path */ }
+    if (onShellPage) { uiView.webContents.focus(); uiView.webContents.send(channel); return; }
+  }
   await showOrCreateWindow();
   const contents = uiView?.webContents;
   if (!contents || contents.isDestroyed()) return;
@@ -228,6 +305,7 @@ function destroyNativeManagers() {
   googleWorkspaceManager?.finishAuth?.();
   googleWorkspaceManager = null;
   spotifyManager?.finishAuth?.();
+  spotifyPlayerHost?.dispose();
   spotifyManager = null;
   deepResearchManager = null;
 }
@@ -987,9 +1065,20 @@ function registerIpc() {
       return { ok: false, error: "Clyra couldn't read local system status. Try again." };
     }
   });
+  // Precise location: a tiny CoreLocation helper app (native/location-helper) asks macOS for this Mac's position.
+  // It is its own app bundle so the system prompt appears even when the dev Electron binary's prompt never does.
+  ipcMain.handle("location:get", async (event, options) => {
+    authorize(event);
+    return getPreciseLocation(Number(options?.timeoutSeconds) || 12);
+  });
+  ipcMain.handle("agents:status", async (event) => { authorize(event); return agentsManager ? agentsManager.status() : { phase: "idle" }; });
+  ipcMain.handle("agents:start", async (event) => { authorize(event); if (!agentsManager) return { phase: "error", message: "Agents are not ready yet." }; void agentsManager.start(); return agentsManager.state; });
   ipcMain.handle("eye:status", async (event) => {
     authorize(event);
-    return { ok: true, url: eyeView.url, reachable: await probeEyeUrl(eyeView.url) };
+    const reachable = await probeEyeUrl(eyeView.url);
+    // Opening Clyra Eye starts its local server the first time, instead of asking for a terminal command.
+    const starting = reachable ? false : ensureEyeServer();
+    return { ok: true, url: eyeView.url, reachable, starting };
   });
   ipcMain.handle("eye:set-location", (event, payload) => { authorize(event); eyeView.setLocation(payload); return { ok: true }; });
   ipcMain.handle("eye:set-surface", (event, payload) => { authorize(event); eyeView.setSurface(payload || { visible: false }); return { ok: true }; });
@@ -1096,13 +1185,14 @@ function registerIpc() {
   ipcMain.handle("surface:update", (event, payload) => { authorize(event); return { ok: true, surface: surfaceManager.update(payload) }; });
   ipcMain.handle("surface:hide", (event, { id }) => { authorize(event); surfaceManager.hide(id); return { ok: true }; });
   ipcMain.handle("dictation:set-state", (event, payload) => { authorize(event); dictationManager?.setState(payload || { phase: "idle" }); return { ok: true }; });
-  ipcMain.handle("dictation:toggle", (event) => { authorize(event); void dictationManager?.toggle(); return { ok: true }; });
+  ipcMain.handle("dictation:toggle", (event, options) => { authorize(event); void dictationManager?.toggle({ inline: Boolean(options?.inline), selection: String(options?.selection || "") }); return { ok: true }; });
+  ipcMain.handle("dictation:cancel", (event) => { authorize(event); void dictationManager?.action("cancel"); return { ok: true }; });
   ipcMain.handle("dictation:shortcut-status", (event) => { authorize(event); return { registered: Boolean(dictationManager?.shortcutRegistered || dictationManager?.hotkeyMode === "hold"), ...dictationManager?.hotkeyInfo() }; });
   ipcMain.handle("dictation:service-url", (event) => {
     authorize(event);
     return `http://127.0.0.1:${appPort}`;
   });
-  ipcMain.handle("dictation:insert", async (event, payload) => { authorize(event); return dictationManager?.insert(payload || {}); });
+  ipcMain.handle("dictation:insert", async (event, payload) => { authorize(event); return dictationManager?.presentAndInsert(payload || {}); });
   ipcMain.handle("dictation:ensure-permissions", async (event) => {
     authorize(event);
     const mic = await dictationManager?.ensureMicrophoneAccess();
@@ -1509,6 +1599,10 @@ async function createWindow() {
   resizeUi();
   // Clyra's renderer takes over dictation only while it is loaded and has said
   // so; a reload or crash hands the hotkey straight back to the standalone path.
+  uiView.webContents.on("console-message", (details) => {
+    const text = String(details?.message ?? "");
+    if (text.startsWith("[flow-ui]")) console.log(text);
+  });
   uiView.webContents.on("did-start-loading", () => dictationManager?.setRendererReady(false));
   uiView.webContents.on("render-process-gone", () => dictationManager?.setRendererReady(false));
   uiView.webContents.on("destroyed", () => dictationManager?.setRendererReady(false));
@@ -1521,6 +1615,14 @@ async function createWindow() {
   });
   eyeView = new EyeView({ window: mainWindow, url: process.env.CLYRA_EYE_URL || "http://localhost:5179/" });
   surfaceManager = new ChromiumSurfaceManager({ window: mainWindow });
+  // The Agents view's own session (see surface-manager "agents" kind): signing in through it puts the cookie where
+  // the embedded app reads it.
+  agentsManager ??= new AgentsManager({ projectRoot, sessionFetch: (url, init) => session.fromPartition("persist:clyra-agents").fetch(url, init) });
+  agentsManager.onState((state) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("agents:state", state);
+    }
+  });
   smartToolbarManager = new SmartToolbarManager({
     uiContents: () => uiView?.webContents ?? null,
     preloadPath: path.join(here, "smart-toolbar-preload.cjs"),
@@ -1536,7 +1638,13 @@ async function createWindow() {
     clientSecret: process.env.CLYRA_GOOGLE_CLIENT_SECRET,
     serviceUrl: () => `http://127.0.0.1:${appPort}`,
   });
+  spotifyPlayerHost = new SpotifyPlayerHost({
+    preloadPath: path.join(here, "spotify-player-preload.cjs"),
+    htmlPath: path.join(here, "spotify-player.html"),
+    getToken: () => spotifyManager.accessToken(),
+  });
   spotifyManager = new SpotifyManager({
+    playerHost: spotifyPlayerHost,
     tokenPath: path.join(app.getPath("userData"), "spotify.dat"),
     uiContents: () => uiView?.webContents ?? null,
     development: isDevelopment,
@@ -1664,7 +1772,8 @@ async function createWindow() {
     httpOnly: true,
     sameSite: "strict",
   });
-  await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`);
+  // A reload or redirect that interrupts the first load (ERR_ABORTED) is harmless; it must not abort start-up.
+  await uiView.webContents.loadURL(`http://127.0.0.1:${appPort}`).catch((error) => { if (error?.code !== "ERR_ABORTED" && error?.errno !== -3) throw error; });
   // Pre-warm OpenCluely in the background so ⌘/ toggles instantly.
   // OpenCluely is an optional companion cloned on demand; with no install there
   // is nothing to warm, so stay quiet instead of logging a misleading warning.
@@ -1723,6 +1832,19 @@ function initFlowEarly() {
     engine: flowEngine,
     settingsPath: path.join(app.getPath("userData"), "flow-settings.json"),
     // Optional language-model polish, available only while Clyra's service is up.
+    // Applies a spoken instruction ("make it sound smarter") to selected text; boots the service if needed.
+    optimiseViaService: async (body) => {
+      if (!appPort || !fullBootPromise) await Promise.race([ensureFullBoot(), new Promise((resolve) => setTimeout(resolve, 25_000))]).catch(() => undefined);
+      if (!appPort) return "";
+      const response = await fetch(`http://127.0.0.1:${appPort}/api/dictation/optimise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: `clyra_token=${serviceToken}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(40_000),
+      });
+      const payload = await response.json().catch(() => null);
+      return response.ok && payload?.ok && payload.source !== "local-fallback" ? String(payload.text || "") : "";
+    },
     cleanupViaService: async (body) => {
       if (!appPort || !fullBootPromise) return "";
       const response = await fetch(`http://127.0.0.1:${appPort}/api/dictation/cleanup`, {
@@ -1735,7 +1857,7 @@ function initFlowEarly() {
       return response.ok && payload?.ok ? String(payload.text || "") : "";
     },
   });
-  void dictationManager.initialize();
+  void Promise.resolve(dictationManager.initialize()).then(() => rebuildTrayMenu?.());
   // Test hook (off unless CLYRA_FLOW_TEST_PORT is set): lets automated checks drive the
   // exact same hold/tap gesture the Right Option key produces, on loopback only.
   if (process.env.CLYRA_FLOW_TEST_PORT) {
@@ -1743,7 +1865,13 @@ function initFlowEarly() {
       const route = String(req.url || "").split("?")[0];
       if (route === "/press") dictationManager?.machine.press();
       else if (route === "/release") dictationManager?.machine.release();
+      else if (route === "/tap") dictationManager?.hotkeyPressed();
       else if (route === "/open") void showOrCreateWindow();
+      else if (route === "/reset") dictationManager?.forceReset();
+      else if (route === "/hotkey") { const id = new URL(req.url, "http://x").searchParams.get("id"); if (id) dictationManager?.applyHotkey(id); res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(dictationManager?.hotkeyInfo())); return; }
+      else if (route === "/present") { const q = new URL(req.url, "http://x").searchParams; dictationManager?.setState({ phase: "processing", detail: "Thinking" }); void dictationManager?.presentAndInsert({ raw: q.get("raw") || "", text: q.get("text") || "inserted", target: { application: q.get("app") || "", selectedText: "" } }).then((r) => { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(r)); }).catch((e) => res.end(String(e))); return; }
+      else if (route === "/insert") { const q = new URL(req.url, "http://x").searchParams; void dictationManager?.insert({ text: q.get("text") || "inserted", target: { application: q.get("app") || "", selectedText: q.get("sel") || "" } }).then((r) => { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(r)); }).catch((e) => res.end(String(e))); return; }
+      else if (route === "/pillinfo") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(dictationManager?.pillInfo())); return; }
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ phase: dictationManager?.phase, nativeActive: Boolean(dictationManager?.nativeActive), detail: dictationManager?.payload?.detail, rendererReady: Boolean(dictationManager?.rendererReady), window: Boolean(mainWindow), service: Boolean(fullBootPromise) }));
     }).listen(Number(process.env.CLYRA_FLOW_TEST_PORT), "127.0.0.1");
@@ -1764,7 +1892,11 @@ function ensureFullBoot() {
       reportDesktopLifecycle("browser bridge resolved; starting service");
       startLocalService();
       await waitForService();
-    })();
+    })().catch((error) => {
+      // A failed start must not be cached: the next "Open Clyra" gets a fresh attempt.
+      fullBootPromise = null;
+      throw error;
+    });
   }
   return fullBootPromise;
 }

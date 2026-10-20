@@ -4,211 +4,470 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; }
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; --ease: cubic-bezier(.16, 1, .3, 1); --blue: #0052fb; --ink: #0b1220; --mute: #64748b; }
+    html, body { height: 100%; }
     body { margin: 0; overflow: hidden; background: transparent; -webkit-font-smoothing: antialiased; user-select: none; }
-    #stage { display: grid; width: 100%; height: 100%; place-items: end center; padding-bottom: 8px; box-sizing: border-box; }
-    /* Flow bar: a near-black capsule that idles as a small dot-pill, then opens
-       into controls + live waveform while recording. */
-    #pill { position: relative; box-sizing: border-box; display: flex; align-items: center; justify-content: center; width: 52px; height: 12px; gap: 8px; padding: 0 6px; overflow: hidden; border: 1px solid rgba(15,23,42,.1); border-radius: 999px; background: rgba(255,255,255,.98); box-shadow: 0 8px 24px rgba(15,23,42,.14), 0 1px 3px rgba(15,23,42,.08); opacity: 0; transform: translateY(6px) scale(.9); transition: width .26s cubic-bezier(.16,1,.3,1), height .26s cubic-bezier(.16,1,.3,1), opacity .16s ease-out, transform .26s cubic-bezier(.16,1,.3,1); }
-    #pill[hidden] { display: none; }
-    #pill[data-ready="true"] { opacity: 1; transform: translateY(0) scale(1); }
-    #pill[data-expanded="true"] { width: 172px; height: 38px; padding: 0 6px; }
-    #pill[data-handsfree="true"] { border-color: rgba(0,82,251,.55); }
-    #pill[data-wide="true"] { width: 254px; }
-    #pill[data-selection="true"] { width: 254px; height: 44px; }
-    button { appearance: none; border: 0; cursor: pointer; font: inherit; }
-    .control { display: grid; flex: 0 0 auto; width: 26px; height: 26px; place-items: center; border-radius: 50%; opacity: 0; transform: scale(.7); transition: opacity .16s ease, transform .22s cubic-bezier(.16,1,.3,1), background .14s ease; }
-    #pill[data-expanded="true"] .control { opacity: 1; transform: scale(1); }
-    .cancel { background: rgba(15,23,42,.06); color: #64748b; } .cancel:hover { background: rgba(15,23,42,.11); color: #0f172a; }
-    .stop { background: #0052fb; color: #fff; } .stop:hover { background: #0048e0; }
-    .control b { font-size: 17px; font-weight: 400; line-height: 1; margin-top: -1px; } .control i { display: block; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
-    .meter { display: flex; flex: 1; min-width: 0; height: 26px; align-items: center; justify-content: center; gap: 2.5px; opacity: 0; transition: opacity .16s ease; }
-    #pill[data-expanded="true"] .meter { opacity: 1; }
-    .bar { display: block; width: 2.5px; height: 4px; flex: 0 0 2.5px; border-radius: 999px; background: #0052fb; will-change: height, opacity; transition: height .08s linear; }
-    .status { display: none; flex: 1; min-width: 0; align-items: center; justify-content: center; gap: 8px; color: #334155; font-size: 12px; font-weight: 500; letter-spacing: .005em; }
-    #status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; text-align: center; }
-    .dots { display: inline-flex; gap: 3px; } .dots i { width: 4px; height: 4px; border-radius: 50%; background: #0052fb; opacity: .35; animation: pulse 1s ease-in-out infinite; } .dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
-    #pill[data-processing="true"] .meter { display: none; }
-    #pill[data-processing="true"] .status { display: flex; }
-    #pill[data-done="true"] .dots { display: none; }
-    #pill[data-done="true"] #status-text::before { content: "✓  "; color: #0052fb; font-weight: 700; }
-    .selection { display: none; flex: 1; gap: 6px; align-items: center; }
-    #pill[data-selection="true"] .selection { display: flex; }
-    #pill[data-selection="true"] .meter, #pill[data-selection="true"] .status { display: none; }
-    .choice { flex: 1; height: 32px; border-radius: 999px; background: #eef3ff; color: #0f172a; font-size: 12px; font-weight: 600; transition: background .16s ease; }
-    .choice:hover { background: #dce8ff; color: #0052fb; }
-    .selection-cancel { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 50%; background: rgba(15,23,42,.06); color: #64748b; font-size: 18px; transition: background .16s ease; }
-    .selection-cancel:hover { background: rgba(15,23,42,.11); }
-    .error { color: #b42318; }
+    #stage { position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 16px; box-sizing: border-box; }
 
-    /* Shimmer: the status text and the capsule itself sweep with Clyra blue while Clyra is working. */
-    #status-text { background: linear-gradient(110deg, #64748b 34%, #0052fb 46%, #8fb4ff 50%, #0052fb 54%, #64748b 66%); background-size: 260% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.7s linear infinite; }
-    #status-text.error { background: none; color: #b42318; animation: none; }
-    #status-text.done { background: none; color: #1e293b; animation: none; }
-    #pill[data-processing="true"]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(100deg, transparent 32%, rgba(0,82,251,.11) 50%, transparent 68%); transform: translateX(-110%); animation: sweep 1.9s cubic-bezier(.45,.05,.25,1) infinite; }
-    #pill[data-done="true"]::after, #pill[data-error="true"]::after { display: none; }
-    #pill[data-expanded="true"][data-processing="false"] { animation: breathe 2.6s ease-in-out infinite; }
+    /* One capsule, constant height. Only its width changes (ball -> bar), and the radius is always an explicit
+       pixel value so the shape never snaps. Everything inside cross-fades. */
+    @property --a { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
+    /* #pill is the unclipped shell (so a halo can shine outside it); .clip holds the white body and all content. */
+    #pill { --w: 40px; --h: 40px; --r: 20px; --lvl: 0; --shine: 0; position: relative; box-sizing: border-box; width: var(--w); height: var(--h); border-radius: var(--r); cursor: grab;
+      opacity: 0; transform: translateY(10px) scale(.5); transform-origin: 50% 100%; pointer-events: auto;
+      transition: width .48s var(--ease), height .48s var(--ease), border-radius .48s var(--ease), opacity .28s ease, transform .48s var(--ease); will-change: width, height, transform, opacity; }
+    .clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; box-sizing: border-box;
+      background: linear-gradient(180deg, #ffffff 0%, #f6f9ff 100%);
+      border: 1px solid rgba(var(--ring, 15,23,42), calc(.11 + var(--lvl) * .32)); transition: border-color .18s ease; }
+    /* selection chip: what you highlighted and what Flow will do with it (replace it, or rewrite it from your instruction) */
+    .selchip { position: absolute; left: 50%; bottom: calc(100% + 8px); max-width: 360px; height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; border-radius: 13px; white-space: nowrap;
+      background: #fff; border: 1px solid rgba(15,23,42,.10); font-size: 12px; color: #5b6472; opacity: 0; transform: translate(-50%, 6px); transition: opacity .3s ease, transform .4s var(--ease); pointer-events: none; }
+    .selchip.show { opacity: 1; transform: translate(-50%, 0); }
+    .selchip .tag { flex: 0 0 auto; font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--blue); }
+    .selchip .quote { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    #pill.dragging { cursor: grabbing; transition: opacity .2s ease; }
+    #pill[data-ready="true"] { opacity: 1; transform: none; }
+
+    .layer { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s; }
+    .layer.on { opacity: 1; visibility: visible; transition: opacity .4s ease .1s, visibility 0s; }
+
+    button { appearance: none; border: 0; cursor: pointer; font: inherit; }
+    /* The one row: [cancel] [text or waveform] [stop / spinner / status] — same in every state. */
+    .row { position: absolute; left: 0; top: 0; height: var(--h); width: var(--rw, 480px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 0 6px; box-sizing: border-box; }
+    .ctl { position: relative; display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border-radius: 50%; transition: background .18s ease, transform .18s var(--ease), opacity .3s ease; }
+    .ctl:active { transform: scale(.9); }
+    .cancel { background: rgba(15,23,42,.055); color: #5b6678; } .cancel:hover { background: rgba(15,23,42,.11); color: var(--ink); }
+    .cancel svg { width: 11px; height: 11px; }
+    .stop { background: linear-gradient(180deg, #2a6bff, #0048e6); color: #fff; } .stop:hover { filter: brightness(1.08); }
+    .stop i { display: block; width: 9px; height: 9px; border-radius: 2.5px; background: currentColor; }
+    
+
+    /* centre: waveform when nothing has been said yet, otherwise the words */
+    .mid { position: relative; flex: 1; min-width: 0; height: 36px; overflow: hidden; transition: height .48s var(--ease); }
+    .meter { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2.5px; transition: opacity .3s ease; }
+    .bar { display: block; width: 2.5px; height: 18px; flex: 0 0 2.5px; border-radius: 999px; background: linear-gradient(180deg, #5b92ff, var(--blue)); transform: scaleY(.17); will-change: transform; }
+    .text { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: flex-start; overflow: hidden; opacity: 0; transition: opacity .3s ease;
+      -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); }
+    .has-text .text { opacity: 1; } .has-text .meter { opacity: 0; }
+    /* One line, newest words on the right; older words slide off to the left. Height never changes. */
+    .track { margin-block: auto; white-space: nowrap; flex: 0 0 auto; font-size: 13.5px; font-weight: 500; letter-spacing: -.01em; color: var(--ink); will-change: transform; transition: transform .5s var(--ease); }
+    .final-mode .text { justify-content: flex-start; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); }
+    .final-mode .text { inset: 0; }
+    .final-mode .track { white-space: normal; flex: 1 1 auto; line-height: 16px; transform: none !important; }
+    .final-mode.one-line .text { align-items: center; }
+    .final-mode.one-line .track { white-space: nowrap; }
+    .final-mode .text::-webkit-scrollbar { display: none; }
+    .w { display: inline-block; transition: color .4s ease, opacity .4s ease, text-decoration-color .4s ease, transform .5s var(--ease); }
+    /* each word eases up into place — opacity and transform only, so it stays on the compositor */
+    .w.in { animation: wordIn .34s var(--ease) both; }
+    @keyframes wordIn { from { opacity: 0; transform: translateY(5px); filter: blur(1.5px); } to { opacity: 1; transform: none; filter: none; } }
+    /* edits: removed = red + crossed out; added = blue (text only) */
+    .w.del { text-decoration: line-through; text-decoration-thickness: 1.7px; text-decoration-color: transparent; }
+    .w.del.struck { color: #dc2626; text-decoration-color: #dc2626; }
+    .w.add { color: var(--blue); font-weight: 600; opacity: 0; transform: translateY(5px); }
+    .w.add.shown { opacity: 1; transform: none; }
+    /* thinking: blue wave across the words */
+    .thinking .w { color: #64748b; animation: wordWave 1.5s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 60ms); }
+    @keyframes wordWave { 0%, 100% { color: #64748b; opacity: .75; } 40% { color: var(--blue); opacity: 1; } 70% { color: #64748b; opacity: .9; } }
+    .label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 560; opacity: 0; transition: opacity .3s ease; background: linear-gradient(110deg, #64748b 34%, var(--blue) 46%, #8fb4ff 50%, var(--blue) 54%, #64748b 66%); background-size: 260% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
     @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -130% 0; } }
-    @keyframes sweep { 0% { transform: translateX(-110%); } 55%, 100% { transform: translateX(110%); } }
-    @keyframes breathe { 0%, 100% { box-shadow: 0 8px 24px rgba(15,23,42,.14), 0 1px 3px rgba(15,23,42,.08), 0 0 0 0 rgba(0,82,251,0); } 50% { box-shadow: 0 8px 26px rgba(15,23,42,.14), 0 1px 3px rgba(15,23,42,.08), 0 0 0 5px rgba(0,82,251,.07); } }
-    @media (prefers-reduced-motion: reduce) { #status-text { animation: none; color: #475569; background: none; } #pill::after, #pill { animation: none !important; } }
-    @keyframes pulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
-    @media (prefers-reduced-motion: reduce) { #pill, .meter, .status, .control { transition-duration: 1ms !important; } .dots i { animation: none; opacity: .8; } }
+    .show-label .label { opacity: 1; } .show-label .meter { opacity: 0; }
+    /* final text sweep */
+    .sweep .track { background-image: linear-gradient(100deg, var(--ink) 0 38%, var(--blue) 46%, #8fb4ff 50%, rgba(11,18,32,0) 58%); background-size: 340% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: sweepText .95s cubic-bezier(.3,.7,.2,1) forwards; }
+    @keyframes sweepText { from { background-position: 100% 0; } to { background-position: 0 0; } }
+    .note-in .track { animation: noteIn .45s var(--ease) both; }
+    @keyframes noteIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    /* right-hand status glyphs */
+    /* "thinking" loader: the listening waveform settles into a small pulsing wave */
+    .spin { display: flex; align-items: center; justify-content: center; gap: 2.5px; height: 18px; }
+    .spin i { display: block; width: 2.5px; height: 4px; border-radius: 999px; background: linear-gradient(180deg, #5b92ff, var(--blue)); animation: pulseBar 1.05s ease-in-out infinite; animation-delay: calc(var(--i) * .11s); }
+    @keyframes pulseBar { 0%, 100% { height: 4px; opacity: .4; } 45% { height: 14px; opacity: 1; } }
+    .orb { width: 15px; height: 15px; border-radius: 50%; background: conic-gradient(from 0deg, #0052fb, #8fb4ff, #dbe7ff, #8fb4ff, #0052fb); -webkit-mask: radial-gradient(farthest-side, transparent 55%, #000 58%); mask: radial-gradient(farthest-side, transparent 55%, #000 58%); animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Apple Pay / App Store style success: a green disc springs in, the tick draws itself, a ring ripples out */
+    .badge { position: relative; width: 26px; height: 26px; display: grid; place-items: center; transform: scale(.4); opacity: 0; transition: transform .6s cubic-bezier(.34,1.56,.64,1), opacity .25s ease; }
+    .badge.show { transform: none; opacity: 1; }
+    .badge svg { width: 26px; height: 26px; overflow: visible; }
+    .badge .disc { fill: #34c759; transform: scale(0); transform-origin: 13px 13px; }
+    .badge .tick { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 18; stroke-dashoffset: 18; }
+    .badge .wave { fill: none; stroke: #34c759; stroke-width: 1.5; opacity: 0; transform-origin: 13px 13px; }
+    .badge.show .disc { animation: discIn .55s cubic-bezier(.34,1.56,.64,1) forwards; }
+    .badge.show .tick { animation: tickDraw .36s .22s cubic-bezier(.4,0,.2,1) forwards; }
+    .badge.show .wave { animation: tickWave .8s .12s ease-out forwards; }
+    @keyframes discIn { to { transform: scale(1); } }
+    @keyframes tickDraw { to { stroke-dashoffset: 0; } }
+    @keyframes tickWave { 0% { opacity: .55; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.9); } }
+    .badge.clip .disc { fill: #0052fb; }
+    .glyph { position: absolute; transition: opacity .25s ease, transform .35s var(--ease); }
+    .glyph.off { opacity: 0; transform: scale(.6); pointer-events: none; }
+    .endwrap { position: relative; width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; }
+
+    /* ball: blank */
+    #l-dot { display: block; }
+    .l-main { display: block; }
+    /* chooser */
+    .l-select { display: flex; align-items: center; gap: 6px; padding: 0 9px; }
+    .choice { flex: 1; height: 28px; border-radius: 14px; background: #eef3ff; color: var(--ink); font-size: 12px; font-weight: 600; transition: background .16s ease, color .16s ease; }
+    .choice:hover { background: #dce8ff; color: var(--blue); }
+    .msg { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 14px; font-size: 12.5px; font-weight: 540; color: #334155; }
+    .msg.error { color: #b42318; }
+
+    @media (prefers-reduced-motion: reduce) { #pill, .layer, .w, .badge { transition-duration: 1ms !important; } .spin i, .badge .disc, .badge .tick, .badge .wave, .label, .thinking .w, .w.in, .w.in::after, .w.bump, #pill, .sweep .track { animation: none !important; } }
   </style>
 </head>
 <body>
-  <main id="stage"><div id="pill" hidden data-ready="false" data-expanded="false">
-    <button class="control cancel" id="cancel" type="button" aria-label="Cancel dictation"><b>×</b></button>
-    <div class="meter" id="meter" aria-hidden="true"></div>
-    <div class="status" id="status"><span class="dots" id="status-loader"><i></i><i></i><i></i></span><span id="status-text">Transcribing</span></div>
-    <div class="selection"><button class="selection-cancel" id="selection-cancel" type="button" aria-label="Cancel">×</button><button class="choice" id="replace" type="button">Replace</button><button class="choice" id="enhance" type="button">Enhance</button></div>
-    <button class="control stop" id="primary" type="button" aria-label="Stop recording"><i></i></button>
-  </div></main>
+  <main id="stage">
+    <div id="pill" data-mode="circle" data-ready="false"><div class="selchip" id="selchip"><span class="tag" id="seltag"></span><span class="quote" id="selquote"></span></div><div class="clip">
+      <div class="layer" id="l-dot"></div>
+      <div class="layer l-main" id="l-main">
+        <div class="row" id="row">
+          <button class="ctl cancel" id="cancel" type="button" aria-label="Cancel dictation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+          <div class="mid" id="mid">
+            <div class="meter" id="meter" aria-hidden="true"></div>
+            <div class="text" id="text"><div class="track" id="track"></div></div>
+            <div class="label" id="label">Thinking</div>
+          </div>
+          <div class="endwrap">
+            <button class="ctl stop glyph" id="primary" type="button" aria-label="Stop recording"><i></i></button>
+            <span class="spin glyph off" id="dots"><i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i><i style="--i:4"></i></span>
+            <span class="badge glyph off" id="badge"></span>
+          </div>
+        </div>
+      </div>
+      <div class="layer" id="l-msg"><div class="msg" id="msg"></div></div>
+      <div class="layer l-select" id="l-select"><button class="ctl cancel" id="selection-cancel" type="button" aria-label="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><button class="choice" id="replace" type="button">Replace</button><button class="choice" id="enhance" type="button">Enhance</button></div>
+    </div></div>
+  </main>
   <script>
     const pill = document.getElementById('pill');
-    const meter = document.getElementById('meter');
-    const statusText = document.getElementById('status-text');
-    const statusLoader = document.getElementById('status-loader');
-    const primary = document.getElementById('primary');
-    const cancel = document.getElementById('cancel');
+    const api = window.clyraDictationPill;
+    const $ = (id) => document.getElementById(id);
+    const meter = $('meter'), mid = $('mid'), track = $('track'), row = $('row');
     const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let hideTimer = 0;
-    let phase = 'idle';
-    let inputLevel = 0;
-    let targetVolume = .08;
-    let currentVolume = .08;
-    let phaseValue = 0;
-    let targetTimer = 0;
-    const bars = Array.from({ length: 13 }, () => {
-      const bar = document.createElement('i');
-      bar.className = 'bar';
-      meter.append(bar);
-      return bar;
-    });
+    const H = 44;
+    let phase = 'idle', mode = 'circle', hovering = false, dragging = null;
+    let inputLevel = 0, currentVolume = .06, phaseValue = 0, cardOpen = false, liveText = '', timers = [];
+    const later = (fn, ms) => { timers.push(setTimeout(fn, ms)); };
+    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+    const bars = Array.from({ length: 11 }, () => { const bar = document.createElement('i'); bar.className = 'bar'; meter.append(bar); return bar; });
+    const isVisible = () => pill.dataset.ready === 'true';
+    const maxW = () => Math.max(220, Math.min(340, innerWidth - 32));
 
-    function setTargetVolume() {
-      // Microphone amplitude is always the dominant signal. This tiny idle
-      // floor only keeps the ready state from looking mechanically frozen.
-      targetVolume = phase === 'listening' ? .06 + Math.random() * .12 : .035;
-      targetTimer = window.setTimeout(setTargetVolume, 280 + Math.random() * 260);
+    // ---------------------------------------------------------------- shape
+    function setSize(w, h, r) { pill.style.setProperty('--w', w + 'px'); pill.style.setProperty('--h', h + 'px'); pill.style.setProperty('--r', r + 'px'); row.style.setProperty('--rw', w + 'px'); }
+    const glyph = (name) => { for (const id of ['primary', 'dots', 'badge']) $(id).classList.toggle('off', id !== name); };
+    function show(next) {
+      mode = next; pill.dataset.mode = next;
+      if (next !== 'card') mid.style.height = '';
+      const key = next === 'circle' ? 'l-dot' : next === 'msg' ? 'l-msg' : next === 'select' ? 'l-select' : 'l-main';
+      for (const id of ['l-dot', 'l-main', 'l-msg', 'l-select']) $(id).classList.toggle('on', id === key);
+      if (next === 'circle') setSize(40, 40, 20);
+      else if (next === 'select') setSize(236, H, H / 2);
+      else if (next === 'msg') setSize(maxW(), H, H / 2);
+      else if (next === 'card') setSize(parseFloat(pill.style.getPropertyValue('--w')) || widthFor('card'), parseFloat(pill.style.getPropertyValue('--h')) || H, parseFloat(pill.style.getPropertyValue('--r')) || H / 2);
+      else setSize(widthFor(next), H, H / 2);   // listening/thinking: constant height; width follows the words
+      const hasText = Boolean(liveText) && next !== 'circle';
+      mid.classList.toggle('has-text', hasText);
+      mid.classList.toggle('show-label', next === 'think' && !hasText);
+      mid.classList.toggle('thinking', next === 'think');
+      if (next === 'listen') glyph('primary'); else if (next === 'think') glyph('dots');
+      if (!INTERACTIVE_HOVER_OK()) setHover(false);
+    }
+    const INTERACTIVE_HOVER_OK = () => isVisible();
+    function appear(next) {
+      if (isVisible()) { next(); return; }
+      show('circle');
+      requestAnimationFrame(() => requestAnimationFrame(() => { pill.dataset.ready = 'true'; next(); }));
     }
 
-    function animateWave() {
-      phaseValue += .2;
-      const desired = Math.max(inputLevel * 1.35, targetVolume);
-      currentVolume += (desired - currentVolume) * .16;
-      bars.forEach((bar, index) => {
-        const distance = (index - 6) / 6;
-        const bell = Math.exp(-(distance * distance) * 2.6);
-        const waves = (Math.sin(phaseValue + index * .4) + Math.sin(phaseValue * .7 - index * .2) + 2) / 4;
-        const height = 3 + bell * (2 + waves * (6 + currentVolume * 24));
-        bar.style.height = `${Math.round(height)}px`;
-        bar.style.opacity = String(.32 + bell * (.32 + Math.min(.36, currentVolume * .55)));
-      });
-      if (!prefersReducedMotion) requestAnimationFrame(animateWave);
+    /** Width that follows the words smoothly: compact while empty, growing with the text up to a max. */
+    function widthFor(m) {
+      if (m === 'card') return maxW();
+      const chrome = 28 + 28 + 8 * 2 + 6 * 2 + 14;          // two buttons, gaps, padding, breathing room
+      const textW = liveText ? track.scrollWidth : 0;
+      return Math.round(Math.max(150, Math.min(maxW(), chrome + textW)));
+    }
+    /** Keep the newest words in view: the track slides left smoothly as it outgrows the capsule. */
+    function followTail() {
+      if (mode !== 'listen' && mode !== 'think') return;
+      setSize(widthFor(mode), H, H / 2);
+      const over = Math.max(0, track.scrollWidth - mid.clientWidth + 4);
+      track.style.transform = `translateX(${-over}px)`;
+    }
+    // ---------------------------------------------------------------- words
+    function wordSpan(text, cls, i) { const s = document.createElement('span'); s.className = 'w ' + cls; s.style.setProperty('--i', i); s.textContent = text; return s; }
+    function setWords(segments, animate) {
+      track.textContent = '';
+      let i = 0;
+      for (const seg of segments) for (const word of String(seg.text).split(/\s+/).filter(Boolean)) { track.append(wordSpan(word, seg.type + (animate ? ' in' : ''), i++), document.createTextNode(' ')); }
+    }
+    // Words are released one at a time at a steady, slightly faster pace when there is a backlog, so a phrase that arrives
+    // all at once still *types in* smoothly instead of popping.
+    let target = [], paceTimer = 0, paceBase = 92, printing = false;
+    function revealNext() {
+      paceTimer = 0;
+      let have = track.querySelectorAll('.w').length;
+      if (have >= target.length) { printing = false; return; }
+      const backlog = target.length - have;
+      const step = Math.min(backlog, printing ? Math.max(1, Math.ceil(backlog / 14)) : backlog > 12 ? 3 : backlog > 6 ? 2 : 1);
+      const batch = document.createDocumentFragment();
+      for (let k = 0; k < step; k++, have++) batch.append(wordSpan(target[have], 'same in', have), document.createTextNode(' '));
+      track.append(batch);
+      followTail();
+      if (have < target.length) paceTimer = setTimeout(revealNext, Math.max(paceBase > 40 ? 38 : 16, paceBase - backlog * 5));
+      else printing = false;
+    }
+    function flushWords() {
+      clearTimeout(paceTimer); paceTimer = 0;
+      const have = track.querySelectorAll('.w').length;
+      for (let i = have; i < target.length; i++) track.append(wordSpan(target[i], 'same', i), document.createTextNode(' '));
+      followTail();
+    }
+    /** Live transcript: displayed words are revised in place, new words are paced in on the right, older ones slide off left. */
+    function setLive(text, flush) {
+      printing = false; paceBase = 92;
+      const next = String(text || '').split(/\s+/).filter(Boolean);
+      liveText = next.join(' ');
+      target = next;
+      const spans = Array.from(track.querySelectorAll('.w'));
+      for (let i = 0; i < Math.min(spans.length, next.length); i++) if (spans[i].textContent !== next[i]) spans[i].textContent = next[i];
+      for (let i = spans.length - 1; i >= next.length; i--) { spans[i].nextSibling?.remove(); spans[i].remove(); }
+      mid.classList.toggle('has-text', next.length > 0);
+      mid.classList.remove('final-mode', 'sweep', 'note-in');
+      if (flush) flushWords();
+      else if (!paceTimer && track.querySelectorAll('.w').length < next.length) paceTimer = setTimeout(revealNext, 0);
+      followTail();
     }
 
+    /** Measures how text will lay out in the card without touching the live track (one off-screen probe). */
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;font-size:13.5px;font-weight:500;letter-spacing:-.01em;line-height:16px;white-space:normal;';
+    document.body.append(probe);
+    const CHROME = 28 + 28 + 8 * 2 + 6 * 2 + 14;
+    function measure(text) {
+      probe.style.whiteSpace = 'nowrap'; probe.style.width = 'auto'; probe.textContent = text;
+      const single = probe.scrollWidth;
+      const textMax = maxW() - CHROME;
+      if (single <= textMax) return { lines: 1, width: Math.round(Math.max(150, Math.min(maxW(), CHROME + single))) };
+      probe.style.whiteSpace = 'normal'; probe.style.width = textMax + 'px';
+      return { lines: Math.max(1, Math.round(probe.scrollHeight / 16)), width: maxW() };
+    }
+    /** Done: one line stays a one-line capsule sized to the words; longer text grows upward (the pill is anchored
+     *  at the bottom) once, to its final height, up to nine lines, then scrolls. */
+    function fitCard(text) {
+      if (mode !== 'card') return;
+      const words = text != null ? String(text) : Array.from(track.querySelectorAll('.w')).map((w) => w.textContent).join(' ');
+      const { lines, width } = measure(words);
+      const oneLine = lines <= 1;
+      mid.classList.toggle('one-line', oneLine);
+      const h = oneLine ? H : Math.max(H, Math.min(9, lines) * 16 + 24);
+      setSize(width, h, oneLine ? H / 2 : Math.min(h / 2, 24));
+      mid.style.height = (oneLine ? 36 : h - 12) + 'px';
+    }
+    // ---------------------------------------------------------------- edits + final
+    function openDiff(payload) {
+      clearTimers(); cardOpen = true;
+      mid.classList.remove('thinking', 'show-label', 'sweep'); mid.classList.add('has-text', 'final-mode');
+      track.style.transition = 'none'; track.style.transform = ''; void track.offsetWidth; track.style.transition = '';
+      setWords(payload.diff, false);
+      show('card'); glyph('badge'); $('badge').className = 'badge glyph off';
+      requestAnimationFrame(() => fitCard());
+      const dels = Array.from(track.querySelectorAll('.w.del')), adds = Array.from(track.querySelectorAll('.w.add'));
+      dels.forEach((el, i) => later(() => el.classList.add('struck'), 600 + i * 110));
+      const t = 600 + dels.length * 110 + 260;
+      adds.forEach((el, i) => later(() => el.classList.add('shown'), t + i * 140));
+      track.style.transform = ''; track.style.transition = '';
+    }
+    function revealFinal(payload) {
+      if (!cardOpen) { cardOpen = true; show('card'); }
+      track.querySelectorAll('.w.del').forEach((el) => el.classList.add('struck'));
+      track.querySelectorAll('.w.add').forEach((el) => el.classList.add('shown'));
+      clearTimers();
+      mid.classList.remove('thinking', 'show-label'); mid.classList.add('has-text', 'final-mode');
+      // Print the final text the same way the words appeared while you spoke: one by one, easing in, the capsule growing
+      // upward line by line as it fills.
+      const words = String(payload.finalText || '').split(/\s+/).filter(Boolean);
+      track.style.transition = 'opacity .16s ease'; track.style.opacity = '0';
+      setTimeout(() => {
+        track.textContent = ''; track.style.transform = ''; track.style.opacity = '1';
+        target = words; printing = true; paceBase = Math.max(16, Math.min(46, 1100 / Math.max(1, words.length)));
+        clearTimeout(paceTimer); paceTimer = 0;
+        revealNext();
+      }, 170);
+      // Settle to the final shape in one move — a one-line answer never grows into a taller card.
+      fitCard(words.join(' '));
+    }
+    const ICON_CHECK = '<svg viewBox="0 0 26 26"><circle class="wave" cx="13" cy="13" r="12"/><circle class="disc" cx="13" cy="13" r="12"/><path class="tick" d="M7.6 13.4l3.7 3.7 7.2-7.6"/></svg>';
+    const ICON_CLIP = '<svg viewBox="0 0 26 26"><circle class="wave" cx="13" cy="13" r="12"/><circle class="disc" cx="13" cy="13" r="12"/><g fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9.2" y="7.2" width="7.6" height="2.8" rx="1"/><path d="M16.8 8.6h.8a1.2 1.2 0 0 1 1.2 1.2v8a1.2 1.2 0 0 1-1.2 1.2H8.4a1.2 1.2 0 0 1-1.2-1.2v-8a1.2 1.2 0 0 1 1.2-1.2h.8"/></g></svg>';
+    function landStatus(detail, clipboard) {
+      // Like Flow itself there is no tick: the loader simply gives way and the text is in place. Only the
+      // clipboard case keeps a small icon, because the text went somewhere you need to know about.
+      const badge = $('badge'); badge.className = 'badge glyph' + (clipboard ? ' clip' : '');
+      if (clipboard) { badge.innerHTML = ICON_CLIP; glyph('badge'); requestAnimationFrame(() => badge.classList.add('show')); }
+      else glyph('none');
+      if (clipboard) {   // say where the text went
+        later(() => { mid.classList.remove('sweep'); track.textContent = ''; const s = wordSpan(detail || 'Saved to clipboard', 'same', 0); s.style.display = 'inline'; s.style.color = '#1d4ed8'; track.append(s); mid.classList.add('note-in'); }, 1100);
+      }
+    }
 
-    // ---- Sound FX: synthesised with WebAudio (no assets, ~0 CPU, offline) ----
-    let audio = null;
-    function tone(freq, start, dur, { type = 'sine', gain = .16, slideTo = 0 } = {}) {
-      if (!audio) return;
-      const t0 = audio.currentTime + start;
-      const osc = audio.createOscillator();
-      const amp = audio.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, t0);
-      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-      amp.gain.setValueAtTime(0.0001, t0);
-      amp.gain.exponentialRampToValueAtTime(gain, t0 + .012);
-      amp.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.connect(amp).connect(audio.destination);
-      osc.start(t0); osc.stop(t0 + dur + .02);
+    // ---------------------------------------------------------------- premium sound design
+    // Soft, layered tones (sine + a quiet octave harmonic) through a gentle low-pass and a short
+    // synthetic room, so every cue feels like one family: rising = on, falling = off, bright triad = done.
+    let audio = null, bus = null, dryBus = null;
+    function ensureAudio() {
+      if (audio) { if (audio.state === 'suspended') audio.resume().catch(() => {}); return audio; }
+      audio = new (window.AudioContext || window.webkitAudioContext)();
+      const master = audio.createGain(); master.gain.value = .9;
+      const lp = audio.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200; lp.Q.value = .4;
+      const dry = audio.createGain(); dry.gain.value = 1;
+      const wet = audio.createGain(); wet.gain.value = .26;
+      const conv = audio.createConvolver();
+      const len = Math.floor(audio.sampleRate * .55), ir = audio.createBuffer(2, len, audio.sampleRate);
+      for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+      conv.buffer = ir;
+      lp.connect(dry).connect(master); lp.connect(conv); conv.connect(wet).connect(master); master.connect(audio.destination);
+      bus = lp;
+      // The start cue skips the room so no reverb tail lingers into the microphone.
+      dryBus = audio.createGain(); dryBus.gain.value = 1; dryBus.connect(master);
+      if (audio.state === 'suspended') audio.resume().catch(() => {});
+      return audio;
+    }
+    function note(freq, at, dur, { gain = .14, glide = 0, harm = .22, attack = .012, dry = false } = {}) {
+      const ctx = ensureAudio(); const t0 = ctx.currentTime + .005 + at;
+      const out = dry ? dryBus : bus;
+      for (const [mult, g] of [[1, gain], [2, gain * harm]]) {
+        const osc = ctx.createOscillator(), amp = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(freq * mult, t0);
+        if (glide) osc.frequency.exponentialRampToValueAtTime(glide * mult, t0 + dur);
+        amp.gain.setValueAtTime(.0001, t0); amp.gain.exponentialRampToValueAtTime(g, t0 + attack); amp.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
+        osc.connect(amp).connect(out); osc.start(t0); osc.stop(t0 + dur + .05);
+      }
     }
     const SOUNDS = {
-      start: () => { tone(660, 0, .09); tone(990, .07, .13); },                       // rising blip: mic is live
-      handsfree: () => { tone(880, 0, .07); tone(880, .1, .07); },                       // double tick: locked on
-      stop: () => { tone(740, 0, .08, { gain: .12 }); tone(520, .06, .1, { gain: .12 }); }, // falling: captured
-      done: () => { tone(784, 0, .1, { gain: .14 }); tone(1175, .09, .2, { gain: .14 }); }, // chime: inserted
-      cancel: () => tone(420, 0, .12, { slideTo: 240, gain: .12 }),
-      error: () => { tone(220, 0, .14, { type: 'triangle', gain: .2 }); tone(180, .15, .2, { type: 'triangle', gain: .2 }); },
+      start:  () => { note(523.25, 0, .1, { gain: .1, dry: true }); note(783.99, .05, .15, { gain: .11, dry: true }); },     // C5 -> G5, short and dry: done before you speak
+      stop:   () => { note(659.25, 0, .13, { gain: .11 }); note(493.88, .07, .22, { gain: .11 }); },                         // E5 -> B4
+      done:   () => { note(659.25, 0, .18, { gain: .11 }); note(830.61, .08, .2, { gain: .11 }); note(1046.5, .16, .42, { gain: .12 }); }, // E-G#-C triad sparkle
+      copied: () => { note(783.99, 0, .14, { gain: .1 }); note(987.77, .09, .3, { gain: .1 }); },
+      cancel: () => note(440, 0, .2, { gain: .1, glide: 261.63 }),
+      error:  () => { note(196, 0, .22, { gain: .13, harm: .1 }); note(155.56, .16, .34, { gain: .13, harm: .1 }); },
     };
     let lastPhase = 'idle';
-    let lastHandsFree = false;
     function playFor(payload) {
-      if (payload.sound === false) { lastPhase = payload.phase || 'idle'; return; }
       const next = payload.phase || 'idle';
+      if (payload.sound === false) { lastPhase = next; return; }
       try {
-        if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
-        if (audio.state === 'suspended') audio.resume();
         if (next === 'listening' && lastPhase !== 'listening') SOUNDS.start();
-        else if (next === 'listening' && payload.handsFree && !lastHandsFree) SOUNDS.handsfree();
-        else if (next === 'processing' && lastPhase === 'listening') SOUNDS.stop();
-        else if (next === 'done' && lastPhase !== 'done') SOUNDS.done();
+        else if ((next === 'processing' || next === 'optimising') && lastPhase === 'listening') SOUNDS.stop();
+        else if (next === 'done' && lastPhase !== 'done') (payload.clipboard ? SOUNDS.copied : SOUNDS.done)();
         else if (next === 'error' && lastPhase !== 'error') SOUNDS.error();
         else if (next === 'idle' && ['arming', 'listening', 'processing', 'optimising', 'preview', 'selection'].includes(lastPhase)) SOUNDS.cancel();
       } catch { /* audio is best-effort */ }
-      lastHandsFree = Boolean(payload.handsFree);
       lastPhase = next;
     }
+    // Warm the audio engine as soon as the page loads so the very first cue is instant.
+    try { ensureAudio(); } catch { /* no audio device */ }
 
+    // ---------------------------------------------------------------- waveform
+    function animateWave() {
+      phaseValue += .2;
+      const desired = Math.max(inputLevel * 1.35, phase === 'listening' ? .07 : .035);
+      currentVolume += (desired - currentVolume) * .2;
+      const mid_ = (bars.length - 1) / 2;
+      bars.forEach((bar, index) => {
+        const d = (index - mid_) / mid_, bell = Math.exp(-(d * d) * 2.2);
+        const w = (Math.sin(phaseValue + index * .45) + Math.sin(phaseValue * .7 - index * .25) + 2) / 4;
+        const px = 3 + bell * (2 + w * (5 + currentVolume * 18));
+        bar.style.transform = `scaleY(${Math.min(1, px / 18).toFixed(3)})`;
+        bar.style.opacity = String(.35 + bell * (.3 + Math.min(.35, currentVolume * .6)));
+      });
+      pill.style.setProperty('--lvl', phase === 'listening' ? Math.min(1, currentVolume * 1.2).toFixed(3) : '0');
+      pill.style.setProperty('--ring', phase === 'listening' ? '0,82,251' : '15,23,42');
+      waveRaf = (!prefersReducedMotion && phase === 'listening') ? requestAnimationFrame(animateWave) : 0;
+    }
+    let waveRaf = 0;
+    function ensureWave() { if (!waveRaf && !prefersReducedMotion) waveRaf = requestAnimationFrame(animateWave); }
+
+    // ---------------------------------------------------------------- state machine
+    let readyTimer = 0;
+    function collapse() {
+      clearTimers(); cardOpen = false;
+      glyph('primary'); $('badge').className = 'badge glyph off';
+      show('circle');
+      clearTimeout(readyTimer);
+      readyTimer = setTimeout(() => {
+        pill.dataset.ready = 'false';
+        setTimeout(() => { track.textContent = ''; track.style.transform = ''; liveText = ''; mid.className = 'mid'; mid.style.height = ''; }, 450);
+      }, prefersReducedMotion ? 10 : 680);
+    }
+    function updateSelection(payload) {
+      const chip = $('selchip');
+      const sel = String(payload.selectedText || '').replace(/\s+/g, ' ').trim();
+      const active = ['listening', 'processing', 'optimising', 'refining', 'revealing'].includes(payload.phase);
+      if (!sel || !active) { chip.classList.remove('show'); return; }
+      const edit = payload.edit;
+      $('seltag').textContent = edit === 'rewrite' ? 'Rewriting selection' : edit === 'replace' ? 'Replacing selection' : 'Selected text';
+      const instruction = edit === 'rewrite' ? String(payload.partial || '').trim() : '';
+      const text = instruction || sel;
+      $('selquote').textContent = (instruction ? '\u201c' : '') + (text.length > 70 ? text.slice(0, 67) + '\u2026' : text) + (instruction ? '\u201d' : '');
+      chip.classList.add('show');
+    }
     function render(payload = {}) {
+      updateSelection(payload);
       playFor(payload);
-      pill.dataset.handsfree = String(Boolean(payload.handsFree) && (payload.phase === 'listening'));
       phase = payload.phase || 'idle';
       inputLevel = Math.max(0, Math.min(1, Number(payload.level) || 0));
-      clearTimeout(hideTimer);
-      if (phase === 'idle') {
-        pill.dataset.expanded = 'false';
-        pill.dataset.ready = 'false';
-        hideTimer = setTimeout(() => { pill.hidden = true; }, 420);
+      const detail = String(payload.detail || '').trim();
+      if (phase === 'idle') { collapse(); return; }
+      clearTimeout(readyTimer);
+      if (phase === 'arming') { if (!isVisible()) { cardOpen = false; track.textContent = ''; liveText = ''; mid.className = 'mid'; appear(() => show('circle')); } return; }
+      if (phase === 'listening') { ensureWave(); appear(() => { setLive(payload.partial || ''); if (mode !== 'listen') show('listen'); }); return; }
+      if (phase === 'processing' || phase === 'optimising') {
+        $('label').textContent = detail || 'Thinking';
+        appear(() => { if (payload.partial) setLive(payload.partial, true); else flushWords(); if (mode !== 'think') show('think'); else { mid.classList.toggle('show-label', !liveText); } });
         return;
       }
-      pill.hidden = false;
-      requestAnimationFrame(() => {
-        pill.dataset.ready = 'true';
-        pill.dataset.expanded = String(phase !== 'arming');
-      });
-      const selection = phase === 'selection';
-      const processing = phase === 'processing' || phase === 'optimising' || phase === 'preview' || phase === 'error' || phase === 'done';
-      pill.dataset.selection = String(selection);
-      pill.dataset.processing = String(processing && !selection);
-      const detail = String(payload.detail || '').trim();
-      if (phase === 'error') {
-        // Surface the real failure (mic, accessibility, STT) instead of a
-        // generic "Needs attention" label that hid actionable fixes.
-        statusText.textContent = (detail || 'Something went wrong. Press Esc to dismiss.').slice(0, 96);
-      } else if (phase === 'processing') {
-        statusText.textContent = detail || 'Transcribing';
-      } else if (phase === 'optimising') {
-        statusText.textContent = detail || 'Enhancing';
-      } else if (phase === 'done') {
-        statusText.textContent = detail || 'Inserted';
-      } else if (phase === 'preview') {
-        statusText.textContent = detail || 'Ready';
-      } else {
-        statusText.textContent = detail || 'Listening';
+      appear(() => later_(payload, detail));
+    }
+    function later_(payload, detail) {
+      if (phase === 'refining') { if (!cardOpen) openDiff(payload); return; }
+      if (phase === 'revealing') { revealFinal(payload); return; }
+      if (phase === 'done') {
+        if (cardOpen) { landStatus(detail, Boolean(payload.clipboard)); return; }
+        $('msg').className = 'msg'; $('msg').textContent = detail || 'Inserted'; show('msg'); return;
       }
-      statusText.className = phase === 'error' ? 'error' : phase === 'done' ? 'done' : '';
-      pill.dataset.error = String(phase === 'error');
-      statusLoader.style.display = phase === 'error' || phase === 'done' ? 'none' : 'inline-flex';
-      pill.dataset.done = String(phase === 'done');
-      pill.dataset.wide = String(phase === 'error' || phase === 'preview' || detail.length > 18 && phase !== 'listening');
-      primary.style.display = selection || processing ? 'none' : 'grid';
-      // Keep dismiss available on errors so users are not stuck until Escape.
-      cancel.style.display = selection || phase === 'preview' || phase === 'done' ? 'none' : 'grid';
+      if (phase === 'error') { cardOpen = false; $('msg').className = 'msg error'; $('msg').textContent = (detail || 'Something went wrong. Press Esc to dismiss.').slice(0, 90); show('msg'); return; }
+      if (phase === 'preview') { $('msg').className = 'msg'; $('msg').textContent = detail || 'Ready'; show('msg'); return; }
+      if (phase === 'selection') show('select');
     }
 
-    primary.addEventListener('click', () => window.clyraDictationPill.action('stop'));
-    cancel.addEventListener('click', () => window.clyraDictationPill.action('cancel'));
-    document.getElementById('replace').addEventListener('click', () => window.clyraDictationPill.action('replace'));
-    document.getElementById('enhance').addEventListener('click', () => window.clyraDictationPill.action('enhance'));
-    document.getElementById('selection-cancel').addEventListener('click', () => window.clyraDictationPill.action('cancel'));
-    window.clyraDictationPill.onState(render);
-    window.__clyraPlay = (name) => { if (!audio) audio = new AudioContext(); SOUNDS[name]?.(); };
-    setTargetVolume();
-    if (prefersReducedMotion) animateWave(); else requestAnimationFrame(animateWave);
-    render();
+    // ---------------------------------------------------------------- input: hover hit-testing + dragging
+    function setHover(next) { if (next !== hovering) { hovering = next; api.setInteractive && api.setInteractive(next); } }
+    document.addEventListener('mousemove', (event) => {
+      if (dragging) return;
+      if (!isVisible()) { setHover(false); return; }
+      const r = pill.getBoundingClientRect();
+      setHover(event.clientX >= r.left - 4 && event.clientX <= r.right + 4 && event.clientY >= r.top - 4 && event.clientY <= r.bottom + 4);
+    });
+    pill.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('button')) return;
+      dragging = { x: event.screenX, y: event.screenY }; pill.setPointerCapture(event.pointerId); pill.classList.add('dragging');
+    });
+    pill.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      api.move && api.move(event.screenX - dragging.x, event.screenY - dragging.y);
+      dragging.x = event.screenX; dragging.y = event.screenY;
+    });
+    const endDrag = () => { dragging = null; pill.classList.remove('dragging'); };
+    pill.addEventListener('pointerup', endDrag); pill.addEventListener('pointercancel', endDrag);
+    const action = (name) => () => api.action(name);
+    $('primary').addEventListener('click', action('stop'));
+    for (const id of ['cancel', 'selection-cancel']) $(id).addEventListener('click', action('cancel'));
+    $('replace').addEventListener('click', action('replace'));
+    $('enhance').addEventListener('click', action('enhance'));
+
+    api.onState(render);
+
   </script>
 </body>
 </html>

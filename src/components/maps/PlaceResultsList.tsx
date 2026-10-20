@@ -19,14 +19,14 @@ export function PlaceResultsList({ places, hoveredId, onHover, onHoverPrefetch, 
   if (!places.length) return null;
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, x: -16 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -16 }}
       transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-      className="pointer-events-auto absolute bottom-4 left-4 z-20 max-h-[60vh] w-[300px] overflow-y-auto rounded-2xl border border-slate-200/90 bg-white/95 shadow-[0_12px_40px_rgba(15,23,42,.14)] backdrop-blur-xl"
+      className="pointer-events-auto absolute bottom-0 left-0 top-[68px] z-20 w-[408px] max-w-[100vw] overflow-y-auto"
     >
       {title ? (
-        <div className="sticky top-0 border-b border-slate-100 bg-white/95 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">
+        <div className="sticky top-0 border-b border-slate-100 bg-white px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">
           {title}
         </div>
       ) : null}

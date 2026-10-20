@@ -4,17 +4,17 @@
 
 :root {
   --background-main: #ffffff;
-  --background-sidebar: #ffffff;
-  --background-hover: #f1f0ef;
-  --background-selected: #eeeceb;
+  --background-sidebar: #f9f8f7;
+  --background-hover: rgba(55, 53, 47, 0.06);
+  --background-selected: rgba(55, 53, 47, 0.08);
   --background-menu: #ffffff;
   --background-subtle: #f7f6f5;
   --background-input: #f2f1f0;
   --background-scrim: rgba(15, 15, 15, 0.32);
 
-  --text-primary: #37352f;
-  --text-secondary: #787774;
-  --text-tertiary: #a7a5a2;
+  --text-primary: #2c2c2b;
+  --text-secondary: #5f5e59;
+  --text-tertiary: #a19e99;
   --text-placeholder: #b8b6b3;
   --text-on-accent: #ffffff;
 
@@ -50,8 +50,8 @@
     Quicksand, "Trebuchet MS", var(--font-ui);
   --font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
 
-  --sidebar-width: 300px;
-  --content-width: 780px;
+  --sidebar-width: 270px;
+  --content-width: 720px;
   --tab-height: 40px;
   --toolbar-height: 44px;
 

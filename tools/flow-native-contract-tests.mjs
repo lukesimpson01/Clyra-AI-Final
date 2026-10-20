@@ -16,4 +16,26 @@ assert.match(renderer, /<DictationController \/>/);
 assert.doesNotMatch(renderer, /dictation\.onTrigger/);
 assert.match(controller, /dictation\.onTrigger/);
 assert.match(stream, /transcribePcm/);
-console.log("flow-native-contract-tests: 6 assertions passed");
+// Flow runs on its own: hotkey + hidden mic window + speech engine start before (or without) the UI.
+const [main, native] = await Promise.all([
+  readFile(new URL("../electron/main.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../electron/flow-native.mjs", import.meta.url), "utf8"),
+]);
+assert.match(main, /initFlowEarly\(\);\s*\n\s*syncAnywhereTray/);
+assert.match(main, /backgroundLaunch && keepRunningInBackground\(\)/);
+assert.match(main, /function ensureFullBoot/);
+assert.match(manager, /nativeStart\(activationId\)/);
+assert.match(native, /session\.fromPartition\("flow-capture"\)/);
+// Recovery guarantees: nothing can leave the pill stuck, and it must sit above everything.
+assert.match(manager, /armWatchdog\(\)/);
+assert.match(manager, /forceReset\(/);
+assert.match(manager, /setAlwaysOnTop\(true, "screen-saver"(, 1)?\)/);
+assert.match(manager, /enableAutoStop\(\)/);
+assert.match(manager, /createTapMachine/);
+assert.doesNotMatch(manager, /createGestureMachine/);
+// The pill must stay on the Space you are in: a fresh window per dictation, never a re-shown one.
+assert.match(manager, /retirePill\(\)/);
+assert.match(manager, /prepareSpare\(\)/);
+assert.match(manager, /presentAndInsert\(/);
+assert.doesNotMatch(manager, /current\.hide\(\)/);
+console.log("flow-native-contract-tests: 19 assertions passed");

@@ -36,6 +36,8 @@ import { cn } from "../../lib/utils";
 import { isElectronRuntime } from "../../lib/electron-runtime";
 import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
+import { PreviewBuilding } from "./PreviewBuilding";
+import { liveStepLabel } from "./CodexActivity";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
@@ -165,6 +167,7 @@ function BrowserView({
   onOpenTerminal,
   onAddContext,
   agentRunning = false,
+  buildStep,
   projectId,
   inspectMode,
   onToggleInspect,
@@ -180,6 +183,8 @@ function BrowserView({
   onOpenTerminal?: () => void;
   onAddContext: (context: ComposerContext) => void;
   agentRunning?: boolean;
+  /** What the agent is doing right now ("Editing App.tsx"), shown under the building animation. */
+  buildStep?: string | null;
   projectId: string | null;
   inspectMode: boolean;
   onToggleInspect: () => void;
@@ -439,20 +444,10 @@ function BrowserView({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ opacity: { duration: 0.32, ease: [0.22, 1, 0.36, 1] } }}
-              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#FAFAF9]"
+              transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute inset-0 z-10"
             >
-              <div className="cc-preview-loader" aria-hidden />
-              <div className="flex flex-col items-center gap-1 text-center">
-                <ShiningText
-                  text={starting ? "Starting live preview…" : "Building your project…"}
-                  play
-                  className="text-[12.5px] font-medium tracking-[-0.01em]"
-                />
-                <p className="text-[11px] text-[#8A8A8A]">
-                  {starting ? "Preparing the development server" : "Preview will appear when files are ready"}
-                </p>
-              </div>
+              <PreviewBuilding phase={starting ? "starting" : "building"} step={buildStep} />
             </motion.div>
           ) : null}
         </AnimatePresence>
@@ -885,6 +880,7 @@ export function RightPanel({
   const [inspectMode, setInspectMode] = useState(false);
   const [selection, setSelection] = useState<InspectPayload | null>(null);
   const frameWindowRef = useRef<Window | null>(null);
+  const buildStep = useMemo(() => (agentRunning ? liveStepLabel(actionList) : null), [actionList, agentRunning]);
 
   const postToFrame = (message: unknown) => {
     frameWindowRef.current?.postMessage(message, "*");
@@ -1067,6 +1063,7 @@ export function RightPanel({
           onOpenTerminal={onOpenTerminal}
           onAddContext={onAddContext}
           agentRunning={agentRunning}
+          buildStep={buildStep}
           projectId={state.activeProjectId}
           inspectMode={inspectMode}
           onToggleInspect={() => setInspectMode((mode) => !mode)}

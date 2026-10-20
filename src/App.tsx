@@ -4,6 +4,8 @@
  */
 
 import { chatReplyFailureText } from "./lib/chatReplyErrors";
+import { useNativeOcclusion } from "./lib/nativeOcclusion";
+import { WorkspaceCardPlaceholder, WorkspaceSlot, useWorkspacePortalNodes } from "./components/WorkspacePortal";
 import {
   extractLocationQuery,
   extractWeatherLocation,
@@ -162,6 +164,8 @@ import { VoicePcmCapturer } from "./lib/voicePcmCapture";
 import { applyDictionary, inferContext, localDictationCleanup, routeSpeechIntent } from "./speech";
 import { useVoiceCall } from "./hooks/useVoiceCall";
 import { appendDictatedText, canStartDictation, type ComposerDictationPhase } from "./lib/composerDictation";
+import { playFlowSound } from "./lib/flowSounds";
+import type { FlowSession } from "./components/chat/FlowComposerOverlay";
 import { type OrbColorTheme } from "./components/AiOrb";
 import { Bloub, type BloubExpression, type BloubHandle, type BloubState } from "./components/bloub/Bloub";
 import { BloubBootAvatar } from "./components/bloub/BloubBootAvatar";
@@ -216,26 +220,49 @@ const loadVibeCoderWorkspace = () => import("./components/clyra-code/ClyraCodeWo
   }));
 const VibeCoderWorkspace = lazy(loadVibeCoderWorkspace);
 
+/** Names from the last project list, so the opening surface already shows the real sidebar contents. */
+function readCachedVibeProjectNames(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("clyra-code:projects-cache") || "[]");
+    return Array.isArray(parsed) ? parsed.slice(0, 18).map((p: any) => String(p?.displayName || p?.name || "").trim()).filter(Boolean) : [];
+  } catch { return []; }
+}
+
+/**
+ * Shown for the few hundred milliseconds the Vibe Coder workspace takes to mount. It has the same geometry as the real
+ * thing (top bar, 264px sidebar with your actual projects, the centred prompt), so when the real workspace takes over
+ * nothing moves: the page just fades in once, smoothly.
+ */
 function VibeWorkspaceLoadingSurface() {
+  const names = useMemo(readCachedVibeProjectNames, []);
   return (
     <motion.div
       aria-label="Opening Vibe Coder"
-      className="flex h-full min-h-0 w-full overflow-hidden bg-[#fbfbfa]"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
     >
-      <div className="w-[236px] shrink-0 border-r border-black/[0.055] bg-[#f8f8f7] p-3">
-        <div className="h-8 w-28 animate-pulse rounded-md bg-black/[0.055]" />
-        <div className="mt-5 h-8 animate-pulse rounded-md bg-black/[0.045]" />
-        <div className="mt-4 space-y-3 px-1">
-          <div className="h-3 w-3/4 animate-pulse rounded bg-black/[0.045]" />
-          <div className="h-3 w-2/3 animate-pulse rounded bg-black/[0.04]" />
-        </div>
+      <div className="flex h-[48px] shrink-0 items-center border-b border-black/[0.05] px-3.5">
+        <div className="h-[30px] w-[132px] rounded-[9px] bg-black/[0.045]" />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col p-7">
-        <div className="h-7 w-40 animate-pulse rounded-md bg-black/[0.055]" />
-        <div className="mt-6 flex-1 animate-pulse rounded-xl border border-black/[0.045] bg-white" />
+      <div className="flex min-h-0 flex-1">
+        <div className="flex w-[264px] shrink-0 flex-col border-r border-black/[0.07] bg-[#FAFAF9]">
+          <div className="border-b border-black/[0.07] px-2.5 pb-2 pt-2.5">
+            <div className="flex h-[32px] items-center px-1 text-[14.5px] font-semibold tracking-[-0.02em] text-[#34363A]">Clyra Code</div>
+            <div className="mt-1.5 flex h-[32px] items-center gap-2 px-2 text-[13px] font-medium text-[#3E4045]"><span className="h-4 w-4 rounded bg-black/[0.07]" />New project</div>
+          </div>
+          <div className="px-1.5 pt-1.5">
+            <div className="flex h-[30px] items-center px-2 pt-2 text-[11.5px] font-medium text-[#9A9CA0]">Projects</div>
+            {names.length ? names.map((name, i) => (
+              <div key={`${name}-${i}`} className="flex h-[32px] items-center gap-2 px-2 text-[13px] text-[#45474C]"><span className="h-4 w-4 shrink-0 rounded-[4px] border border-black/[0.18]" /><span className="truncate">{name}</span></div>
+            )) : Array.from({ length: 8 }, (_, i) => <div key={i} className="m-1 h-[22px] rounded-md bg-black/[0.04]" style={{ width: `${55 + ((i * 17) % 35)}%` }} />)}
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
+          <div className="h-[40px] w-[40px] rounded-full bg-[#3977F6]/90" />
+          <div className="mt-4 text-[22px] font-semibold tracking-[-0.025em] text-[#222327]">What do you want to build?</div>
+        </div>
       </div>
     </motion.div>
   );
@@ -328,9 +355,9 @@ const loadStudyPalWorkspace = () =>
     default: () => <WorkspaceImportFailure name="Study Pal" />,
   }));
 const StudyPalWorkspace = lazy(loadStudyPalWorkspace);
-// Cowork is the cloned Rakazo application. It remains lazy because its
-// browser host should not be created until the user opens Cowork.
-const CoworkWorkspace = lazy(() => import("./components/cowork/CoworkWorkspace").then((m) => ({ default: m.CoworkWorkspace })));
+// Agents is Rakazo itself, run locally by Electron (electron/agents). It stays lazy so nothing starts until the user
+// opens Agents.
+const AgentsWorkspace = lazy(() => import("./components/agents/AgentsWorkspace").then((m) => ({ default: m.AgentsWorkspace })));
 const ClyraCareWorkspace = lazy(() => import("./components/care/ClyraCareWorkspace").then((m) => ({ default: m.ClyraCareWorkspace })));
 const ClyraMapsWorkspace = lazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsWorkspace })));
 const ClyraEyeWorkspace = lazy(() => import("./components/eye/ClyraEyeWorkspace").then((m) => ({ default: m.ClyraEyeWorkspace })));
@@ -656,7 +683,8 @@ function formatRecentUpdate(updatedAt: number) {
  *              today); this is deliberately the "basic" version of that.
  */
 type ChatEffort = "light" | "medium" | "high" | "max";
-const CHAT_EFFORTS: ChatEffort[] = ["light", "medium", "high", "max"];
+// Three levels are offered (Light / Standard / Extended); "max" stays defined for old saved values only.
+const CHAT_EFFORTS: ChatEffort[] = ["light", "medium", "high"];
 const CHAT_EFFORT_MODEL: Record<ChatEffort, string> = {
   light: "deepseek-v4-flash",
   medium: "deepseek-v4-pro",
@@ -2537,7 +2565,9 @@ function detectGoogleTool(prompt: string, selected?: BuiltInCommandSuggestion | 
 }
 
 type SpotifyIntent =
-  | { action: "resume" | "pause" | "next" | "previous" | "play_trending" }
+  | { action: "resume" | "pause" | "next" | "previous" | "play_trending" | "now_playing" | "shuffle_on" | "shuffle_off" | "like" }
+  | { action: "volume"; percent: number }
+  | { action: "queue_query"; query: string }
   | { action: "play_query"; query: string };
 
 /** Lets a plain chat message ("skip this song", "play X", "resume") drive
@@ -2546,6 +2576,14 @@ type SpotifyIntent =
 function detectSpotifyIntent(prompt: string): SpotifyIntent | null {
   const value = prompt.trim();
   if (!value) return null;
+  if (/^(?:what'?s|what is) (?:playing|this song|this track)(?: right now)?\??$/i.test(value) || /^(?:now playing|what song is this)\??$/i.test(value)) return { action: "now_playing" };
+  const volumeMatch = value.match(/^(?:set |turn )?(?:the )?volume(?: to| up to| down to)? (\d{1,3})\s*%?$/i);
+  if (volumeMatch) return { action: "volume", percent: Math.min(100, Number(volumeMatch[1])) };
+  if (/^(?:turn |switch )?shuffle on$|^shuffle (?:my )?(?:music|songs|playlist)$/i.test(value)) return { action: "shuffle_on" };
+  if (/^(?:turn |switch )?shuffle off$/i.test(value)) return { action: "shuffle_off" };
+  if (/^(?:like|save|heart) (?:this|the current) (?:song|track)$|^(?:like|save) (?:this|it)$/i.test(value)) return { action: "like" };
+  const queueMatch = value.match(/^(?:add|queue)\s+(.+?)\s+(?:to (?:the |my )?queue|next)$|^queue(?: up)?\s+(.+)$/i);
+  if (queueMatch) return { action: "queue_query", query: (queueMatch[1] || queueMatch[2]).trim() };
   if (/^(?:skip(?: this (?:song|track))?|next(?: song| track)?)$/i.test(value)) return { action: "next" };
   if (/\b(?:skip to the next|play the next (?:song|track))\b/i.test(value)) return { action: "next" };
   if (/^(?:go back|previous(?: song| track)?|play the (?:previous|last) (?:song|track))$/i.test(value)) return { action: "previous" };
@@ -2888,6 +2926,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!showSpotifyNotch) setNotchOpen(false);
+  }, [showSpotifyNotch]);
+  // Lets full-bleed apps (Maps) keep their own top controls clear of the floating Music notch.
+  useEffect(() => {
+    document.documentElement.dataset.musicNotch = showSpotifyNotch ? "on" : "off";
   }, [showSpotifyNotch]);
   const [pendingDeepResearch, setPendingDeepResearch] = useState<{ checkpointId: string; prompt: string } | null>(null);
   const [selectedAppAgents, setSelectedAppAgents] = useState<AppSuggestion[]>([]);
@@ -3352,16 +3394,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOverviewFromNotes]);
   useLayoutEffect(() => {
-    const occluded = isAppLauncherOpen || isTaskViewOpen;
-    if (occluded) {
+    if (isAppLauncherOpen || isTaskViewOpen) {
       void getElectronDesktop()?.browser.setSurface({ visible: false });
     }
-    window.dispatchEvent(
-      new CustomEvent("clyra:native-surface-occlusion", {
-        detail: { occluded },
-      }),
-    );
   }, [isAppLauncherOpen, isTaskViewOpen]);
+  useNativeOcclusion(isAppLauncherOpen || isTaskViewOpen);
   // A Chromium browser surface is a native sibling of the React tree, not a
   // child of the outgoing page. Hide it synchronously whenever Browser is no
   // longer current so it can never paint above the incoming workspace frame.
@@ -3607,7 +3644,7 @@ export default function App() {
   // exports appear blank even though the template has rendered underneath.
   const isEmbeddedToolRoute = typeof window !== "undefined"
     && Boolean(new URLSearchParams(window.location.search).get("embedTool"));
-  const [introState, setIntroState] = useState<BootOverlayState>(() => isEmbeddedToolRoute ? "complete" : "holding");
+  const [introState, setIntroState] = useState<BootOverlayState>("complete");   // no boot overlay: the app simply fades in
   const [introProgress, setIntroProgress] = useState(0);
   const isBootOverlayVisible = introState !== "complete";
   // Tracks whether the flying boot avatar has landed in the chat-home slot
@@ -3778,7 +3815,13 @@ export default function App() {
   // The static document-level cover remains until this first layout commit,
   // where the React-owned boot surface is already in place beneath it.
   useLayoutEffect(() => {
-    document.getElementById("clyra-preboot-surface")?.remove();
+    // Butter-smooth, light intro: the white cover just fades away (opacity only, no layout, no filters).
+    const cover = document.getElementById("clyra-preboot-surface");
+    if (!cover) return undefined;
+    cover.style.transition = "opacity .6s cubic-bezier(.4,0,.2,1)";
+    const raf = requestAnimationFrame(() => { cover.style.opacity = "0"; });
+    const timer = window.setTimeout(() => cover.remove(), 700);
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); };
   }, []);
 
   const beginRippleRef = useRef<() => void>(() => {});
@@ -3803,13 +3846,9 @@ export default function App() {
     // animations instead of one sequenced handoff.
     const beginRipple = () => {
       if (cancelled) return;
-      setIntroState("ripple");
       setIsSidebarOpen(true);
-      schedule(1_000, () => {
-        if (cancelled) return;
-        setIntroState("complete");
-      });
     };
+    beginRipple();
     beginRippleRef.current = beginRipple;
 
     const completePreparation = (ready: boolean) => {
@@ -3859,6 +3898,7 @@ export default function App() {
   const [value, setValue] = useState("");
   const [chatEffort, setChatEffort] = useState<ChatEffort>(() => {
     const stored = readStoredString("clyra-chat-effort");
+    if (stored === "max") return "high";
     return (CHAT_EFFORTS as string[]).includes(stored || "") ? (stored as ChatEffort) : "medium";
   });
   useEffect(() => {
@@ -3896,15 +3936,95 @@ export default function App() {
     setValue((draft) => appendDictatedText(draft, text));
     setIsInputExpanded(true);
   });
+  // Desktop: the composer mic drives the same Flow engine as the system-wide hotkey. Its states come back
+  // here so the composer can show its own inline version of the pill (no floating window for this session).
+  const [flowSession, setFlowSession] = useState<FlowSession | null>(null);
+  const flowInlineRef = useRef(false);
+  const flowDeliverRef = useRef<(text: string) => void>(() => undefined);
+  const flowDeliveredRef = useRef(false);   // set once this dictation's text has reached the draft
+  // Text highlighted in the composer when dictation starts: speech replaces it, or (if it sounds like an
+  // instruction) the AI rewrites it. Remembered as a range so the result lands exactly where the selection was.
+  const flowSelectionRef = useRef<{ start: number; end: number; text: string } | null>(null);
+  const flowPrevPhaseRef = useRef("idle");
+  useEffect(() => {
+    const flow = getElectronDesktop()?.dictation;
+    if (!flow?.onState) return undefined;
+    const offState = flow.onState((state: FlowSession) => {
+      if (!flowInlineRef.current) return;
+      const previous = flowPrevPhaseRef.current;
+      const next = state.phase || "idle";
+      if (next !== previous) {
+        if (next === "listening" && previous !== "listening") playFlowSound("start");
+        else if ((next === "processing" || next === "optimising") && previous === "listening") playFlowSound("stop");
+        else if (next === "done") playFlowSound("done");
+        else if (next === "error") playFlowSound("error");
+        else if (next === "idle" && previous !== "done" && previous !== "idle") playFlowSound("cancel");
+      }
+      flowPrevPhaseRef.current = next;
+      if (next === "done" && (state as any).resultText) flowDeliverRef.current((state as any).resultText);
+      if (next === "idle") {
+        flowInlineRef.current = false;
+        // A finished dictation lets the text glide from the dictation layer into the draft; a cancel just closes.
+        if (previous === "done") {
+          setFlowSession((current) => (current ? { ...current, phase: "closing" } : null));
+          window.setTimeout(() => setFlowSession((current) => (current?.phase === "closing" ? null : current)), 1050);
+        } else setFlowSession(null);
+        return;
+      }
+      setFlowSession({ ...state });
+    });
+    // The text reaches the draft exactly once per dictation: from the inline-result message, or — if that
+    // message was missed for any reason — from the finished state, which carries the same text.
+    const deliver = (text: string) => {
+      const clean = String(text || "");
+      if (!clean.trim() || flowDeliveredRef.current) return;
+      flowDeliveredRef.current = true;
+      const selection = flowSelectionRef.current;
+      flowSelectionRef.current = null;
+      setValue((draft) => (selection && draft.slice(selection.start, selection.end) === selection.text
+        ? `${draft.slice(0, selection.start)}${clean}${draft.slice(selection.end)}`
+        : appendDictatedText(draft, clean)));
+      setIsInputExpanded(true);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+    const offResult = flow.onInlineResult?.(({ text }) => deliver(text));
+    flowDeliverRef.current = deliver;
+    return () => { offState?.(); offResult?.(); };
+  }, []);
+  const flowComposerPhase = (phase: string): ComposerDictationPhase => (
+    phase === "arming" ? "starting" : phase === "listening" ? "listening" : phase === "error" ? "error" : phase === "closing" ? "idle" : "transcribing"
+  );
   // One state object for every composer surface, so the mic always reflects the real capture session.
   const composerDictationState = {
-    phase: composerDictation.phase,
-    level: composerDictation.level,
+    phase: flowSession ? flowComposerPhase(flowSession.phase) : composerDictation.phase,
+    level: flowSession ? flowSession.level || 0 : composerDictation.level,
     elapsedSeconds: composerDictation.elapsedSeconds,
-    detail: composerDictation.detail,
-    onStart: () => { void composerDictation.start(); },
-    onStop: () => { composerDictation.stop(); },
-    onCancel: () => { composerDictation.cancel(); },
+    detail: flowSession ? flowSession.detail : composerDictation.detail,
+    flow: flowSession,
+    // In the desktop app the mic button drives the same Flow engine as the global hotkey, shown inline here.
+    onStart: () => {
+      const flow = getElectronDesktop()?.dictation;
+      if (flow?.toggle) {
+        const area = textareaRef.current;
+        const start = area?.selectionStart ?? 0; const end = area?.selectionEnd ?? 0;
+        const selected = area && end > start ? area.value.slice(start, end) : "";
+        flowSelectionRef.current = selected.trim() ? { start, end, text: selected } : null;
+        flowInlineRef.current = true; flowDeliveredRef.current = false; flowPrevPhaseRef.current = "idle";
+        void flow.toggle({ inline: true, selection: selected });
+        return;
+      }
+      void composerDictation.start();
+    },
+    onStop: () => {
+      const flow = getElectronDesktop()?.dictation;
+      if (flowSession && flow?.toggle) { void flow.toggle(); return; }
+      composerDictation.stop();
+    },
+    onCancel: () => {
+      const flow = getElectronDesktop()?.dictation;
+      if (flowSession && flow?.cancel) { void flow.cancel(); return; }
+      composerDictation.cancel();
+    },
   };
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [readingMessageId, setReadingMessageId] = useState<string | null>(null);
@@ -6841,6 +6961,22 @@ Please analyze the code you just wrote and fix this error.`;
           case "play_query":
             actionLabel = `Searching Spotify for "${intent.query}"`;
             break;
+          case "queue_query":
+            actionLabel = `Adding "${intent.query}" to your queue`;
+            break;
+          case "volume":
+            actionLabel = `Setting volume to ${intent.percent}%`;
+            break;
+          case "shuffle_on":
+          case "shuffle_off":
+            actionLabel = "Updating shuffle";
+            break;
+          case "like":
+            actionLabel = "Saving to your Liked Songs";
+            break;
+          case "now_playing":
+            actionLabel = "Checking what's playing";
+            break;
           default:
             actionLabel = "Preparing Clyra Music";
             break;
@@ -6896,6 +7032,39 @@ Please analyze the code you just wrote and fix this error.`;
               const res = await spotifyPlayback.playTrending();
               const error = res.ok ? await verifySpotify("playing") : res.error;
               reply = !error ? `▶️ Playing **${res.playlistName}**.` : `Couldn't start trending music: ${error}`;
+              break;
+            }
+            case "now_playing": {
+              const t = spotifyPlayback.track;
+              reply = t ? `🎵 **${t.name}** by ${t.artists.map((a) => a.name).join(", ")}${spotifyPlayback.isPlaying ? "" : " (paused)"}.` : "Nothing is playing right now.";
+              break;
+            }
+            case "volume": {
+              spotifyPlayback.setVolumePercent(intent.percent);
+              reply = `🔊 Volume set to ${intent.percent}%.`;
+              break;
+            }
+            case "shuffle_on":
+            case "shuffle_off": {
+              const want = intent.action === "shuffle_on";
+              if (spotifyPlayback.shuffleOn !== want) spotifyPlayback.toggleShuffle();
+              reply = want ? "🔀 Shuffle is on." : "Shuffle is off.";
+              break;
+            }
+            case "like": {
+              const t = spotifyPlayback.track;
+              if (!t) { reply = "Nothing is playing to save."; break; }
+              if (!spotifyPlayback.liked) await spotifyPlayback.toggleSaveTrack();
+              reply = `💚 Saved **${t.name}** to your Liked Songs.`;
+              break;
+            }
+            case "queue_query": {
+              const found = await spotifyPlayback.search(intent.query, "track", 1);
+              const hit = found.ok ? found.tracks?.[0] : null;
+              if (!hit) { reply = `Couldn't find "${intent.query}" on Spotify.`; break; }
+              const queued = await spotifyPlayback.addToQueue(hit.uri);
+              if (!queued.ok) { reply = `Couldn't queue that: ${queued.error || "no active player"}`; break; }
+              reply = `➕ Added **${hit.name}** by ${hit.artists.map((a) => a.name).join(", ")} to your queue.`;
               break;
             }
             case "play_query": {
@@ -9049,9 +9218,8 @@ Please analyze the code you just wrote and fix this error.`;
       : null;
   const isCreatorWorkspace = creatorMode !== null;
   const isVibeWorkspace = activeWorkspaceTab === "vibe" && !isClipWorkspace && !isCompanionWorkspace;
-  // The Clyra Composer reskin's ClyraComposerShell now owns its own chat
-  // history sidebar (Chats panel) — the old app-level drawer is retired for
-  // the chat tab to avoid a redundant second sidebar.
+  // Chat uses the composer shell's own "Chats" sidebar (history, search, new chat, settings). The older app-level
+  // floating sidebar stays off so there is only ever one sidebar.
   const showSidebarControls = false;
   const rawShowWorkspaceLivePreview = isVibeWorkspace && showVibeLivePreview;
   const [workspacePreviewLayoutVisible, setWorkspacePreviewLayoutVisible] =
@@ -9087,10 +9255,55 @@ Please analyze the code you just wrote and fix this error.`;
           ? "eye"
         : isSpotifyWorkspace
           ? "spotify"
+        : isCoworkWorkspace
+          ? "cowork"
         : creatorMode ??
           (isVibeWorkspace
             ? "vibe"
             : "chat");
+  // Which apps are mounted (each through its own persistent portal). Normally just the active one, plus the one that
+  // is sliding out during a switch; while Task View is open, every visited app, mounted progressively after the
+  // overview has finished opening so the zoom-out itself is never blocked by app start-up work.
+  const activeContentTab = workspaceViewKey as WorkspaceTabId;
+  const workspacePortalNode = useWorkspacePortalNodes();
+  const [contentTabTracker, setContentTabTracker] = useState<{ current: WorkspaceTabId; retained: WorkspaceTabId[] }>(() => ({ current: activeContentTab, retained: [] }));
+  if (contentTabTracker.current !== activeContentTab) {
+    setContentTabTracker((prev) => ({ current: activeContentTab, retained: [...prev.retained.filter((id) => id !== activeContentTab && id !== prev.current), prev.current] }));
+  }
+  useEffect(() => {
+    if (!contentTabTracker.retained.length) return;
+    const timer = window.setTimeout(() => setContentTabTracker((prev) => ({ ...prev, retained: [] })), 900);
+    return () => window.clearTimeout(timer);
+  }, [contentTabTracker.retained]);
+  const [taskViewMountedTabs, setTaskViewMountedTabs] = useState<WorkspaceTabId[]>([]);
+  useEffect(() => {
+    if (isTaskViewOpen) {
+      const pending = visitedWorkspaceTabs.filter((id) => id !== activeContentTab && !taskViewMountedTabs.includes(id));
+      if (!pending.length) return;
+      let cancelled = false;
+      let handle = 0;
+      const w = window as any;
+      const idle = (cb: () => void): number => (typeof w.requestIdleCallback === "function" ? w.requestIdleCallback(cb, { timeout: 260 }) : window.setTimeout(cb, 40));
+      const step = (index: number) => {
+        if (cancelled || index >= pending.length) return;
+        setTaskViewMountedTabs((current) => (current.includes(pending[index]) ? current : [...current, pending[index]]));
+        handle = idle(() => step(index + 1));
+      };
+      // Wait for the overview's zoom-out to land, then fill cards in one by one.
+      const start = window.setTimeout(() => step(0), 520);
+      return () => { cancelled = true; window.clearTimeout(start); if (typeof w.cancelIdleCallback === "function") w.cancelIdleCallback(handle); else window.clearTimeout(handle); };
+    }
+    if (!taskViewMountedTabs.length) return;
+    // After Task View closes, release the other apps gradually so the closing zoom stays smooth.
+    const timer = window.setTimeout(() => setTaskViewMountedTabs((current) => current.slice(1)), 120);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTaskViewOpen, taskViewMountedTabs, visitedWorkspaceTabs]);
+  const mountedWorkspaceTabs = useMemo(() => {
+    const ids: WorkspaceTabId[] = [activeContentTab];
+    for (const id of [...contentTabTracker.retained, ...taskViewMountedTabs]) if (!ids.includes(id)) ids.push(id);
+    return ids;
+  }, [activeContentTab, contentTabTracker.retained, taskViewMountedTabs]);
   const activeInputCommand =
     selectedCommand && selectedCommand.id !== "vibe" ? selectedCommand : null;
   const recentChat = chats.find((chat) => chat.title.trim() && chat.messages.length > 0) ?? null;
@@ -9118,7 +9331,7 @@ Please analyze the code you just wrote and fix this error.`;
     clip: { id: "clip", label: "Shorts", icon: Scissors },
     browser: { id: "browser", label: "Browser", icon: Globe },
     study: { id: "study", label: "Study", icon: GraduationCap },
-    cowork: { id: "cowork", label: "Cowork", icon: Users },
+    cowork: { id: "cowork", label: "Agents", icon: Users },
     spotify: { id: "spotify", label: "Music", icon: Music2 },
     care: { id: "care", label: "Care", icon: Heart },
   };
@@ -9468,6 +9681,14 @@ Please analyze the code you just wrote and fix this error.`;
       adjustHeight();
     }, 50);
   };
+  // Development-only hook so automated UI checks can open any workspace directly.
+  const workspaceTabChangeRef = useRef(handleWorkspaceTabChange);
+  workspaceTabChangeRef.current = handleWorkspaceTabChange;
+  useEffect(() => {
+    if (!(import.meta as any).env?.DEV) return undefined;
+    (window as any).__clyraOpenWorkspace = (tabId: WorkspaceTabId) => workspaceTabChangeRef.current(tabId);
+    return () => { delete (window as any).__clyraOpenWorkspace; };
+  }, []);
 
   const workspaceSwitcherTabAt = (clientX: number, clientY: number) => {
     const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
@@ -10164,34 +10385,160 @@ Please analyze the code you just wrote and fix this error.`;
   // A thin presentation adapter over the existing workspace registry. These
   // are the same mounted application instances that Clyra normally uses — the
   // Mission Control layer only changes their outer geometry.
+  // One renderer for every app, used by its persistent portal (see WorkspacePortal). The same element tree serves the
+  // normal workspace panel and Task View, so neither path ever remounts an app.
+  const renderWorkspaceContent = (tabId: WorkspaceTabId): React.ReactNode => (
+                      tabId === "vibe" ? (
+                        <Suspense fallback={<VibeWorkspaceLoadingSurface />}>
+                          <VibeCoderWorkspace
+                            initialProjectId={vibeProjectToOpen ?? undefined}
+                            onInitialProjectOpened={() => setVibeProjectToOpen(null)}
+                          />
+                        </Suspense>
+                      ) : tabId === "clip" ? (
+                        <Suspense fallback={null}>
+                          <ShortsWorkspaceApp
+                            key="clip"
+                            entry={{ name: "home" }}
+                            onExit={() => {
+                              setSelectedCommand(null);
+                              setClipInitialUrl("");
+                              setActiveWorkspaceTab("chat");
+                            }}
+                          />
+                        </Suspense>
+                      ) : tabId === "browser" ? (
+                        <Suspense fallback={null}>
+                          <WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} />
+                        </Suspense>
+                      ) : tabId === "companion" ? (
+                        <Suspense fallback={null}>
+                          <ScreenCompanionWorkspace />
+                        </Suspense>
+                      ) : tabId === "cowork" ? (
+                        <Suspense fallback={null}>
+                          <AgentsWorkspace />
+                        </Suspense>
+                      ) : tabId === "study" ? (
+                        <Suspense fallback={null}>
+                          <StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} />
+                        </Suspense>
+                      ) : tabId === "care" ? (
+                        <Suspense fallback={null}>
+                          <ClyraCareWorkspace />
+                        </Suspense>
+                      ) : tabId === "maps" ? (
+                        <Suspense fallback={null}>
+                          <ClyraMapsWorkspace />
+                        </Suspense>
+                      ) : tabId === "eye" ? (
+                        <Suspense fallback={null}>
+                          <ClyraEyeWorkspace suspended={isTaskViewOpen} />
+                        </Suspense>
+                      ) : tabId === "spotify" ? (
+                        <SpotifyWorkspace playback={spotifyPlayback} />
+                      ) : tabId === "would-rather" || tabId === "reddit-story" || tabId === "fake-text" ? (
+                        <Suspense fallback={null}>
+                          <ShortsWorkspaceApp
+                            key={tabId}
+                            entry={{ name: "setup", kind: tabId }}
+                            onExit={() => handleWorkspaceTabChange("chat")}
+                          />
+                        </Suspense>
+                      ) : (
+                        <div className="relative flex min-h-0 flex-1 w-full flex-col overflow-hidden">
+                          <ClyraComposerShell
+                            userName="Luke"
+                            accentColor={accentColor}
+                            text={value}
+                            onTextChange={setValue}
+                            onKeyDown={handleKeyDown}
+                            onSend={handleSendMessage}
+                            isResponding={isAiResponding}
+                            onStop={stopGeneration}
+                            onStartVoiceCall={() => void voiceCall.startCall()}
+                            canSend={canSendMessage}
+                            textareaRef={textareaRef}
+                            placeholder="Message Clyra"
+                            sent={isWorkspaceSwitcherCustomizing ? false : messages.length > 0}
+                            temp={isTemporaryChat}
+                            onToggleTemp={toggleTemporaryChat}
+                            efforts={shellEfforts}
+                            currentEffort={chatEffort}
+                            sources={shellSources}
+                            activeSourceIds={shellActiveSourceIds}
+                            onToggleSource={handleShellToggleSource}
+                            paletteOpen={showCommandPalette}
+                            paletteItems={shellPaletteItems}
+                            paletteQuery={commandQuery}
+                            paletteActiveIndex={activeSuggestion}
+                            onPaletteHoverIndex={setActiveSuggestion}
+                            selections={shellSelections}
+                            suggestions={shellSuggestions}
+                            files={shellFiles}
+                            onPickFiles={handleAttachFile}
+                            fileInputRef={fileInputRef}
+                            onFilesSelected={handleFilesSelected}
+                            dictation={composerDictationState}
+                            historyPanel
+                            sidebarOpen={shellSidebarOpen}
+                            onToggleSidebar={() => setShellSidebarOpen((v) => !v)}
+                            onOpenSettings={() => setIsSettingsOpen(true)}
+                            chats={shellChatRows}
+                            onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }}
+                            onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }}
+                            onRenameChat={handleShellRenameChat}
+                            onDeleteChat={handleShellDeleteChat}
+                            sideQuery={shellSideQuery}
+                            onSideQueryChange={setShellSideQuery}
+                            usage={shellUsage}
+                            connections={{
+                              signInAvailable: Boolean(getElectronDesktop()?.google) || googleShellWebConfigured,
+                              connected: googleShellStatus.connected,
+                              connecting: googleShellConnecting,
+                              connectNote: googleShellConnectNote,
+                              email: googleShellStatus.email ?? null,
+                              onConnect: () => {
+                                const desktop = getElectronDesktop();
+                                if (desktop?.google) {
+                                  setGoogleShellConnecting(true);
+                                  void desktop.google.signIn().then((result) => {
+                                    if (!result.ok) { setGoogleShellConnecting(false); setToastMessage(result.error || "Google sign-in could not start."); }
+                                  }).catch(() => { setGoogleShellConnecting(false); setToastMessage("Google sign-in could not start."); });
+                                  return;
+                                }
+                                startGoogleWebSignIn();
+                              },
+                              onDisconnect: () => {
+                                const desktop = getElectronDesktop();
+                                if (desktop?.google) {
+                                  void desktop.google.disconnect().then(() => setGoogleShellStatus({ connected: false }));
+                                  return;
+                                }
+                                void disconnectGoogleWeb();
+                              },
+                              scopes: shellConnectionScopes,
+                              webSearchEnabled: webSearchShellEnabled,
+                              onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v),
+                            }}
+                            transcript={shellTranscript} transcriptOverlay={scrollLatestControl}
+                            transcriptContainerId="chat-container"
+                            transcriptContainerRef={chatContentRef}
+                          />
+                        </div>
+                      )
+  );
+
   const workspaceTaskTabs = visitedWorkspaceTabs.map((tabId): TaskViewTab => {
     const labels: Record<WorkspaceTabId, string> = {
       chat: "Chat", vibe: "Vibe Coder", clip: "AI Clipper", browser: "Browser",
-      companion: "Companion", study: "Study Pal", notes: "Clyra Notes", cowork: "Cowork",
+      companion: "Companion", study: "Study Pal", notes: "Clyra Notes", cowork: "Agents",
       "fake-text": "Text Story", "would-rather": "Would You Rather", "reddit-story": "Reddit Story",
       spotify: "Clyra Music", care: "Clyra Care", maps: "Clyra Maps", eye: "Clyra Eye",
     };
-    const content = tabId === "vibe" ? <Suspense fallback={<VibeWorkspaceLoadingSurface />}><VibeCoderWorkspace initialProjectId={vibeProjectToOpen ?? undefined} onInitialProjectOpened={() => setVibeProjectToOpen(null)} /></Suspense>
-      : tabId === "clip" ? <Suspense fallback={null}><ShortsWorkspaceApp key="clip" entry={{ name: "home" }} onExit={() => handleWorkspaceTabChange("chat")} /></Suspense>
-      : tabId === "browser" ? <Suspense fallback={null}><WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} /></Suspense>
-      : tabId === "companion" ? <Suspense fallback={null}><ScreenCompanionWorkspace /></Suspense>
-      : tabId === "cowork" ? <Suspense fallback={null}><CoworkWorkspace /></Suspense>
-      : tabId === "study" ? <Suspense fallback={null}><StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} /></Suspense>
-      : tabId === "fake-text" || tabId === "would-rather" || tabId === "reddit-story" ? <Suspense fallback={null}><ShortsWorkspaceApp key={tabId} entry={{ name: "setup", kind: tabId }} onExit={() => handleWorkspaceTabChange("chat")} /></Suspense>
-      : tabId === "spotify" ? <SpotifyWorkspace playback={spotifyPlayback} />
-      : tabId === "care" ? <Suspense fallback={null}><ClyraCareWorkspace /></Suspense>
-      : tabId === "maps" ? <Suspense fallback={null}><ClyraMapsWorkspace /></Suspense>
-      : tabId === "eye" ? <Suspense fallback={null}><ClyraEyeWorkspace suspended={isTaskViewOpen} /></Suspense>
-      : <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden"><ClyraComposerShell
-          userName="Luke" accentColor={accentColor} text={value} onTextChange={setValue} onKeyDown={handleKeyDown} onSend={handleSendMessage} isResponding={isAiResponding} onStop={stopGeneration} onStartVoiceCall={() => void voiceCall.startCall()} canSend={canSendMessage} textareaRef={textareaRef} placeholder="Message Clyra" sent={messages.length > 0} temp={isTemporaryChat} onToggleTemp={toggleTemporaryChat}
-          efforts={shellEfforts} currentEffort={chatEffort} sources={shellSources} activeSourceIds={shellActiveSourceIds} onToggleSource={handleShellToggleSource} paletteOpen={showCommandPalette} paletteItems={shellPaletteItems} paletteQuery={commandQuery} paletteActiveIndex={activeSuggestion} onPaletteHoverIndex={setActiveSuggestion} selections={shellSelections} suggestions={shellSuggestions}
-          files={shellFiles} onPickFiles={handleAttachFile} fileInputRef={fileInputRef} onFilesSelected={handleFilesSelected}
-          dictation={composerDictationState}
-          sidebarOpen={shellSidebarOpen} onToggleSidebar={() => setShellSidebarOpen((v) => !v)} onOpenSettings={() => setIsSettingsOpen(true)} chats={shellChatRows} onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }} onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }} onRenameChat={handleShellRenameChat} onDeleteChat={handleShellDeleteChat} sideQuery={shellSideQuery} onSideQueryChange={setShellSideQuery} usage={shellUsage}
-          connections={{ signInAvailable: Boolean(getElectronDesktop()?.google) || googleShellWebConfigured, connected: googleShellStatus.connected, connecting: googleShellConnecting, connectNote: googleShellConnectNote, email: googleShellStatus.email ?? null, onConnect: () => { const desktop = getElectronDesktop(); if (desktop?.google) { setGoogleShellConnecting(true); void desktop.google.signIn().then((result) => { if (!result.ok) { setGoogleShellConnecting(false); setToastMessage(result.error || "Google sign-in could not start."); } }).catch(() => { setGoogleShellConnecting(false); setToastMessage("Google sign-in could not start."); }); return; } startGoogleWebSignIn(); }, onDisconnect: () => { const desktop = getElectronDesktop(); if (desktop?.google) { void desktop.google.disconnect().then(() => setGoogleShellStatus({ connected: false })); return; } void disconnectGoogleWeb(); }, scopes: shellConnectionScopes, webSearchEnabled: webSearchShellEnabled, onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v) }}
-          transcript={shellTranscript} transcriptOverlay={scrollLatestControl} transcriptContainerId="chat-container" transcriptContainerRef={chatContentRef}
-        /></div>;
-    return { id: tabId, label: labels[tabId] || tabId, content };
+    const label = labels[tabId] || tabId;
+    const content = <WorkspaceSlot node={workspacePortalNode(tabId)} placeholder={<WorkspaceCardPlaceholder label={label} />} />;
+    return { id: tabId, label, content };
   });
 
   return (
@@ -11321,144 +11668,7 @@ Please analyze the code you just wrote and fix this error.`;
                       data-workspace-surface={workspaceViewKey}
                       className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
                     >
-                      {isVibeWorkspace ? (
-                        <Suspense fallback={<VibeWorkspaceLoadingSurface />}>
-                          <VibeCoderWorkspace
-                            initialProjectId={vibeProjectToOpen ?? undefined}
-                            onInitialProjectOpened={() => setVibeProjectToOpen(null)}
-                          />
-                        </Suspense>
-                      ) : isClipWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ShortsWorkspaceApp
-                            key="clip"
-                            entry={{ name: "home" }}
-                            onExit={() => {
-                              setSelectedCommand(null);
-                              setClipInitialUrl("");
-                              setActiveWorkspaceTab("chat");
-                            }}
-                          />
-                        </Suspense>
-                      ) : isBrowserWorkspace ? (
-                        <Suspense fallback={null}>
-                          <WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} />
-                        </Suspense>
-                      ) : isCompanionWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ScreenCompanionWorkspace />
-                        </Suspense>
-                      ) : isCoworkWorkspace ? (
-                        <Suspense fallback={null}>
-                          <CoworkWorkspace />
-                        </Suspense>
-                      ) : isStudyWorkspace ? (
-                        <Suspense fallback={null}>
-                          <StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} />
-                        </Suspense>
-                      ) : isCareWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ClyraCareWorkspace />
-                        </Suspense>
-                      ) : isMapsWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ClyraMapsWorkspace />
-                        </Suspense>
-                      ) : isEyeWorkspace ? (
-                        <Suspense fallback={null}>
-                          <ClyraEyeWorkspace suspended={isTaskViewOpen} />
-                        </Suspense>
-                      ) : isSpotifyWorkspace ? (
-                        <SpotifyWorkspace playback={spotifyPlayback} />
-                      ) : creatorMode ? (
-                        <Suspense fallback={null}>
-                          <ShortsWorkspaceApp
-                            key={creatorMode}
-                            entry={{ name: "setup", kind: creatorMode }}
-                            onExit={() => handleWorkspaceTabChange("chat")}
-                          />
-                        </Suspense>
-                      ) : (
-                        <div className="relative flex min-h-0 flex-1 w-full flex-col overflow-hidden">
-                          <ClyraComposerShell
-                            userName="Luke"
-                            accentColor={accentColor}
-                            text={value}
-                            onTextChange={setValue}
-                            onKeyDown={handleKeyDown}
-                            onSend={handleSendMessage}
-                            isResponding={isAiResponding}
-                            onStop={stopGeneration}
-                            onStartVoiceCall={() => void voiceCall.startCall()}
-                            canSend={canSendMessage}
-                            textareaRef={textareaRef}
-                            placeholder="Message Clyra"
-                            sent={isWorkspaceSwitcherCustomizing ? false : messages.length > 0}
-                            temp={isTemporaryChat}
-                            onToggleTemp={toggleTemporaryChat}
-                            efforts={shellEfforts}
-                            currentEffort={chatEffort}
-                            sources={shellSources}
-                            activeSourceIds={shellActiveSourceIds}
-                            onToggleSource={handleShellToggleSource}
-                            paletteOpen={showCommandPalette}
-                            paletteItems={shellPaletteItems}
-                            paletteQuery={commandQuery}
-                            paletteActiveIndex={activeSuggestion}
-                            onPaletteHoverIndex={setActiveSuggestion}
-                            selections={shellSelections}
-                            suggestions={shellSuggestions}
-                            files={shellFiles}
-                            onPickFiles={handleAttachFile}
-                            fileInputRef={fileInputRef}
-                            onFilesSelected={handleFilesSelected}
-                            dictation={composerDictationState}
-                            sidebarOpen={shellSidebarOpen}
-                            onToggleSidebar={() => setShellSidebarOpen((v) => !v)}
-                            onOpenSettings={() => setIsSettingsOpen(true)}
-                            chats={shellChatRows}
-                            onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }}
-                            onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }}
-                            onRenameChat={handleShellRenameChat}
-                            onDeleteChat={handleShellDeleteChat}
-                            sideQuery={shellSideQuery}
-                            onSideQueryChange={setShellSideQuery}
-                            usage={shellUsage}
-                            connections={{
-                              signInAvailable: Boolean(getElectronDesktop()?.google) || googleShellWebConfigured,
-                              connected: googleShellStatus.connected,
-                              connecting: googleShellConnecting,
-                              connectNote: googleShellConnectNote,
-                              email: googleShellStatus.email ?? null,
-                              onConnect: () => {
-                                const desktop = getElectronDesktop();
-                                if (desktop?.google) {
-                                  setGoogleShellConnecting(true);
-                                  void desktop.google.signIn().then((result) => {
-                                    if (!result.ok) { setGoogleShellConnecting(false); setToastMessage(result.error || "Google sign-in could not start."); }
-                                  }).catch(() => { setGoogleShellConnecting(false); setToastMessage("Google sign-in could not start."); });
-                                  return;
-                                }
-                                startGoogleWebSignIn();
-                              },
-                              onDisconnect: () => {
-                                const desktop = getElectronDesktop();
-                                if (desktop?.google) {
-                                  void desktop.google.disconnect().then(() => setGoogleShellStatus({ connected: false }));
-                                  return;
-                                }
-                                void disconnectGoogleWeb();
-                              },
-                              scopes: shellConnectionScopes,
-                              webSearchEnabled: webSearchShellEnabled,
-                              onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v),
-                            }}
-                            transcript={shellTranscript} transcriptOverlay={scrollLatestControl}
-                            transcriptContainerId="chat-container"
-                            transcriptContainerRef={chatContentRef}
-                          />
-                        </div>
-                      )}
+                      <WorkspaceSlot node={workspacePortalNode(activeContentTab)} />
                       <AnimatePresence>
                         {false && isVibeWorkspace && messages.length === 0 && (
                           <motion.div
@@ -11671,6 +11881,7 @@ Please analyze the code you just wrote and fix this error.`;
           setToastMessage("All chats cleared");
         }}
       />
+      {mountedWorkspaceTabs.map((tabId) => createPortal(renderWorkspaceContent(tabId), workspacePortalNode(tabId), `workspace-${tabId}`))}
     </FullscreenContext.Provider>
     </TerminalRunnerProvider>
   );

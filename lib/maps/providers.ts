@@ -2,6 +2,7 @@
  * Overpass (nearby OSM POIs), OSRM (routing). Each function degrades to an
  * empty/failed result rather than throwing, so one dead provider never takes
  * down the whole map — callers decide the fallback. */
+import { overpassQuery } from "./overpass";
 import type { ClyraPlace, Coordinate, NavigationStep, Route, RouteRequest, TravelMode } from "./types";
 
 const FETCH_TIMEOUT_MS = 9000;
@@ -151,6 +152,8 @@ function overpassElementToPlace(el: {
 
 /** Nearby POIs within a viewport/radius, filtered by category. Uses the public
  * Overpass API — bounded by radius + result limit so we never query the world. */
+const nearbyCache = new Map<string, { at: number; places: ClyraPlace[] }>();
+
 export async function searchNearby(
   center: Coordinate,
   category: string,
@@ -166,25 +169,19 @@ export async function searchNearby(
       return `node[${k}=${v}](around:${radius},${lat},${lon});way[${k}=${v}](around:${radius},${lat},${lon});`;
     })
     .join("\n");
+  const cacheKey = `${category}|${lat.toFixed(3)},${lon.toFixed(3)}|${radius}|${limit}`;
+  const hit = nearbyCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.places;
   const query = `[out:json][timeout:15];(${clauses});out center ${limit};`;
-  const res = await fetchWithTimeout("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    // Overpass 406s requests that omit Accept/User-Agent — Node's fetch sends
-    // neither by default.
-    headers: { "Content-Type": "text/plain", Accept: "application/json", "User-Agent": "ClyraMaps/1.0" },
-    body: query,
-  });
-  if (!res || !res.ok) return [];
-  try {
-    const data = (await res.json()) as { elements?: Array<Parameters<typeof overpassElementToPlace>[0]> };
-    return (data.elements || [])
-      .map((el) => overpassElementToPlace(el, center))
-      .filter((p): p is ClyraPlace => p !== null)
-      .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
-      .slice(0, limit);
-  } catch {
-    return [];
-  }
+  const data = await overpassQuery<{ elements?: Array<Parameters<typeof overpassElementToPlace>[0]> }>(query, 14000);
+  const places = (data?.elements || [])
+    .map((el) => overpassElementToPlace(el, center))
+    .filter((p): p is ClyraPlace => p !== null)
+    .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
+    .slice(0, limit);
+  // Only remember real answers; an empty list may just be an overloaded mirror.
+  if (places.length) nearbyCache.set(cacheKey, { at: Date.now(), places });
+  return places;
 }
 
 /* ----------------------------------- OSRM ------------------------------------ */

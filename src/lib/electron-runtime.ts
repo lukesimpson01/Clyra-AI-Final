@@ -1,3 +1,11 @@
+export type AgentsStackState = {
+  phase: "idle" | "engine" | "pulling" | "starting" | "ready" | "error";
+  message: string | null;
+  detail: string | null;
+  progress: number | null;
+  url: string;
+};
+
 export type ElectronSurfaceBounds = { x: number; y: number; width: number; height: number };
 
 export type CareSnapshot = {
@@ -131,9 +139,13 @@ export type ClyraDesktopBridge = {
     update: (payload: {
       id: string;
       url: string;
-      kind: "preview" | "vibe-runtime";
+      kind: "preview" | "vibe-runtime" | "agents";
       bounds: ElectronSurfaceBounds;
       visible: boolean;
+      /** Optional stylesheet re-applied on each navigation of the embedded page. */
+      css?: string;
+      /** Optional presentation script run once per document of the embedded page. */
+      script?: string;
     }) => Promise<any>;
     hide: (id: string) => Promise<any>;
   };
@@ -176,17 +188,30 @@ export type ClyraDesktopBridge = {
   care?: {
     scan: () => Promise<{ ok: boolean; error?: string; snapshot?: CareSnapshot }>;
   };
+  /** Clyra Agents: the local Rakazo stack managed by Electron. */
+  agents?: {
+    status: () => Promise<AgentsStackState>;
+    start: () => Promise<AgentsStackState>;
+    onState: (callback: (state: AgentsStackState) => void) => () => void;
+  };
+  /** Precise macOS location through the native CoreLocation helper. */
+  location?: {
+    get: (options?: { timeoutSeconds?: number }) => Promise<{ ok: boolean; lat?: number; lon?: number; accuracy?: number; error?: string }>;
+  };
   eye?: {
     status: () => Promise<{ ok: boolean; url: string; reachable: boolean }>;
     setSurface: (payload: { bounds?: { x: number; y: number; width: number; height: number }; visible: boolean }) => Promise<{ ok: boolean }>;
     setLocation: (location: { lat: number; lon: number }) => Promise<{ ok: boolean }>;
   };
   dictation: {
-    toggle?: () => Promise<{ ok: boolean }>;
+    toggle?: (options?: { inline?: boolean; selection?: string }) => Promise<{ ok: boolean }>;
+    cancel?: () => Promise<{ ok: boolean }>;
+    onState?: (callback: (payload: any) => void) => () => void;
+    onInlineResult?: (callback: (payload: { text: string; edit?: "rewrite" | "replace" | null }) => void) => () => void;
     shortcutStatus?: () => Promise<{ registered: boolean }>;
     setState: (payload: unknown) => Promise<any>;
     serviceUrl: () => Promise<string>;
-    insert: (payload: { text: string; target?: unknown }) => Promise<any>;
+    insert: (payload: { text: string; target?: unknown; raw?: string }) => Promise<any>;
     ensurePermissions?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string; accessibility?: boolean }>;
     ensureCamera?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string }>;
     openMicrophoneSettings?: () => Promise<{ ok: boolean }>;

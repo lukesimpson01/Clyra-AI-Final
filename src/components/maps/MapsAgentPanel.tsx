@@ -54,23 +54,24 @@ interface MapsAgentPanelProps {
   /** Warms the detail cache ahead of a click, so the sheet opens pre-loaded. */
   onHoverPlace?: (place: ClyraPlace) => void;
   selectedName?: string;
+  hasRoute?: boolean;
 }
 
 /** Every capability the agent has, shown as starters so the user can see what's possible. */
 const STARTERS = [
   "What's around here?",
+  "Plan a relaxed day out nearby",
+  "Best coffee within a 10 minute walk",
+  "How do I get to the CBD by train?",
   "Find somewhere open now",
-  "Find petrol on the way",
-  "Compare the first two",
-  "Weather at my destination",
-  "What's the best one?",
-  "Take me to the second one",
+  "Show me this area in satellite 3D",
+  "Weather and air quality here",
   "Remember I prefer walking",
 ];
 
 /** Collapsed: a Clyra composer pill. Expanded: a right-hand thread built from the
  * same bubble styles, composer bar and reply animation the Clyra chat uses. */
-export function MapsAgentPanel({ open, onOpen, onClose, turns, busy, status, onSend, onStop, onSelectPlace, onHoverPlace, selectedName }: MapsAgentPanelProps) {
+export function MapsAgentPanel({ open, onOpen, onClose, turns, busy, status, onSend, onStop, onSelectPlace, onHoverPlace, selectedName, hasRoute }: MapsAgentPanelProps) {
   const [text, setText] = useState("");
   const threadRef = useRef<HTMLDivElement | null>(null);
 
@@ -96,7 +97,7 @@ export function MapsAgentPanel({ open, onOpen, onClose, turns, busy, status, onS
           exit={{ opacity: 0, x: 24 }}
           transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
           aria-label="Ask Clyra"
-          className="pointer-events-auto absolute bottom-4 right-4 top-[88px] z-40 flex w-[400px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-[#e7e4dc] bg-[#fbfaf7]/[0.98] shadow-[0_16px_48px_rgba(15,23,42,.16)] backdrop-blur-xl"
+          className="pointer-events-auto absolute bottom-4 right-4 top-4 z-40 flex w-[400px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-[#e7e4dc] bg-[#fbfaf7]/[0.98] shadow-[0_16px_48px_rgba(15,23,42,.16)]"
         >
           <header className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3.5">
             <div className="flex items-center gap-2">
@@ -120,7 +121,12 @@ export function MapsAgentPanel({ open, onOpen, onClose, turns, busy, status, onS
                 <p className="text-[18px] font-semibold tracking-[-0.02em] text-[#15171C]">What would you like to find?</p>
                 <p className="mt-1 text-[13px] text-[#8190a3]">Ask about this area, a place you've selected, or a route.</p>
                 <div className="mt-4 flex flex-wrap gap-1.5">
-                  {STARTERS.map((s) => (
+                  {(selectedName
+                    ? [`Is ${selectedName} worth visiting?`, "What's the best time to go?", "Find parking nearby", "Similar places nearby"]
+                    : hasRoute
+                      ? ["Coffee on the way", "Fuel along my route", "Is there a faster way?", "Plan a stop for lunch"]
+                      : STARTERS
+                  ).map((s) => (
                     <button
                       key={s}
                       type="button"
@@ -231,7 +237,7 @@ export function MapsAgentPanel({ open, onOpen, onClose, turns, busy, status, onS
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
           transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          className="pointer-events-auto absolute bottom-4 left-1/2 z-40 flex w-[min(440px,calc(100vw-32px))] -translate-x-1/2 items-center gap-2.5 rounded-full border border-[#e7e4dc] bg-white/95 px-4 py-2.5 text-left text-[14px] text-[#8190a3] shadow-[0_12px_40px_rgba(15,23,42,.14)] backdrop-blur-xl transition-colors hover:text-[#15171C]"
+          className="pointer-events-auto absolute bottom-4 left-1/2 z-40 flex w-[min(440px,calc(100vw-32px))] -translate-x-1/2 items-center gap-2.5 rounded-full border border-[#e7e4dc] bg-white px-4 py-2.5 text-left text-[14px] text-[#8190a3] shadow-[0_12px_40px_rgba(15,23,42,.14)] transition-colors hover:text-[#15171C]"
         >
           <Sparkles className="h-4 w-4 text-[#3b82f6]" />
           <span className="flex-1 truncate">Ask Clyra about this area…</span>

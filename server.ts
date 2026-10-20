@@ -41,7 +41,8 @@ if (sharedEnvFile) {
 dotenv.config({ path: clyraDataPath(".env.local"), override: true });
 import { Readable, Transform } from "node:stream";
 import { spawn, execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import fsSync from "node:fs";
 import net from "node:net";
 import { createWriteStream, existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
@@ -1616,6 +1617,62 @@ async function startServer() {
   // origin than the main UI and would not carry this cookie. Tightening that
   // route group further is tracked separately rather than risking breaking
   // that integration on an unverified assumption about its call site.
+  // Clyra Agents (a local Rakazo stack in Docker) reaches Clyra's model through this OpenAI-compatible relay, so the
+  // stack never holds a model key. The containers cannot carry the UI's capability cookie, so the relay is registered
+  // before that guard and is gated instead by a per-install token in its path (~/.clyra/agents/model-token, written
+  // by electron/agents/agents-manager.mjs). Only chat and model-list endpoints are forwarded.
+  const agentsModelToken = () => {
+    try { return fsSync.readFileSync(path.join(homedir(), ".clyra", "agents", "model-token"), "utf8").trim(); } catch { return ""; }
+  };
+  const AGENTS_MODEL_ALIAS = "clyra";
+  app.use("/api/agents-model/:token/v1", async (req, res) => {
+    const expected = agentsModelToken();
+    const given = String(req.params.token || "");
+    if (!expected || given.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
+      res.status(404).end();
+      return;
+    }
+    const base = String(process.env.MY_LLM_BASE_URL || process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
+    const key = process.env.MY_LLM_API_KEY || process.env.DEEPSEEK_API_KEY;
+    const model = String(process.env.MY_LLM_MODEL || process.env.DEEPSEEK_MODEL || "deepseek-chat");
+    const sub = req.path.replace(/^\/+/, "");
+    if (req.method === "GET" && (sub === "models" || sub === "")) {
+      res.json({ object: "list", data: [{ id: AGENTS_MODEL_ALIAS, object: "model", owned_by: "clyra" }] });
+      return;
+    }
+    if (!/^chat\/completions$/.test(sub) || req.method !== "POST") {
+      res.status(404).json({ error: { message: "Not available through the Clyra relay." } });
+      return;
+    }
+    if (!key) {
+      res.status(503).json({ error: { message: "Clyra has no model configured. Add a DeepSeek key in Clyra first." } });
+      return;
+    }
+    try {
+      const body = { ...(req.body && typeof req.body === "object" ? req.body : {}) } as Record<string, unknown>;
+      // Agents see one friendly model, "clyra"; it always runs on whatever model Clyra itself is configured to use.
+      body.model = model;
+      const controller = new AbortController();
+      // Stop the upstream call only if the agent disconnects before the answer finishes.
+      res.on("close", () => { if (!res.writableFinished) controller.abort(); });
+      const upstream = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json", accept: String(req.headers.accept || "application/json") },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      res.status(upstream.status);
+      const contentType = upstream.headers.get("content-type");
+      if (contentType) res.setHeader("content-type", contentType);
+      res.setHeader("cache-control", "no-cache");
+      if (!upstream.body) { res.end(); return; }
+      Readable.fromWeb(upstream.body as never).on("error", () => res.end()).pipe(res);
+    } catch (error) {
+      if (!res.headersSent) res.status(502).json({ error: { message: error instanceof Error ? error.message : "Relay failed." } });
+      else res.end();
+    }
+  });
+
   let loggedMissingToken = false;
   app.use((req, res, next) => {
     // The Clyra-native MCP child has no browser cookie by design. Its one
@@ -3949,6 +4006,7 @@ async function startServer() {
         };
       },
       identify: (at) => identifyPoint(at),
+      transit: (origin, destination, when, arriveBy) => planTransit(origin, destination, when, arriveBy),
       placeInfo: (name, at) => lookupPlaceInfo(name, at),
       reviews: (osmId) => findOpenReviews(osmId),
       webSearch: async (query) => {
@@ -4439,6 +4497,45 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
 
   // Health of the embedded OpenDesign daemon that serves the Design tab UI.
   // A same-origin probe keeps the browser free of cross-origin checks.
+  // Optional local companion services (Clyra Design's daemon, Clyra Eye's dev server) are started on demand the first
+  // time their tab asks, so `npm run desktop:dev` alone gives a fully working app. One child per service; a second
+  // request while it boots just waits on the same port.
+  const companionChildren = new Map<string, ReturnType<typeof spawn>>();
+  const portOpen = (port: number) => new Promise<boolean>((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port }, () => { socket.destroy(); resolve(true); });
+    socket.on("error", () => resolve(false));
+    socket.setTimeout(1200, () => { socket.destroy(); resolve(false); });
+  });
+  const ensureCompanion = async (name: string, port: number, command: string, args: string[], timeoutMs: number) => {
+    if (await portOpen(port)) return { running: true, started: false };
+    const existing = companionChildren.get(name);
+    if (!existing || existing.exitCode !== null) {
+      const logPath = path.join(tmpdir(), `clyra-${name}.log`);
+      const out = fsSync.openSync(logPath, "a");
+      const child = spawn(command, args, { cwd: process.cwd(), env: process.env, stdio: ["ignore", out, out], detached: false });
+      child.once("exit", () => companionChildren.delete(name));
+      companionChildren.set(name, child);
+    }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await portOpen(port)) return { running: true, started: true };
+      if (companionChildren.get(name)?.exitCode != null) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return { running: await portOpen(port), started: true };
+  };
+  for (const signal of ["exit", "SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => { for (const child of companionChildren.values()) { try { child.kill(); } catch { /* already gone */ } } });
+  }
+
+  app.post("/api/open-design/start", async (_req, res) => {
+    const port = Number(process.env.OD_PORT) || 7456;
+    const ready = fsSync.existsSync(path.join(process.cwd(), "third_party", "open-design", "apps", "daemon", "dist", "cli.js"));
+    if (!ready) return res.status(409).json({ running: false, error: "Clyra Design has not been built yet. Run npm run setup:open-design once." });
+    const result = await ensureCompanion("open-design", port, process.execPath.includes("Electron") ? "node" : process.execPath, ["tools/open-design-daemon.mjs"], 45_000);
+    res.json({ ...result, url: `http://127.0.0.1:${port}` });
+  });
+
   app.get("/api/open-design/status", async (_req, res) => {
     const port = Number(process.env.OD_PORT) || 7456;
     const probe = await new Promise<boolean>((resolve) => {

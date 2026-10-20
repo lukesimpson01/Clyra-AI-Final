@@ -62,9 +62,35 @@ async function getIpLocation(): Promise<DeviceCoords | null> {
   }
 }
 
-/** Resolves the user's current device location: browser geolocation first, IP-based fallback second. */
+/** macOS Location Services through Clyra's native helper (desktop app only). */
+async function getDesktopLocation(): Promise<DeviceCoords | null> {
+  const cached = readCachedLocation();
+  if (cached) return cached;
+  const desktop = (window as unknown as { clyraDesktop?: { location?: { get: (o?: { timeoutSeconds?: number }) => Promise<{ ok: boolean; lat?: number; lon?: number }> } } }).clyraDesktop;
+  if (!desktop?.location) return null;
+  try {
+    const result = await desktop.location.get({ timeoutSeconds: 10 });
+    if (!result.ok || typeof result.lat !== "number" || typeof result.lon !== "number") return null;
+    const coords = { lat: result.lat, lon: result.lon };
+    writeCachedLocation(coords);
+    return coords;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves the user's current location: the first precise fix from macOS or the browser, else IP-based. */
 export async function resolveDeviceLocation(): Promise<DeviceCoords | null> {
-  const browserLocation = await getBrowserLocation();
-  if (browserLocation) return browserLocation;
+  const precise = await new Promise<DeviceCoords | null>((resolve) => {
+    let pending = 2;
+    const settle = (value: DeviceCoords | null) => {
+      if (value) { resolve(value); return; }
+      pending -= 1;
+      if (pending === 0) resolve(null);
+    };
+    void getDesktopLocation().then(settle);
+    void getBrowserLocation().then(settle);
+  });
+  if (precise) return precise;
   return getIpLocation();
 }

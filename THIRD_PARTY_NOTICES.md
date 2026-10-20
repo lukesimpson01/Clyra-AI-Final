@@ -173,3 +173,11 @@ into Clyra. Clyra uses its own UI and integration code.
 | nexu-io/open-design | `53231d40` | Apache-2.0 | Bundled design-system and layout files under `lib/clyra-design/bundled/` (12 systems, 10 layouts). See `lib/clyra-design/bundled/NOTICE.md`. |
 
 No source sections from these repositories were adapted in this change.
+
+## Rakazo (Clyra Agents)
+
+Clyra Agents runs Rakazo (https://github.com/elie222/rakazo) locally from its published container images
+(ghcr.io/elie222/rakazo/app). Rakazo is licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). `electron/agents/docker-compose.yml` is derived from Rakazo's
+`infra/compose/docker-compose.images.yml`; Clyra's changes are noted at the top of that file. Clyra layers its own
+theme over Rakazo's web UI at runtime and does not modify Rakazo's source.

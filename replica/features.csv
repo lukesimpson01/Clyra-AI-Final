@@ -11,12 +11,12 @@ Look Around,place,should,yes,yes,open street imagery
 Offline maps,map,should,yes,yes,tile cache
 Search this area,search,should,yes,yes,
 Favorites + Recents,library,must,yes,yes,
-Guides,library,should,yes,no,
-Home/Work,library,should,yes,no,
-Parked car,library,could,yes,no,
-Flyover tour,map,could,yes,no,orbit camera over 3D buildings
-Voice guidance,nav,should,yes,no,speechSynthesis
-Route callouts,routing,could,yes,no,
-Depart/arrive-by,routing,could,yes,no,
-Weather + AQI,place,could,yes,no,Open-Meteo
+Guides,library,should,yes,yes,
+Home/Work,library,should,yes,yes,
+Parked car,library,could,yes,yes,
+Flyover tour,map,could,yes,yes,orbit camera over 3D buildings
+Voice guidance,nav,should,yes,yes,speechSynthesis
+Route callouts,routing,could,yes,yes,
+Depart/arrive-by,routing,could,yes,yes,
+Weather + AQI,place,could,yes,yes,Open-Meteo
 Ask Clyra AI agent,ai,must,no,yes,Google-style AI

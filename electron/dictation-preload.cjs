@@ -9,4 +9,11 @@ contextBridge.exposeInMainWorld("clyraDictationPill", {
   action(action) {
     ipcRenderer.send("dictation:pill-action", action);
   },
+  // The pill window is click-through except while the pointer is over its capsule.
+  move(dx, dy) {
+    ipcRenderer.send("dictation:pill-move", { dx, dy });
+  },
+  setInteractive(interactive) {
+    ipcRenderer.send("dictation:pill-interactive", Boolean(interactive));
+  },
 });

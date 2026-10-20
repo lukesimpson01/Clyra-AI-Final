@@ -4,3 +4,5 @@ export type CleanupOptions = { level?: DictationStyle; dictionary?: string[]; ap
 export type CleanupResult = { text: string; changed: boolean; kind: AppKind; needsModel: boolean };
 export function classifyApp(application?: string | null): AppKind;
 export function cleanDictation(input: string, options?: CleanupOptions): CleanupResult;
+
+export function looksLikeInstruction(spoken: string): boolean;
