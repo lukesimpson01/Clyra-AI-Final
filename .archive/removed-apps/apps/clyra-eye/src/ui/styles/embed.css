@@ -1,0 +1,33 @@
+/* Embed mode (?embed=1): the globe alone, on top of clean view. Provider
+   attribution stays visible. */
+body.ui-embed #clean-view-exit,
+body.ui-embed #intel-hud,
+body.ui-embed #key-setup-chip,
+body.ui-embed #key-setup,
+body.ui-embed #first-run-launcher,
+body.ui-embed #command-dock,
+body.ui-embed #left-panel-stack,
+body.ui-embed #right-context-rail,
+body.ui-embed #world-overlay-actions,
+body.ui-embed #view-switcher {
+  display: none !important;
+}
+
+/* Light embed (Clyra): the planet on a soft light backdrop, with no dark HUD chrome, vignette or scope around it.
+   The loading screen matches, so opening is a light fade rather than a black flash. */
+body.ui-light,
+body.ui-light #cesiumContainer,
+body.ui-light .cesium-widget,
+body.ui-light .cesium-viewer { background: #eef1f5 !important; }
+body.ui-light #loading-screen { background: #eef1f5 !important; color: #3b3e45 !important; }
+body.ui-light #loading-screen * { color: #3b3e45 !important; text-shadow: none !important; box-shadow: none !important; }
+body.ui-light .vignette, body.ui-light .scanlines, body.ui-light #crt-overlay, body.ui-light #hud-vignette,
+body.ui-light [class*="vignette"], body.ui-light [id*="vignette"], body.ui-light [class*="scanline"] { display: none !important; }
+body.ui-light .cesium-widget-credits,
+body.ui-light .cesium-credit-textContainer,
+body.ui-light .cesium-credit-expand-link { color: rgba(16, 18, 24, 0.55) !important; text-shadow: none !important; }
+body.ui-light .cesium-widget-credits a { color: rgba(16, 18, 24, 0.7) !important; }
+/* The scope mask (a radial fade to near-black around the globe) is the app's own dark framing; Clyra's light embed
+   shows the planet with no scope at all. */
+body.ui-light #scope-mask { display: none !important; }
+body.ui-light #celestial-ring-overlay { display: none !important; }

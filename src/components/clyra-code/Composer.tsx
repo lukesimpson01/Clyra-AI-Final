@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ArrowUp, Bug, CheckCircle2, Clipboard, Feather, File as FileIcon, FileSearch, Flame, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X, Zap } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
-import { Check16, ChevronDown14, TodoChecklist, type TodoRow } from "./harness";
+import { ChevronDown14, TodoChecklist, type TodoRow } from "./harness";
+import { EffortSlider } from "../chat/EffortSlider";
+import type { ComposerEffortOption } from "../chat/ClyraComposerShell";
 import type { BriefPlatform } from "./appBrief";
 import { BriefHeader, BriefSkeleton, IOSHostNote } from "./BriefComponents";
 import { useClickAway } from "./useClickAway";
@@ -67,6 +70,8 @@ export function Composer({
   onQuestionBack,
   effort = "medium",
   onEffortChange,
+  effortMenuOpen,
+  onEffortMenuOpenChange,
   plan,
   brief = null,
   onBriefClear,
@@ -86,19 +91,25 @@ export function Composer({
   onQuestionBack?: () => void;
   effort?: "low" | "medium" | "high";
   onEffortChange?: (effort: "low" | "medium" | "high") => void;
+  /** When provided, the effort menu is controlled by the parent (for opening/closing in tandem with the project picker). */
+  effortMenuOpen?: boolean;
+  onEffortMenuOpenChange?: (open: boolean) => void;
   /** The agent's current plan, docked directly above the input card. */
   plan?: readonly TodoRow[] | null;
   /** A chosen app type from the welcome chips. Shows the guided brief until the user types. */
   brief?: BriefPlatform | null;
   onBriefClear?: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentMenu, setAttachmentMenu] = useState(false);
   const [command, setCommand] = useState<ComposerCommand | null>(null);
   const [commandQuery, setCommandQuery] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
-  const [effortMenu, setEffortMenu] = useState(false);
+  const effortControlled = effortMenuOpen !== undefined;
+  const [effortMenuInternal, setEffortMenuInternal] = useState(false);
+  const effortMenu = effortControlled ? (effortMenuOpen ?? false) : effortMenuInternal;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // A hidden mirror of the field, laid out with identical classes, gives the
   // true content height without touching the live textarea's height. Setting
@@ -111,9 +122,43 @@ export function Composer({
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
+  const effortButtonRef = useRef<HTMLButtonElement | null>(null);
   const effortMenuRef = useRef<HTMLDivElement | null>(null);
+  const [effortMenuPos, setEffortMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   useClickAway(attachmentMenuRef, attachmentMenu, useCallback(() => setAttachmentMenu(false), []));
-  useClickAway(effortMenuRef, effortMenu, useCallback(() => setEffortMenu(false), []));
+
+  const setEffortMenu = useCallback((next: boolean) => {
+    if (next) {
+      const rect = effortButtonRef.current?.getBoundingClientRect();
+      if (rect) setEffortMenuPos({ left: rect.left - 6, bottom: window.innerHeight - rect.top + 11 });
+    }
+    if (!effortControlled) setEffortMenuInternal(next);
+    onEffortMenuOpenChange?.(next);
+  }, [effortControlled, onEffortMenuOpenChange]);
+
+  // The effort menu is portaled to <body> so it can escape the composer's
+  // overflow-hidden height animation, so it manages its own dismissal (outside
+  // pointer press, Escape, or any scroll/resize that would detach the anchor).
+  useEffect(() => {
+    if (!effortMenu) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (effortButtonRef.current?.contains(target) || effortMenuRef.current?.contains(target)) return;
+      setEffortMenu(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setEffortMenu(false); };
+    const onScrollOrResize = () => setEffortMenu(false);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [effortMenu, setEffortMenu]);
 
   useEffect(() => {
     const input = folderInputRef.current;
@@ -216,6 +261,24 @@ export function Composer({
 
   const attached = attachments.length > 0 || contexts.length > 0;
   const activeEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[1];
+  const effortOptions: ComposerEffortOption[] = useMemo(() => {
+    const iconFor = (id: "low" | "medium" | "high") =>
+      id === "low" ? (
+        <Feather size={15} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
+      ) : id === "medium" ? (
+        <Zap size={15} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
+      ) : (
+        <Flame size={15} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
+      );
+    return EFFORT_LEVELS.map((level) => ({
+      value: level.id,
+      label: level.name,
+      hint: level.detail,
+      icon: iconFor(level.id),
+      onPick: () => onEffortChange?.(level.id),
+    }));
+  }, [onEffortChange]);
+  const finished = !running && Boolean(plan?.length) && (plan as readonly TodoRow[]).every((item) => item.status === "completed");
   return (
     <div className={cn("relative px-3", welcome ? "pt-0" : "pb-2 pt-1")}>
       {plan?.length ? (
@@ -226,23 +289,37 @@ export function Composer({
           transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
           className={cn("mx-auto", welcome ? "max-w-[620px]" : "max-w-[680px]")}
         >
-          <TodoChecklist todos={plan} />
+          <TodoChecklist todos={plan} finished={finished} />
         </motion.div>
       ) : null}
       <motion.div
-        className={cn("relative mx-auto overflow-visible rounded-[14px] border border-[var(--border-subtle)] bg-[var(--composer-surface)]", welcome ? "max-w-[620px] shadow-[0_4px_18px_rgba(0,0,0,0.025)] focus-within:border-[var(--border-medium)] focus-within:shadow-[0_4px_18px_rgba(0,0,0,0.035)]" : "max-w-[680px] shadow-[0_1px_2px_rgba(0,0,0,0.025),0_5px_18px_rgba(0,0,0,0.025)] focus-within:border-[var(--border-medium)] focus-within:shadow-[0_0_0_1px_rgba(57,119,246,0.12),0_5px_18px_rgba(0,0,0,0.03)]")}
+        className={cn("cc-composer relative mx-auto overflow-visible rounded-[20px] border border-black/[0.08] bg-white", welcome ? "max-w-[620px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14]" : "max-w-[680px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14] focus-within:shadow-[0_0_0_3px_rgba(30,111,255,0.07),0_12px_28px_-16px_rgba(20,24,32,0.16)]")}
       >
-        <AnimatePresence mode="popLayout" initial={false}>
+        <AnimatePresence initial={false}>
           {question ? (
-            <motion.div key="question" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
+            <motion.div
+              key="question"
+              initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 7, height: 0 }}
+              animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, height: "auto" }}
+              exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -7, height: 0 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
+            >
               <QuestionComposer questionSet={question} submitting={questionSubmitting} onBack={onQuestionBack} onSubmit={(answers) => onQuestionSubmit?.(answers)} />
             </motion.div>
           ) : (
-            <motion.div key="normal" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -7 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
+            <motion.div
+              key="normal"
+              initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 7, height: 0 }}
+              animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, height: "auto" }}
+              exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -7, height: 0 }}
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
+            >
         <AnimatePresence initial={false}>
           {attached ? <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
             <div className="flex max-h-[86px] gap-1.5 overflow-x-auto px-2.5 pt-2 [scrollbar-width:none]">
-              {contexts.map((context) => <span key={context.id} title={context.detail} className="flex h-6 shrink-0 items-center gap-1 rounded-[7px] bg-[var(--surface-muted)] px-1.5 text-[10.5px] text-[var(--text-secondary)]">{context.label}<button type="button" aria-label="Remove context" onClick={() => onRemoveContext(context.id)} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"><X className="h-2.5 w-2.5" /></button></span>)}
+              {contexts.map((context) => <span key={context.id} title={context.detail} className="flex h-[26px] shrink-0 items-center gap-1 rounded-full border border-black/[0.07] bg-[#F4F4F3] pl-2 pr-1 text-[11px] font-medium text-[#3A3C40]">{context.label}<button type="button" aria-label="Remove context" onClick={() => onRemoveContext(context.id)} className="flex h-4 w-4 items-center justify-center rounded-full text-[#8A8E94] transition-colors hover:bg-black/[0.06] hover:text-[#202124]"><X className="h-3 w-3" strokeWidth={2} /></button></span>)}
               {attachments.map((attachment) => attachment.kind === "image" && attachment.preview ? <div key={attachment.id} className="relative h-[68px] w-[84px] shrink-0 overflow-visible"><img src={attachment.preview} alt={attachment.file.name} className="h-[68px] w-[84px] rounded-[8px] border border-[var(--border-subtle)] object-cover" /><button type="button" aria-label={`Remove ${attachment.file.name}`} onClick={() => removeAttachment(attachment.id)} className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white shadow-sm"><X className="h-2.5 w-2.5" /></button></div> : <div key={attachment.id} className="relative flex h-[44px] min-w-[150px] max-w-[220px] shrink-0 items-center gap-1.5 rounded-[8px] bg-[var(--surface-muted)] px-2 pr-5"><FileIcon className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" /><span className="min-w-0"><span className="block truncate text-[10.5px] font-medium text-[var(--text-secondary)]">{attachment.file.name}</span><span className="block text-[9.5px] text-[var(--text-tertiary)]">{attachment.kind === "folder" ? "Folder" : `${attachment.file.name.split(".").pop()?.toUpperCase() || "File"} · ${readableSize(attachment.file.size)}`}</span></span><button type="button" aria-label={`Remove ${attachment.file.name}`} onClick={() => removeAttachment(attachment.id)} className="absolute right-1.5 top-1.5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"><X className="h-3 w-3" /></button></div>)}
             </div>
           </motion.div> : null}
@@ -296,49 +373,35 @@ export function Composer({
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"><IconComponent className="h-3.5 w-3.5 text-[var(--text-tertiary)]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
-          <div ref={effortMenuRef} className="relative">
+          <div className="relative">
             <button
+              ref={effortButtonRef}
               type="button"
               className="dsh-chip"
               aria-label={`Effort: ${activeEffort.name}`}
               aria-haspopup="menu"
               aria-expanded={effortMenu}
-              onClick={() => setEffortMenu((open) => !open)}
+              onClick={() => setEffortMenu(!effortMenu)}
             >
               Agent
               <span className="dsh-chip-value">{activeEffort.name}</span>
-              <ChevronDown14 className="dsh-chip-chevron" />
+              <ChevronDown14 className="dsh-chip-chevron" data-open={effortMenu} />
             </button>
-            <AnimatePresence>
-              {effortMenu ? (
-                <motion.div
-                  role="menu"
-                  aria-label="Effort"
-                  initial={{ opacity: 0, y: 4, scale: 0.985 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 3, scale: 0.985 }}
-                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                  className="dsh-menu"
-                >
-                  {EFFORT_LEVELS.map((level) => (
-                    <button
-                      key={level.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={effort === level.id}
-                      className="dsh-menu-option"
-                      onClick={() => { onEffortChange?.(level.id); setEffortMenu(false); }}
-                    >
-                      <span className="dsh-menu-copy">
-                        <span className="dsh-menu-name">{level.name}</span>
-                        <span className="dsh-menu-detail">{level.detail}</span>
-                      </span>
-                      <span className="dsh-menu-check">{effort === level.id ? <Check16 /> : null}</span>
-                    </button>
-                  ))}
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
+            {typeof document !== "undefined"
+              ? createPortal(
+                  <div ref={effortMenuRef}>
+                    <EffortSlider
+                      efforts={effortOptions}
+                      current={effort}
+                      accentColor="#3977F6"
+                      open={effortMenu}
+                      defaultValue="medium"
+                      fixedAnchor={effortMenuPos}
+                    />
+                  </div>,
+                  document.body,
+                )
+              : null}
           </div><span className="flex-1" />
           <button type="button" aria-label="Voice input" onClick={() => textareaRef.current?.focus()} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><Mic className="h-3.5 w-3.5" strokeWidth={1.65} /></button>
           {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--app-background)] transition-colors duration-150 hover:opacity-90 active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[var(--accent-blue)] text-white hover:brightness-110" : "bg-[var(--surface-muted)] text-[var(--text-disabled)]")}><ArrowUp className="h-3.5 w-3.5" strokeWidth={2.15} /></button>}

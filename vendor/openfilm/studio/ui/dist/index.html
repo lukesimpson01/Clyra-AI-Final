@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clyra Editor</title>
+
+<script>
+  /* the theme before the first paint, so the wrong one never flashes: light unless the person chose another */
+  (function () {
+    var t = 'light';
+    try { t = localStorage.getItem('openfilm.theme') || 'light'; } catch (e) {}
+    if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t === 'dark' ? 'dark' : 'light';
+  })();
+</script>
+  <script type="module" crossorigin src="/assets/index-CGlIDx0V.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D6zx39ax.css">
+</head>
+<body>
+<div id="root"></div>
+</body>
+</html>

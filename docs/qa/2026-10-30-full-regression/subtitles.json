@@ -1,0 +1,79 @@
+{
+  "states": [
+    {
+      "time": 0.05,
+      "words": [
+        {
+          "word": "One",
+          "opacity": 0.5904,
+          "transform": "translateY(27.1565px)"
+        },
+        {
+          "word": "two",
+          "opacity": 0,
+          "transform": ""
+        },
+        {
+          "word": "three",
+          "opacity": 0,
+          "transform": ""
+        }
+      ]
+    },
+    {
+      "time": 0.75,
+      "words": [
+        {
+          "word": "One",
+          "opacity": 1,
+          "transform": "translateY(0px)"
+        },
+        {
+          "word": "two",
+          "opacity": 0.802469,
+          "transform": "translateY(13.0963px)"
+        },
+        {
+          "word": "three",
+          "opacity": 0,
+          "transform": ""
+        }
+      ]
+    },
+    {
+      "time": 1.5,
+      "words": [
+        {
+          "word": "One",
+          "opacity": 1,
+          "transform": "translateY(0px)"
+        },
+        {
+          "word": "two",
+          "opacity": 1,
+          "transform": "translateY(0px)"
+        },
+        {
+          "word": "three",
+          "opacity": 0.987654,
+          "transform": "translateY(0.818519px)"
+        }
+      ]
+    }
+  ],
+  "none": [
+    {
+      "opacity": 1,
+      "transform": ""
+    },
+    {
+      "opacity": 1,
+      "transform": ""
+    },
+    {
+      "opacity": 1,
+      "transform": ""
+    }
+  ],
+  "errors": []
+}

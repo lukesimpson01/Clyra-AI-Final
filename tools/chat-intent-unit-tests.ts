@@ -50,6 +50,8 @@ assert.equal(looksLikeWeatherQuery("Explain how DNS works."), false);
 // Failed replies say what happened and what to do next. The provider's raw
 // detail stays out of the conversation.
 assert.match(chatReplyFailureText(new Error("Chat API error: 429 Too Many Requests")), /rate-limited/);
+assert.match(chatReplyFailureText(new Error("Chat API error: 402 PROVIDER_CREDITS_EXHAUSTED")), /out of credits/);
+assert.match(chatReplyFailureText(new Error("Chat API error: 429 insufficient_quota")), /out of credits/);
 assert.match(chatReplyFailureText(new Error("Chat API error: 401 Unauthorized")), /API key in Settings/);
 assert.match(chatReplyFailureText(new Error("Chat API error: 503 Service Unavailable")), /isn't responding/);
 assert.match(chatReplyFailureText(new TypeError("Failed to fetch")), /reach the model/);

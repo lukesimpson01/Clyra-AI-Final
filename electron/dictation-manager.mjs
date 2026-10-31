@@ -17,6 +17,9 @@ const PILL_MARGIN = 16;
 const PREVIEW_WIDTH = 420;
 const PREVIEW_HEIGHT = 212;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The one-time process-type switch that macOS needs to let a window sit over full-screen apps. It flickers the
+// Dock, so it happens once while the app boots (the first pill window is built at launch), never during a dictation.
+let fullScreenTransformDone = false;
 const PREVIEW_PHASES = new Set(["refining", "revealing"]);
 
 function snapshotClipboard() {
@@ -67,30 +70,40 @@ async function frontmostApplication() {
   return runAppleScript('tell application "System Events" to get name of first process whose frontmost is true');
 }
 
-/** Frontmost app name plus its front window rectangle (to put the pill on the right display). */
+/**
+ * Frontmost app, its front window rectangle (to put the pill on the right display) and any selected text,
+ * in ONE osascript run. It happens while you are already speaking, so it must be cheap: no second process,
+ * and no synthetic Cmd+C (which could fire in the wrong app and copied on every single dictation).
+ */
 async function frontmostContext() {
-  if (process.platform !== "darwin") return { application: "", rect: null };
+  if (process.platform !== "darwin") return { application: "", rect: null, selectedText: "" };
   const script = `tell application "System Events"
   set p to first process whose frontmost is true
   set n to name of p
+  set rs to (ASCII character 30)
   -- Chromium/Electron apps only build their accessibility tree when asked; do it now so
   -- "is a text field focused?" can be answered reliably when the paste happens seconds later.
   try
     set value of attribute "AXManualAccessibility" of p to true
   end try
+  set r to ""
   try
     set {px, py} to position of front window of p
     set {sw, sh} to size of front window of p
-    return n & "|" & px & "," & py & "," & sw & "," & sh
-  on error
-    return n & "|"
+    set r to (px as text) & "," & (py as text) & "," & (sw as text) & "," & (sh as text)
   end try
+  set s to ""
+  try
+    set s to value of attribute "AXSelectedText" of (value of attribute "AXFocusedUIElement" of p)
+    if s is missing value then set s to ""
+  end try
+  return n & rs & r & rs & s
 end tell`;
   const out = await runAppleScript(script);
-  const [application, rectText = ""] = out.split("|");
+  const [application = "", rectText = "", ...selection] = out.split("\x1e");
   const nums = rectText.split(",").map((value) => Number(value.trim()));
   const rect = nums.length === 4 && nums.every((value) => Number.isFinite(value)) ? { x: nums[0], y: nums[1], width: nums[2], height: nums[3] } : null;
-  return { application: application.trim(), rect };
+  return { application: application.trim(), rect, selectedText: selection.join("\x1e") };
 }
 
 /**
@@ -131,32 +144,6 @@ async function focusApplication(name) {
   await wait(70);
 }
 
-async function readSelectedText() {
-  if (process.platform !== "darwin") return "";
-  const direct = 'tell application "System Events" to tell (first process whose frontmost is true) to tell (focused UI element of front window) to get value of attribute "AXSelectedText"';
-  try {
-    const selected = await runAppleScript(direct);
-    if (selected) return selected;
-  } catch {
-    // Some native controls expose no AXSelectedText. This fallback only runs
-    // after an explicit global shortcut and restores every clipboard format.
-  }
-  const saved = snapshotClipboard();
-  // A no-selection Cmd+C leaves the clipboard untouched. Seed it with a
-  // per-activation marker so stale clipboard text cannot impersonate a
-  // selected range and open Replace/Enhance by mistake.
-  const marker = `__clyra_selection_probe_${crypto.randomUUID()}__`;
-  try {
-    clipboard.writeText(marker);
-    await runAppleScript('tell application "System Events" to keystroke "c" using command down');
-    await wait(70);
-    const copied = clipboard.readText();
-    return copied === marker ? "" : copied;
-  } finally {
-    restoreClipboard(saved);
-  }
-}
-
 function isClyraProcessName(name) {
   return /^clyra$/i.test(String(name || "").trim());
 }
@@ -193,8 +180,9 @@ export class DictationManager {
     this.nativeStartPromise = null;
     if (this.native) this.native.onLevel = (level) => {
       if (!this.nativeActive || this.phase !== "listening") return;
-      this.setState({ level: Math.max(0, Math.min(1, level)) });
       const now = Date.now();
+      // The pill animates the level itself; a few updates a second are plenty and keep IPC and repaints light.
+      if (now - (this.lastLevelPush || 0) >= 90) { this.lastLevelPush = now; this.setState({ level: Math.max(0, Math.min(1, level)) }); }
       // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
       // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
       // More sensitive than before: the first soft word of a sentence must count as speech, or it gets clipped.
@@ -209,7 +197,7 @@ export class DictationManager {
           this.segHasSpeech = true;
           this.segSpeechAt = now;
           // A short pre-roll keeps the first syllable, but never reaches back into the start cue.
-          const preRoll = 16_000 * 2 * (this.segments.length ? 0.4 : 0.45);
+          const preRoll = 16_000 * 2 * (this.segments.length ? 0.4 : 0.6);
           this.segStart = Math.max(this.segStart, this.cueEndBytes || 0, bytes - preRoll);
         }
         this.heardSpeech = true;
@@ -225,7 +213,9 @@ export class DictationManager {
       if (this.segHasSpeech && now - this.lastSpeechAt >= 420 && this.lastSpeechAt - this.segSpeechAt >= 900) this.commitSegment();
       else if (this.segHasSpeech && now - this.segSpeechAt >= 4_500 && level < threshold * 2.2) this.commitSegment();
       if (!this.autoStop) return;
-      if (this.heardSpeech && now - this.lastSpeechAt >= 1_150 && this.lastSpeechAt - this.speechStartedAt >= 250) void this.nativeFinish();
+      // Only a long silence ends a session on its own: pausing for a second or two to think must never cut you off
+      // (tap again to finish sooner). Words are already being transcribed phrase by phrase during the pause.
+      if (this.heardSpeech && now - this.lastSpeechAt >= 8_000 && this.lastSpeechAt - this.speechStartedAt >= 250) void this.nativeFinish();
       else if (!this.heardSpeech && now - this.nativeStartedAt >= 12_000) this.forceReset("No speech was detected.");
     };
     this.preloadPath = preloadPath;
@@ -258,7 +248,24 @@ export class DictationManager {
     this.stopHotkey = null;
     // Every press of the hotkey toggles: press to start, press again to stop. (Hands-free and
     // silence auto-stop apply to every session; there is no hold-to-talk.)
-    this.machine = createTapMachine({ onTap: () => this.hotkeyPressed() });
+    this.machine = createTapMachine({
+      onTap: () => this.hotkeyPressed(),
+      onPress: () => this.prewarm(),
+      onAbort: () => this.cooldown(),
+    });
+  }
+
+  /** Key-down: open the mic and wake the speech model now, so nothing said right after the tap is lost. */
+  prewarm() {
+    if (this.nativeActive || !this.native || !this.engine?.available || !["idle", "done", "error"].includes(this.phase)) return;
+    this.native.warm();
+    this.engine.warm().catch(() => undefined);
+  }
+
+  /** The key press was not a dictation tap (held, or used with another key): release the mic again. */
+  cooldown() {
+    if (this.nativeActive || this.captureRequested) return;
+    this.native?.cool();
   }
 
   hotkeyPressed() {
@@ -334,7 +341,8 @@ export class DictationManager {
     this.segHasSpeech = false;
     this.segGen = 0;
     this.partialText = "";
-    this.cueGuardUntil = Number.POSITIVE_INFINITY;
+    // No start beep any more (it leaked into the mic and swallowed the first words), so nothing is skipped.
+    this.cueGuardUntil = 0;
     this.cueEndBytes = 0;
     this.nativeStartPromise = this.native.start();
     // Warm the speech model while the user is already talking.
@@ -348,9 +356,6 @@ export class DictationManager {
     }
     if (activationId !== this.activationId || !this.nativeActive) { this.native.cancel(); this.nativeActive = false; return; }
     console.log(`[flow] microphone live in ${Date.now() - startedAt}ms`);
-    // The pill's start cue (~0.2 s, after a short render delay) ends within 0.3 s of here; skip that slice of audio for speech detection and decoding.
-    this.cueGuardUntil = Date.now() + 300;
-    this.cueEndBytes = this.native.bytes + 16_000 * 2 * 0.3;
     this.setState({ phase: "listening", detail: "Listening", level: 0, partial: "" });
     this.startPartials(activationId);
     if (this.pendingStop) { this.pendingStop = false; void this.nativeFinish(); }
@@ -376,7 +381,12 @@ export class DictationManager {
   liveText() {
     const parts = [];
     for (const segment of this.segments) { if (segment.text === null) break; if (segment.text) parts.push(segment.text); }
-    if (this.partialText && this.segments.every((segment) => segment.text !== null)) parts.push(this.partialText);
+    if (this.partialText && this.segments.every((segment) => segment.text !== null)) {
+      // The word being spoken right now is cut off mid-sound and is usually decoded wrongly; show only the settled words.
+      const settled = this.partialText.split(" ");
+      if (settled.length > 1) settled.pop();
+      parts.push(settled.join(" "));
+    }
     return joinPhrases(parts);
   }
 
@@ -395,7 +405,7 @@ export class DictationManager {
       if (busy || activationId !== this.activationId || !this.nativeActive || this.phase !== "listening" || !this.segHasSpeech) return;
       const pcm = this.native.slice(this.segStart);
       // Live words wait for ~0.6 s of a phrase: shorter clips are mostly guesses that flash and then change.
-      if (pcm.length < 16_000 * 2 * 0.6 || pcm.length - lastBytes < 16_000 * 2 * 0.14) return;
+      if (pcm.length < 16_000 * 2 * 0.8 || pcm.length - lastBytes < 16_000 * 2 * 0.3) return;
       busy = true;
       lastBytes = pcm.length;
       const gen = this.segGen;
@@ -403,7 +413,7 @@ export class DictationManager {
         const text = await this.engine.transcribe(pcm);
         if (gen === this.segGen && activationId === this.activationId && this.nativeActive && text) { this.partialText = text; this.pushLive(); }
       } catch { /* partials are best-effort; the final transcript is what counts */ } finally { busy = false; if (gen !== this.segGen) lastBytes = 0; }
-    }, 170);
+    }, 250);
   }
 
   async nativeFinish() {
@@ -818,6 +828,9 @@ export class DictationManager {
       hasShadow: false,
       fullscreenable: false,
       title: "Clyra Dictation",
+      // A non-activating NSPanel: floats over every app, Space and full-screen window without ever
+      // making Clyra the active app (no Dock bounce, no other window jumping forward).
+      ...(process.platform === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
@@ -828,6 +841,10 @@ export class DictationManager {
       },
     });
     win.setFullScreenable(false);
+    if (process.platform === "darwin" && !fullScreenTransformDone) {
+      fullScreenTransformDone = true;
+      try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* older Electron */ }
+    }
     // Click-through everywhere except over the capsule itself (the page reports hover via IPC),
     // so the big transparent canvas never blocks the app underneath.
     if (process.platform !== "linux") win.setIgnoreMouseEvents(true, { forward: true });
@@ -899,7 +916,7 @@ export class DictationManager {
       }
 
       // showInactive keeps the user's target app focused while the overlay appears.
-      pill.showInactive();
+      if (this.phase !== previousPhase || !pill.isVisible()) pill.showInactive();
       // Keep it above everything for the whole session, even if you switch apps, tabs or Spaces mid-dictation.
       if (!this.topTimer) this.topTimer = setInterval(() => {
         const win = this.window;
@@ -959,8 +976,10 @@ export class DictationManager {
   pinPill(pill, { first = false } = {}) {
     if (!pill || pill.isDestroyed()) return;
     pill.setAlwaysOnTop(true, "screen-saver", 1);
-    // skipTransformProcessType after the first call: re-transforming on every show makes the Dock icon flicker.
-    pill.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: !first });
+    // Never transform the process type: doing so hides/re-shows the Dock icon, which looked like
+    // another app flashing open on every dictation. The panel window type is what lets it sit over
+    // full-screen apps.
+    pill.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     pill.moveTop();
   }
 
@@ -1049,11 +1068,9 @@ export class DictationManager {
     }
 
     if (this.inline) { this.target = { application: "Clyra", selectedText: this.inlineSelection }; return; }
-    const [context, selectedText] = await Promise.all([
-      frontmostContext().catch(() => ({ application: "", rect: null })),
-      readSelectedText().catch(() => ""),
-    ]);
+    const context = await frontmostContext().catch(() => ({ application: "", rect: null, selectedText: "" }));
     const application = context.application;
+    const selectedText = context.selectedText || "";
     if (activationId !== this.activationId || this.phase === "idle") return;
     this.followFocusedWindow(context.rect);
     // Selection is context, not a separate mode. This lets someone select a

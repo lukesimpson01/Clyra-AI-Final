@@ -30,7 +30,7 @@ export type InspectPayload = {
 };
 
 export function selectionChipLabel(payload: InspectPayload) {
-  return `▣ ${payload.kind ?? "Element"} · ${payload.label ?? payload.name ?? "element"}`;
+  return `${payload.kind ?? "Element"} · ${payload.label ?? payload.name ?? "element"}`;
 }
 
 export function selectionContextDetail(payload: InspectPayload) {

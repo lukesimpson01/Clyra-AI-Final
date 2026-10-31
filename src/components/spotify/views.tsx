@@ -2,12 +2,12 @@
  * The page-level views of Clyra Music: Home, Search/Browse, Your Library,
  * playlist/Liked Songs/album collections, the artist page and lyrics.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { SpotifyAlbum, SpotifyArtist, SpotifyLyrics, SpotifyPlaylist, SpotifyPlaylistItem, SpotifyTrack } from "../../lib/electron-runtime";
-import type { SpotifyPlaybackHook } from "../chat/SpotifyNotch";
+import { useSpotifyProgress, type SpotifyPlaybackHook } from "../chat/SpotifyNotch";
 import { useSp } from "./ctx";
 import { CardsSkeleton, MediaCard, QuickTile, RowsSkeleton, Shelf, TrackTable, sortRows, type SortState, type TrackRowData } from "./lists";
-import { addRecentSearch, clearRecentSearches, readRecentSearches, removeRecentSearch, type RecentSearch } from "./music-state";
+import { addRecentSearch, clearRecentSearches, readPlaylistRecency, readRecentSearches, removeRecentSearch, sortPlaylistsByRecency, type RecentSearch } from "./music-state";
 import { Artwork, Icon, IconBtn, LikedArt, PlayBtn, bigImage, fmtCount, fmtDuration, greeting, initials, midImage } from "./ui";
 
 /* ── Artwork tint (collection + lyrics backgrounds) ──────────────────────── */
@@ -64,6 +64,10 @@ export function HomeView({ filter, onWash }: { filter: HomeFilter; onWash: (colo
   const [topArtists, setTopArtists] = useState<SpotifyArtist[]>([]);
   const [topTracks, setTopTracks] = useState<SpotifyTrack[]>([]);
   const [savedAlbums, setSavedAlbums] = useState<SpotifyAlbum[]>([]);
+  const [newReleases, setNewReleases] = useState<SpotifyAlbum[]>([]);
+  const [madeForYou, setMadeForYou] = useState<SpotifyPlaylist[]>([]);
+  const [popular, setPopular] = useState<SpotifyPlaylist[]>([]);
+  const [recs, setRecs] = useState<{ tracks: SpotifyTrack[]; artists: SpotifyArtist[]; seed: string }>({ tracks: [], artists: [], seed: "" });
   const [hoverWash, setHoverWash] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,19 +75,26 @@ export function HomeView({ filter, onWash }: { filter: HomeFilter; onWash: (colo
     void browse("top-artists").then((res) => { if (alive && res.ok) setTopArtists(res.artists ?? []); });
     void browse("top-tracks").then((res) => { if (alive && res.ok) setTopTracks(res.tracks ?? []); });
     void browse("saved-albums").then((res) => { if (alive && res.ok) setSavedAlbums(res.albums ?? []); });
+    void browse("new-releases").then((res) => { if (alive && res.ok) setNewReleases(res.albums ?? []); });
+    void browse("made-for-you").then((res) => { if (alive && res.ok) setMadeForYou(res.playlists ?? []); });
+    void browse("popular-playlists").then((res) => { if (alive && res.ok) setPopular(res.playlists ?? []); });
+    void browse("recommendations").then((res) => { if (alive && res.ok) setRecs({ tracks: res.tracks ?? [], artists: res.artists ?? [], seed: res.seed ?? "" }); });
     return () => { alive = false; };
   }, [browse]);
 
   useEffect(() => { onWash(hoverWash); }, [hoverWash, onWash]);
 
+  // Spotify orders Home by what you listened to last, so the playlists follow the same recency as the library.
+  const orderedPlaylists = useMemo(() => sortPlaylistsByRecency(playlists, readPlaylistRecency()), [playlists, recentTracks, contextUri]);
+
   const quick = useMemo(() => {
     const items: Array<{ key: string; title: string; art?: string; liked?: boolean; open: () => void; play: () => void; playing: boolean }> = [];
     if (savedTracks.length) items.push({ key: "liked", title: "Liked Songs", liked: true, open: () => goTo({ type: "liked" }), play: () => void playLikedSongs(), playing: false });
-    for (const playlist of playlists.slice(0, 7)) {
+    for (const playlist of orderedPlaylists.slice(0, 7)) {
       items.push({ key: playlist.id, title: playlist.name, art: midImage(playlist.images), open: () => openPlaylist(playlist), play: () => void playPlaylistUri(playlist.uri), playing: contextUri === playlist.uri });
     }
     return items.slice(0, 8);
-  }, [playlists, savedTracks.length, goTo, openPlaylist, playLikedSongs, playPlaylistUri, contextUri]);
+  }, [orderedPlaylists, savedTracks.length, goTo, openPlaylist, playLikedSongs, playPlaylistUri, contextUri]);
 
   const recentUris = useMemo(() => recentTracks.map((item) => item.uri), [recentTracks]);
   const showMusic = filter === "all" || filter === "music";
@@ -133,6 +144,22 @@ export function HomeView({ filter, onWash }: { filter: HomeFilter; onWash: (colo
         </Shelf>
       ) : null}
 
+      {showPlaylists && orderedPlaylists.length > 8 ? (
+        <Shelf title="Jump back in" count={orderedPlaylists.length}>
+          {orderedPlaylists.slice(0, 12).map((playlist) => (
+            <MediaCard
+              key={`jump-${playlist.id}`}
+              art={bigImage(playlist.images)}
+              title={playlist.name}
+              sub={`By ${playlist.owner?.display_name || "Spotify"}`}
+              playing={contextUri === playlist.uri && isPlaying}
+              onOpen={() => openPlaylist(playlist)}
+              onPlay={() => void playPlaylistUri(playlist.uri)}
+            />
+          ))}
+        </Shelf>
+      ) : null}
+
       {showArtists && topArtists.length > 0 ? (
         <Shelf title="Your top artists" count={topArtists.length}>
           {topArtists.map((artist) => (
@@ -166,6 +193,12 @@ export function HomeView({ filter, onWash }: { filter: HomeFilter; onWash: (colo
         </Shelf>
       ) : null}
 
+      {showMusic && savedTracks.length > 0 ? (
+        <Shelf title="From your Liked Songs" onTitle={() => goTo({ type: "liked" })} count={savedTracks.length}>
+          {savedTracks.slice(0, 20).map((item, index) => trackCard(item, savedTracks.slice(0, 50).map((entry) => entry.uri), `liked-${item.id}-${index}`))}
+        </Shelf>
+      ) : null}
+
       {showMusic && topTracks.length > 0 ? (
         <Shelf title="Your top songs" count={topTracks.length}>
           {topTracks.map((item, index) => trackCard(item, topTracks.map((entry) => entry.uri), `top-${item.id}-${index}`))}
@@ -182,6 +215,67 @@ export function HomeView({ filter, onWash }: { filter: HomeFilter; onWash: (colo
               sub={`${album.release_date?.slice(0, 4) ?? ""} • ${album.artists?.map((artist) => artist.name).join(", ") ?? ""}`}
               onOpen={() => openAlbum(album)}
               onPlay={() => void playPlaylistUri(album.uri)}
+            />
+          ))}
+        </Shelf>
+      ) : null}
+
+      {showPlaylists && madeForYou.length > 0 ? (
+        <Shelf title="Made for you" count={madeForYou.length}>
+          {madeForYou.map((playlist) => (
+            <MediaCard
+              key={`mfy-${playlist.id}`}
+              art={bigImage(playlist.images)}
+              title={playlist.name}
+              sub={playlist.description?.replace(/<[^>]+>/g, "") || `By ${playlist.owner?.display_name || "Spotify"}`}
+              playing={contextUri === playlist.uri && isPlaying}
+              onOpen={() => openPlaylist(playlist)}
+              onPlay={() => void playPlaylistUri(playlist.uri)}
+            />
+          ))}
+        </Shelf>
+      ) : null}
+
+      {showMusic && newReleases.length > 0 ? (
+        <Shelf title="New releases" count={newReleases.length}>
+          {newReleases.map((album) => (
+            <MediaCard
+              key={`new-${album.id}`}
+              art={bigImage(album.images)}
+              title={album.name}
+              sub={`${album.release_date?.slice(0, 4) ?? ""} • ${album.artists?.map((artist) => artist.name).join(", ") ?? ""}`}
+              onOpen={() => openAlbum(album)}
+              onPlay={() => void playPlaylistUri(album.uri)}
+            />
+          ))}
+        </Shelf>
+      ) : null}
+
+      {showMusic && recs.tracks.length > 0 ? (
+        <Shelf title={recs.seed ? `Because you listen to ${recs.seed}` : "Recommended for you"} count={recs.tracks.length}>
+          {recs.tracks.map((item, index) => trackCard(item, recs.tracks.map((entry) => entry.uri), `rec-${item.id}-${index}`))}
+        </Shelf>
+      ) : null}
+
+      {showArtists && recs.artists.length > 0 ? (
+        <Shelf title="Artists you might like" count={recs.artists.length}>
+          {recs.artists.map((artist) => (
+            <MediaCard key={`recart-${artist.id}`} round art={bigImage(artist.images)} title={artist.name} sub="Artist" onOpen={() => openArtist(artist)} onPlay={() => void playPlaylistUri(artist.uri)} label={`Open artist ${artist.name}`} />
+          ))}
+        </Shelf>
+      ) : null}
+
+      {showPlaylists && popular.length > 0 ? (
+        <Shelf title="Popular right now" count={popular.length}>
+          {popular.map((playlist) => (
+            <MediaCard
+              key={`pop-${playlist.id}`}
+              art={bigImage(playlist.images)}
+              title={playlist.name}
+              sub={playlist.description?.replace(/<[^>]+>/g, "") || `By ${playlist.owner?.display_name || "Spotify"}`}
+              playing={contextUri === playlist.uri && isPlaying}
+              onOpen={() => openPlaylist(playlist)}
+              onPlay={() => void playPlaylistUri(playlist.uri)}
             />
           ))}
         </Shelf>
@@ -870,15 +964,30 @@ export function useTrackLyrics(track: SpotifyTrack | null, lyricsForTrack: Spoti
   return { lyrics: fresh ? state.lyrics : null, error: fresh ? state.error : null, loading: fresh ? state.loading : Boolean(track) };
 }
 
+const LYRIC_LEAD_MS = 220;
+
 export function activeLyricIndexFor(lyrics: SpotifyLyrics | null, progressMs: number) {
   if (!lyrics?.synced) return -1;
+  const at = progressMs + LYRIC_LEAD_MS;
+  const lines = lyrics.lines;
+  let lo = 0;
+  let hi = lines.length - 1;
   let active = -1;
-  for (let index = 0; index < lyrics.lines.length; index += 1) {
-    const time = lyrics.lines[index].timeMs;
-    if (time !== null && time <= progressMs + 150) active = index;
-    else if (time !== null && time > progressMs + 150) break;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const time = lines[mid].timeMs;
+    if (time === null) { hi = mid - 1; continue; }
+    if (time <= at) { active = mid; lo = mid + 1; } else hi = mid - 1;
   }
   return active;
+}
+
+/** Index of the line being sung. Subscribes to the live position but only re-renders when the line changes. */
+export function useActiveLyric(playback: SpotifyPlaybackHook, lyrics: SpotifyLyrics | null) {
+  const store = playback.progress;
+  const subscribe = useCallback((listener: () => void) => (store ? store.subscribe(listener) : () => {}), [store]);
+  const getSnapshot = useCallback(() => activeLyricIndexFor(lyrics, store ? store.get() : playback.progressMs), [lyrics, store, playback.progressMs]);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 export function centerLyric(viewport: HTMLElement | null, index: number, smooth: boolean) {
@@ -891,14 +1000,12 @@ export function centerLyric(viewport: HTMLElement | null, index: number, smooth:
 
 export function LyricsView() {
   const { playback } = useSp();
-  const { track, progressMs, seekTo, lyricsForTrack, isPlaying } = playback;
+  const { track, seekTo, lyricsForTrack, isPlaying } = playback;
   const reduceMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const userScrollUntil = useRef(0);
   const { lyrics, loading, error } = useTrackLyrics(track, lyricsForTrack);
-  const artwork = bigImage(track?.album?.images);
-  const tint = useArtworkTint(artwork);
-  const activeIndex = useMemo(() => activeLyricIndexFor(lyrics, progressMs), [lyrics, progressMs]);
+  const activeIndex = useActiveLyric(playback, lyrics);
 
   useEffect(() => {
     if (Date.now() < userScrollUntil.current) return;
@@ -912,35 +1019,34 @@ export function LyricsView() {
   const status = loading ? "Loading lyrics…" : lyrics?.instrumental ? "This track is instrumental." : error ? error : !lyrics || lyrics.lines.length === 0 ? "No lyrics are available for this song yet." : null;
 
   return (
-    <div className="sp-lyrics" style={{ background: `linear-gradient(180deg, ${tint || "#3a56a8"}, color-mix(in srgb, ${tint || "#3a56a8"} 70%, #0b1020))` }}>
+    <div className="sp-lyrics">
       <div ref={viewportRef} className="sp-lyrics__scroll" onWheel={() => { userScrollUntil.current = Date.now() + 3500; }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 34 }}>
           <div style={{ width: 56, height: 56, borderRadius: 4, overflow: "hidden", flexShrink: 0 }}><Artwork src={midImage(track.album?.images)} /></div>
           <div style={{ minWidth: 0 }}>
             <div className="sp-ellipsis" style={{ fontSize: 16, fontWeight: 700 }}>{track.name}</div>
-            <div className="sp-ellipsis" style={{ fontSize: 14, color: "rgba(255,255,255,.75)" }}>{track.artists.map((a) => a.name).join(", ")}</div>
+            <div className="sp-ellipsis" style={{ fontSize: 14, color: "#566074" }}>{track.artists.map((a) => a.name).join(", ")}</div>
           </div>
         </div>
-        {status ? <p role="status" style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-.02em", color: "rgba(255,255,255,.88)" }}>{status}</p> : null}
+        {status ? <p role="status" style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-.02em", color: "#566074" }}>{status}</p> : null}
         {!loading && lyrics && lyrics.lines.length > 0 ? (
           <div aria-label="Song lyrics">
             {lyrics.lines.map((line, index) => {
               const synced = lyrics.synced && line.timeMs !== null;
               const state = !lyrics.synced ? "plain" : index === activeIndex ? "active" : index < activeIndex ? "past" : "future";
-              const color = state === "active" || state === "plain" ? "#fff" : state === "past" ? "rgba(255,255,255,.62)" : "rgba(11,16,32,.46)";
               return (
                 <p
                   key={`${line.timeMs ?? "plain"}-${index}`}
                   data-lyric-index={index}
-                  className={`sp-lyrics__line ${synced ? "is-synced" : ""}`}
+                  className={`sp-lyrics__line ${synced ? "is-synced" : ""} is-${state}`}
                   onClick={synced ? () => { userScrollUntil.current = 0; seekTo(line.timeMs as number); } : undefined}
-                  style={{ color, transform: state === "active" && !reduceMotion ? "scale(1.015)" : "none" }}
+                  
                 >
                   {line.text}
                 </p>
               );
             })}
-            <div style={{ marginTop: 28, fontSize: 12, color: "rgba(255,255,255,.7)" }}>{lyrics.synced ? `Lyrics synced${isPlaying ? "" : " · paused"} · LRCLIB` : "Lyrics provided by LRCLIB"}</div>
+            <div style={{ marginTop: 28, fontSize: 12, color: "#8993a6" }}>{lyrics.synced ? `Lyrics synced${isPlaying ? "" : " · paused"} · LRCLIB` : "Lyrics provided by LRCLIB"}</div>
           </div>
         ) : null}
       </div>

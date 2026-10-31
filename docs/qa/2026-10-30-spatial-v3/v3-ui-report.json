@@ -1,0 +1,42 @@
+{
+  "modes": [
+    "Points",
+    "Wireframe",
+    "3D Inspect",
+    "Video"
+  ],
+  "layouts": [
+    {
+      "width": 320,
+      "scroll": 320,
+      "spatialSwitch": true,
+      "guideOnPanel": false
+    },
+    {
+      "width": 375,
+      "scroll": 375,
+      "spatialSwitch": true,
+      "guideOnPanel": false
+    },
+    {
+      "width": 768,
+      "scroll": 768,
+      "spatialSwitch": true,
+      "guideOnPanel": false
+    },
+    {
+      "width": 1024,
+      "scroll": 1024,
+      "spatialSwitch": true,
+      "guideOnPanel": false
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "spatialSwitch": true,
+      "guideOnPanel": false
+    }
+  ],
+  "keys": "1 motion keys · 0.00 s. Enable animation, then move the handles at each time. Diamonds appear on this layer.",
+  "errors": []
+}

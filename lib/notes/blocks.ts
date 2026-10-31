@@ -224,12 +224,45 @@ export function markdownToBlocks(markdown: string): DraftBlock[] {
     }
     const bullet = body.match(/^[-*+](?:\s+(.*))?$/);
     if (bullet) {
-      append(draft("bulleted", inlineToSpans(bullet[1] ?? "")), indent);
+      const inner = bullet[1] ?? "";
+      /* Models sometimes nest a callout or a numbered step inside a bullet ("- > [!EXAM] …", "- 1. …"): keep the
+         intended block rather than printing the markup. */
+      const nestedCallout = inner.match(/^>\s?\[!(\w+)\]\s*(.*)$/);
+      if (nestedCallout) {
+        const icons: Record<string, string> = { note: "📝", tip: "💡", summary: "✨", important: "📌", warning: "⚠️", caution: "⚠️", exam: "🎯", question: "❓", key: "🔑", info: "ℹ️" };
+        append(draft("callout", inlineToSpans(nestedCallout[2]!), { icon: icons[nestedCallout[1]!.toLowerCase()] || "💡" }), indent);
+        continue;
+      }
+      const nestedNumber = inner.match(/^\d+[.)]\s+(.*)$/);
+      if (nestedNumber) {
+        append(draft("numbered", inlineToSpans(nestedNumber[1]!)), indent);
+        continue;
+      }
+      append(draft("bulleted", inlineToSpans(inner)), indent);
       continue;
     }
     const numbered = body.match(/^\d+[.)](?:\s+(.*))?$/);
     if (numbered) {
       append(draft("numbered", inlineToSpans(numbered[1] ?? "")), indent);
+      continue;
+    }
+    /* Callouts: "> [!TIP] text" (GitHub-style) or "> 💡 text" (how callouts are exported). */
+    const callout = body.match(/^>\s?\[!(\w+)\]\s*(.*)$/);
+    if (callout) {
+      const icons: Record<string, string> = { note: "📝", tip: "💡", summary: "✨", important: "📌", warning: "⚠️", caution: "⚠️", exam: "🎯", question: "❓", key: "🔑", info: "ℹ️" };
+      append(draft("callout", inlineToSpans(callout[2]!), { icon: icons[callout[1]!.toLowerCase()] || "💡" }), indent);
+      continue;
+    }
+    const emojiCallout = body.match(/^>\s?(\p{Extended_Pictographic}\uFE0F?)\s+(.*)$/u);
+    if (emojiCallout) {
+      append(draft("callout", inlineToSpans(emojiCallout[2]!), { icon: emojiCallout[1] }), indent);
+      continue;
+    }
+    /* Toggles: "▸ Summary" (children are the indented lines beneath); "▸ ## Heading" makes a toggle heading. */
+    const toggle = body.match(/^▸\s+(?:(#{1,3})\s+)?(.*)$/);
+    if (toggle) {
+      const type = (toggle[1] ? `toggle_h${toggle[1].length}` : "toggle") as BlockType;
+      append(draft(type, inlineToSpans(toggle[2]!)), indent);
       continue;
     }
     const quote = body.match(/^>\s?(.*)$/);

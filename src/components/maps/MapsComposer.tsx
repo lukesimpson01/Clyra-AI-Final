@@ -81,12 +81,12 @@ export function MapsComposer({ onSubmit, onSearch, onSuggestionPick, fetchSugges
     <div className="pointer-events-auto absolute left-4 top-4 z-40 w-[380px] max-w-[calc(100vw-32px)]">
       <motion.div
         layout
-        transition={{ duration: 0.22, ease: COMPOSER_EASE }}
+        transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
         className={
-          "overflow-hidden rounded-[26px] border bg-white transition-[border-color,box-shadow] duration-200 " +
+          "overflow-hidden rounded-[24px] bg-white transition-[box-shadow] duration-200 " +
           (focused
-            ? "border-slate-300/90 shadow-[0_16px_44px_rgba(15,23,42,.18)]"
-            : "border-slate-200/90 shadow-[0_12px_40px_rgba(15,23,42,.14)]")
+            ? "shadow-[0_1px_1px_rgba(16,18,24,0.03),0_10px_24px_-8px_rgba(16,18,24,0.15),0_30px_60px_-28px_rgba(16,18,24,0.28),inset_0_0_0_1px_rgba(30,111,255,0.22)]"
+            : "shadow-[0_1px_1px_rgba(16,18,24,0.03),0_8px_20px_-8px_rgba(16,18,24,0.12),0_28px_56px_-28px_rgba(16,18,24,0.24),inset_0_0_0_1px_rgba(16,18,24,0.06)]")
         }
       >
         <div className="flex items-center gap-2.5 px-4 py-3">

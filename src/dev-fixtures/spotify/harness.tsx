@@ -7,6 +7,7 @@
  */
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { MORPH_EASE, MORPH_SHELL_MS, SpotifyNotchPanel, SpotifyNotchPill } from "../../components/chat/SpotifyNotch";
 import type { SpotifyPlaybackHook } from "../../components/chat/SpotifyNotch";
 import { SpotifyWorkspace } from "../../components/spotify/SpotifyWorkspace";
 import type { SpotifyAlbum, SpotifyArtist, SpotifyBrowseKind, SpotifyBrowseResult, SpotifyPlaylist, SpotifyPlaylistItem, SpotifyTrack } from "../../lib/electron-runtime";
@@ -126,8 +127,30 @@ function useMockPlayback(): SpotifyPlaybackHook {
   } as SpotifyPlaybackHook;
 }
 
+/** ?notch=1 — the expanding notch shell exactly as App.tsx sizes it. Click it to toggle. */
+function NotchHarness({ playback }: { playback: SpotifyPlaybackHook }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#fff", display: "flex", justifyContent: "center", paddingTop: 60 }}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          position: "relative", overflow: "hidden", boxSizing: "border-box", background: "oklch(0.997 0.001 258)", border: "1px solid oklch(0.93 0.008 258)",
+          width: open ? 424 : 176, height: open ? 196 : 40, borderRadius: open ? 38 : 20,
+          boxShadow: open ? "0 30px 64px -22px oklch(0.42 0.06 260 / 0.34), 0 4px 12px -4px oklch(0.42 0.04 260 / 0.12)" : "0 10px 24px -14px oklch(0.42 0.04 260 / 0.45), 0 1px 3px oklch(0.42 0.04 260 / 0.07)",
+          transition: `width ${MORPH_SHELL_MS}ms ${MORPH_EASE}, height ${MORPH_SHELL_MS}ms ${MORPH_EASE}, border-radius ${MORPH_SHELL_MS}ms ${MORPH_EASE}, box-shadow 0.32s ease`,
+        }}
+      >
+        <SpotifyNotchPill visible={!open} playback={playback} />
+        <SpotifyNotchPanel visible={open} playback={playback} onExpand={() => undefined} onDismiss={() => undefined} />
+      </div>
+    </div>
+  );
+}
+
 function Harness() {
   const playback = useMockPlayback();
+  if (new URLSearchParams(window.location.search).get("notch")) return <NotchHarness playback={playback} />;
   return (
     <div style={{ position: "fixed", inset: 0, background: "#fff" }}>
       <SpotifyWorkspace playback={playback} />

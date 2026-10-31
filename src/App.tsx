@@ -6,6 +6,7 @@
 import { chatReplyFailureText } from "./lib/chatReplyErrors";
 import { useNativeOcclusion } from "./lib/nativeOcclusion";
 import { WorkspaceCardPlaceholder, WorkspaceSlot, useWorkspacePortalNodes } from "./components/WorkspacePortal";
+import { preloadableLazy } from "./lib/preloadableLazy";
 import {
   extractLocationQuery,
   extractWeatherLocation,
@@ -28,24 +29,27 @@ import { createPortal } from "react-dom";
 import {
   motion,
   AnimatePresence,
-  useMotionValue,
-  useSpring,
-  useVelocity,
-  useTransform,
+  useReducedMotion,
 } from "motion/react";
 import {
   AppWindow,
-  Archive,
   Bell,
   Brain,
-  CircleAlert,
   Clock3,
   Code2,
+  BookOpen,
+  Earth,
+  Feather,
+  Flame,
   Gift,
+  MapPin,
+  Rocket,
   Scissors,
+  Zap,
   ArrowUpIcon,
   Check,
   Copy,
+  MoreHorizontal,
   ChevronRight,
   FileUp,
   Folder,
@@ -58,7 +62,6 @@ import {
   MessagesSquare,
   Music2,
   Mic,
-  MoreHorizontal,
   MousePointer2,
   Paperclip,
   Pencil,
@@ -68,23 +71,19 @@ import {
   Search,
   Share2,
   Settings,
-  Square,
   SquarePen,
   Trash2,
-  RotateCcw,
   User,
   Users,
-  Volume2,
   X,
   XIcon,
   Edit2,
   Youtube,
 } from "lucide-react";
 import { cn, formatApiError } from "./lib/utils";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, SettingsSheet } from "./components/SettingsModal";
 import { useMacOSPageTransition } from "./components/MacOSPageTransition";
 import { ChatSearchModal } from "./components/ChatSearchModal";
-import { ShiningBrainIcon, ShiningText, ThinkingDots } from "./components/ShiningText";
 import {
   YoutubeScanEmbed,
   extractYoutubeVideoId,
@@ -105,7 +104,6 @@ import {
   wantsCodeMode,
   wantsNotesMode,
 } from "./lib/clyraChatPrompt";
-import { TextFadeIn } from "@/components/ui/text-fade-in";
 import { TextLoop } from "@/components/core/text-loop";
 import { StatusTextReveal } from "@/components/core/status-text-reveal";
 import { MarkdownMessageContent } from "./components/MarkdownMessageContent";
@@ -122,8 +120,9 @@ import {
   MORPH_SHELL_DELAY_MS,
 } from "./components/chat/SpotifyNotch";
 import { SpotifyWorkspace } from "./components/spotify/SpotifyWorkspace";
+import type { SpotifyTrack } from "./lib/electron-runtime";
+import { SpotifyRunTimeline, type SpotifyRun, type SpotifyRunStep } from "./components/chat/SpotifyRunTimeline";
 import ClyraComposerShell, {
-  assistantBubbleInnerStyle,
   chatBubbleStyle,
   userBubbleInnerStyle,
   type ComposerChatRow,
@@ -150,10 +149,24 @@ import { AppLauncher } from "./components/AppLauncher";
 import { AgentControlledPreview } from "./components/AgentControlledPreview";
 type CreatorMode = "fake-text" | "would-rather" | "reddit-story";
 import { isGroundedWebResearchAnswer, type WebCitationView } from "../lib/research/research-grounding";
-import { ClyraSearchCitations } from "./shared/clyra/ClyraSearchActivity";
-import { ClyraAgentActivity } from "./shared/clyra/ClyraAgentActivity";
+import { AttachmentThumb, FilePreviewDialog, describeFile } from "./components/chat/attachments";
+import {
+  ActivitySteps,
+  AssistantResponse,
+  AssistantStatus,
+  ChatMenu,
+  JumpToLatest,
+  MessageActions,
+  SearchSummary,
+  SourcesFooter,
+  WorkSummary,
+  type ActivityStep,
+  type SourceView,
+  type StatusKind,
+} from "./components/chat/assistant";
 import { deriveAgentEvents, type AgentEvent, type RunSnapshot } from "../lib/agent-events/agent-event";
-import { VoiceCallScreen } from "./components/voice/VoiceCallScreen";
+import { VoiceCallHost } from "./components/voice/VoiceCallHost";
+import { requestVoiceCall } from "./components/voice/voiceCallTrigger";
 import { DictationController } from "./components/DictationController";
 import { ConnectivityIndicator } from "./components/ConnectivityIndicator";
 import { useConnectivity } from "./hooks/useConnectivity";
@@ -168,7 +181,8 @@ import { playFlowSound } from "./lib/flowSounds";
 import type { FlowSession } from "./components/chat/FlowComposerOverlay";
 import { type OrbColorTheme } from "./components/AiOrb";
 import { Bloub, type BloubExpression, type BloubHandle, type BloubState } from "./components/bloub/Bloub";
-import { BloubBootAvatar } from "./components/bloub/BloubBootAvatar";
+import { ClyraStartupLoader } from "./components/startup/ClyraStartupLoader";
+import { getHomeFace } from "./voice/homeFace";
 
 // Maps the app's existing orb colour themes to a single Bloub accent hex.
 // Bloub takes one flat colour (its geometry doesn't depend on it), so this
@@ -182,13 +196,15 @@ const BLOUB_THEME_COLOR: Record<OrbColorTheme, string> = {
   noir: "#171717",
 };
 import { GoogleProductIcon, YouTubeBrandIcon } from "./components/brand/ProductIcons";
+import { pillIcon, usePersonalPills } from "./components/chat/HomePanels";
 import { getElectronDesktop } from "./lib/electron-runtime";
 import { VibeAgentMessageBody } from "./components/vibe/VibeAgentMessageBody";
 import { VibeLivePreviewPanel } from "./components/vibe/VibeLivePreviewPanel";
 import { WorkspaceTaskView, type TaskViewHandle, type TaskViewPreview, type TaskViewTab } from "./components/WorkspaceTaskView";
 import { buildLocalVibeFallbackResponse } from "./lib/buildLocalVibeFallback";
-import { extractYoutubeUrl, looksLikeWebSearchQuery, wantsYoutubeAndWebSearch, webSearchProgressLabel } from "./lib/chatRouting";
+import { extractYoutubeUrl, looksLikeWebSearchQuery, wantsYoutubeAndWebSearch } from "./lib/chatRouting";
 import { VIBE_CURSOR_AGENT_SYSTEM_PROMPT } from "./lib/vibeAgentConstants";
+import { runEffortHarness, type HarnessStep } from "./lib/chatEffortHarness";
 import { extractVibeFilesFromContent } from "./lib/parseVibeAgentContent";
 import {
   describeControls,
@@ -198,12 +214,17 @@ import {
   type AgentBridgeSnapshot,
 } from "./lib/agentController";
 import { collectClyraAppContext, formatClyraAppContext } from "./agent/tool-registry";
+import { fetchMemoryContext, fetchMemoryProfile, learnFromExchange, subscribeMemoryEvents, type LearnResponse } from "./lib/memoryClient";
 
 const loadShortsWorkspace = () =>
-  import("./shorts/ShortsApp").then((module) => ({ default: module.ShortsApp })).catch(() => ({
+  import("./shorts/ShortsApp").then((module) => {
+    // the app's address is asked for as soon as the workspace code is here (preloaded at start), so opening is instant
+    void module.warmShortsApp().catch(() => undefined);
+    return { default: module.ShortsApp };
+  }).catch(() => ({
     default: () => <WorkspaceImportFailure name="Shorts" />,
   }));
-const ShortsWorkspaceApp = lazy(loadShortsWorkspace);
+const ShortsWorkspaceApp = preloadableLazy(loadShortsWorkspace);
 type VibeCoderWorkspaceProps = {
   initialProjectId?: string;
   onInitialProjectOpened?: (projectId: string) => void;
@@ -218,7 +239,7 @@ const loadVibeCoderWorkspace = () => import("./components/clyra-code/ClyraCodeWo
       </div>
     )
   }));
-const VibeCoderWorkspace = lazy(loadVibeCoderWorkspace);
+const VibeCoderWorkspace = preloadableLazy(loadVibeCoderWorkspace);
 
 /** Names from the last project list, so the opening surface already shows the real sidebar contents. */
 function readCachedVibeProjectNames(): string[] {
@@ -337,7 +358,7 @@ const loadWebBrowserWorkspace = () =>
   import("./components/WebBrowserWorkspace").catch(() => ({
     default: () => <WorkspaceImportFailure name="Web Browser" />,
   }));
-const WebBrowserWorkspace = lazy(loadWebBrowserWorkspace);
+const WebBrowserWorkspace = preloadableLazy(loadWebBrowserWorkspace);
 const loadScreenCompanionWorkspace = () =>
   import("./components/ScreenCompanionWorkspace").catch(() => ({
     default: () => (
@@ -346,7 +367,7 @@ const loadScreenCompanionWorkspace = () =>
       </div>
     ),
   }));
-const ScreenCompanionWorkspace = lazy(loadScreenCompanionWorkspace);
+const ScreenCompanionWorkspace = preloadableLazy(loadScreenCompanionWorkspace);
 
 
 
@@ -354,13 +375,57 @@ const loadStudyPalWorkspace = () =>
   import("./components/StudyPalWorkspace").catch(() => ({
     default: () => <WorkspaceImportFailure name="Study Pal" />,
   }));
-const StudyPalWorkspace = lazy(loadStudyPalWorkspace);
-// Agents is Rakazo itself, run locally by Electron (electron/agents). It stays lazy so nothing starts until the user
-// opens Agents.
-const AgentsWorkspace = lazy(() => import("./components/agents/AgentsWorkspace").then((m) => ({ default: m.AgentsWorkspace })));
-const ClyraCareWorkspace = lazy(() => import("./components/care/ClyraCareWorkspace").then((m) => ({ default: m.ClyraCareWorkspace })));
-const ClyraMapsWorkspace = lazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsWorkspace })));
-const ClyraEyeWorkspace = lazy(() => import("./components/eye/ClyraEyeWorkspace").then((m) => ({ default: m.ClyraEyeWorkspace })));
+const StudyPalWorkspace = preloadableLazy(loadStudyPalWorkspace);
+const ClyraMapsWorkspace = preloadableLazy(() => import("./components/maps/ClyraMapsWorkspace").then((m) => ({ default: m.ClyraMapsWorkspace })));
+// Maps is the heaviest app to start (MapLibre plus its style). Its code and tile cache are warmed once the app has
+// settled, at an idle moment, so opening Maps is immediate instead of a half-second module load.
+if (typeof window !== "undefined") {
+  const warmMaps = () => {
+    void ClyraMapsWorkspace.preload().catch(() => undefined);
+    void VibeCoderWorkspace.preload().catch(() => undefined);
+    void import("./maps/offline").then((m) => m.registerTileCache()).catch(() => undefined);
+  };
+  const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+  window.setTimeout(() => (idle ? idle(warmMaps, { timeout: 5000 }) : warmMaps()), 3500);
+}
+
+// Every lazily-loaded workspace app is warmed during launch so switching tabs
+// is instant once the boot bar finishes. Maps is deliberately NOT here: it is
+// the heaviest bundle (MapLibre plus its style) and is already warmed at an
+// idle moment just after launch (`warmMaps` below) — loading it synchronously
+// here would stall the main thread for ~seconds and freeze the progress bar.
+const PRELOADABLE_WORKSPACES = [
+  ShortsWorkspaceApp,
+  VibeCoderWorkspace,
+  WebBrowserWorkspace,
+  ScreenCompanionWorkspace,
+  StudyPalWorkspace,
+] as const;
+
+function preloadAllWorkspaces() {
+  // Yield one frame between each bundle so the progress bar keeps painting
+  // smoothly instead of the main thread stalling on a burst of heavy imports.
+  const yieldFrame = () =>
+    new Promise<void>((resolve) => {
+      const raf = requestAnimationFrame(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+      const timer = setTimeout(() => {
+        cancelAnimationFrame(raf);
+        resolve();
+      }, 32);
+    });
+
+  return (async () => {
+    const results: Array<unknown> = [];
+    for (const workspace of PRELOADABLE_WORKSPACES) {
+      results.push(await workspace.preload().catch(() => undefined));
+      await yieldFrame();
+    }
+    return results;
+  })();
+}
 
 function prepareVibeForBoot(
   onProgress?: (update: VibeBootProgressUpdate) => void,
@@ -425,8 +490,8 @@ function prepareVibeForBoot(
   return vibeBootPreparation;
 }
 
-type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | "cowork" | "spotify" | "care" | "maps" | "eye" | CreatorMode;
-type SidebarAppId = "vibe" | "clip" | "browser" | "study" | "cowork" | "spotify" | "care";
+type WorkspaceTabId = "chat" | "vibe" | "clip" | "browser" | "study" | "companion" | "notes" | "spotify" | "maps" | CreatorMode;
+type SidebarAppId = "vibe" | "clip" | "browser" | "study" | "spotify" | "notes" | "maps";
 type WorkspaceRailAppId = SidebarAppId;
 type WorkspaceRailTabId = "chat" | WorkspaceRailAppId;
 type AppAgentId = "vibe" | "browse" | "clip" | "notes" | "fake-text" | "would-rather";
@@ -467,13 +532,12 @@ const WORKSPACE_TAB_ORDER: WorkspaceTabId[] = [
   "vibe",
   "clip",
   "browser",
-  "cowork",
   "fake-text",
   "would-rather",
 ];
 const DEFAULT_WORKSPACE_RAIL_TABS: WorkspaceRailTabId[] = ["chat", "vibe", "clip"];
-const WORKSPACE_RAIL_MAX_APPS = 2;
-const SIDEBAR_APP_IDS: SidebarAppId[] = ["vibe", "clip", "browser", "study", "cowork", "spotify", "care"];
+const WORKSPACE_RAIL_MAX_APPS = 4;
+const SIDEBAR_APP_IDS: SidebarAppId[] = ["vibe", "clip", "browser", "study", "spotify", "notes", "maps"];
 function readWorkspaceRailTabs(): WorkspaceRailTabId[] {
   if (typeof window === "undefined") return DEFAULT_WORKSPACE_RAIL_TABS;
   try {
@@ -502,7 +566,6 @@ function readEmbeddedWorkspace(): WorkspaceTabId {
   if (params.get("clipDemo") === "1") return "clip";
   const tool = params.get("embedTool");
   if (tool === "browse" || tool === "browser") return "browser";
-  if (tool === "cowork") return "cowork";
   if (tool === "fake-text" || tool === "would-rather") return tool;
   if (tool === "vibe" || tool === "clip" || tool === "study") return tool;
   return "chat";
@@ -673,14 +736,11 @@ function formatRecentUpdate(updatedAt: number) {
 }
 
 /**
- * Composer effort picker. Maps directly onto the two DeepSeek tiers the
- * server already understands (`lib/deepseek-models.ts`):
- *  - light  -> deepseek-v4-flash, no reasoning — fastest, current default.
- *  - medium -> deepseek-v4-pro, no reasoning — the normal, better-quality chat.
- *  - high   -> deepseek-v4-pro WITH reasoning enabled — the closest thing to
- *              an agentic pass this endpoint supports without a dedicated
- *              multi-step tool-use harness (that only exists for Vibe Coder
- *              today); this is deliberately the "basic" version of that.
+ * Composer effort picker. Each level runs its own loop for an ordinary chat turn (lib/chatEffortHarness):
+ *  - light  -> one direct pass on deepseek-v4-flash.
+ *  - medium -> a short private plan (flash), then the answer on deepseek-v4-pro.
+ *  - high   -> plan, a reasoned private draft (pro, reasoning on), then a check that writes the final answer.
+ * CHAT_EFFORT_MODEL is the model other turns (search, Google work) use for the same level.
  */
 type ChatEffort = "light" | "medium" | "high" | "max";
 // Three levels are offered (Light / Standard / Extended); "max" stays defined for old saved values only.
@@ -691,32 +751,6 @@ const CHAT_EFFORT_MODEL: Record<ChatEffort, string> = {
   high: "deepseek-v4-pro",
   max: "deepseek-v4-pro",
 };
-const CHAT_EFFORT_THINKING: Record<ChatEffort, boolean> = {
-  light: false,
-  medium: false,
-  high: true,
-  max: true,
-};
-/** DeepSeek V4 `reasoning_effort`: "high" or "max" (it maps low/medium to high). */
-const CHAT_EFFORT_REASONING: Record<ChatEffort, "high" | "max" | undefined> = {
-  light: undefined,
-  medium: undefined,
-  high: "high",
-  max: "max",
-};
-/** Reasoning takes real time: a fixed 75s stream budget cut deeper levels off mid-thought. */
-const CHAT_EFFORT_TIMEOUT_MS: Record<ChatEffort, number> = {
-  light: 60_000,
-  medium: 90_000,
-  high: 180_000,
-  max: 420_000,
-};
-const CHAT_EFFORT_MAX_TOKENS: Record<ChatEffort, number> = {
-  light: 8000,
-  medium: 8000,
-  high: 16_000,
-  max: 32_000,
-};
 // Named after the levels people already know from ChatGPT's thinking-time
 // picker (Light / Standard / Extended / Heavy); Instant-style speed is Light.
 const CHAT_EFFORT_LABEL: Record<ChatEffort, string> = {
@@ -726,9 +760,9 @@ const CHAT_EFFORT_LABEL: Record<ChatEffort, string> = {
   max: "Heavy",
 };
 const CHAT_EFFORT_HINT: Record<ChatEffort, string> = {
-  light: "Fastest replies",
-  medium: "Balanced quality",
-  high: "Thinks it through",
+  light: "Answers directly",
+  medium: "Plans, then answers",
+  high: "Drafts, then checks",
   max: "Longest, most thorough",
 };
 
@@ -761,7 +795,7 @@ function pickGreetingPrefix(hour: number): string {
   return bucket.options[Math.floor(Math.random() * bucket.options.length)];
 }
 
-type BootOverlayState = "holding" | "ripple" | "complete";
+type BootOverlayState = "loading" | "complete";
 
 /**
  * One NameDrop-style, top-edge optical pressure wave. The SVG displacement filter is
@@ -1131,46 +1165,61 @@ function StartupSpatialRipple() {
 }
 
 function BootIntroOverlay({
-  state,
-  progress,
-  avatarColor,
-  onAvatarArrive,
+  bootMinMs,
+  preloadDone,
+  loaderExiting,
+  onLoaderExited,
 }: {
-  state: BootOverlayState;
-  progress: number;
-  avatarColor: string;
-  onAvatarArrive: () => void;
+  bootMinMs: number;
+  preloadDone: boolean;
+  loaderExiting: boolean;
+  onLoaderExited: () => void;
 }) {
-  const progressRail = (
-    <div className="clyra-boot-progress clyra-boot-progress--intro" role="progressbar" aria-label="Preparing Clyra" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-      <div className="clyra-boot-progress__track">
-        <motion.div
-          className="clyra-boot-progress__fill"
-          initial={false}
-          animate={{ scaleX: progress }}
-          transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-        />
-      </div>
-    </div>
-  );
+  // A single white launch surface: the blue progress bar fills and collapses,
+  // then the whole overlay fades out to reveal the already-rendered app
+  // underneath — a clean fade-in, no competing reveal animation.
+  //
+  // The fill's per-frame progress lives here (not in the App) so its 60fps
+  // updates re-render only this tiny component instead of the whole app,
+  // which keeps the bar smooth while the heavy bundles preload underneath.
+  const [progress, setProgress] = useState(0);
+  const preloadDoneRef = useRef(preloadDone);
+  useEffect(() => {
+    preloadDoneRef.current = preloadDone;
+  }, [preloadDone]);
 
-  // The avatar keeps the same tree position/identity across the
-  // "holding" -> "ripple" phases so its fly-into-position transform is
-  // never interrupted by a remount; only the chrome around it changes.
+  useEffect(() => {
+    let rafId = 0;
+    const startedAt = performance.now();
+    const easeInOutCubic = (t: number) =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const tick = (now: number) => {
+      const raw = Math.min(1, (now - startedAt) / bootMinMs);
+      const eased = easeInOutCubic(raw);
+      // Hold just shy of full until the preload has genuinely finished.
+      setProgress(preloadDoneRef.current ? eased : Math.min(0.97, eased));
+      if (raw < 1) rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [bootMinMs]);
+
+  const shown = loaderExiting ? 1 : progress;
+
   return (
-    <div className={`clyra-boot-overlay ${state === "ripple" ? "clyra-boot-overlay--ripple" : "clyra-boot-overlay--progress"}`}>
-      {state === "ripple" && <StartupSpatialRipple />}
-      <div className="clyra-boot-overlay__content">
-        <BloubBootAvatar
-          progress={progress}
-          phase={state}
-          color={avatarColor}
-          targetSelector="#clyra-bloub-home-target"
-          onArrive={onAvatarArrive}
-        />
-        {state !== "ripple" && progressRail}
-      </div>
-    </div>
+    <motion.div
+      className="clyra-boot-overlay clyra-boot-overlay--progress"
+      initial={{ opacity: 1 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <ClyraStartupLoader
+        progress={shown * 100}
+        exiting={loaderExiting}
+        onExited={onLoaderExited}
+      />
+    </motion.div>
   );
 }
 
@@ -1399,87 +1448,6 @@ const CHAT_EASE_OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
 const COMPOSER_EXPAND_MS = 560;
 const COMPOSER_TOOLS_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
-/**
- * Lightweight streaming paint: advances in word-sized chunks via rAF instead of
- * per-character DOM/layout thrash. Settled text snaps to the full payload.
- */
-function SoftStreamText({
-  text,
-  isStreaming,
-  className,
-}: {
-  text: string;
-  isStreaming?: boolean;
-  className?: string;
-}) {
-  const [shown, setShown] = useState(() => (isStreaming ? "" : text));
-  const shownRef = useRef(isStreaming ? "" : text);
-  const targetRef = useRef(text);
-  const rafRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    targetRef.current = text;
-    if (!isStreaming) {
-      shownRef.current = text;
-      setShown(text);
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      return;
-    }
-
-    const schedule = () => {
-      if (rafRef.current != null) return;
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        const target = targetRef.current;
-        let current = shownRef.current;
-        if (current.length > target.length) {
-          shownRef.current = target;
-          setShown(target);
-          return;
-        }
-        if (current.length >= target.length) return;
-        // Catch up faster when the network is ahead of the paint cursor.
-        // Smaller, more frequent chunks than a flat word-per-step reveal
-        // read as a smoother continuous stream rather than jumps.
-        let steps = target.length - current.length > 64 ? 3 : 1;
-        while (steps-- > 0 && current.length < target.length) {
-          const rem = target.slice(current.length);
-          const match = rem.match(/^(?:\s*\S{1,10}|\s+|[\s\S]{1,6})/);
-          current += match?.[0] ?? rem.slice(0, 4);
-        }
-        shownRef.current = current;
-        setShown(current);
-        if (current.length < targetRef.current.length) schedule();
-      });
-    };
-
-    schedule();
-  }, [text, isStreaming]);
-
-  useEffect(
-    () => () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-    },
-    [],
-  );
-
-  if (!text && !shown) return null;
-
-  return (
-    <div
-      className={cn(
-        "clyra-stream-paint whitespace-pre-wrap font-medium leading-relaxed",
-        className,
-      )}
-    >
-      {shown}
-      {isStreaming ? <span className="clyra-stream-paint__caret" aria-hidden /> : null}
-    </div>
-  );
-}
 
 type GoogleAgentStep = {
   service: "clyra" | "research" | "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
@@ -1488,213 +1456,61 @@ type GoogleAgentStep = {
   detail: string;
 };
 
-function GoogleAgentServiceIcon({ service }: { service: GoogleAgentStep["service"] }) {
-  if (service === "research") return <Globe className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.8} />;
-  if (service === "clyra") return <ShiningBrainIcon />;
-  return <GoogleGlyph product={service} className="h-4 w-4" />;
+
+
+
+type SearchSourceView = SourceView;
+
+/** Sources behind an answer that did not come through the search pipeline (agent
+ * research, pasted references): the real links the answer itself contains. */
+function sourcesFromContent(content: string): SearchSourceView[] {
+  const found = new Map<string, SearchSourceView>();
+  const add = (url: string, title?: string) => {
+    const clean = url.replace(/[.,;:!?)\]]+$/, "");
+    let host = "";
+    try {
+      const parsed = new URL(clean);
+      if (!/^https?:$/.test(parsed.protocol) || /^(localhost|127\.|0\.0\.0\.0)/.test(parsed.hostname)) return;
+      host = parsed.hostname.replace(/^www\./i, "");
+    } catch { return; }
+    if (found.has(clean)) return;
+    // No link text: read a title off the last path segment (…/Using_for_accessibility → "Using for accessibility").
+    const segment = decodeURIComponent(new URL(clean).pathname.split("/").filter(Boolean).pop() || "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[-_+]+/g, " ").trim();
+    const derived = segment.length >= 12 && /[a-z]{4}/i.test(segment) ? segment.charAt(0).toUpperCase() + segment.slice(1) : undefined;
+    found.set(clean, { id: clean, url: clean, host, title: title?.trim() || derived });
+  };
+  for (const match of content.matchAll(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g)) add(match[2], match[1]);
+  for (const match of content.matchAll(/https?:\/\/[^\s)\]>"'<]+/g)) add(match[0]);
+  return [...found.values()].slice(0, 12);
 }
 
-function GoogleAgentActionStack({ steps, completed = false }: { steps?: GoogleAgentStep[]; completed?: boolean }) {
-  const visibleSteps = steps || [];
-  if (!visibleSteps.length) return null;
-  return (
-    <div className={cn("mt-2.5 max-w-[560px] space-y-1.5", completed && "mb-3")}>
-      <AnimatePresence initial={false}>
-        {visibleSteps.map((step, index) => (
-          <motion.div
-            key={`${step.service}-${step.label}`}
-            initial={{ opacity: 0, y: 5, filter: "blur(2px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.42, delay: Math.min(index * 0.085, 0.34), ease: CHAT_EASE_OUT }}
-            className={cn("flex items-center gap-2 text-[11px] leading-4 text-slate-400", step.state === "running" && "text-slate-500")}
-          >
-            <span className="grid h-4 w-4 shrink-0 place-items-center opacity-80"><GoogleAgentServiceIcon service={step.service} /></span>
-            <span className="min-w-0 truncate"><span className="font-medium text-slate-500">{step.label}</span>{step.detail ? <span className="text-slate-400"> — {step.detail}</span> : null}</span>
-          </motion.div>
-        ))}
-      </AnimatePresence>
-    </div>
-  );
+/** Prefer the grounded citation view (real titles + stable ids) when present;
+ * otherwise fall back to the raw URLs discovered during the search stage. */
+function searchSourcesToViews(urls: string[] = [], citations: WebCitationView[] = []): SearchSourceView[] {
+  if (citations.length) {
+    return citations.map((citation) => ({
+      id: citation.id,
+      url: citation.url,
+      host: citation.host,
+      title: citation.title,
+    }));
+  }
+  const seen = new Set<string>();
+  const views: SearchSourceView[] = [];
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    const host = hostnameFromUrl(url);
+    if (!host) continue;
+    seen.add(url);
+    views.push({ id: url, url, host });
+  }
+  return views;
 }
 
-/** The execution transcript intentionally uses the same calm, centered
- * divider language as the provided reference. It describes the current
- * action, rather than a generic "working" state. */
-function AppAgentPlanTimeline({ steps }: { steps?: AppAgentPlanStep[] }) {
-  if (!steps?.length) return null;
-  return (
-    <section className="mt-4 space-y-3" aria-label="Agent execution plan">
-      <AnimatePresence initial={false}>
-        {steps.map((step, index) => {
-          const active = step.state === "running";
-          const finished = step.state === "completed";
-          const failed = step.state === "failed" || step.state === "needs_input";
-          return (
-            <motion.div
-              layout
-              key={step.id}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ type: "spring", duration: 0.34, bounce: 0, delay: Math.min(index * 0.04, 0.16) }}
-              className="flex items-center gap-3"
-            >
-              <span className="h-px min-w-0 flex-1 bg-slate-200/90" />
-              <span className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-2 text-[11px] font-medium tracking-[-.005em]",
-                active ? "text-slate-700" : finished ? "text-emerald-700" : failed ? "text-amber-700" : "text-slate-400",
-              )}>
-                {active ? <Loader2 className="h-3 w-3 animate-spin" /> : finished ? <Check className="h-3 w-3" strokeWidth={2.3} /> : failed ? <CircleAlert className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
-                {step.label}
-              </span>
-              <span className="h-px min-w-0 flex-1 bg-slate-200/90" />
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
-    </section>
-  );
-}
 
-/** Standard chat: shimmer until the model emits answer text (`content`), then hide so stagger can print it. */
-function ChatThinkingLabel({
-  thinkingMode = "thinking",
-  searchSources = [],
-  searchQuery,
-  googleAction,
-  googleDetail,
-  googleSteps,
-  spotifyAction,
-}: {
-  thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
-  searchSources?: string[];
-  searchQuery?: string;
-  googleAction?: string;
-  googleDetail?: string;
-  googleSteps?: GoogleAgentStep[];
-  spotifyAction?: string;
-}) {
-  const activeGoogleService = [...(googleSteps || [])].reverse().find((step) => step.state === "running")?.service;
-  const googleIsResearching = (thinkingMode === "google" && activeGoogleService === "research") || thinkingMode === "research";
-  const label =
-    thinkingMode === "coding"
-      ? "Coding"
-      : thinkingMode === "youtube"
-      ? "Analyzing YouTube"
-      : thinkingMode === "search"
-        ? "Searching the web"
-        : thinkingMode === "weather"
-          ? "Checking weather"
-          : thinkingMode === "maps"
-            ? "Finding location"
-          : thinkingMode === "spotify"
-            ? spotifyAction || "Working with Clyra Music"
-          : googleIsResearching
-            ? googleAction || "Preparing the research scope"
-          : thinkingMode === "google"
-            ? googleAction || "Working in Google Workspace"
-          : "Thinking";
 
-  const sources = [...new Map(
-    searchSources
-      .map((url) => [hostnameFromUrl(url), url] as const)
-      .filter(([host]) => Boolean(host)),
-  ).entries()].slice(0, 6);
 
-  // Exact port of the Composer artboard's thinking row: a globe icon only
-  // while actively searching, plus the shimmering label — no bouncing dots,
-  // no icon-reveal wave, no framer-motion entrance (that fought the CSS
-  // clyraThinkIn/clyraShine keyframes below). Container animation matches
-  // the artboard's own `animation:clyraThinkIn .55s cubic-bezier(.32,.72,0,1) both`.
-  return (
-    <div
-      className={cn(
-        "clyra-thinking-status",
-        thinkingMode === "search" ? "clyra-thinking-status--search" : "flex flex-wrap items-center gap-2",
-      )}
-      style={{ animation: "clyraThinkIn .55s cubic-bezier(.32,.72,0,1) both" }}
-      aria-live="polite"
-    >
-      <div className="clyra-thinking-status__line">
-        {thinkingMode === "coding" ? (
-          <span className="clyra-coding-prompt" aria-hidden>{">_"}</span>
-        ) : thinkingMode === "search" || googleIsResearching ? (
-          <span style={{ display: "flex", alignItems: "center", color: "#9DA1A9", flexShrink: 0 }} aria-hidden>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round">
-              <circle cx={12} cy={12} r={8.6} />
-              <path d="M3.4 12h17.2M12 3.4c2.4 2.5 3.7 5.4 3.7 8.6S14.4 18.1 12 20.6c-2.4-2.5-3.7-5.4-3.7-8.6S9.6 5.9 12 3.4z" />
-            </svg>
-          </span>
-        ) : null}
-        {thinkingMode === "spotify" ? (
-          <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }} aria-hidden>
-            <img src="/icons/clyra-music.svg" alt="" style={{ width: 14, height: 14, borderRadius: 4 }} />
-          </span>
-        ) : null}
-        {thinkingMode === "maps" ? (
-          <span style={{ display: "flex", alignItems: "center", color: "#9DA1A9", flexShrink: 0 }} aria-hidden>
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 21s-6.5-6.14-6.5-11A6.5 6.5 0 0 1 18.5 10c0 4.86-6.5 11-6.5 11z" />
-              <circle cx={12} cy={10} r={2.4} />
-            </svg>
-          </span>
-        ) : null}
-        {thinkingMode !== "coding" &&
-        thinkingMode !== "search" &&
-        !googleIsResearching &&
-        thinkingMode !== "spotify" &&
-        thinkingMode !== "maps" ? (
-          <ShiningBrainIcon className="h-3.5 w-3.5 shrink-0" />
-        ) : null}
-        <span className="clyra-thinking-wave clyra-thinking-wave--shimmer min-w-0 truncate">{label}</span>
-      </div>
-      {thinkingMode === "search" && (sources.length > 0 || searchQuery?.trim()) ? (
-        <div className="clyra-search-progress" aria-label="Web search progress">
-          {searchQuery?.trim() ? (
-            <div className="clyra-search-step clyra-search-step--query">
-              <span className="clyra-search-step__icon" aria-hidden>
-                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round">
-                  <circle cx={12} cy={12} r={8.6} />
-                  <path d="M3.4 12h17.2M12 3.4c2.4 2.5 3.7 5.4 3.7 8.6S14.4 18.1 12 20.6c-2.4-2.5-3.7-5.4-3.7-8.6S9.6 5.9 12 3.4z" />
-                </svg>
-              </span>
-              <span className="clyra-search-step__label">{searchQuery.trim()}</span>
-            </div>
-          ) : null}
-          {sources.length > 0 ? (
-            <div className="clyra-search-sites" aria-label="Websites being searched">
-              {sources.map(([host, url], index) => (
-                <a
-                  key={url}
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={url}
-                  className="clyra-search-step clyra-search-step--site"
-                  style={{ animationDelay: `${120 + Math.min(index * 90, 360)}ms` }}
-                >
-                  <span className="clyra-search-step__icon" aria-hidden><SiteMark host={host} /></span>
-                  <span className="clyra-search-step__label">{host.replace(/^www\./i, "")}</span>
-                </a>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
-/** Site favicons are useful but optional. The fallback gives every source a
- * stable, readable mark even when the site's icon cannot be fetched. */
-function SiteMark({ host }: { host: string }) {
-  const [failed, setFailed] = useState(false);
-  const label = host.replace(/^www\./i, "");
-  if (failed) return <span className="clyra-site-mark__fallback" aria-hidden>{label.slice(0, 1).toUpperCase()}</span>;
-  // Google's favicon endpoint returns the publisher's coloured site mark more
-  // reliably than a generic browser icon, including for nested documentation
-  // subdomains. The readable initial remains as a graceful offline fallback.
-  return <img src={`https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(`https://${host}`)}&sz=64`} alt="" onError={() => setFailed(true)} />;
-}
 
 /** Source favicons sit to the right of message actions; hover expands the site name. */
 // Recognizes the small set of built-in "couldn't complete this" fallback
@@ -1704,153 +1520,14 @@ const SOFT_FAILURE_PREFIXES = [
   "I couldn't reach",
   "I gathered the source material, but",
   "Sorry, I've hit a rate limit",
+  "Clyra's model account is out of credits",
 ];
 function isSoftFailureMessage(content: string): boolean {
   const trimmed = content.trim();
   return SOFT_FAILURE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
-function SourceFaviconChips({ urls }: { urls?: string[] }) {
-  const items = useMemo(
-    () =>
-      [...new Map((urls ?? []).map((url) => [hostnameFromUrl(url), url])).entries()].filter(
-        ([host]) => host,
-      ),
-    [urls],
-  );
 
-  if (!items.length) return null;
-
-  return (
-    <div className="clyra-message-source-chips" aria-label={`${items.length} source${items.length === 1 ? "" : "s"} used`}>
-      {items.map(([host, url]) => {
-        const label = host.replace(/^www\./i, "");
-        return (
-          <a
-            key={url}
-            className="clyra-message-source-chip"
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Open ${label}`}
-            aria-label={`Open source: ${label}`}
-          >
-            <span className="clyra-message-source-chip__icon" aria-hidden><SiteMark host={host} /></span>
-            <span className="clyra-message-source-chip__bullet">
-              <span className="clyra-message-source-chip__label">{label}</span>
-            </span>
-          </a>
-        );
-      })}
-    </div>
-  );
-}
-
-function AssistantMessageActions({
-  onCopy,
-  onRegenerate,
-  onReadAloud,
-  onBranch,
-  onExport,
-  copied,
-  isReading,
-}: {
-  onCopy: () => void;
-  onRegenerate: () => void;
-  onReadAloud: () => void;
-  onBranch: () => void;
-  onExport: () => void;
-  copied: boolean;
-  isReading: boolean;
-}) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuOpen]);
-
-  return (
-    <div className="clyra-message-actions" aria-label="Response actions" ref={rootRef}>
-      <button type="button" onClick={onCopy} title="Copy response" aria-label="Copy response">
-        <AnimatePresence mode="wait" initial={false}>
-          {copied ? (
-            <motion.span
-              key="check"
-              initial={{ opacity: 0, scale: 0.7 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.7 }}
-              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-              className="inline-flex"
-            >
-              <Check className="h-3.5 w-3.5" />
-            </motion.span>
-          ) : (
-            <motion.span
-              key="copy"
-              initial={{ opacity: 0, scale: 0.7 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.7 }}
-              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-              className="inline-flex"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </motion.span>
-          )}
-        </AnimatePresence>
-      </button>
-      <button type="button" onClick={onRegenerate} title="Retry response" aria-label="Retry response">
-        <RotateCcw className="h-3.5 w-3.5" />
-      </button>
-      <button
-        type="button"
-        onClick={onReadAloud}
-        title={isReading ? "Stop reading" : "Read aloud"}
-        aria-label={isReading ? "Stop reading response" : "Read response aloud"}
-        aria-pressed={isReading}
-        className={isReading ? "is-active" : undefined}
-      >
-        {isReading ? <Square className="h-3 w-3 fill-current" /> : <Volume2 className="h-3.5 w-3.5" />}
-      </button>
-      <span className="clyra-message-actions__more">
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          title="More response actions"
-          aria-label="More response actions"
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-        >
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </button>
-        {menuOpen ? (
-          <span className="clyra-message-actions__menu" role="menu" aria-label="More response actions">
-            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onBranch(); }}>
-              <MessageCircleDashed className="h-3.5 w-3.5" />
-              Continue in a new chat
-            </button>
-            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onExport(); }}>
-              <Archive className="h-3.5 w-3.5" />
-              Export conversation
-            </button>
-          </span>
-        ) : null}
-      </span>
-    </div>
-  );
-}
 
 function AppAgentGlyph({ id, className = "h-4 w-4" }: { id: AppAgentId; className?: string }) {
   if (id === "vibe") return <Code2 className={className} />;
@@ -1862,13 +1539,13 @@ function AppAgentGlyph({ id, className = "h-4 w-4" }: { id: AppAgentId; classNam
 }
 
 const GOOGLE_PRODUCT_LOGOS = {
-  google: "https://www.gstatic.com/images/branding/product/2x/googleg_48dp.png",
-  gmail: "https://www.gstatic.com/images/branding/product/2x/gmail_48dp.png",
-  calendar: "https://www.gstatic.com/images/branding/product/2x/calendar_48dp.png",
-  docs: "https://www.gstatic.com/images/branding/product/2x/docs_48dp.png",
-  sheets: "https://www.gstatic.com/images/branding/product/2x/sheets_48dp.png",
-  slides: "https://www.gstatic.com/images/branding/product/2x/slides_48dp.png",
-  drive: "https://www.gstatic.com/images/branding/product/2x/drive_48dp.png",
+  google: "/icons/brand/google.svg",
+  gmail: "/icons/brand/gmail.svg",
+  calendar: "/icons/brand/calendar.svg",
+  docs: "/icons/brand/docs.svg",
+  sheets: "/icons/brand/sheets.svg",
+  slides: "/icons/brand/slides.svg",
+  drive: "/icons/brand/drive.svg",
 } as const;
 
 function GoogleGlyph({ product = "google", className = "h-4 w-4" }: { product?: keyof typeof GOOGLE_PRODUCT_LOGOS; className?: string }) {
@@ -2132,11 +1809,6 @@ export function UserMessageText({ text }: { text: string }) {
   return <div className="clyra-chat-user-text">{text}</div>;
 }
 
-// Streaming can replace the assistant row while its first text chunk arrives.
-// Keep the thinking start outside the row component so the visual handoff still
-// honours its minimum dwell instead of blinking away on that replacement.
-const chatThinkingStartedAt = new Map<string, number>();
-
 export const AnimatedMessage = ({
   messageId,
   content,
@@ -2150,7 +1822,11 @@ export const AnimatedMessage = ({
   thinkingMode = "thinking",
   youtubeVideoId,
   searchSources,
+  searchCitations,
+  searchPhase = "searching",
   searchQuery,
+  harnessPhase,
+  harnessSteps,
   weather,
   mapLocation,
   googleAction,
@@ -2182,6 +1858,7 @@ export const AnimatedMessage = ({
   onAutomationPause,
   onAutomationResume,
   onAutomationRun,
+  memoryActivity,
 }: {
   messageId?: string;
   content: string;
@@ -2196,7 +1873,11 @@ export const AnimatedMessage = ({
   thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
   youtubeVideoId?: string;
   searchSources?: string[];
+  searchCitations?: WebCitationView[];
+  searchPhase?: "searching" | "reading";
   searchQuery?: string;
+  harnessPhase?: string;
+  harnessSteps?: HarnessStep[];
   weather?: WeatherPayload;
   mapLocation?: MapLocationPayload;
   googleAction?: string;
@@ -2231,73 +1912,26 @@ export const AnimatedMessage = ({
   onAutomationPause?: (automation: AutomationStatus) => Promise<void>;
   onAutomationResume?: (automation: AutomationStatus) => Promise<void>;
   onAutomationRun?: (automation: AutomationStatus) => Promise<void>;
+  memoryActivity?: string;
 }) => {
   const isVibe = assistantKind === "vibe";
-  const [holdingThinking, setHoldingThinking] = useState(false);
-  const thinkingStartedAtRef = useRef<number | null>(null);
-  const thinkingKey = messageId || "anonymous-assistant-message";
-  const awaitingFirstAnswer =
-    !isVibe && content.length === 0 && (!!isThinking || !!isStreaming);
-  const minimumThinkingMs =
-    thinkingMode === "youtube" || thinkingMode === "search"
-      ? 4600
-      : thinkingMode === "weather"
-        ? 3600
-        : thinkingMode === "google" || thinkingMode === "research"
-          ? 2400
-        : 3200;
-  const persistedThinkingStart = chatThinkingStartedAt.get(thinkingKey);
-  const shouldKeepThinkingForDwell =
-    !isVibe &&
-    content.length > 0 &&
-    persistedThinkingStart != null &&
-    Date.now() - persistedThinkingStart < minimumThinkingMs;
-
-  // Let the shared thinking cue breathe long enough to feel intentional. Once
-  // text arrives it hands over cleanly to the response reveal instead of blinking
-  // out between two adjacent renders.
-  useEffect(() => {
-    if (isVibe) return;
-    if (awaitingFirstAnswer) {
-      if (thinkingStartedAtRef.current == null) {
-        const startedAt = chatThinkingStartedAt.get(thinkingKey) ?? Date.now();
-        thinkingStartedAtRef.current = startedAt;
-        chatThinkingStartedAt.set(thinkingKey, startedAt);
-      }
-      setHoldingThinking(true);
-      return;
-    }
-
-    const startedAt = thinkingStartedAtRef.current ?? chatThinkingStartedAt.get(thinkingKey);
-    if (startedAt == null) {
-      setHoldingThinking(false);
-      return;
-    }
-
-    thinkingStartedAtRef.current = startedAt;
-    setHoldingThinking(true);
-    const elapsed = Date.now() - startedAt;
-    const timer = window.setTimeout(() => {
-      thinkingStartedAtRef.current = null;
-      chatThinkingStartedAt.delete(thinkingKey);
-      setHoldingThinking(false);
-    }, Math.max(0, minimumThinkingMs - elapsed));
-
-    return () => window.clearTimeout(timer);
-  }, [awaitingFirstAnswer, isVibe, minimumThinkingMs, thinkingKey]);
-
-  const showYoutubeScan =
-    thinkingMode === "youtube" &&
-    !!youtubeVideoId &&
-    content.length === 0 &&
-    (!!isThinking || !!isStreaming);
-  /** Vibe agent now drives its own thought UI from the model's <<<VIBE_THINKING>>> blocks. While we have no
-   *  content yet, show the unified "Thinking" shimmer so the seam into the inline VibeThoughtPanel is clean. */
-  const suppressVibeAnswerBody = isVibe && !!isThinking && content.length === 0;
+  const live = !!isThinking || !!isStreaming;
+  // A turn that was ever live in this mount gets the entrance; a conversation
+  // reopened from storage mounts finished and never replays it.
+  const wasLiveRef = useRef(live);
+  if (live) wasLiveRef.current = true;
+  const awaitingFirstAnswer = !isVibe && content.length === 0 && live;
   const hasMarkdownStructure =
     /```|^\s{0,3}#{1,6}\s|^\s*[-*]\s|\n\s*\d+\.\s|\|.+\||\*\*[^*]+\*\*/m.test(
       content,
     );
+  const showYoutubeScan =
+    thinkingMode === "youtube" &&
+    !!youtubeVideoId &&
+    content.length === 0 &&
+    live;
+  /** Vibe agent drives its own thought UI; until it has content, show the shared status line. */
+  const suppressVibeAnswerBody = isVibe && !!isThinking && content.length === 0;
 
   // Robust heuristics to detect if the response is an email or structured notes, ignoring preamble.
   const isEmail =
@@ -2364,39 +1998,119 @@ export const AnimatedMessage = ({
 
   const shouldRenderMarkdown =
     markdownSupport && hasMarkdownStructure && !useDocumentUI;
-  const codingResponsePending = thinkingMode === "coding" && !!isStreaming;
-  const showThinking =
-    !isVibe && (awaitingFirstAnswer || holdingThinking || shouldKeepThinkingForDwell || codingResponsePending);
-  const showAnswer =
-    content.length > 0 &&
-    !suppressVibeAnswerBody &&
-    // Code is a complete artifact, not prose to trickle out word-by-word.
-    // Keep the shared Coding shimmer visible until the stream closes, then
-    // hand it to the finished Notes block in one continuous transition.
-    !codingResponsePending &&
-    (!holdingThinking || isVibe) &&
-    !shouldKeepThinkingForDwell;
-  const useCompletedBlurReveal =
-    !isVibe && !isStreaming && !useDocumentUI && !shouldRenderMarkdown;
-  const answerBody = isVibe ? (
-    <VibeAgentMessageBody
-      key={messageId ?? "vibe-body"}
-      messageId={messageId}
-      content={content}
-      isStreaming={!!isStreaming}
-      fontSizeClass={fontSizeClass}
-      isLastAssistant={!!isLastAssistant}
-      onVibePreviewReady={onVibePreviewReady}
-    />
+  const showThinking = !isVibe && awaitingFirstAnswer;
+  const showAnswer = content.length > 0 && !suppressVibeAnswerBody;
+  const sourceViews = useMemo(() => {
+    const fromSearch = searchSourcesToViews(searchSources, searchCitations);
+    if (fromSearch.length || isStreaming || isVibe) return fromSearch;
+    return sourcesFromContent(content);
+  }, [searchSources, searchCitations, isStreaming, isVibe, content]);
+  const googleActivity: ActivityStep[] = useMemo(
+    () =>
+      (googleSteps ?? []).map((step, index) => ({
+        id: `${step.service}-${index}-${step.label}`,
+        label: step.label,
+        detail: step.detail || undefined,
+        state: step.state === "running" ? "running" : step.state === "failed" ? "failed" : "done",
+        kind: step.service === "research" ? "web" : "work",
+      })),
+    [googleSteps],
+  );
+  const googleIsResearching =
+    thinkingMode === "research" ||
+    (thinkingMode === "google" && [...(googleSteps ?? [])].reverse().find((step) => step.state === "running")?.service === "research");
+  const statusKind: StatusKind =
+    thinkingMode === "coding" ? "coding"
+    : thinkingMode === "search" || googleIsResearching || thinkingMode === "youtube" ? "web"
+    : thinkingMode === "maps" ? "maps"
+    : thinkingMode === "spotify" ? "spotify"
+    : thinkingMode === "google" ? "work"
+    : "thinking";
+  const statusLabel =
+    thinkingMode === "coding" ? "Coding"
+    : thinkingMode === "youtube" ? "Analysing YouTube"
+    : thinkingMode === "search" ? (searchPhase === "reading" ? "Reading sources" : "Searching the web")
+    : thinkingMode === "weather" ? "Checking weather"
+    : thinkingMode === "maps" ? "Finding location"
+    : thinkingMode === "spotify" ? spotifyAction || "Working with Clyra Music"
+    : googleIsResearching ? googleAction || "Preparing the research scope"
+    : thinkingMode === "google" ? googleAction || "Working in Google Workspace"
+    : harnessPhase || "Thinking";
+  // Once the answer begins the live status gives way to a quiet, collapsed
+  // record of the real work. It only exists when verified work happened.
+  const completedActivity = useMemo(() => {
+    if (isVibe || showThinking) return null;
+    if ((thinkingMode === "google" || thinkingMode === "research") && googleActivity.length > 0 && !isStreaming) {
+      return <WorkSummary label={`Google Workspace · ${googleActivity.length} step${googleActivity.length === 1 ? "" : "s"}`} steps={googleActivity} />;
+    }
+    // a finished web search: what it did, collapsed ("Searched 6 sources")
+    if (thinkingMode === "search" && searchSources?.length) {
+      return <SearchSummary sources={sourceViews} query={searchQuery} pagesRead={searchCitations?.length || undefined} />;
+    }
+    /* the effort loop's steps, once the answer is done ("Worked through 3 steps") */
+    if (harnessSteps?.length && !isStreaming) {
+      return <WorkSummary label={`Worked through ${harnessSteps.length} step${harnessSteps.length === 1 ? "" : "s"}`} steps={harnessSteps} />;
+    }
+    return null;
+  }, [isVibe, showThinking, thinkingMode, sourceViews, searchQuery, googleActivity, isStreaming, searchSources, searchCitations, harnessSteps]);
+
+  const responseEnter = wasLiveRef.current;
+  const softFailure = !isStreaming && isSoftFailureMessage(content);
+  /* the answer's [S3] markers become links to the sources they name, shown by host */
+  const linkCitations = (text: string) =>
+    sourceViews.length
+      ? text.replace(/\[S(\d+)\]/g, (marker, n: string) => {
+          const source = sourceViews.find((s) => s.id === `S${n}`) ?? sourceViews[Number(n) - 1];
+          if (!source?.url || !/^https?:\/\//i.test(source.url)) return marker;
+          const label = (source.host || hostnameFromUrl(source.url) || `S${n}`).replace(/^www\./, "");
+          const title = `Source ${n}: ${source.title || label}`.replace(/["\\]/g, "");
+          return ` [${label}](${source.url.replace(/[()\s]/g, encodeURIComponent)} "${title}")`;
+        })
+      : text;
+  const bodyContent = (raw: string) => {
+    const text = linkCitations(raw);
+    return shouldRenderMarkdown || text !== raw ? (
+      <MarkdownMessageContent
+        content={text}
+        codeHighlighting={!!codeHighlighting}
+        codePresentation={codeTheme === "light" ? "soft" : "default"}
+      />
+    ) : (
+      text
+        .split(/\n{2,}/)
+        .map((paragraph, index) => <p key={index} style={{ whiteSpace: "pre-wrap" }}>{paragraph}</p>)
+    );
+  };
+
+  const gmailCard = gmailResults && onGmailRefresh && onGmailSummarize && onGmailGenerateReply && onGmailSaveReply && onGmailSendReply && onGmailModify && onGmailThread && onGmailFollowUp && onGmailCancelFollowUp
+    ? <GmailEmailResults results={gmailResults} onRefresh={onGmailRefresh} onSummarize={onGmailSummarize} onGenerateReply={onGmailGenerateReply} onSaveReply={onGmailSaveReply} onSendReply={onGmailSendReply} onModify={onGmailModify} onThread={onGmailThread} onFollowUp={onGmailFollowUp} onCancelFollowUp={onGmailCancelFollowUp} />
+    : null;
+
+  const answerNode = !showAnswer ? null : isVibe ? (
+    <div className="clyra-ai-vibe" data-invert-ignore>
+      <VibeAgentMessageBody
+        key={messageId ?? "vibe-body"}
+        messageId={messageId}
+        content={content}
+        isStreaming={!!isStreaming}
+        fontSizeClass={fontSizeClass}
+        isLastAssistant={!!isLastAssistant}
+        onVibePreviewReady={onVibePreviewReady}
+      />
+      {gmailCard}
+      {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
+    </div>
   ) : useDocumentUI ? (
-    <>
-      {preamble && (
-        <MarkdownMessageContent
-          content={preamble}
-          codeHighlighting={!!codeHighlighting}
-          codePresentation={codeTheme === "light" ? "soft" : "default"}
-        />
-      )}
+    <div className="clyra-ai-embed" data-invert-ignore>
+      {preamble ? (
+        <AssistantResponse enter={responseEnter} streaming={!!isStreaming}>
+          <MarkdownMessageContent
+            content={preamble}
+            codeHighlighting={!!codeHighlighting}
+            codePresentation={codeTheme === "light" ? "soft" : "default"}
+          />
+        </AssistantResponse>
+      ) : null}
       <DocumentCardUI
         content={docContent}
         isStreaming={!!isStreaming}
@@ -2410,88 +2124,56 @@ export const AnimatedMessage = ({
             );
           }
         }}
-        className={cn(preamble ? "mt-4" : "mt-1", fontSizeClass)}
       />
-    </>
-  ) : shouldRenderMarkdown ? (
-    <MarkdownMessageContent
-      content={content}
-      codeHighlighting={!!codeHighlighting}
-      codePresentation={codeTheme === "light" ? "soft" : "default"}
-    />
-  ) : useCompletedBlurReveal ? (
-    <TextFadeIn
-      className={cn("font-medium leading-relaxed text-inherit", fontSizeClass)}
-      by="word"
-      duration={0.42}
-      delay={0.04}
-      staggerDelay={0.028}
-    >
-      {content}
-    </TextFadeIn>
+      {gmailCard}
+      {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
+    </div>
   ) : (
-    <SoftStreamText
-      text={content}
-      isStreaming={!!isStreaming}
-      className={cn("text-inherit", fontSizeClass)}
-    />
+    <>
+      <AssistantResponse
+        enter={responseEnter}
+        streaming={!!isStreaming}
+        error={softFailure}
+      >
+        {bodyContent(content)}
+      </AssistantResponse>
+      {gmailCard}
+      {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
+    </>
   );
+
   const hasInlineStatusCard = Boolean(youtubeVideoId || weather || mapLocation);
-  return (
-    <div
-      className={cn(
-        "pt-0.5 font-medium text-inherit w-full relative flex flex-col gap-2",
-        fontSizeClass,
-      )}
-    >
-      {showThinking ? (
-        <div key="thinking">
-          <ChatThinkingLabel
-            thinkingMode={thinkingMode}
-            searchSources={searchSources}
-            searchQuery={searchQuery}
-            googleAction={googleAction}
-            googleDetail={googleDetail}
-            googleSteps={googleSteps}
-            spotifyAction={spotifyAction}
-          />
-          {thinkingMode === "google" || thinkingMode === "research" ? (
-            <GoogleAgentActionStack steps={googleSteps} />
-          ) : null}
-        </div>
-      ) : showAnswer && !hasInlineStatusCard ? (
-        <div
-          key="answer"
-          className={cn("markdown-body", isVibe && "markdown-body--vibe")}
-          data-invert-ignore
-          style={{ animation: thinkingMode === "coding" ? "clyraCodeReplyIn .42s cubic-bezier(.22,1,.36,1) both" : "clyraReplyIn 1.15s cubic-bezier(.32,.72,0,1) both" }}
-        >
-          {answerBody}
-          {gmailResults && onGmailRefresh && onGmailSummarize && onGmailGenerateReply && onGmailSaveReply && onGmailSendReply && onGmailModify && onGmailThread && onGmailFollowUp && onGmailCancelFollowUp ? <GmailEmailResults results={gmailResults} onRefresh={onGmailRefresh} onSummarize={onGmailSummarize} onGenerateReply={onGmailGenerateReply} onSaveReply={onGmailSaveReply} onSendReply={onGmailSendReply} onModify={onGmailModify} onThread={onGmailThread} onFollowUp={onGmailFollowUp} onCancelFollowUp={onGmailCancelFollowUp} /> : null}
-          {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
-        </div>
-      ) : null}
-      {youtubeVideoId ? (
-        <YoutubeScanEmbed videoId={youtubeVideoId} active={showYoutubeScan} />
-      ) : null}
-      {weather ? <WeatherDiagramCard weather={weather} /> : null}
-      {mapLocation ? <LocationMapCard location={mapLocation} /> : null}
+  const missionNodes = (
+    <>
       {mission ? <MissionStatusCard mission={mission} onResume={onMissionResume} onPause={onMissionPause} onStop={onMissionStop} onApprove={onMissionApproval} /> : null}
       {automation ? <AutomationStatusCard automation={automation} onPause={onAutomationPause} onResume={onAutomationResume} onRun={onAutomationRun} /> : null}
-      {showAnswer && hasInlineStatusCard ? (
-        <div
-          className={cn("markdown-body", isVibe && "markdown-body--vibe")}
-          data-invert-ignore
-          style={{ animation: thinkingMode === "coding" ? "clyraCodeReplyIn .42s cubic-bezier(.22,1,.36,1) both" : "clyraReplyIn 1.15s cubic-bezier(.32,.72,0,1) both" }}
-        >
-          {answerBody}
-          {gmailResults && onGmailRefresh && onGmailSummarize && onGmailGenerateReply && onGmailSaveReply && onGmailSendReply && onGmailModify && onGmailThread && onGmailFollowUp && onGmailCancelFollowUp ? <GmailEmailResults results={gmailResults} onRefresh={onGmailRefresh} onSummarize={onGmailSummarize} onGenerateReply={onGmailGenerateReply} onSaveReply={onGmailSaveReply} onSendReply={onGmailSendReply} onModify={onGmailModify} onThread={onGmailThread} onFollowUp={onGmailFollowUp} onCancelFollowUp={onGmailCancelFollowUp} /> : null}
-          {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
-        </div>
-      ) : null}
+    </>
+  );
+
+  return (
+    <div className="clyra-ai-stack">
+      {showThinking ? (
+        <AssistantStatus
+          kind={statusKind}
+          label={statusLabel}
+          query={thinkingMode === "search" ? searchQuery : undefined}
+          sources={thinkingMode === "search" ? sourceViews : []}
+          steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
+          note={memoryActivity}
+        />
+      ) : completedActivity}
+      {youtubeVideoId ? <YoutubeScanEmbed videoId={youtubeVideoId} active={showYoutubeScan} /> : null}
+      {weather ? <WeatherDiagramCard weather={weather} /> : null}
+      {mapLocation ? <LocationMapCard location={mapLocation} /> : null}
+      {hasInlineStatusCard ? missionNodes : null}
+      {answerNode}
+      {showAnswer && !isStreaming && !isVibe && !useDocumentUI ? <SourcesFooter sources={sourceViews} query={thinkingMode === "search" ? searchQuery : undefined} /> : null}
+      {hasInlineStatusCard ? null : missionNodes}
     </div>
   );
 };
+
+const ACTIVE_MISSION_STATES = new Set(["UNDERSTANDING", "PLANNING", "READY", "EXECUTING", "OBSERVING", "VERIFYING", "REPLANNING", "RECOVERING"]);
 
 interface UseAutoResizeTextareaProps {
   minHeight: number;
@@ -2811,6 +2493,8 @@ export default function App() {
      * (e.g. an image or binary format) — surfaced to the user rather than
      * silently sending an attachment the model never actually saw. */
     unreadable?: boolean;
+    /** The original file, kept in memory so it can be previewed before sending. */
+    file?: File;
   }
 
   interface Message {
@@ -2832,6 +2516,8 @@ export default function App() {
     googleRunId?: string;
     googleSteps?: GoogleAgentStep[];
     spotifyAction?: string;
+    /** Real, event-driven Spotify task timeline. */
+    spotifyRun?: SpotifyRun;
     gmailResults?: GmailResultsPayload;
     workspaceResult?: WorkspaceResult;
     mission?: MissionStatus;
@@ -2850,12 +2536,21 @@ export default function App() {
     searchSources?: string[];
     /** Fetched sources the final answer cites as [S#]. Only set once the answer is grounded. */
     searchCitations?: WebCitationView[];
+    /** Search lifecycle stage: discovering results vs. reading their pages. */
+    searchPhase?: "searching" | "reading";
     /** The exact query Clyra is researching, shown during the live search stage. */
     searchQuery?: string;
+    /** The effort loop's phase now running ("Planning", "Checking the answer"); unset once the answer streams. */
+    harnessPhase?: string;
+    /** What the effort loop did, recorded when it finishes. */
+    harnessSteps?: HarnessStep[];
     weather?: WeatherPayload;
     mapLocation?: MapLocationPayload;
     appAgents?: AttachedAppAgent[];
     agentSteps?: AppAgentPlanStep[];
+    /** Subtle status for memory work that actually happened this turn
+     * ("Recalling a previous decision", "Restoring the previous conversation"). */
+    memoryActivity?: string;
   }
 
   interface ChatSession {
@@ -2875,6 +2570,9 @@ export default function App() {
   const [showSpotifyNotch, setShowSpotifyNotch] = useState(false);
   const [notchOpen, setNotchOpen] = useState(false);
   const [pillHovered, setPillHovered] = useState(false);
+  const [hoveredWorkflowTabId, setHoveredWorkflowTabId] =
+    useState<WorkspaceRailTabId | null>(null);
+  const reduceMotion = useReducedMotion();
   const [activeWorkspaceTab, setActiveWorkspaceTab] =
     useState<WorkspaceTabId>(() => readEmbeddedWorkspace());
   const [workspaceRailTabs, setWorkspaceRailTabs] =
@@ -3351,6 +3049,10 @@ export default function App() {
     }
     taskViewOpenRef.current = true;
     setIsAppLauncherOpen(false);
+    // The Shorts welcome surface is a full-screen overlay, not a workspace
+    // panel, so it must be dismissed before the overview or it stays painted
+    // on top of Task View and swallows the Cmd/Ctrl+J chord entirely.
+    setIsShortsWelcomeOpen(false);
     setShowCommandPalette(false);
     setVisitedWorkspaceTabs((current) =>
       current.includes(activeWorkspaceTab) ? current : [...current, activeWorkspaceTab],
@@ -3362,6 +3064,9 @@ export default function App() {
     // Task View must not leave a stale "open" value for the next Cmd/Ctrl+J.
     taskViewOpenRef.current = false;
     setIsTaskViewOpen(false);
+    // Same overlay concern as Task View: the launcher is also a full-screen
+    // z-[260] surface, so the Shorts welcome overlay must close or it covers it.
+    setIsShortsWelcomeOpen(false);
     setShowCommandPalette(false);
     setIsAppLauncherOpen((open) => !open);
     appLauncherChordRef.current = false;
@@ -3471,59 +3176,12 @@ export default function App() {
   const [workspaceTransitionDirection, setWorkspaceTransitionDirection] =
     useState<number>(0);
 
-  const containerMouseX = useMotionValue(0);
-  const magneticTargetX = useTransform(containerMouseX, (mouseX) => {
-    const padding = WORKSPACE_TAB_PADDING;
-    const offsetStep = WORKSPACE_TAB_WIDTH + WORKSPACE_TAB_GAP;
-    const rawIndex = (mouseX - padding) / offsetStep;
-    const closestIndex = Math.max(
-      0,
-      Math.min(workspaceRailTabs.length - 1, Math.round(rawIndex)),
-    );
-    const closestCenter = padding + closestIndex * offsetStep + WORKSPACE_TAB_WIDTH / 2;
-
-    const minDistance = Math.abs(mouseX - closestCenter);
-
-    // Soft magnetic zone: stretches toward the nearest tab, then settles cleanly on it.
-    const snapZone = 30;
-    const releaseZone = 58;
-
-    if (minDistance < snapZone) {
-      return closestCenter;
-    } else if (minDistance < releaseZone) {
-      const t = (minDistance - snapZone) / (releaseZone - snapZone);
-      const smoothT = t * t * (3 - 2 * t);
-      return closestCenter * (1 - smoothT) + mouseX * smoothT;
-    }
-    return mouseX;
-  });
-
-  const springContainerX = useSpring(magneticTargetX, {
-    stiffness: 430,
-    damping: 33,
-    mass: 0.34,
-  });
-  const containerVelocityX = useVelocity(springContainerX);
-  const hoverScaleX = useTransform(
-    containerVelocityX,
-    [-1500, 0, 1500],
-    [1.1, 1, 1.1],
-  );
-  const hoverOrigin = useTransform(
-    containerVelocityX,
-    [-1500, 0, 1500],
-    ["right", "center", "left"],
-  );
-  const hoverPillX = useTransform(() => {
-    const pillX = springContainerX.get() - 50.5;
-    const maxX =
-      WORKSPACE_TAB_PADDING +
-        (workspaceRailTabs.length - 1) *
-        (WORKSPACE_TAB_WIDTH + WORKSPACE_TAB_GAP) +
-      2;
-    return Math.min(maxX, Math.max(7, pillX));
-  });
   const [isWorkspaceSwitching, setIsWorkspaceSwitching] = useState(false);
+  // The horizontal slide direction for the workspace switch (1 = destination to
+  // the right, -1 = to the left, 0 = no slide). Set directly by the tab handler
+  // so Task-View selections (which already zoom the window to full) skip the
+  // extra slide rather than re-entering from off-screen.
+  const [workspaceSlideDirection, setWorkspaceSlideDirection] = useState<number>(0);
   const workspaceSwitchTimeoutRef = useRef<number | null>(null);
   const workspaceTransition = useMacOSPageTransition(
     activeWorkspaceTab,
@@ -3533,8 +3191,6 @@ export default function App() {
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === "undefined" ? 1200 : window.innerWidth,
   );
-  const [hoveredWorkspaceTab, setHoveredWorkspaceTab] =
-    useState<WorkspaceTabId | null>(null);
   // Tool workspaces own their full canvas from their first frame. This avoids
   // the Chat/Vibe/Shorts rail momentarily overlapping a map, browser, or
   // other task surface opened directly through a workspace URL.
@@ -3644,8 +3300,20 @@ export default function App() {
   // exports appear blank even though the template has rendered underneath.
   const isEmbeddedToolRoute = typeof window !== "undefined"
     && Boolean(new URLSearchParams(window.location.search).get("embedTool"));
-  const [introState, setIntroState] = useState<BootOverlayState>("complete");   // no boot overlay: the app simply fades in
-  const [introProgress, setIntroProgress] = useState(0);
+  // Embedded production tools don't run the launch choreography — they fade
+  // straight in. The full app starts in "loading" (flux bar → ripple reveal).
+  const [introState, setIntroState] = useState<BootOverlayState>(() =>
+    isEmbeddedToolRoute ? "complete" : "loading",
+  );
+  const [bootPreloadDone, setBootPreloadDone] = useState(false);
+  const [loaderExiting, setLoaderExiting] = useState(false);
+  // The launch must always feel settled, never rushed or stalled: hold the
+  // bar open for a random 5–12s window (rounded to whole seconds) so the real
+  // preload and the choreography finish in the same beat.
+  const [bootMinMs] = useState(() => {
+    const seconds = 5 + Math.random() * 7;
+    return Math.round(seconds) * 1000;
+  });
   const isBootOverlayVisible = introState !== "complete";
   // Tracks whether the flying boot avatar has landed in the chat-home slot
   // (or, on an embedded/deep-linked boot with no overlay at all, is simply
@@ -3690,7 +3358,7 @@ export default function App() {
       const scale = 260;
       const nx = Math.max(-1, Math.min(1, (clientX - cx) / scale));
       const ny = Math.max(-1, Math.min(1, (clientY - cy) / scale));
-      homeBloubRef.current?.setGaze(nx * 22, -ny * 14, 0, 0);
+      getHomeFace()?.track(nx, ny);
     });
   }, []);
   const handleHomeGazeEnter = useCallback(
@@ -3706,12 +3374,20 @@ export default function App() {
     },
     [updateHomeGaze],
   );
+  // When the pointer isn't tracking the tab bar, the face settles on a fixed
+  // pose: forward by default, or down while the composer is focused. Both the
+  // tab-leave handler and the backstop below funnel through this so the two
+  // sources of "stop following" can never disagree about the resting pose.
+  const homeComposerFocusedRef = useRef(false);
+  const applyHomeFaceRest = useCallback(() => {
+    getHomeFace()?.setLook(homeComposerFocusedRef.current ? "down" : "forward");
+  }, []);
   const handleHomeGazeLeave = useCallback(() => {
     homeGazeActiveRef.current = Math.max(0, homeGazeActiveRef.current - 1);
     if (homeGazeActiveRef.current === 0) {
-      homeBloubRef.current?.setGaze(0, 0, 0, bloubLanded ? 0.35 : 0);
+      applyHomeFaceRest();
     }
-  }, [bloubLanded]);
+  }, [applyHomeFaceRest]);
 
   // Self-correcting backstop for the enter/leave pairs above: if any of them
   // ever misses its matching leave (e.g. the tab bar unmounting mid-hover
@@ -3736,7 +3412,7 @@ export default function App() {
       });
       if (!inside && wasInside) {
         homeGazeActiveRef.current = 0;
-        homeBloubRef.current?.setGaze(0, 0, 0, bloubLanded ? 0.35 : 0);
+        applyHomeFaceRest();
       }
       wasInside = inside;
     };
@@ -3753,7 +3429,7 @@ export default function App() {
       window.removeEventListener("mousemove", onMove);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [activeWorkspaceTab, messages.length, bloubLanded]);
+  }, [activeWorkspaceTab, messages.length, applyHomeFaceRest]);
 
   // Clicking the welcome avatar plays one short facial reaction, then settles
   // back to rest: either a wink (a catalogue animation — 0.3s entry morph,
@@ -3824,64 +3500,70 @@ export default function App() {
     return () => { cancelAnimationFrame(raf); window.clearTimeout(timer); };
   }, []);
 
-  const beginRippleRef = useRef<() => void>(() => {});
-
   useEffect(() => {
     if (isEmbeddedToolRoute) return;
-    // The visible progress tracks the real preload phases. The handoff never
-    // begins mid-load, so the final fill genuinely represents readiness.
+    // The bar glides 0→100% over a random 5–12s window on an eased curve —
+    // evenly spread, never a race-then-freeze — while every workspace bundle
+    // loads underneath. The handoff only happens once both the real preload and
+    // the boot window have finished, so the app lands fully ready.
     let cancelled = false;
     let finished = false;
+    let preloadDone = false;
+    const bootStartedAt = performance.now();
     const timers: number[] = [];
     const schedule = (delay: number, callback: () => void) => {
       timers.push(window.setTimeout(callback, delay));
     };
     vibeBootPreparation = null;
 
-    // The optical ripple reveal — the app's own "other" intro animation —
-    // must never start until the boot avatar has actually landed in its
-    // header slot (see `onAvatarArrive` on `BootIntroOverlay` below, which
-    // calls this). Triggering it any earlier would show the ripple/reveal
-    // while the avatar is still mid-flight, which reads as two competing
-    // animations instead of one sequenced handoff.
-    const beginRipple = () => {
-      if (cancelled) return;
-      setIsSidebarOpen(true);
-    };
-    beginRipple();
-    beginRippleRef.current = beginRipple;
-
-    const completePreparation = (ready: boolean) => {
+    // Collapse the bar, then the overlay fades out (AnimatePresence exit) to
+    // reveal the app. The sidebar is opened at the reveal moment (not here) so
+    // it slides in at the same instant the content fades in.
+    const finish = () => {
       if (finished || cancelled) return;
       finished = true;
-      markVibeBootReady(ready);
-      setIntroProgress(1);
-      // Safety net only: if the avatar's arrival signal never fires (e.g. no
-      // chat-home slot to fly into, or an unexpected stall), don't leave the
-      // user stuck behind the boot overlay forever.
-      schedule(6_000, () => {
-        if (cancelled) return;
-        beginRipple();
+      schedule(240, () => {
+        if (!cancelled) setLoaderExiting(true);
       });
     };
 
-    void prepareVibeForBoot((update) => {
-      if (cancelled) return;
-      setIntroProgress((current) => Math.max(current, Math.min(0.97, update.progress)));
-    }).then((result) => {
-      completePreparation(result.ready);
+    const tryFinish = () => {
+      if (finished || cancelled) return;
+      const raw = (performance.now() - bootStartedAt) / bootMinMs;
+      if (preloadDone && raw >= 1) finish();
+    };
+
+    // Warm the Vibe stack and every lazy workspace bundle in parallel. The bar
+    // only reaches 100% once both the preload AND the boot window are done, so
+    // no tab lags in on its first open after launch.
+    void Promise.all([
+      prepareVibeForBoot(),
+      preloadAllWorkspaces(),
+    ]).then(([vibe]) => {
+      markVibeBootReady(vibe.ready);
+      preloadDone = true;
+      setBootPreloadDone(true);
+      tryFinish();
     }).catch(() => {
-      completePreparation(false);
+      preloadDone = true;
+      setBootPreloadDone(true);
+      tryFinish();
     });
-    // The shell remains usable even if an optional local warmup endpoint is
-    // unavailable. This is a genuine readiness timeout, not simulated progress.
-    schedule(4_000, () => completePreparation(false));
+
+    // The progress fill now animates inside BootIntroOverlay (isolated so its
+    // per-frame updates never re-render the whole app). Here we only gate the
+    // reveal on both the preload finishing and the boot window elapsing.
+    schedule(bootMinMs, tryFinish);
+
+    // Hard safety ceiling: if a warmup endpoint or a single bundle never
+    // settles, never strand the user behind the loader indefinitely.
+    schedule(bootMinMs + 20_000, finish);
 
     return () => {
       cancelled = true;
       timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [isEmbeddedToolRoute]);
+  }, [isEmbeddedToolRoute, bootMinMs]);
 
   useEffect(() => {
     return () => {
@@ -3921,6 +3603,7 @@ export default function App() {
   const canSendMessage =
     Boolean(value.trim() || selectedCommand || selectedAppAgents.length) && !isOffline;
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -4144,7 +3827,25 @@ export default function App() {
     setCurrentChatId((prevId) => (prevId === id ? null : prevId));
   }, []);
   const [shellSideQuery, setShellSideQuery] = useState("");
-  const [shellSidebarOpen, setShellSidebarOpen] = useState(false);
+  const [shellSidebarOpen, setShellSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 960);
+  // A history rail that was open at desktop width must not cover the chat
+  // when the same window becomes compact. Deliberately keep a rail the user
+  // opens *while already compact*; only a desktop → compact transition closes
+  // it automatically.
+  const wasCompactShellRef = useRef(typeof window !== "undefined" && window.innerWidth < 960);
+  useEffect(() => {
+    const syncShellSidebarForViewport = () => {
+      const isCompact = window.innerWidth < 960;
+      if (isCompact && !wasCompactShellRef.current) setShellSidebarOpen(false);
+      wasCompactShellRef.current = isCompact;
+    };
+    window.addEventListener("resize", syncShellSidebarForViewport, { passive: true });
+    return () => window.removeEventListener("resize", syncShellSidebarForViewport);
+  }, []);
+  // True while the composer morphs into Manage/Settings. The chat surface's
+  // surrounding chrome (docked sidebar, workspace tab switcher) clears away
+  // so the sheet has the full width and reads as one focused surface.
+  const [composerMorphOpen, setComposerMorphOpen] = useState(false);
   const [vibeProjectToOpen, setVibeProjectToOpen] = useState<string | null>(null);
   const buildChatRowPreview = (messages: { role: "user" | "assistant"; content: string }[]) => {
     const last = messages[messages.length - 1];
@@ -4169,29 +3870,25 @@ export default function App() {
         const when = ageDays < 1
           ? new Date(c.updatedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
           : new Date(c.updatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-        return { id: c.id, group, title: c.title, when, preview: buildChatRowPreview(c.messages) };
+        /* running: the open chat while its reply is live, or a chat whose agent mission is still at work (missions
+           run on the server; one not updated for half an hour is not taken as running) */
+        const live = c.id === currentChatId ? messages : c.messages;
+        const running = live.some((m) => m.isThinking || m.isStreaming || (!!m.mission && ACTIVE_MISSION_STATES.has(m.mission.state) && now - c.updatedAt < 30 * 60 * 1000))
+          && (c.id === currentChatId || live.some((m) => !!m.mission));
+        return { id: c.id, group, title: c.title, when, preview: buildChatRowPreview(c.messages), running };
       });
-  }, [chats]);
+  }, [chats, currentChatId, messages]);
   const shellEfforts: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (kind: ChatEffort) => (
-      <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#2A2D34" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
-        {kind === "light" ? <path d="M13 2.5 5 13.6h6L10.6 21.5 19 10.4h-6z" /> : null}
-        {kind === "medium" ? <>
-          <path d="M12 3.2l2 5.6 5.6 2-5.6 2-2 5.6-2-5.6-5.6-2 5.6-2z" />
-          <path d="M19 3.6v3M17.5 5.1h3" opacity={0.6} />
-        </> : null}
-        {kind === "high" || kind === "max" ? <>
-          <path d="M12 5.1a3 3 0 0 0-5.7-1.2A2.9 2.9 0 0 0 4 6.5a3 3 0 0 0-.6 4.2 3.1 3.1 0 0 0 .6 4.8 2.9 2.9 0 0 0 2.6 3.2A3 3 0 0 0 12 18z" />
-          <path d="M12 5.1a3 3 0 0 1 5.7-1.2A2.9 2.9 0 0 1 20 6.5a3 3 0 0 1 .6 4.2 3.1 3.1 0 0 1-.6 4.8 2.9 2.9 0 0 1-2.6 3.2A3 3 0 0 1 12 18z" />
-          <path d="M12 5.1V20" opacity={0.3} />
-          <path d="M9.4 4.9c-1 .5-1.3 1.6-.8 2.5M6.4 9.3c1.2-.2 2.3.5 2.6 1.6M6.9 15.4c1-.6 2.3-.3 2.9.6M14.6 4.9c1 .5 1.3 1.6.8 2.5M17.6 9.3c-1.2-.2-2.3.5-2.6 1.6M17.1 15.4c-1-.6-2.3-.3-2.9.6" opacity={0.55} />
-        </> : null}
-        {kind === "max" ? <>
-          <path d="M19.4 2.6v4.8M17 5h4.8" />
-          <path d="M5.2 20.3v2.2M4.1 21.4h2.2" opacity={0.7} />
-        </> : null}
-      </svg>
-    );
+    const iconFor = (kind: ChatEffort, size = 15) =>
+      kind === "light" ? (
+        <Feather size={size} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
+      ) : kind === "medium" ? (
+        <Zap size={size} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
+      ) : kind === "high" ? (
+        <Flame size={size} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <Rocket size={size} strokeWidth={1.8} color="#DC2626" strokeLinecap="round" strokeLinejoin="round" />
+      );
     return CHAT_EFFORTS.map((v) => ({
       value: v,
       label: CHAT_EFFORT_LABEL[v],
@@ -4214,10 +3911,10 @@ export default function App() {
   );
   const shellSources: ComposerSource[] = useMemo(
     () => [
-      ...shellSourceDefs.map((d) => ({ id: d.id, name: d.name, short: d.short, icon: d.id === "search" ? <Search className="h-4 w-4" strokeWidth={1.8} /> : <GoogleGlyph product={d.product} className="h-4 w-4" /> })),
+      ...shellSourceDefs.map((d) => ({ id: d.id, name: d.name, short: d.short, icon: <GoogleGlyph product={d.product} className="h-[19px] w-[19px]" /> })),
       // Clyra Music is a real command selection, just like the other sources.
       // Choosing it must not reveal the player until that message is sent.
-      { id: "spotify", name: "Clyra Music", short: "Music", icon: <Music2 className="h-4 w-4" strokeWidth={1.8} /> },
+      { id: "spotify", name: "Clyra Music", short: "Music", icon: <img src="/icons/clyra-music.svg" alt="" draggable={false} className="h-[18px] w-[18px] rounded-[5px] object-contain" /> },
     ],
     [shellSourceDefs],
   );
@@ -4319,19 +4016,29 @@ export default function App() {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     programmaticScrollRef.current = true;
 
-    const follow = () => {
+    // One smooth follower for everything that grows the transcript (streamed text, markdown reflow, cards): each
+    // frame closes a time-based share of the gap (≈90ms time constant), so new lines glide into view at any frame
+    // rate instead of stepping a line at a time. It stops when caught up; the ResizeObserver below restarts it.
+    let last = performance.now();
+    const follow = (now: number) => {
+      if (userPinnedAwayRef.current) {
+        programmaticScrollRef.current = false;
+        scrollRafRef.current = null;
+        return;
+      }
       const target = Math.max(0, container.scrollHeight - container.clientHeight);
       const distance = target - container.scrollTop;
-      if (reducedMotion || Math.abs(distance) < 1.5) {
+      if (reducedMotion || Math.abs(distance) < 0.75) {
         container.scrollTop = target;
         lastScrollTopRef.current = target;
         programmaticScrollRef.current = false;
         scrollRafRef.current = null;
         return;
       }
-
-      // Faster catch-up so the latest answer fully clears the composer.
-      container.scrollTop += Math.max(distance * 0.42, Math.sign(distance) * 2);
+      const dt = Math.min(64, Math.max(1, now - last));
+      last = now;
+      const share = 1 - Math.exp(-dt / 90);
+      container.scrollTop += distance * share;
       lastScrollTopRef.current = container.scrollTop;
       scrollRafRef.current = requestAnimationFrame(follow);
     };
@@ -4387,6 +4094,30 @@ export default function App() {
     minHeight: isExpanded ? 50 : 40,
     maxHeight: 200,
   });
+
+  // Focusing the composer casts the welcome face down toward the input — the
+  // same glance the voice call's face gives its composer. Focus is observed at
+  // the document level so it survives the textarea remounting across dictation
+  // and flow states; `textareaRef` is the single source of truth for "the
+  // composer input".
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target !== textareaRef.current) return;
+      homeComposerFocusedRef.current = true;
+      getHomeFace()?.setLook("down");
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (event.target !== textareaRef.current) return;
+      homeComposerFocusedRef.current = false;
+      applyHomeFaceRest();
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, [applyHomeFaceRest]);
 
   useEffect(() => {
     adjustHeight();
@@ -4583,6 +4314,27 @@ export default function App() {
     });
   }, []);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined);
+  const [profileName, setProfileNameState] = useState(() => {
+    try { return window.localStorage.getItem("clyra-profile-name")?.trim() || "Luke"; } catch { return "Luke"; }
+  });
+  const setProfileName = useCallback((name: string) => {
+    const next = name.trim() || "Luke";
+    setProfileNameState(next);
+    try { window.localStorage.setItem("clyra-profile-name", next); } catch { /* ignore */ }
+    // Keep the persistent user profile in sync so the welcome page and future
+    // conversations (even on other devices of this install) share the name.
+    void (async () => {
+      try {
+        await fetch("/api/memory/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field: "name", value: next }),
+          signal: AbortSignal.timeout(4000),
+        });
+      } catch { /* profile sync is best-effort */ }
+    })();
+  }, []);
   const [showChatDropdown, setShowChatDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showRewards, setShowRewards] = useState(false);
@@ -5456,17 +5208,9 @@ export default function App() {
           chatContentHeightRef.current = container.scrollHeight;
           return;
         }
-        const nextHeight = container.scrollHeight;
-        const delta = nextHeight - chatContentHeightRef.current;
-        programmaticScrollRef.current = true;
-        if (delta > 0) {
-          container.scrollTop += delta;
-        } else {
-          container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        }
-        lastScrollTopRef.current = container.scrollTop;
-        chatContentHeightRef.current = nextHeight;
-        programmaticScrollRef.current = false;
+        chatContentHeightRef.current = container.scrollHeight;
+        // glide to the new bottom rather than jumping by the growth
+        followLatest();
       });
     });
     observer.observe(content);
@@ -5485,6 +5229,68 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [toastMessage]);
+
+  // Persistent-memory bootstrap: load the durable profile once on startup and
+  // apply what the user has explicitly saved (real name on the welcome page,
+  // favourite accent colour, theme). Locally-chosen settings always win over
+  // memory, so this only fills gaps and never overrides a user's choices.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const profile = await fetchMemoryProfile();
+      if (cancelled || !profile) return;
+      try {
+        if (profile.name && !window.localStorage.getItem("clyra-profile-name")) {
+          setProfileName(profile.name);
+        }
+        if (profile.accent_color && !window.localStorage.getItem("clyra-accent-color")) {
+          setAccentColor(profile.accent_color);
+        }
+        if ((profile.theme === "Dark" || profile.theme === "Light") && !window.localStorage.getItem("clyra-theme")) {
+          setTheme(profile.theme);
+        }
+      } catch { /* best-effort */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live memory events: when the async curation pass actually persists or
+  // proposes something, surface it honestly — only after the backend has
+  // confirmed the write.
+  useEffect(() => {
+    const unsubscribe = subscribeMemoryEvents((event) => {
+      if (event.event === "memory.change.proposed") {
+        setToastMessage("Clyra proposed a memory update — review it in Settings → Memory");
+      } else if (event.event === "memory.entry.updated") {
+        setToastMessage("Clyra updated a saved preference");
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  /** Apply what a learning pass actually persisted: profile fields become
+   * live UI personalization (name, accent, theme) immediately. */
+  const applyLearningSideEffects = useCallback((result: LearnResponse | null) => {
+    if (!result?.ok) return;
+    const profile = result.profile;
+    const savedNames: string[] = [];
+    let profileChanged = false;
+    for (const item of result.learned) {
+      if (item.status !== "saved" && item.status !== "updated") continue;
+      if (item.kind === "profile") {
+        profileChanged = true;
+        if (item.field === "name" && item.value) savedNames.push(item.value);
+        if (item.field === "accent_color" && item.value && item.value !== accentColor) setAccentColor(item.value);
+        if (item.field === "theme" && (item.value === "Dark" || item.value === "Light") && item.value !== theme) setTheme(item.value);
+      } else if (item.kind === "preference" || item.kind === "fact" || item.kind === "lesson") {
+        profileChanged = true;
+      }
+    }
+    if (profile.name && profileChanged && profile.name !== profileName) setProfileName(profile.name);
+    if (savedNames.length) setToastMessage(`Nice to meet you, ${savedNames[savedNames.length - 1]}`);
+    else if (profileChanged) setToastMessage("Clyra saved that for next time");
+  }, [accentColor, theme, profileName, setProfileName, setAccentColor, setTheme, setToastMessage]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -5606,18 +5412,9 @@ export default function App() {
 
   const commandSuggestions: CommandSuggestion[] = useMemo(() => ([
     {
-      id: "mission",
-      kind: "command",
-      icon: () => <Users className="h-4 w-4" />,
-      label: "Mission",
-      description: "Plan and run a multi-step task with Clyra agents",
-      prefix: "/mission",
-      workspace: "chat",
-    },
-    {
       id: "youtube",
       kind: "command",
-      icon: () => <Youtube className="h-4 w-4" />,
+      icon: () => <YouTubeBrandIcon className="h-4 w-4" />,
       label: "YouTube analyzer",
       description: "Analyze a video and answer from its transcript",
       prefix: "/youtube",
@@ -5640,15 +5437,6 @@ export default function App() {
       description: "Investigate a topic across trusted sources and produce a verified report",
       prefix: "/deep-research",
       workspace: "vibe",
-    },
-    {
-      id: "automate",
-      kind: "command",
-      icon: () => <Clock3 className="h-4 w-4" />,
-      label: "Automate",
-      description: "Schedule a verified Clyra task to run later",
-      prefix: "/automate",
-      workspace: "chat",
     },
     { id:"google-gmail", kind:"command", icon:()=> <GoogleGlyph product="gmail" />, label:"Google Gmail", description:"Read email or prepare a message without leaving Clyra", prefix:"/gmail", workspace:"chat" },
     { id:"google-calendar", kind:"command", icon:()=> <GoogleGlyph product="calendar" />, label:"Google Calendar", description:"Check upcoming events or prepare a calendar action", prefix:"/calendar", workspace:"chat" },
@@ -6941,145 +6729,214 @@ Please analyze the code you just wrote and fix this error.`;
         adjustHeight(true);
         const userMsgId = `${Date.now()}`;
         const assistantMsgId = `${Date.now() + 1}`;
-        let actionLabel: string;
-        switch (intent?.action) {
-          case "next":
-            actionLabel = "Skipping to the next track";
-            break;
-          case "previous":
-            actionLabel = "Going back a track";
-            break;
-          case "pause":
-            actionLabel = "Pausing Spotify";
-            break;
-          case "resume":
-            actionLabel = "Resuming Spotify";
-            break;
-          case "play_trending":
-            actionLabel = "Finding something trending";
-            break;
-          case "play_query":
-            actionLabel = `Searching Spotify for "${intent.query}"`;
-            break;
-          case "queue_query":
-            actionLabel = `Adding "${intent.query}" to your queue`;
-            break;
-          case "volume":
-            actionLabel = `Setting volume to ${intent.percent}%`;
-            break;
-          case "shuffle_on":
-          case "shuffle_off":
-            actionLabel = "Updating shuffle";
-            break;
-          case "like":
-            actionLabel = "Saving to your Liked Songs";
-            break;
-          case "now_playing":
-            actionLabel = "Checking what's playing";
-            break;
-          default:
-            actionLabel = "Preparing Clyra Music";
-            break;
-        }
+        const intro = (() => {
+          switch (intent?.action) {
+            case "next": return "Skipping to the next track.";
+            case "previous": return "Going back a track.";
+            case "pause": return "Pausing your music.";
+            case "resume": return "Resuming playback.";
+            case "play_trending": return "I'll find something trending and start it.";
+            case "play_query": return "I'll find the track and start playback.";
+            case "queue_query": return "I'll find the track and add it to your queue.";
+            case "volume": return `Setting the volume to ${intent.percent}%.`;
+            case "shuffle_on":
+            case "shuffle_off": return "Updating shuffle.";
+            case "like": return "Saving the current track to your Liked Songs.";
+            case "now_playing": return "Checking what's playing.";
+            default: return "Opening Clyra Music.";
+          }
+        })();
+        const runStartedAt = Date.now();
         setMessages((prev) => [
           ...prev,
-          { id: userMsgId, role: "user", content: promptText, createdAt: Date.now() },
+          { id: userMsgId, role: "user", content: promptText, createdAt: runStartedAt },
           {
             id: assistantMsgId,
             role: "assistant",
-            content: "",
-            isThinking: true,
-            thinkingMode: "spotify",
-            spotifyAction: actionLabel,
-            createdAt: Date.now(),
+            content: intro,
+            createdAt: runStartedAt,
+            spotifyRun: { startedAt: runStartedAt, status: "running", steps: [] },
           },
         ]);
         spotifyCommandInFlightRef.current = true;
-        let reply: string;
+        const patchRun = (fn: (run: SpotifyRun) => SpotifyRun) =>
+          setMessages((prev) => prev.map((m) => (m.id === assistantMsgId && m.spotifyRun ? { ...m, spotifyRun: fn(m.spotifyRun) } : m)));
+        // Each step is appended as it begins and settled only from the real
+        // result of the Spotify call, so the timeline mirrors actual events.
+        type StepOutcome = { ok: boolean; detail?: string; error?: string; tracks?: SpotifyTrack[] };
+        let stepSeq = 0;
+        let failed = false;
+        const step = async <T extends StepOutcome>(
+          def: Pick<SpotifyRunStep, "icon" | "title" | "detail" | "mono">,
+          fn: () => Promise<T>,
+        ): Promise<T | null> => {
+          if (failed) return null;
+          const id = `sp-${++stepSeq}`;
+          const startedAt = Date.now();
+          patchRun((run) => ({ ...run, steps: [...run.steps, { id, ...def, status: "running", startedAt }] }));
+          let outcome: T;
+          try {
+            outcome = await fn();
+          } catch (err) {
+            outcome = { ok: false, error: err instanceof Error ? err.message : "Spotify ran into a problem." } as T;
+          }
+          // Keep each running state readable long enough to register.
+          const spent = Date.now() - startedAt;
+          if (spent < 350) await new Promise((resolve) => window.setTimeout(resolve, 350 - spent));
+          if (!outcome.ok) failed = true;
+          patchRun((run) => ({
+            ...run,
+            steps: run.steps.map((s) =>
+              s.id === id
+                ? { ...s, status: outcome.ok ? "done" : "failed", endedAt: Date.now(), detail: outcome.ok ? outcome.detail ?? s.detail : s.detail, error: outcome.ok ? undefined : outcome.error || "Spotify did not confirm this step.", tracks: outcome.tracks }
+                : s,
+            ),
+          }));
+          return outcome;
+        };
+        const verify = (expected: "playing" | "paused" | "available", okText: string) =>
+          step({ icon: "verify", title: "Check playback state", detail: "Reading Spotify's playback state back." }, async () => {
+            const v = await spotifyPlayback.verifyPlayback(expected);
+            return { ok: v.ok, detail: okText, error: v.error };
+          });
+        const names = (t: SpotifyTrack) => t.artists.map((a) => a.name).join(", ");
+        let reply = "";
+        let resultTrack: SpotifyTrack | undefined;
+        let confirmedPlaying = false;
         try {
-          const verifySpotify = async (expected: "playing" | "paused" | "available") => {
-            const verification = await spotifyPlayback.verifyPlayback(expected);
-            return verification.ok ? null : verification.error || "Spotify did not confirm the requested state.";
-          };
           if (!intent) {
+            await step({ icon: "open", title: "Open Clyra Music" }, async () => ({ ok: true, detail: "Clyra Music is ready." }));
             reply = "Clyra Music is ready.";
           } else switch (intent.action) {
             case "next": {
-              const res = await spotifyPlayback.next();
-              const error = res.ok ? await verifySpotify("available") : res.error;
-              reply = !error ? "⏭️ Skipped to the next track." : `Couldn't skip: ${error}`;
+              await step({ icon: "skip", title: "Skip track", detail: "Sending the next-track command." }, async () => {
+                const r = await spotifyPlayback.next();
+                return { ok: r.ok, detail: "Spotify accepted the next-track command.", error: r.error };
+              });
+              const v = await verify("available", "Spotify reports an active track.");
+              reply = v?.ok ? "Skipped to the next track." : "Couldn't skip — see the failed step above.";
               break;
             }
             case "previous": {
-              const res = await spotifyPlayback.previous();
-              const error = res.ok ? await verifySpotify("available") : res.error;
-              reply = !error ? "⏮️ Back to the previous track." : `Couldn't go back: ${error}`;
+              await step({ icon: "back", title: "Previous track", detail: "Sending the previous-track command." }, async () => {
+                const r = await spotifyPlayback.previous();
+                return { ok: r.ok, detail: "Spotify accepted the previous-track command.", error: r.error };
+              });
+              const v = await verify("available", "Spotify reports an active track.");
+              reply = v?.ok ? "Back to the previous track." : "Couldn't go back — see the failed step above.";
               break;
             }
             case "pause": {
-              const res = await spotifyPlayback.pause();
-              const error = res.ok ? await verifySpotify("paused") : res.error;
-              reply = !error ? "⏸️ Paused." : `Couldn't pause: ${error}`;
+              await step({ icon: "pause", title: "Pause playback", detail: "Sending the pause command." }, async () => {
+                const r = await spotifyPlayback.pause();
+                return { ok: r.ok, detail: "Spotify accepted the pause command.", error: r.error };
+              });
+              const v = await verify("paused", "Spotify confirmed playback is paused.");
+              reply = v?.ok ? "Paused. Say “resume” whenever you want to continue." : "Couldn't pause — see the failed step above.";
               break;
             }
             case "resume": {
-              const res = await spotifyPlayback.resume();
-              const error = res.ok ? await verifySpotify("playing") : res.error;
-              reply = !error ? "▶️ Resumed." : `Couldn't resume: ${error}`;
+              await step({ icon: "play", title: "Resume playback", detail: "Sending the play command." }, async () => {
+                const r = await spotifyPlayback.resume();
+                return { ok: r.ok, detail: "Spotify accepted the play command.", error: r.error };
+              });
+              const v = await verify("playing", "Spotify confirmed playback is active.");
+              reply = v?.ok ? "Resumed." : "Couldn't resume — see the failed step above.";
               break;
             }
             case "play_trending": {
-              const res = await spotifyPlayback.playTrending();
-              const error = res.ok ? await verifySpotify("playing") : res.error;
-              reply = !error ? `▶️ Playing **${res.playlistName}**.` : `Couldn't start trending music: ${error}`;
+              let playlistName = "";
+              await step({ icon: "search", title: "Find a trending playlist", detail: "Searching Spotify and starting playback.", mono: "Today's Top Hits" }, async () => {
+                const r = await spotifyPlayback.playTrending();
+                playlistName = r.playlistName || "";
+                return { ok: r.ok, detail: playlistName ? `Requested playback of ${playlistName}.` : undefined, error: r.error };
+              });
+              const v = await verify("playing", "Spotify confirmed playback is active.");
+              reply = v?.ok ? `Playing **${playlistName}**.` : "Couldn't start trending music — see the failed step above.";
+              confirmedPlaying = Boolean(v?.ok);
               break;
             }
             case "now_playing": {
               const t = spotifyPlayback.track;
-              reply = t ? `🎵 **${t.name}** by ${t.artists.map((a) => a.name).join(", ")}${spotifyPlayback.isPlaying ? "" : " (paused)"}.` : "Nothing is playing right now.";
+              await step({ icon: "info", title: "Check playback state" }, async () =>
+                t ? { ok: true, detail: `${t.name} · ${names(t)}` } : { ok: false, error: "Spotify reports nothing playing." });
+              if (t) { resultTrack = t; confirmedPlaying = spotifyPlayback.isPlaying; }
+              reply = t ? `**${t.name}** by ${names(t)}${spotifyPlayback.isPlaying ? "" : " (paused)"}.` : "Nothing is playing right now.";
               break;
             }
             case "volume": {
-              spotifyPlayback.setVolumePercent(intent.percent);
-              reply = `🔊 Volume set to ${intent.percent}%.`;
+              await step({ icon: "volume", title: "Set volume", detail: `Requested ${intent.percent}%.` }, async () => {
+                spotifyPlayback.setVolumePercent(intent.percent);
+                return { ok: true, detail: `Volume command sent (${intent.percent}%).` };
+              });
+              reply = `Volume set to ${intent.percent}%.`;
               break;
             }
             case "shuffle_on":
             case "shuffle_off": {
               const want = intent.action === "shuffle_on";
-              if (spotifyPlayback.shuffleOn !== want) spotifyPlayback.toggleShuffle();
-              reply = want ? "🔀 Shuffle is on." : "Shuffle is off.";
+              await step({ icon: "shuffle", title: want ? "Turn shuffle on" : "Turn shuffle off" }, async () => {
+                if (spotifyPlayback.shuffleOn !== want) spotifyPlayback.toggleShuffle();
+                return { ok: true, detail: "Shuffle command sent." };
+              });
+              reply = want ? "Shuffle is on." : "Shuffle is off.";
               break;
             }
             case "like": {
               const t = spotifyPlayback.track;
-              if (!t) { reply = "Nothing is playing to save."; break; }
-              if (!spotifyPlayback.liked) await spotifyPlayback.toggleSaveTrack();
-              reply = `💚 Saved **${t.name}** to your Liked Songs.`;
+              const r = await step({ icon: "heart", title: "Save to Liked Songs", detail: t ? `${t.name} · ${names(t)}` : undefined }, async () => {
+                if (!t) return { ok: false, error: "Nothing is playing to save." };
+                if (spotifyPlayback.liked) return { ok: true, detail: "Already in your Liked Songs." };
+                const saved = await spotifyPlayback.toggleSaveTrack();
+                return { ok: saved.ok, detail: "Saved to your Liked Songs.", error: saved.error };
+              });
+              if (r?.ok && t) resultTrack = t;
+              reply = r?.ok && t ? `Saved **${t.name}** to your Liked Songs.` : "Nothing is playing to save.";
               break;
             }
             case "queue_query": {
-              const found = await spotifyPlayback.search(intent.query, "track", 1);
-              const hit = found.ok ? found.tracks?.[0] : null;
-              if (!hit) { reply = `Couldn't find "${intent.query}" on Spotify.`; break; }
-              const queued = await spotifyPlayback.addToQueue(hit.uri);
-              if (!queued.ok) { reply = `Couldn't queue that: ${queued.error || "no active player"}`; break; }
-              reply = `➕ Added **${hit.name}** by ${hit.artists.map((a) => a.name).join(", ")} to your queue.`;
+              let hit: SpotifyTrack | undefined;
+              await step({ icon: "search", title: "Search Spotify", detail: "Searching for the track.", mono: intent.query }, async () => {
+                const found = await spotifyPlayback.search(intent.query, "track", 5);
+                hit = found.tracks?.[0];
+                return { ok: found.ok && Boolean(hit), detail: hit ? `Found ${hit.name} · ${names(hit)}` : undefined, tracks: found.tracks, error: found.ok ? `No Spotify track matched "${intent.query}".` : found.error };
+              });
+              const q = await step({ icon: "queue", title: "Add to queue", detail: hit ? `${hit.name} · ${names(hit)}` : undefined }, async () => {
+                const added = await spotifyPlayback.addToQueue(hit!.uri);
+                return { ok: added.ok, detail: "Spotify accepted the queue request.", error: added.error || "No active player." };
+              });
+              if (q?.ok && hit) { resultTrack = hit; reply = `Added **${hit.name}** by ${names(hit)} to your queue.`; }
+              else reply = hit ? "Couldn't queue that — see the failed step above." : `Couldn't find "${intent.query}" on Spotify.`;
               break;
             }
             case "play_query": {
-              const res = await spotifyPlayback.playQuery(intent.query);
-              const error = res.ok ? await verifySpotify("playing") : res.error;
-              reply = !error ? `▶️ Playing **${res.trackName}** by ${res.artistName}.` : `Couldn't find that on Spotify: ${error}`;
+              let hit: SpotifyTrack | undefined;
+              await step({ icon: "search", title: "Search Spotify", detail: "Looking for the matching track.", mono: intent.query }, async () => {
+                const found = await spotifyPlayback.search(intent.query, "track", 5);
+                hit = found.tracks?.[0];
+                return { ok: found.ok && Boolean(hit), detail: hit ? `Found ${hit.name} · ${names(hit)}` : undefined, tracks: found.tracks, error: found.ok ? `No Spotify track matched "${intent.query}".` : found.error };
+              });
+              const played = await step({ icon: "play", title: "Start playback", detail: hit ? `Requested ${hit.name} by ${names(hit)}.` : undefined }, async () => {
+                const r = await spotifyPlayback.playQuery(intent.query);
+                return { ok: r.ok, detail: r.ok ? `Requested playback of ${r.trackName} by ${r.artistName}.` : undefined, error: r.error };
+              });
+              const v = played?.ok ? await verify("playing", "Spotify confirmed playback is active.") : null;
+              if (hit && v?.ok) { resultTrack = hit; confirmedPlaying = true; reply = `Playing **${hit.name}** by ${names(hit)}.`; }
+              else reply = hit ? "Couldn't start playback — see the failed step above." : `Couldn't find "${intent.query}" on Spotify.`;
               break;
             }
           }
         } catch {
           reply = "Spotify ran into a problem handling that.";
+          failed = true;
         }
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: reply, isThinking: false } : m)),
-        );
+        patchRun((run) => ({
+          ...run,
+          status: failed ? "failed" : "done",
+          endedAt: Date.now(),
+          finalText: reply,
+          result: resultTrack ? { track: resultTrack, confirmedPlaying } : undefined,
+        }));
         // Do not reveal the player while the command is still being handled.
         // At this point the chat response has been committed, whether the
         // requested action succeeded or returned a useful error.
@@ -7562,7 +7419,7 @@ Please analyze the code you just wrote and fix this error.`;
         ...(researchRunId ? { researchRunId, googleSteps: [] } : {}),
         ...(googleAction ? { googleAction } : {}),
         ...(googleDetail ? { googleDetail } : {}),
-        ...(isSearchMode ? { searchQuery: webSearchProgressLabel(searchPayload || rawUserText) } : {}),
+        ...(isSearchMode ? { searchQuery: (searchPayload || rawUserText.replace(/^\/search\s*/i, "").trim()) } : {}),
         // A request may contain “notes” / “summarize” while being routed to
         // web search, YouTube, research, or Google Docs. Keep the Notes card
         // exclusively for plain chat note requests — search answers stay as
@@ -8714,6 +8571,15 @@ Please analyze the code you just wrote and fix this error.`;
                   ),
                 );
               }
+              // Pages have been fetched — the model now reads the retrieved
+              // evidence. This is a real event (the fetch completed), not a timer.
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? { ...msg, searchPhase: "reading", isThinking: true, isStreaming: true, thinkingMode: "search" }
+                    : msg,
+                ),
+              );
               // Let the final source settle without inserting a noticeable gap.
               await new Promise((resolve) => window.setTimeout(resolve, 350));
               analysisPrompt = String(payload.analysisPrompt || "");
@@ -8901,35 +8767,60 @@ Please analyze the code you just wrote and fix this error.`;
               // block the user's normal chat request.
             }
           }
+          // Persistent memory context: profile, preferences, relevant saved
+          // memories, prior-session restoration and candidate skills. This is
+          // always additive — a memory failure must never block the reply.
+          let memoryGuidance = "";
+          let memoryActivity = "";
+          try {
+            const memoryContext = await fetchMemoryContext(userText, currentChatId, namedProject);
+            if (memoryContext?.block) {
+              memoryGuidance = memoryContext.block;
+              memoryActivity = memoryContext.activity.join(" · ");
+              if (memoryActivity) {
+                updateMessagesForRun((prev) =>
+                  prev.map((msg) =>
+                    msg.id === aiMsgId ? { ...msg, memoryActivity } : msg,
+                  ),
+                );
+              }
+            }
+          } catch {
+            // Additive only.
+          }
           const finalPrompt = wantsNotesMode(userText)
-            ? `${basePrompt}${languageContract}${feedbackGuidance}${contextGuidance}${projectMemoryGuidance}\n\n${CLYRA_NOTES_MODE_CONTRACT}`
-            : `${basePrompt}${languageContract}${feedbackGuidance}${contextGuidance}${projectMemoryGuidance}`;
+            ? `${basePrompt}${languageContract}${feedbackGuidance}${contextGuidance}${projectMemoryGuidance}${memoryGuidance}\n\n${CLYRA_NOTES_MODE_CONTRACT}`
+            : `${basePrompt}${languageContract}${feedbackGuidance}${contextGuidance}${projectMemoryGuidance}${memoryGuidance}`;
 
-          await streamOpenAI(
-            finalPrompt,
-            openAiMessages,
-            (chunkText, isReasoning) => {
-              // Provider reasoning is private implementation detail. The UI
-              // receives only the final/user-facing stream, never a hidden
-              // chain-of-thought transcript that could later be persisted.
-              if (isReasoning) return;
+          // The effort level is a loop, not just a model setting (lib/chatEffortHarness): Light answers directly,
+          // Standard plans then answers, Extended plans, drafts with reasoning and checks the draft. Provider
+          // reasoning and the loop's working notes stay private; only the final answer streams into the transcript.
+          const harnessSteps = await runEffortHarness({
+            effort: chatEffort,
+            system: finalPrompt,
+            messages: openAiMessages,
+            stream: streamOpenAI,
+            temperature,
+            signal: streamController.signal,
+            onPhase: (phase) => {
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === aiMsgId ? { ...msg, harnessPhase: phase ?? undefined } : msg)),
+              );
+            },
+            onChunk: (chunkText) => {
               accumulatedText += chunkText;
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === aiMsgId
-                    ? { ...msg, content: accumulatedText, isThinking: false }
+                    ? { ...msg, content: accumulatedText, isThinking: false, harnessPhase: undefined }
                     : msg,
                 ),
               );
             },
-            temperature,
-            CHAT_EFFORT_MAX_TOKENS[chatEffort],
-            CHAT_EFFORT_MODEL[chatEffort],
-            streamController.signal,
-            CHAT_EFFORT_THINKING[chatEffort],
-            CHAT_EFFORT_TIMEOUT_MS[chatEffort],
-            CHAT_EFFORT_REASONING[chatEffort],
-          );
+          });
+          if (harnessSteps.length) {
+            setMessages((prev) => prev.map((msg) => (msg.id === aiMsgId ? { ...msg, harnessSteps } : msg)));
+          }
 
           // End of streaming. A cancelled stream can resolve normally, so the
           // stop is recorded here as well as in the abort branch below.
@@ -8940,6 +8831,24 @@ Please analyze the code you just wrote and fix this error.`;
                 : msg,
             ),
           );
+
+          // Continuous learning: a completed, non-cancelled exchange feeds the
+          // deterministic extractor (synchronous, applies personalization
+          // immediately) and the bounded async curation pass. This never
+          // blocks the reply and never claims success the backend has not
+          // confirmed.
+          if (!streamController.signal.aborted && accumulatedText.trim()) {
+            void (async () => {
+              const result = await learnFromExchange({
+                userText,
+                assistantText: accumulatedText,
+                sessionId: persistentRun ? chatId : null,
+                sessionTitle: persistentRun ? (userText.slice(0, 60) || "New conversation") : null,
+                projectRef: namedProject,
+              });
+              applyLearningSideEffects(result);
+            })();
+          }
         } catch (error) {
           if (streamController.signal.aborted) {
             updateMessagesForRun((prev) =>
@@ -9130,16 +9039,33 @@ Please analyze the code you just wrote and fix this error.`;
       cancelEditMessage();
       return;
     }
-    setMessages((current) => current.slice(0, index));
+    // An edit is a new path through the conversation, never a destructive
+    // rewrite of the original saved chat.  The new prompt is sent below after
+    // the branch becomes the active persisted conversation.
+    const sourceTitle = chats.find((chat) => chat.id === currentChatId)?.title || "Conversation";
+    const branchId = crypto.randomUUID?.() || `chat-${Date.now()}`;
+    const branch: ChatSession = {
+      id: branchId,
+      title: `${sourceTitle.slice(0, 42)} — edited branch`,
+      messages: messages.slice(0, index),
+      updatedAt: Date.now(),
+      kind: "chat",
+    };
+    skipDraftPersistRef.current = true;
+    setIsTemporaryChat(false);
+    setChats((current) => [branch, ...current]);
+    setCurrentChatId(branchId);
+    setMessages(branch.messages);
     setValue(text);
     setIsInputExpanded(true);
     cancelEditMessage();
+    setToastMessage("Created an edited branch from this message");
     requestAnimationFrame(() => {
       const chatContainer = document.getElementById("chat-container");
       chatContainer?.scrollTo({ top: chatContainer.scrollHeight, behavior: "smooth" });
       window.setTimeout(() => void sendMessageRef.current?.(), 110);
     });
-  }, [editingMessageId, editingMessageText, messages, cancelEditMessage]);
+  }, [editingMessageId, editingMessageText, messages, chats, currentChatId, cancelEditMessage]);
 
   const handleAttachFile = () => {
     fileInputRef.current?.click();
@@ -9156,12 +9082,12 @@ Please analyze the code you just wrote and fix this error.`;
     const read = await Promise.all(
       files.map(async (file): Promise<ChatAttachment> => {
         const looksReadable = file.type.startsWith("text/") || READABLE_TEXT_EXTENSIONS.test(file.name);
-        if (!looksReadable) return { name: file.name, unreadable: true };
+        if (!looksReadable) return { name: file.name, unreadable: true, file };
         try {
           const text = await file.text();
-          return { name: file.name, content: text.slice(0, MAX_ATTACHMENT_CHARS) };
+          return { name: file.name, content: text.slice(0, MAX_ATTACHMENT_CHARS), file };
         } catch {
-          return { name: file.name, unreadable: true };
+          return { name: file.name, unreadable: true, file };
         }
       }),
     );
@@ -9194,8 +9120,9 @@ Please analyze the code you just wrote and fix this error.`;
     // the composer rather than merely announced above it.
     setValue("");
     setClipInitialUrl("");
-    setIsCommandPalettePinned(true);
-    setShowCommandPalette(true);
+    // a pick closes the panel; "/" opens it again to add another
+    setIsCommandPalettePinned(false);
+    setShowCommandPalette(false);
     setIsInputExpanded(true);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
@@ -9203,13 +9130,10 @@ Please analyze the code you just wrote and fix this error.`;
   const isClipWorkspace =
     activeWorkspaceTab === "clip" || selectedCommand?.id === "clip";
   const isBrowserWorkspace = activeWorkspaceTab === "browser";
-  const isCareWorkspace = activeWorkspaceTab === "care";
   const isMapsWorkspace = activeWorkspaceTab === "maps";
-  const isEyeWorkspace = activeWorkspaceTab === "eye";
   const isSpotifyWorkspace = activeWorkspaceTab === "spotify";
   const isCompanionWorkspace = activeWorkspaceTab === "companion";
   const isStudyWorkspace = activeWorkspaceTab === "study";
-  const isCoworkWorkspace = activeWorkspaceTab === "cowork";
   const creatorMode: CreatorMode | null =
     activeWorkspaceTab === "would-rather" ||
     activeWorkspaceTab === "reddit-story" ||
@@ -9247,16 +9171,10 @@ Please analyze the code you just wrote and fix this error.`;
           ? "companion"
         : isStudyWorkspace
           ? "study"
-        : isCareWorkspace
-          ? "care"
         : isMapsWorkspace
           ? "maps"
-        : isEyeWorkspace
-          ? "eye"
         : isSpotifyWorkspace
           ? "spotify"
-        : isCoworkWorkspace
-          ? "cowork"
         : creatorMode ??
           (isVibeWorkspace
             ? "vibe"
@@ -9266,19 +9184,18 @@ Please analyze the code you just wrote and fix this error.`;
   // overview has finished opening so the zoom-out itself is never blocked by app start-up work.
   const activeContentTab = workspaceViewKey as WorkspaceTabId;
   const workspacePortalNode = useWorkspacePortalNodes();
+  // The most recently used apps stay mounted (their portal nodes are detached from the document while unseen, so
+  // they cost no layout or paint). Switching back, and Task View, then reuse the live app instead of rebuilding it —
+  // a remount of Maps alone recompiles its WebGL programs (~200 ms).
+  const RETAINED_APPS = 5;
   const [contentTabTracker, setContentTabTracker] = useState<{ current: WorkspaceTabId; retained: WorkspaceTabId[] }>(() => ({ current: activeContentTab, retained: [] }));
   if (contentTabTracker.current !== activeContentTab) {
-    setContentTabTracker((prev) => ({ current: activeContentTab, retained: [...prev.retained.filter((id) => id !== activeContentTab && id !== prev.current), prev.current] }));
+    setContentTabTracker((prev) => ({ current: activeContentTab, retained: [prev.current, ...prev.retained.filter((id) => id !== activeContentTab && id !== prev.current)].slice(0, RETAINED_APPS - 1) }));
   }
-  useEffect(() => {
-    if (!contentTabTracker.retained.length) return;
-    const timer = window.setTimeout(() => setContentTabTracker((prev) => ({ ...prev, retained: [] })), 900);
-    return () => window.clearTimeout(timer);
-  }, [contentTabTracker.retained]);
   const [taskViewMountedTabs, setTaskViewMountedTabs] = useState<WorkspaceTabId[]>([]);
   useEffect(() => {
     if (isTaskViewOpen) {
-      const pending = visitedWorkspaceTabs.filter((id) => id !== activeContentTab && !taskViewMountedTabs.includes(id));
+      const pending = visitedWorkspaceTabs.filter((id) => id !== activeContentTab && !contentTabTracker.retained.includes(id) && !taskViewMountedTabs.includes(id));
       if (!pending.length) return;
       let cancelled = false;
       let handle = 0;
@@ -9301,9 +9218,9 @@ Please analyze the code you just wrote and fix this error.`;
   }, [isTaskViewOpen, taskViewMountedTabs, visitedWorkspaceTabs]);
   const mountedWorkspaceTabs = useMemo(() => {
     const ids: WorkspaceTabId[] = [activeContentTab];
-    for (const id of [...contentTabTracker.retained, ...taskViewMountedTabs]) if (!ids.includes(id)) ids.push(id);
+    for (const id of [...contentTabTracker.retained, ...taskViewMountedTabs]) if (!ids.includes(id) && visitedWorkspaceTabs.includes(id)) ids.push(id);
     return ids;
-  }, [activeContentTab, contentTabTracker.retained, taskViewMountedTabs]);
+  }, [activeContentTab, contentTabTracker.retained, taskViewMountedTabs, visitedWorkspaceTabs]);
   const activeInputCommand =
     selectedCommand && selectedCommand.id !== "vibe" ? selectedCommand : null;
   const recentChat = chats.find((chat) => chat.title.trim() && chat.messages.length > 0) ?? null;
@@ -9331,23 +9248,26 @@ Please analyze the code you just wrote and fix this error.`;
     clip: { id: "clip", label: "Shorts", icon: Scissors },
     browser: { id: "browser", label: "Browser", icon: Globe },
     study: { id: "study", label: "Study", icon: GraduationCap },
-    cowork: { id: "cowork", label: "Agents", icon: Users },
     spotify: { id: "spotify", label: "Music", icon: Music2 },
-    care: { id: "care", label: "Care", icon: Heart },
+    notes: { id: "notes", label: "Notes", icon: BookOpen },
+    maps: { id: "maps", label: "Maps", icon: MapPin },
   };
   const workflowTabs = workspaceRailTabs.map((tabId) => workspaceRailMeta[tabId]);
   // Music is a shared, ongoing activity. Once a command reveals its notch,
   // keep this small control surface present above every workspace until the
   // person expands or dismisses it themselves.
-  const showWorkflowTabs = !isEmbeddedToolPreview && (!workflowTabsHidden || showSpotifyNotch);
+  const showWorkflowTabs = !isEmbeddedToolPreview && (!workflowTabsHidden || showSpotifyNotch) && !composerMorphOpen;
 
   useEffect(() => {
+    // A workspace (e.g. Vibe) asks for the rail to be hidden on mount. Honour it
+    // only when a tool surface is actually active — pre-warming apps during boot
+    // also fires this, and it must not hide the rail while Chat is on screen.
     const hide = () => {
-      if (!showSpotifyNotch) setWorkflowTabsHidden(true);
+      if (!showSpotifyNotch && activeWorkspaceTab !== "chat") setWorkflowTabsHidden(true);
     };
     window.addEventListener("clyra:workflow-tabs-hide", hide);
     return () => window.removeEventListener("clyra:workflow-tabs-hide", hide);
-  }, [showSpotifyNotch]);
+  }, [showSpotifyNotch, activeWorkspaceTab]);
   const sidebarWidthPx = 272;
   const sidebarClearancePx = sidebarWidthPx + 24;
   const effectiveWorkspaceViewport =
@@ -9355,7 +9275,7 @@ Please analyze the code you just wrote and fix this error.`;
       ? Math.max(420, viewportWidth - sidebarClearancePx)
       : viewportWidth;
   const centeredContentWidth =
-    isBrowserWorkspace || isCompanionWorkspace || isStudyWorkspace || isCoworkWorkspace
+    isBrowserWorkspace || isCompanionWorkspace || isStudyWorkspace
       ? Math.min(1280, Math.max(0, effectiveWorkspaceViewport - 32))
       : isClipWorkspace
         ? Math.min(820, Math.max(0, effectiveWorkspaceViewport - 32))
@@ -9404,61 +9324,6 @@ Please analyze the code you just wrote and fix this error.`;
       el.setSelectionRange(prompt.length, prompt.length);
     });
   }, []);
-  const shellSuggestions: ComposerSuggestion[] = useMemo(() => {
-    const items: Array<{
-      id: string;
-      label: string;
-      description: string;
-      prompt: string;
-      icon: React.ComponentType<{ className?: string }>;
-    }> = [];
-    if (recentUserRequest) {
-      items.push({
-        id: "continue",
-        label: "Continue where you left off",
-        description: "Pick up the last thing you asked Clyra to help with.",
-        prompt: `Continue helping me with: ${recentUserRequest}\n\nNext, `,
-        icon: Check,
-      });
-    }
-    items.push(
-      {
-        id: "research",
-        label: "Research a topic",
-        description: "Search current sources and turn them into a clear answer.",
-        prompt: "Research this topic with current sources and cite them: ",
-        icon: Globe,
-      },
-      {
-        id: "write",
-        label: "Write something",
-        description: "Start a draft, rewrite, or polish an idea with Clyra.",
-        prompt: "Help me write ",
-        icon: SquarePen,
-      },
-      {
-        id: "analyze-file",
-        label: "Analyze a file",
-        description: "Attach a document, image, or code file, then ask a question.",
-        prompt: "Analyze the file I attach and help me ",
-        icon: FileUp,
-      },
-      {
-        id: "build",
-        label: "Build an app",
-        description: "Describe what you want to make and Clyra will help build it.",
-        prompt: "Build a ",
-        icon: Code2,
-      },
-    );
-    return items.slice(0, 4).map((item) => ({
-      id: item.id,
-      label: item.label,
-      description: item.description,
-      icon: <item.icon className="h-4 w-4" />,
-      onPick: () => fillComposerDraft(item.prompt),
-    }));
-  }, [recentUserRequest, fillComposerDraft]);
   // Real saved chats for the home-screen "Recent conversations" list —
   // pinned first, then newest first.
   const homeRecentChats = useMemo(
@@ -9471,6 +9336,14 @@ Please analyze the code you just wrote and fix this error.`;
         })
         .slice(0, 6),
     [chats],
+  );
+  const homeChatTitles = useMemo(() => homeRecentChats.map((c) => c.title).filter(Boolean), [homeRecentChats]);
+  const personalPills = usePersonalPills(homeChatTitles, recentUserRequest);
+  // The pills under the composer are picked from a local preset library, ranked by what this person is
+  // doing (to-dos), uses most (activity) and has spoken about (recent chats) — a model never writes them.
+  const shellHomePills: ComposerSuggestion[] = useMemo(
+    () => personalPills.slice(0, 4).map((p) => ({ id: p.id, label: p.label, icon: pillIcon(p.icon), onPick: () => fillComposerDraft(p.prompt) })),
+    [personalPills, fillComposerDraft],
   );
   const [openRecentRowMenuId, setOpenRecentRowMenuId] = useState<string | null>(null);
   const [isRecentChatsPanelOpen, setIsRecentChatsPanelOpen] = useState(false);
@@ -9637,6 +9510,9 @@ Please analyze the code you just wrote and fix this error.`;
     // Always derive direction from a stable order so Chat ↔ tool swipes are
     // perfect mirrors (returning to Chat must not reverse or spawn).
     const direction = fromTaskView ? 1 : toIndex >= fromIndex ? 1 : -1;
+    // Task-View selection already zoomed the destination to full size, so it
+    // must not also slide in from off-screen; only tab-bar switches slide.
+    setWorkspaceSlideDirection(fromTaskView ? 0 : direction);
     // This is the single programmatic entry point for page motion. It has no
     // gesture listeners: buttons/actions choose when to invoke it, and rapid
     // repeated activations are ignored until the present transition settles.
@@ -9990,6 +9866,12 @@ Please analyze the code you just wrote and fix this error.`;
 
   const handleTaskViewTabClose = useCallback((tabId: string) => {
     const workspaceTabId = tabId as WorkspaceTabId;
+    // Closing the Browser must also retire its native WebContentsView, not
+    // just unmount the React shell. The surface is hidden synchronously here;
+    // its renderer is destroyed by the browser manager once it is detached.
+    if (workspaceTabId === "browser") {
+      void getElectronDesktop()?.browser.setSurface({ visible: false });
+    }
     setVisitedWorkspaceTabs((current) => {
       // Task View owns these mounted workspace instances. Removing an entry
       // closes the real tab. The final close returns directly to the global
@@ -10007,6 +9889,13 @@ Please analyze the code you just wrote and fix this error.`;
       }
       return remaining;
     });
+    // Release the closed app from the retention caches so it is fully
+    // unmounted (and its cleanup runs) rather than held as a detached portal.
+    setTaskViewMountedTabs((current) => current.filter((id) => id !== workspaceTabId));
+    setContentTabTracker((current) => ({
+      ...current,
+      retained: current.retained.filter((id) => id !== workspaceTabId),
+    }));
     setTaskViewPreviews((current) => {
       if (!(workspaceTabId in current)) return current;
       const { [workspaceTabId]: _closedPreview, ...remaining } = current;
@@ -10101,12 +9990,17 @@ Please analyze the code you just wrote and fix this error.`;
   );
   const shellFiles: ComposerFileItem[] = useMemo(
     () =>
-      attachments.map((a, i) => ({
-        id: `${a.name}-${i}`,
-        name: a.name,
-        meta: a.unreadable ? "Attached" : "Ready",
-        onRemove: () => removeAttachment(i),
-      })),
+      attachments.map((a, i) => {
+        const info = describeFile({ name: a.name, type: a.file?.type, size: a.file?.size });
+        return {
+          id: `${a.name}-${i}`,
+          name: a.name,
+          meta: [info.label, info.size].filter(Boolean).join(" · ") || (a.unreadable ? "Attached" : "Ready"),
+          thumb: <AttachmentThumb file={a.file} name={a.name} />,
+          onOpen: a.file ? () => setPreviewFile(a.file ?? null) : undefined,
+          onRemove: () => removeAttachment(i),
+        };
+      }),
     [attachments],
   );
   const shellSelections = useMemo(
@@ -10130,10 +10024,10 @@ Please analyze the code you just wrote and fix this error.`;
   const transcriptNodes = messages.map((message) => {
     const fontClass =
       fontSize === "Small"
-        ? "text-[14px] leading-relaxed"
+        ? "text-[14px] leading-[1.7]"
         : fontSize === "Large"
-          ? "text-[18px] leading-loose"
-          : "text-[15px] sm:text-[16px] leading-relaxed";
+          ? "text-[18px] leading-[1.7]"
+          : "text-[16px] leading-[1.7]";
     const isLastAssistant =
       message.role === "assistant" &&
       lastAssistantId != null &&
@@ -10148,13 +10042,21 @@ Please analyze the code you just wrote and fix this error.`;
       >
         {message.role === "user" ? (
           editingMessageId === message.id ? (
-            <div className="clyra-message-edit flex w-full max-w-[85%] flex-col items-end gap-1.5 sm:max-w-[75%]">
+            /* editing an earlier message makes a new branch from it (submitMessageEdit); the original stays */
+            <div className="clyra-message-editor">
+              <span className="clyra-message-editor__label">Edit message</span>
               <textarea
-                autoFocus
+                ref={(el) => {
+                  if (!el || el.dataset.focused) return;
+                  el.dataset.focused = "true";
+                  el.focus({ preventScroll: true });
+                  el.setSelectionRange(el.value.length, el.value.length);
+                }}
+                aria-label="Edit message"
                 value={editingMessageText}
                 onChange={(event) => setEditingMessageText(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
                     submitMessageEdit();
                   } else if (event.key === "Escape") {
@@ -10162,73 +10064,63 @@ Please analyze the code you just wrote and fix this error.`;
                     cancelEditMessage();
                   }
                 }}
-                className={cn(
-                  "clyra-chat-user-bubble w-full resize-none rounded-[24px] border border-slate-200/70 px-5 py-3.5 whitespace-pre-wrap shadow-none outline-none",
-                  fontClass,
-                )}
-                style={{ backgroundColor: userBubbleColor, color: "#1e293b" }}
                 rows={Math.min(8, Math.max(2, editingMessageText.split("\n").length))}
               />
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={cancelEditMessage}
-                  className="rounded-full px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={submitMessageEdit}
-                  className="rounded-full bg-[var(--accent-600)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--accent-700)]"
-                >
-                  Save &amp; resend
-                </button>
+              <div className="clyra-message-editor__actions">
+                <button type="button" className="clyra-chat-button" onClick={cancelEditMessage}>Cancel</button>
+                <button type="button" className="clyra-chat-button clyra-chat-button--primary" onClick={submitMessageEdit} disabled={!editingMessageText.trim()}>Save &amp; Send</button>
               </div>
             </div>
           ) : (
-            <div className="clyra-user-message-group flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => startEditMessage(message)}
-                aria-label="Edit message"
-                title="Edit message"
-                className="clyra-user-message-edit-trigger flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-700"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              <div
-                data-invert-ignore="true"
-                className={cn(
-                  "clyra-chat-user-bubble whitespace-pre-wrap",
-                  isFirstUserMessage &&
-                    "clyra-chat-user-bubble--first",
-                )}
-                style={userBubbleInnerStyle}
-              >
-                <UserMessageText text={message.content} />
+            /* a message sent moments ago (ids are send times) rises in; older ones mount still */
+            <div className={cn("clyra-user-turn", Date.now() - Number(message.id) < 4000 && "clyra-user-turn--fresh")}>
+              <div className="clyra-user-message-group flex items-center">
+                <div
+                  data-invert-ignore="true"
+                  className={cn(
+                    "clyra-chat-user-bubble whitespace-pre-wrap",
+                    isFirstUserMessage &&
+                      "clyra-chat-user-bubble--first",
+                  )}
+                  style={userBubbleInnerStyle}
+                >
+                  <UserMessageText text={message.content} />
+                </div>
+              </div>
+              {/* outside the bubble, so the bubble never moves when they appear */}
+              <div className="clyra-user-actions" role="toolbar" aria-label="Message actions">
+                <button
+                  type="button"
+                  className="clyra-ai-action"
+                  data-tip={copiedMessageId === message.id ? "Copied" : "Copy"}
+                  aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"}
+                  onClick={() => {
+                    if (!navigator.clipboard) { setToastMessage("Copy isn't available in this browser."); return; }
+                    void navigator.clipboard.writeText(message.content).then(() => {
+                      setCopiedMessageId(message.id);
+                      window.setTimeout(() => setCopiedMessageId((current) => current === message.id ? null : current), 1600);
+                    }).catch(() => setToastMessage("Couldn't copy that message."));
+                  }}
+                >
+                  {copiedMessageId === message.id ? <Check /> : <Copy />}
+                </button>
+                <button type="button" className="clyra-ai-action" data-tip="Edit" aria-label="Edit message" onClick={() => startEditMessage(message)}>
+                  <Pencil />
+                </button>
+                <ChatMenu
+                  label="More message actions"
+                  items={[{ label: "Continue in a new chat from here", icon: <MessageCircleDashed />, onSelect: () => branchConversationAt(message.id) }]}
+                  trigger={(props) => (
+                    <button type="button" className="clyra-ai-action" data-tip="More" aria-label="More message actions" {...props}>
+                      <MoreHorizontal />
+                    </button>
+                  )}
+                />
               </div>
             </div>
           )
         ) : (
-          <div
-            className="w-full flex items-start gap-3"
-          >
-            {/* The Composer artboard's replies have no avatar/orb at all —
-                just the text bubble — so the old Bloub avatar is dropped
-                here rather than restyled. */}
-            <div
-              className={cn(
-                "clyra-assistant-message",
-                isLastAssistant && "clyra-assistant-message--latest",
-                message.assistantKind === "vibe" &&
-                  "clyra-assistant-message--vibe",
-                !message.isStreaming &&
-                  isSoftFailureMessage(message.content) &&
-                  "clyra-assistant-message--error",
-              )}
-              style={assistantBubbleInnerStyle}
-            >
+          <div className="clyra-assistant-column" data-latest={isLastAssistant ? "true" : undefined}>
               <AnimatedMessage
                 messageId={message.id}
                 content={message.content}
@@ -10240,7 +10132,11 @@ Please analyze the code you just wrote and fix this error.`;
                 thinkingMode={message.thinkingMode}
                 youtubeVideoId={message.youtubeVideoId}
                 searchSources={message.searchSources}
+                searchCitations={message.searchCitations}
+                searchPhase={message.searchPhase}
                 searchQuery={message.searchQuery}
+                harnessPhase={message.harnessPhase}
+                harnessSteps={message.harnessSteps}
                 weather={message.weather}
                 mapLocation={message.mapLocation}
                 googleAction={message.googleAction}
@@ -10287,14 +10183,19 @@ Please analyze the code you just wrote and fix this error.`;
                 onAutomationPause={(automation) => controlChatAutomation(message.id, automation, "pause")}
                 onAutomationResume={(automation) => controlChatAutomation(message.id, automation, "resume")}
                 onAutomationRun={(automation) => controlChatAutomation(message.id, automation, "run")}
+                memoryActivity={message.memoryActivity}
               />
-              {message.mission && agentEventsByMessage[message.id]?.length ? (
-                <ClyraAgentActivity events={agentEventsByMessage[message.id]} missionState={message.mission.state} />
+              {message.spotifyRun ? <SpotifyRunTimeline run={message.spotifyRun} /> : null}
+              {message.agentSteps?.length ? (
+                <ActivitySteps
+                  steps={message.agentSteps.map((step) => ({
+                    id: step.id,
+                    label: step.label,
+                    detail: step.state === "needs_input" ? "Needs your input" : undefined,
+                    state: step.state === "running" ? "running" : step.state === "completed" ? "done" : step.state === "failed" ? "failed" : "queued",
+                  }))}
+                />
               ) : null}
-              {message.searchCitations?.length && !message.isThinking && !message.isStreaming ? (
-                <ClyraSearchCitations citations={message.searchCitations} />
-              ) : null}
-              <AppAgentPlanTimeline steps={message.agentSteps} />
               <AppAgentFlowPanel
                 messageId={message.id}
                 agents={message.appAgents}
@@ -10309,10 +10210,10 @@ Please analyze the code you just wrote and fix this error.`;
                 }}
               />
               {message.stopped && !message.isStreaming ? (
-                <p className="clyra-stopped-note" role="status">Stopped{message.content.trim() ? "" : " before Clyra replied"}.</p>
+                <p className="clyra-ai-note" role="status">Stopped{message.content.trim() ? "" : " before Clyra replied"}.</p>
               ) : null}
               {!message.isThinking && !message.isStreaming && message.content.trim() ? (
-                <AssistantMessageActions
+                <MessageActions
                   copied={copiedMessageId === message.id}
                   isReading={readingMessageId === message.id}
                   onCopy={() => {
@@ -10333,7 +10234,6 @@ Please analyze the code you just wrote and fix this error.`;
                   onExport={exportConversation}
                 />
               ) : null}
-            </div>
           </div>
         )}
       </div>
@@ -10342,113 +10242,64 @@ Please analyze the code you just wrote and fix this error.`;
 
   // Rendered beside the transcript, not inside it: the control must stay on
   // screen while the reader is above the newest content.
-  const scrollLatestControl = (
-    <AnimatePresence>
-      {showScrollToLatest ? (
-        <motion.div
-          key="scroll-latest-anchor"
-          className="clyra-scroll-latest-anchor"
-          exit={{ opacity: 0, transition: { duration: 0.16 } }}
-        >
-          <motion.button
-            type="button"
-            aria-label="Scroll to latest message"
-            initial={{ opacity: 0, y: 10, scale: 0.94, filter: "blur(4px)" }}
-            animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-            transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              scrollToLatest();
-            }}
-            onClick={(event) => {
-              if (event.detail !== 0) return;
-              event.preventDefault();
-              scrollToLatest();
-            }}
-            className="clyra-scroll-latest"
-          >
-            Scroll to latest <span aria-hidden="true">↓</span>
-          </motion.button>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
-  );
+  const scrollLatestControl = <JumpToLatest visible={showScrollToLatest} onJump={scrollToLatest} />;
 
-  const shellTranscript = (
-    <>
+  const shellTranscript = messages.length > 0 ? (
+    <div className="clyra-conversation-inner">
       {transcriptNodes}
-      {messages.length > 0 ? <ConnectivityIndicator status={connectivityStatus} /> : null}
-    </>
-  );
+      <ConnectivityIndicator status={connectivityStatus} />
+    </div>
+  ) : null;
 
   // A thin presentation adapter over the existing workspace registry. These
   // are the same mounted application instances that Clyra normally uses — the
   // Mission Control layer only changes their outer geometry.
   // One renderer for every app, used by its persistent portal (see WorkspacePortal). The same element tree serves the
   // normal workspace panel and Task View, so neither path ever remounts an app.
+  // Each app's element is memoised on its own inputs. A portal whose children are the same element as last render is
+  // skipped by React, so an App re-render (Task View opening, typing in Chat, a toast) no longer re-renders every
+  // mounted app.
+  const handleWorkspaceTabChangeRef = useRef<(tabId: WorkspaceTabId) => void>(() => {});
+  handleWorkspaceTabChangeRef.current = handleWorkspaceTabChange;
+  const memoVibeApp = useMemo(() => (
+    <Suspense fallback={<VibeWorkspaceLoadingSurface />}>
+      <VibeCoderWorkspace initialProjectId={vibeProjectToOpen ?? undefined} onInitialProjectOpened={() => setVibeProjectToOpen(null)} />
+    </Suspense>
+  ), [vibeProjectToOpen]);
+  const memoClipApp = useMemo(() => (
+    <Suspense fallback={null}>
+      <ShortsWorkspaceApp key="clip" entry={{ name: "home" }} onExit={() => { setSelectedCommand(null); setClipInitialUrl(""); setActiveWorkspaceTab("chat"); }} />
+    </Suspense>
+  ), []);
+  const memoBrowserApp = useMemo(() => (
+    <Suspense fallback={null}>
+      <WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} />
+    </Suspense>
+  ), [browserAutoRunTask, browserInitialUrl, browserLaunchRequestId, browserTaskDraft]);
+  const memoStaticApps = useMemo(() => ({
+    companion: <Suspense fallback={null}><ScreenCompanionWorkspace /></Suspense>,
+    study: <Suspense fallback={null}><StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} /></Suspense>,
+    maps: <Suspense fallback={null}><ClyraMapsWorkspace /></Suspense>,
+  }), []);
+  const memoSpotifyApp = useMemo(() => <SpotifyWorkspace playback={spotifyPlayback} />, [spotifyPlayback]);
+  const memoCreatorApps = useMemo(() => Object.fromEntries((["would-rather", "reddit-story", "fake-text"] as const).map((kind) => [kind, (
+    <Suspense fallback={null}>
+      <ShortsWorkspaceApp key={kind} entry={{ name: "setup", kind }} onExit={() => handleWorkspaceTabChangeRef.current("chat")} />
+    </Suspense>
+  )])) as Record<string, React.ReactNode>, []);
+
   const renderWorkspaceContent = (tabId: WorkspaceTabId): React.ReactNode => (
-                      tabId === "vibe" ? (
-                        <Suspense fallback={<VibeWorkspaceLoadingSurface />}>
-                          <VibeCoderWorkspace
-                            initialProjectId={vibeProjectToOpen ?? undefined}
-                            onInitialProjectOpened={() => setVibeProjectToOpen(null)}
-                          />
-                        </Suspense>
-                      ) : tabId === "clip" ? (
-                        <Suspense fallback={null}>
-                          <ShortsWorkspaceApp
-                            key="clip"
-                            entry={{ name: "home" }}
-                            onExit={() => {
-                              setSelectedCommand(null);
-                              setClipInitialUrl("");
-                              setActiveWorkspaceTab("chat");
-                            }}
-                          />
-                        </Suspense>
-                      ) : tabId === "browser" ? (
-                        <Suspense fallback={null}>
-                          <WebBrowserWorkspace initialTaskDraft={browserTaskDraft} initialUrl={browserInitialUrl} launchRequestId={browserLaunchRequestId} autoRunInitialTask={browserAutoRunTask} onTaskDraftConsumed={() => setBrowserTaskDraft("")} />
-                        </Suspense>
-                      ) : tabId === "companion" ? (
-                        <Suspense fallback={null}>
-                          <ScreenCompanionWorkspace />
-                        </Suspense>
-                      ) : tabId === "cowork" ? (
-                        <Suspense fallback={null}>
-                          <AgentsWorkspace />
-                        </Suspense>
-                      ) : tabId === "study" ? (
-                        <Suspense fallback={null}>
-                          <StudyPalWorkspace globalTabsVisible={false} agentPrompt={new URLSearchParams(window.location.search).get("agentPrompt") || ""} />
-                        </Suspense>
-                      ) : tabId === "care" ? (
-                        <Suspense fallback={null}>
-                          <ClyraCareWorkspace />
-                        </Suspense>
-                      ) : tabId === "maps" ? (
-                        <Suspense fallback={null}>
-                          <ClyraMapsWorkspace />
-                        </Suspense>
-                      ) : tabId === "eye" ? (
-                        <Suspense fallback={null}>
-                          <ClyraEyeWorkspace suspended={isTaskViewOpen} />
-                        </Suspense>
-                      ) : tabId === "spotify" ? (
-                        <SpotifyWorkspace playback={spotifyPlayback} />
-                      ) : tabId === "would-rather" || tabId === "reddit-story" || tabId === "fake-text" ? (
-                        <Suspense fallback={null}>
-                          <ShortsWorkspaceApp
-                            key={tabId}
-                            entry={{ name: "setup", kind: tabId }}
-                            onExit={() => handleWorkspaceTabChange("chat")}
-                          />
-                        </Suspense>
-                      ) : (
+                      tabId === "vibe" ? memoVibeApp
+                      : tabId === "clip" ? memoClipApp
+                      : tabId === "browser" ? memoBrowserApp
+                      : tabId === "companion" || tabId === "study" || tabId === "maps" ? memoStaticApps[tabId]
+                      : tabId === "spotify" ? memoSpotifyApp
+                      : tabId === "would-rather" || tabId === "reddit-story" || tabId === "fake-text" ? memoCreatorApps[tabId]
+                      : (
                         <div className="relative flex min-h-0 flex-1 w-full flex-col overflow-hidden">
+                          <FilePreviewDialog file={previewFile} onClose={() => setPreviewFile(null)} />
                           <ClyraComposerShell
-                            userName="Luke"
+                            userName={profileName}
                             accentColor={accentColor}
                             text={value}
                             onTextChange={setValue}
@@ -10456,7 +10307,7 @@ Please analyze the code you just wrote and fix this error.`;
                             onSend={handleSendMessage}
                             isResponding={isAiResponding}
                             onStop={stopGeneration}
-                            onStartVoiceCall={() => void voiceCall.startCall()}
+                            onStartVoiceCall={() => requestVoiceCall("start", "chat-composer")}
                             canSend={canSendMessage}
                             textareaRef={textareaRef}
                             placeholder="Message Clyra"
@@ -10474,19 +10325,84 @@ Please analyze the code you just wrote and fix this error.`;
                             paletteActiveIndex={activeSuggestion}
                             onPaletteHoverIndex={setActiveSuggestion}
                             selections={shellSelections}
-                            suggestions={shellSuggestions}
+                            suggestions={shellHomePills}
                             files={shellFiles}
                             onPickFiles={handleAttachFile}
                             fileInputRef={fileInputRef}
                             onFilesSelected={handleFilesSelected}
                             dictation={composerDictationState}
                             historyPanel
-                            sidebarOpen={shellSidebarOpen}
+                            introReady={introState === "complete"}
+                            sidebarOpen={shellSidebarOpen && !composerMorphOpen}
                             onToggleSidebar={() => setShellSidebarOpen((v) => !v)}
-                            onOpenSettings={() => setIsSettingsOpen(true)}
+                            onMorphChange={setComposerMorphOpen}
+                            onOpenSettings={() => { setSettingsSection(undefined); setIsSettingsOpen(true); }}
+                            onOpenProfile={() => { setSettingsSection("account"); setIsSettingsOpen(true); }}
+                            settingsSheet={
+                              <SettingsSheet
+                                embedded
+                                onClose={() => undefined}
+                                profileName={profileName}
+                                setProfileName={setProfileName}
+                                accountEmail={googleShellStatus.connected ? googleShellStatus.email ?? null : null}
+                                deleteAccount={() => {
+                                  try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* ignore */ }
+                                  setChats([]);
+                                  setMessages([]);
+                                  setCurrentChatId(null);
+                                  window.location.reload();
+                                }}
+                                theme={theme}
+                                setTheme={setTheme}
+                                sendOnEnter={sendOnEnter}
+                                setSendOnEnter={setSendOnEnter}
+                                fontSize={fontSize}
+                                setFontSize={setFontSize}
+                                autoScroll={autoScroll}
+                                setAutoScroll={setAutoScroll}
+                                animationSpeed={animationSpeed}
+                                setAnimationSpeed={setAnimationSpeed}
+                                codeHighlighting={codeHighlighting}
+                                setCodeHighlighting={setCodeHighlighting}
+                                markdownSupport={markdownSupport}
+                                setMarkdownSupport={setMarkdownSupport}
+                                systemPrompt={systemPrompt}
+                                setSystemPrompt={setSystemPrompt}
+                                temperature={temperature}
+                                setTemperature={setTemperature}
+                                userBubbleColor={userBubbleColor}
+                                setUserBubbleColor={setUserBubbleColor}
+                                orbColorTheme={orbColorTheme}
+                                setOrbColorTheme={setOrbColorTheme}
+                                accentColor={accentColor}
+                                setAccentColor={setAccentColor}
+                                voiceRate={voiceRate}
+                                setVoiceRate={setVoiceRate}
+                                voicePitch={voicePitch}
+                                setVoicePitch={setVoicePitch}
+                                voiceVolume={voiceVolume}
+                                setVoiceVolume={setVoiceVolume}
+                                voiceTestMode={voiceTestMode}
+                                setVoiceTestMode={setVoiceTestMode}
+                                chats={chats}
+                                clearChats={() => {
+                                  setChats([]);
+                                  setMessages([]);
+                                  setCurrentChatId(null);
+                                  setToastMessage("All chats cleared");
+                                }}
+                                workspaceRailTabs={workspaceRailTabs}
+                                setWorkspaceRailTabs={(next) => setWorkspaceRailTabs(next as WorkspaceRailTabId[])}
+                                onWorkspaceQuickAction={(id) => {
+                                  if (id === "new-chat") handleNewChat();
+                                  else if (id === "search") setShowCommandPalette(true);
+                                  else if (id === "voice") requestVoiceCall("start", "command-menu");
+                                }}
+                              />
+                            }
                             chats={shellChatRows}
-                            onNewChat={() => { handleNewChat(); setShellSidebarOpen(false); }}
-                            onOpenChat={(id) => { handleShellOpenChat(id); setShellSidebarOpen(false); }}
+                            onNewChat={() => { handleNewChat(); if (window.innerWidth < 960) setShellSidebarOpen(false); }}
+                            onOpenChat={(id) => { handleShellOpenChat(id); if (window.innerWidth < 960) setShellSidebarOpen(false); }}
                             onRenameChat={handleShellRenameChat}
                             onDeleteChat={handleShellDeleteChat}
                             sideQuery={shellSideQuery}
@@ -10529,22 +10445,52 @@ Please analyze the code you just wrote and fix this error.`;
                       )
   );
 
-  const workspaceTaskTabs = visitedWorkspaceTabs.map((tabId): TaskViewTab => {
+  // The stage's windows: every visited app plus the one on screen. Memoised (and the handlers below are stable) so
+  // ordinary App re-renders — typing in Chat, playback ticks — never re-render the stage.
+  const workspaceTaskTabs = useMemo(() => {
     const labels: Record<WorkspaceTabId, string> = {
       chat: "Chat", vibe: "Vibe Coder", clip: "AI Clipper", browser: "Browser",
-      companion: "Companion", study: "Study Pal", notes: "Clyra Notes", cowork: "Agents",
+      companion: "Companion", study: "Study Pal", notes: "Clyra Notes",
       "fake-text": "Text Story", "would-rather": "Would You Rather", "reddit-story": "Reddit Story",
-      spotify: "Clyra Music", care: "Clyra Care", maps: "Clyra Maps", eye: "Clyra Eye",
+      spotify: "Clyra Music", maps: "Clyra Maps",
     };
-    const label = labels[tabId] || tabId;
-    const content = <WorkspaceSlot node={workspacePortalNode(tabId)} placeholder={<WorkspaceCardPlaceholder label={label} />} />;
-    return { id: tabId, label, content };
-  });
+    const ids = visitedWorkspaceTabs.includes(activeContentTab) ? visitedWorkspaceTabs : [...visitedWorkspaceTabs, activeContentTab];
+    return ids.map((tabId): TaskViewTab => {
+      const label = labels[tabId] || tabId;
+      const mounted = mountedWorkspaceTabs.includes(tabId);
+      const content = (
+        // Only Chat keeps the legacy .clyra-workspace-card wrapper: several Chat rules use :has() on it, and a :has()
+        // ancestor makes every DOM change inside an app restyle that app's whole subtree.
+        <div className={tabId === "chat" ? "clyra-workspace-card" : "clyra-stage-app"} data-workspace-motion="true" data-workspace={tabId}>
+          <WorkspaceSlot node={workspacePortalNode(tabId)} placeholder={mounted ? undefined : <WorkspaceCardPlaceholder label={label} />} />
+        </div>
+      );
+      return { id: tabId, label, content };
+    });
+  }, [activeContentTab, mountedWorkspaceTabs, visitedWorkspaceTabs, workspacePortalNode]);
+  const taskViewHandlersRef = useRef({ onClose: () => {}, onSelect: (_id: string) => {}, onCloseTab: (_id: string) => {}, onReorder: (_ids: string[]) => {} });
+  taskViewHandlersRef.current = {
+    onClose: () => { taskViewOpenRef.current = false; setIsTaskViewOpen(false); },
+    onSelect: (id: string) => {
+      taskViewOpenRef.current = false;
+      taskViewSelectionRef.current = true;
+      if (id === activeContentTab) { setIsTaskViewOpen(false); return; }
+      handleWorkspaceTabChange(id as WorkspaceTabId);
+    },
+    onCloseTab: handleTaskViewTabClose,
+    onReorder: handleTaskViewReorder,
+  };
+  const taskViewHandlers = useMemo(() => ({
+    onClose: () => taskViewHandlersRef.current.onClose(),
+    onSelect: (id: string) => taskViewHandlersRef.current.onSelect(id),
+    onCloseTab: (id: string) => taskViewHandlersRef.current.onCloseTab(id),
+    onReorder: (ids: string[]) => taskViewHandlersRef.current.onReorder(ids),
+  }), []);
 
   return (
     <TerminalRunnerProvider>
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
-      <VoiceCallScreen
+      <VoiceCallHost
         call={voiceCall}
         testMode={voiceTestMode}
         avatarColor={accentColor}
@@ -10668,12 +10614,12 @@ Please analyze the code you just wrote and fix this error.`;
           <AnimatePresence>
             {isBootOverlayVisible ? (
               <BootIntroOverlay
-                state={introState}
-                progress={introProgress}
-                avatarColor={accentColor}
-                onAvatarArrive={() => {
-                  setBloubLanded(true);
-                  beginRippleRef.current();
+                bootMinMs={bootMinMs}
+                preloadDone={bootPreloadDone}
+                loaderExiting={loaderExiting}
+                onLoaderExited={() => {
+                  setIntroState("complete");
+                  setIsSidebarOpen(true);
                 }}
               />
             ) : null}
@@ -10755,6 +10701,8 @@ Please analyze the code you just wrote and fix this error.`;
       <motion.div
         className="clyra-app-shell h-dvh flex min-w-0 bg-white text-slate-900 font-sans selection:bg-slate-200 overflow-hidden scalable-container relative"
         initial={false}
+        animate={{ opacity: isBootOverlayVisible ? 0 : 1 }}
+        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
       >
         {showSidebarControls && (
         <motion.aside
@@ -10779,7 +10727,7 @@ Please analyze the code you just wrote and fix this error.`;
           }
           transition={{
             type: "tween",
-            duration: 0.42,
+            duration: 0.6,
             ease: [0.22, 1, 0.36, 1],
             opacity: { duration: 0.2 },
             filter: { duration: 0 },
@@ -11170,9 +11118,7 @@ Please analyze the code you just wrote and fix this error.`;
               onClick={() => setIsSettingsOpen(true)}
               className="clyra-sidebar-footer mx-2 mb-2 flex shrink-0 cursor-pointer items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left transition-all duration-300 group"
             >
-              <div className="flex items-center justify-center p-1 rounded-full bg-transparent text-slate-400 group-hover:text-slate-600 transition-colors">
-                <Settings className="w-[18px] h-[18px] transition-transform duration-500 ease-out group-hover:rotate-90" />
-              </div>
+              <Settings className="h-[18px] w-[18px] shrink-0 text-slate-400 transition-colors duration-300 group-hover:text-slate-700" />
               <span className="flex-1 font-medium text-slate-500 group-hover:text-slate-700 transition-colors text-sm">
                 Settings
               </span>
@@ -11182,7 +11128,7 @@ Please analyze the code you just wrote and fix this error.`;
         )}
 
         <div className={cn("clyra-main-surface relative z-10 flex min-h-0 min-w-0 flex-1 flex-col bg-white sm:border-transparent", activeWorkspaceTab === "chat" && "clyra-chat-page")}>
-          {workflowTabsHidden && !isEmbeddedToolPreview && messages.length === 0 ? (
+          {workflowTabsHidden && !isEmbeddedToolPreview && messages.length === 0 && !composerMorphOpen ? (
             <button
               type="button"
               aria-label="Show workspace switcher"
@@ -11205,7 +11151,7 @@ Please analyze the code you just wrote and fix this error.`;
               <span className="clyra-workflow-tabs-hint__dot" />
             </button>
           ) : null}
-          <AnimatePresence initial={false}>
+          <AnimatePresence>
           {showWorkflowTabs ? (
           <motion.div
             key="workflow-tabs"
@@ -11218,8 +11164,9 @@ Please analyze the code you just wrote and fix this error.`;
             <motion.div
               className="pointer-events-auto absolute left-1/2 top-3 z-50 -translate-x-1/2 sm:top-4"
               style={isTaskViewOpen ? { pointerEvents: "none" } : undefined}
-              initial={false}
-              animate={{ y: 0 }}
+              initial={reduceMotion ? false : { opacity: 0, y: -16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
               onMouseLeave={(event) => {
                 handleHomeGazeLeave();
                 setPillHovered(false);
@@ -11286,7 +11233,7 @@ Please analyze the code you just wrote and fix this error.`;
                       height: !showSpotifyNotch
                         ? isWorkspaceSwitcherCustomizing ? tabsNaturalSize.height + 58 : tabsNaturalSize.height
                         : notchOpen ? 196 : 40,
-                      borderRadius: !showSpotifyNotch ? isWorkspaceSwitcherCustomizing ? 18 : 999 : notchOpen ? 34 : 20,
+                      borderRadius: !showSpotifyNotch ? isWorkspaceSwitcherCustomizing ? 18 : 999 : notchOpen ? 38 : 20,
                       boxShadow: shellChromeVisible ? shellShadow : "none",
                       transition: `width ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, height ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, border-radius ${MORPH_SHELL_MS}ms ${MORPH_EASE} ${MORPH_SHELL_DELAY_MS}ms, box-shadow 0.32s ease, background 0.28s ease, border-color 0.28s ease`,
                     }}
@@ -11321,9 +11268,29 @@ Please analyze the code you just wrote and fix this error.`;
                     aria-label={isWorkspaceSwitcherCustomizing ? "Customize Clyra workspace switcher" : "Clyra workspace"}
                     data-switcher-rail-drop="true"
                     data-invert-ignore="true"
-                    onPointerMove={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      containerMouseX.set(e.clientX - rect.left);
+                    onPointerMove={(event) => {
+                      if (isWorkspaceSwitcherCustomizing) return;
+                      const tabs = Array.from(
+                        event.currentTarget.querySelectorAll<HTMLElement>("[data-switcher-tab-id]"),
+                      );
+                      let nearestId: string | null = null;
+                      let nearestDist = Infinity;
+                      for (const tab of tabs) {
+                        const rect = tab.getBoundingClientRect();
+                        const centerX = rect.left + rect.width / 2;
+                        const dist = Math.abs(event.clientX - centerX);
+                        if (dist < nearestDist) {
+                          nearestDist = dist;
+                          nearestId = tab.dataset.switcherTabId ?? null;
+                        }
+                      }
+                      setHoveredWorkflowTabId(nearestId as WorkspaceRailTabId | null);
+                    }}
+                    onPointerLeave={() => setHoveredWorkflowTabId(null)}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setHoveredWorkflowTabId(null);
+                      }
                     }}
                     onDragOver={(event) => {
                       if (!isWorkspaceSwitcherCustomizing) return;
@@ -11340,52 +11307,10 @@ Please analyze the code you just wrote and fix this error.`;
                         setWorkspaceSwitcherDropTarget(null);
                       }
                     }}
-                    onMouseLeave={() => {
-                      setHoveredWorkspaceTab(null);
-                    }}
-                    onBlur={(event) => {
-                      if (
-                        !event.currentTarget.contains(
-                          event.relatedTarget as Node | null,
-                        )
-                      ) {
-                        setHoveredWorkspaceTab(null);
-                      }
-                    }}
                   >
-                    <AnimatePresence>
-                      {!isWorkspaceSwitcherCustomizing && hoveredWorkspaceTab && (
-                        <motion.div
-                          className="clyra-workflow-tab__hover--grey absolute pointer-events-none"
-                          initial={{ opacity: 0, scale: 0.85 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{
-                            opacity: 0,
-                            scale: 0.95,
-                            transition: { duration: 0.15 },
-                          }}
-                          style={{
-                            x: hoverPillX,
-                            width: WORKSPACE_TAB_WIDTH - 4,
-                            top: 6,
-                            bottom: 6,
-                            height: "auto",
-                            translate: "none",
-                            scaleX: hoverScaleX,
-                            transformOrigin: hoverOrigin as any,
-                          }}
-                          transition={{
-                            type: "spring",
-                            stiffness: 400,
-                            damping: 30,
-                          }}
-                        />
-                      )}
-                    </AnimatePresence>
                     {workflowTabs.map((tabItem) => {
                       const Icon = tabItem.icon;
                       const isActive = activeWorkspaceTab === tabItem.id;
-                      const isHovered = hoveredWorkspaceTab === tabItem.id;
                       const isPinned = tabItem.id === "chat";
                       const isDragging = workspaceSwitcherDrag?.source === "rail" &&
                         workspaceSwitcherDrag.id === tabItem.id && workspaceSwitcherDrag.active;
@@ -11430,8 +11355,10 @@ Please analyze the code you just wrote and fix this error.`;
                           }}
                           onMouseEnter={() => {
                             if (isWorkspaceSwitcherCustomizing) return;
-                            setHoveredWorkspaceTab(tabItem.id);
                             if (tabItem.id === "vibe") void loadVibeCoderWorkspace();
+                          }}
+                          onFocus={() => {
+                            if (!isWorkspaceSwitcherCustomizing) setHoveredWorkflowTabId(tabItem.id);
                           }}
                           onPointerMove={moveWorkspaceSwitcherDrag}
                           onPointerUp={finishWorkspaceSwitcherDrag}
@@ -11453,9 +11380,6 @@ Please analyze the code you just wrote and fix this error.`;
                               removeWorkspaceRailApp(tabItem.id as WorkspaceRailAppId);
                             }
                           }}
-                          onFocus={() => {
-                            if (!isWorkspaceSwitcherCustomizing) setHoveredWorkspaceTab(tabItem.id);
-                          }}
                           className={cn(
                             "clyra-workflow-tab w-[128px] justify-center",
                             isActive && "clyra-workflow-tab--active",
@@ -11463,8 +11387,17 @@ Please analyze the code you just wrote and fix this error.`;
                             isPinned && isWorkspaceSwitcherCustomizing && "clyra-workflow-tab--pinned",
                             isDragging && "clyra-workflow-tab--dragging",
                             workspaceSwitcherDropTarget === tabItem.id && "clyra-workflow-tab--drop-target",
+                            hoveredWorkflowTabId === tabItem.id && !isWorkspaceSwitcherCustomizing && "clyra-workflow-tab--hovered",
                           )}
                         >
+                          {!isWorkspaceSwitcherCustomizing && hoveredWorkflowTabId === tabItem.id && (
+                            <motion.span
+                              aria-hidden
+                              layoutId={reduceMotion ? undefined : "clyra-workflow-hover-pill"}
+                              className="clyra-workflow-tab__hover clyra-workflow-tab__hover--grey"
+                              transition={{ type: "spring", stiffness: 540, damping: 44, mass: 0.7 }}
+                            />
+                          )}
                           <Icon className="relative h-4 w-4 shrink-0" />
                           <span className="relative whitespace-nowrap">{tabItem.label}</span>
                         </motion.button>
@@ -11593,7 +11526,8 @@ Please analyze the code you just wrote and fix this error.`;
           >
             <div
               className={cn(
-                "grid min-h-0 w-full flex-1 overflow-hidden",
+                // clip, not hidden: a focused field must never scroll the closed preview column into view
+                "grid min-h-0 w-full flex-1 overflow-clip",
                 "transition-[grid-template-columns] duration-[720ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
                 keepWorkspacePreviewLayout
                   ? "grid-cols-[minmax(360px,min(32vw,420px))_minmax(620px,1fr)]"
@@ -11632,143 +11566,20 @@ Please analyze the code you just wrote and fix this error.`;
                     "relative z-10 flex flex-col h-full min-h-0 w-full",
                   )}
                 >
-                  {!isTaskViewOpen && visitedWorkspaceTabs.length > 0 ? <AnimatePresence initial={false} mode="sync" custom={workspaceTransitionDirection}>
-                  <motion.div
-                    key={workspaceViewKey}
-                    data-workspace-motion="true"
-                    data-workspace={workspaceViewKey}
-                    custom={workspaceTransitionDirection}
-                    variants={workspacePanelVariants}
-                    layout={false}
-                    className={cn(
-                      "clyra-workspace-card absolute inset-0 flex flex-col transform-gpu",
-                      messages.length === 0 &&
-                        !isClipWorkspace &&
-                        !isBrowserWorkspace &&
-                        !isCompanionWorkspace &&
-                        !isStudyWorkspace &&
-                        !isCareWorkspace &&
-                        !isMapsWorkspace &&
-                        !isEyeWorkspace &&
-                        !isSpotifyWorkspace &&
-                        !isCoworkWorkspace &&
-                        !isCreatorWorkspace &&
-                        "justify-center",
-                    )}
-                    initial="enter"
-                    animate="center"
-                    exit="exit"
-                    transition={workspaceSwipeTransition}
-                    style={{
-                      backfaceVisibility: "hidden",
-                      willChange: "transform",
-                    }}
-                  >
-                    <div
-                      data-workspace-surface={workspaceViewKey}
-                      className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
-                    >
-                      <WorkspaceSlot node={workspacePortalNode(activeContentTab)} />
-                      <AnimatePresence>
-                        {false && isVibeWorkspace && messages.length === 0 && (
-                          <motion.div
-                            key="vibe-recent-projects"
-                            initial={{ opacity: 0, y: 14, scale: 0.985 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 8, scale: 0.99 }}
-                            transition={{
-                              duration: 0.46,
-                              ease: [0.22, 1, 0.36, 1],
-                            }}
-                            className="mx-auto grid w-full max-w-[1046px] grid-cols-1 gap-3.5 px-5 pb-8 sm:grid-cols-3 sm:px-8"
-                          >
-                            {getRecentVibeProjects.length === 0 ? (
-                              <div className="col-span-full rounded-[28px] border border-dashed border-slate-200/80 bg-white/70 px-5 py-5 text-center shadow-[0_18px_45px_rgba(15,23,42,0.04)] backdrop-blur-xl">
-                                <p className="text-[13px] font-semibold tracking-[-0.01em] text-slate-600">
-                                  No recent projects yet
-                                </p>
-                                <p className="mt-1 text-[12px] font-medium text-slate-400">
-                                  Start typing above and Clyra will save your
-                                  Vibe projects here.
-                                </p>
-                              </div>
-                            ) : (
-                              getRecentVibeProjects.map((project, index) => (
-                                <motion.button
-                                  key={project.id}
-                                  type="button"
-                                  initial={{ opacity: 0, y: 12 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  transition={{
-                                    delay: index * 0.05,
-                                    duration: 0.34,
-                                    ease: [0.22, 1, 0.36, 1],
-                                  }}
-                                  onClick={() => {
-                                    const chat = chats.find(
-                                      (c) => c.id === project.id,
-                                    );
-                                    if (chat) {
-                                      setIsInputExpanded(false);
-                                      openChatSession(chat);
-                                    }
-                                  }}
-                                  className="group relative flex aspect-square min-h-[150px] flex-col justify-between overflow-hidden rounded-[30px] border border-white/80 bg-white/[0.72] p-[18px] text-left shadow-[0_22px_54px_rgba(15,23,42,0.055),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-slate-200 hover:bg-white/[0.88] hover:shadow-[0_26px_64px_rgba(15,23,42,0.085),inset_0_1px_0_rgba(255,255,255,0.95)] active:scale-[0.985]"
-                                >
-                                  <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
-                                  <div className="flex items-center justify-between gap-3">
-                                    <span className="grid h-9 w-9 place-items-center rounded-[18px] border border-slate-200/70 bg-slate-50 text-slate-700 shadow-[0_8px_22px_rgba(15,23,42,0.045)] transition-all duration-300 group-hover:bg-slate-950 group-hover:text-white">
-                                      <SquarePen className="h-4 w-4" />
-                                    </span>
-                                    {project.isRunning ? (
-                                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/70 bg-emerald-50/80 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-600">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                        Running
-                                      </span>
-                                    ) : (
-                                      <span className="h-2 w-2 rounded-full bg-slate-200/90 transition-colors group-hover:bg-slate-400" />
-                                    )}
-                                  </div>
-                                  <div>
-                                    <p
-                                      className="text-[15px] font-semibold leading-snug tracking-[-0.02em] text-slate-800"
-                                      style={{
-                                        display: "-webkit-box",
-                                        WebkitLineClamp: 2,
-                                        WebkitBoxOrient: "vertical",
-                                        overflow: "hidden",
-                                      }}
-                                    >
-                                      {project.title}
-                                    </p>
-                                    <p className="mt-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-slate-400 transition-colors group-hover:text-slate-600">
-                                      Open project
-                                      <ChevronRight className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-0.5" />
-                                    </p>
-                                  </div>
-                                </motion.button>
-                              ))
-                            )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </motion.div>
-                  </AnimatePresence> : null}
-                  {isTaskViewOpen ? (
+                  {/* One persistent stage: every mounted app lives in its own window here for good. Normal use shows the
+                      active window full size; Task View only changes the windows' transforms, so opening it never
+                      moves an app's DOM, restyles it or re-renders it. */}
+                  {visitedWorkspaceTabs.length > 0 ? (
                     <WorkspaceTaskView
                       ref={taskViewRef}
-                      open
-                      activeId={activeWorkspaceTab}
+                      open={isTaskViewOpen}
+                      activeId={activeContentTab}
+                      switchDirection={workspaceSlideDirection}
                       tabs={workspaceTaskTabs}
-                      onClose={() => { taskViewOpenRef.current = false; setIsTaskViewOpen(false); }}
-                      onCloseTab={handleTaskViewTabClose}
-                      onReorder={handleTaskViewReorder}
-                      onSelect={(id) => {
-                        taskViewOpenRef.current = false;
-                        taskViewSelectionRef.current = true;
-                        handleWorkspaceTabChange(id as WorkspaceTabId);
-                      }}
+                      onClose={taskViewHandlers.onClose}
+                      onCloseTab={taskViewHandlers.onCloseTab}
+                      onReorder={taskViewHandlers.onReorder}
+                      onSelect={taskViewHandlers.onSelect}
                     />
                   ) : null}
                 </div>
@@ -11831,6 +11642,17 @@ Please analyze the code you just wrote and fix this error.`;
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        initialSection={settingsSection}
+        profileName={profileName}
+        setProfileName={setProfileName}
+        accountEmail={googleShellStatus.connected ? googleShellStatus.email ?? null : null}
+        deleteAccount={() => {
+          try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* ignore */ }
+          setChats([]);
+          setMessages([]);
+          setCurrentChatId(null);
+          window.location.reload();
+        }}
         theme={theme}
         setTheme={setTheme}
         sendOnEnter={sendOnEnter}
@@ -11864,14 +11686,13 @@ Please analyze the code you just wrote and fix this error.`;
         voiceTestMode={voiceTestMode}
         setVoiceTestMode={setVoiceTestMode}
         chats={chats}
-        onCustomizeWorkspaceSwitcher={() => {
+        workspaceRailTabs={workspaceRailTabs}
+        setWorkspaceRailTabs={(next) => setWorkspaceRailTabs(next as WorkspaceRailTabId[])}
+        onWorkspaceQuickAction={(id) => {
           setIsSettingsOpen(false);
-          setShellSidebarOpen(false);
-          setShowSpotifyNotch(false);
-          setNotchOpen(false);
-          setWorkflowTabsHidden(false);
-          setIsWorkspaceSwitcherCustomizing(true);
-          if (activeWorkspaceTab !== "chat") handleWorkspaceTabChange("chat");
+          if (id === "new-chat") handleNewChat();
+          else if (id === "search") setShowCommandPalette(true);
+          else if (id === "voice") requestVoiceCall("start", "mobile-command-menu");
         }}
         clearChats={() => {
           setChats([]);
@@ -11934,7 +11755,13 @@ export async function streamOpenAI(
     let detail = response.statusText;
     try {
       const errBody = await response.json();
-      if (errBody?.error) detail = String(errBody.error);
+      if (typeof errBody?.error === "string") {
+        detail = errBody.error;
+      } else if (errBody?.error && typeof errBody.error === "object") {
+        const code = typeof errBody.error.code === "string" ? errBody.error.code : "";
+        const message = typeof errBody.error.message === "string" ? errBody.error.message : "";
+        detail = [code, message].filter(Boolean).join(" ") || detail;
+      }
     } catch {
       /* ignore */
     }

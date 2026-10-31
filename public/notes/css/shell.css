@@ -576,3 +576,9 @@
   .tab { width: 150px; }
   .tab.settled { max-width: 150px; }
 }
+
+/* Layers leave the way they arrive: a short fade and settle. `translate`/`scale` compose with each layer's own
+   transform (the modal keeps its translateX(-50%) centring). */
+.is-leaving { pointer-events: none !important; opacity: 0 !important; translate: 0 4px; scale: 0.99;
+  transition: opacity 150ms cubic-bezier(.4, 0, 1, 1), translate 170ms cubic-bezier(.4, 0, 1, 1), scale 170ms cubic-bezier(.4, 0, 1, 1); }
+.layer.is-leaving { translate: none; scale: none; }

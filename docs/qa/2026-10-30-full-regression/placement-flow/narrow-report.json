@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "width": 1440,
+      "drawer": "visible",
+      "clip": true,
+      "cancel": true,
+      "prompt": true
+    },
+    {
+      "width": 1024,
+      "drawer": "hidden",
+      "clip": true,
+      "cancel": true,
+      "prompt": true
+    },
+    {
+      "width": 768,
+      "drawer": "hidden",
+      "clip": true,
+      "cancel": true,
+      "prompt": true
+    },
+    {
+      "width": 375,
+      "drawer": "hidden",
+      "clip": true,
+      "cancel": true,
+      "prompt": true
+    },
+    {
+      "width": 320,
+      "drawer": "hidden",
+      "clip": true,
+      "cancel": true,
+      "prompt": true
+    }
+  ],
+  "errors": []
+}

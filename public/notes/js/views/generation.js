@@ -65,9 +65,27 @@ export function notePicker({ selected = new Set(), onChange } = {}) {
 
 /* A checklist, not a percentage. The real progress of a generation is
    unknowable, so rather than a bar that lies, each named step reports its own
-   state: pending, running, or done. The step being worked on carries the
-   spinner and the shimmer, which is the only part of the panel that moves. */
-export function progressLoader({ title, stages }) {
+   state: pending, running, or done. While a long request is in flight the
+   steps move on at a reading pace (never past the last one — that only
+   completes when the result is really back), an elapsed timer keeps ticking,
+   and a small illustration of what is being made works away above them. */
+const ART = {
+  cards: () => el("div", { class: "gen-art gen-art--cards", "aria-hidden": "true" },
+    el("span", { class: "gen-card c1" }, el("i"), el("i")),
+    el("span", { class: "gen-card c2" }, el("i"), el("i")),
+    el("span", { class: "gen-card c3" }, el("i"), el("i"))),
+  test: () => el("div", { class: "gen-art gen-art--test", "aria-hidden": "true" },
+    el("span", { class: "gen-sheet" },
+      ...[0, 1, 2, 3].map((n) => el("span", { class: `gen-q q${n}` }, el("b"), el("i"))))),
+  doc: () => el("div", { class: "gen-art gen-art--doc", "aria-hidden": "true" },
+    el("span", { class: "gen-sheet" }, el("span", { class: "gen-h" }), ...[0, 1, 2, 3, 4].map((n) => el("span", { class: `gen-l l${n}` })))),
+};
+const artFor = (title) => (/flashcard|deck|card/i.test(title) ? "cards" : /test|quiz|question/i.test(title) ? "test" : "doc");
+
+/* How long each step may plausibly take before the next one starts. */
+const DWELL_MS = [1400, 4200, 9000, 12000];
+
+export function progressLoader({ title, stages, art }) {
   const rows = stages.map((stage) => {
     const text = el("span", { class: "check-text", text: stage });
     const row = el("li", { class: "check-step", "data-state": "pending" },
@@ -80,13 +98,18 @@ export function progressLoader({ title, stages }) {
 
   const list = el("ol", { class: "check-steps" }, rows.map((entry) => entry.row));
   const note = el("p", { class: "check-note", text: "" });
+  const elapsed = el("span", { class: "check-elapsed" });
+  const actions = el("div", { class: "check-actions", hidden: true });
   const node = el("div", { class: "check-loader" },
+    (ART[art || artFor(title)] || ART.doc)(),
     el("div", { class: "check-head" },
-      el("span", { class: "check-mascot" }, bloub(20)),
-      el("span", { class: "check-title", text: title })),
-    list, note);
+      el("span", { class: "check-title", text: title }),
+      elapsed),
+    list, note, actions);
 
   let index = 0;
+  let stepStartedAt = Date.now();
+  const startedAt = Date.now();
   /* A step is only ever set once, and always through here: setting the state
      as a data attribute lets the stylesheet own every transition between the
      three looks instead of the script toggling three class names. */
@@ -94,51 +117,79 @@ export function progressLoader({ title, stages }) {
     rows.forEach((entry, position) => {
       const stateName = position < index ? "done" : position === index ? "running" : "pending";
       entry.row.dataset.state = stateName;
-      entry.text.classList.toggle("shimmer-text", stateName === "running");
+      entry.text.classList.toggle("check-shine", stateName === "running");
     });
   };
   paint();
 
+  const setIndex = (next) => {
+    if (next === index) return;
+    index = next;
+    stepStartedAt = Date.now();
+    paint();
+  };
+
   return {
     node,
     advance(stageIndex) {
-      index = Math.max(index, Math.min(stageIndex, stages.length - 1));
-      paint();
-      rows[index]?.row.scrollIntoView({ block: "nearest" });
+      setIndex(Math.max(index, Math.min(stageIndex, stages.length - 1)));
     },
-    /* Kept for callers that used the ring's idle animation; the checklist
-       animates on its own, so there is nothing to nudge. */
-    creep() {},
+    /* Called on a short timer while the request is in flight. */
+    creep() {
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      elapsed.textContent = seconds >= 3 ? `${seconds}s` : "";
+      const dwell = DWELL_MS[Math.min(index, DWELL_MS.length - 1)];
+      if (index < stages.length - 2 && Date.now() - stepStartedAt > dwell) setIndex(index + 1);
+    },
     finish(message) {
       index = stages.length;
       paint();
       node.classList.add("complete");
-      if (message) note.textContent = message;
+      note.textContent = message || "Done";
     },
-    fail(message) {
+    fail(message, { onRetry, onClose } = {}) {
       rows[Math.min(index, rows.length - 1)]?.row.setAttribute("data-state", "failed");
-      rows.forEach((entry) => entry.text.classList.remove("shimmer-text"));
+      rows.forEach((entry) => entry.text.classList.remove("check-shine"));
       note.textContent = message;
       node.classList.add("failed");
+      clear(actions);
+      actions.hidden = !(onRetry || onClose);
+      if (onClose) actions.append(el("button", { class: "button", type: "button", onclick: onClose }, "Close"));
+      if (onRetry) actions.append(el("button", { class: "button primary", type: "button", onclick: onRetry }, "Try again"));
     },
   };
 }
 
-/* Runs `work` behind the loader, creeping the ring while it waits. */
-export async function withProgress(bodyHost, { title, stages, run }) {
-  const loader = progressLoader({ title, stages });
-  clear(bodyHost);
-  bodyHost.append(loader.node);
-  const timer = setInterval(() => loader.creep(), 220);
-  try {
-    const result = await run(loader);
-    clearInterval(timer);
-    loader.finish();
-    await new Promise((resolve) => setTimeout(resolve, 420));
-    return result;
-  } catch (error) {
-    clearInterval(timer);
-    loader.fail(error instanceof Error ? error.message : "Generation failed");
-    throw error;
+/* Runs `work` behind the loader. The setup fades out and the loader rises in
+   its place; a finished run holds its ticks for a beat before handing over;
+   a failed run stays on screen with the reason and a way to try again. */
+export async function withProgress(bodyHost, { title, stages, run, art }) {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const previous = [...bodyHost.children];
+  if (previous.length && !reduced) {
+    previous.forEach((child) => child.classList.add("gen-leaving"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  for (;;) {
+    const loader = progressLoader({ title, stages, art });
+    clear(bodyHost);
+    bodyHost.append(loader.node);
+    const timer = setInterval(() => loader.creep(), 250);
+    try {
+      const result = await run(loader);
+      clearInterval(timer);
+      loader.finish();
+      await new Promise((resolve) => setTimeout(resolve, reduced ? 150 : 650));
+      return result;
+    } catch (error) {
+      clearInterval(timer);
+      const message = error instanceof Error ? error.message : "Generation failed";
+      const retry = await new Promise((resolve) => loader.fail(message, { onRetry: () => resolve(true), onClose: () => resolve(false) }));
+      if (!retry) {
+        const failure = error instanceof Error ? error : new Error(message);
+        failure.shown = true;
+        throw failure;
+      }
+    }
   }
 }

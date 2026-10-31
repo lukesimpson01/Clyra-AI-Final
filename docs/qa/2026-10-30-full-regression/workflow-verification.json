@@ -1,0 +1,737 @@
+{
+  "result": {
+    "device": {
+      "id": "layer-3d-mvukgwh91z2",
+      "kind": "scene3d",
+      "name": "3D MacBook Showcase",
+      "duration": 2.8,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "objects": [
+        {
+          "type": "laptop",
+          "finish": "silver",
+          "motion": {
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  -1.5,
+                  -1.45,
+                  -1.6
+                ],
+                "r": [
+                  -16,
+                  52,
+                  -12
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 0.8989999999999999,
+                "p": [
+                  -0.5700000000000001,
+                  -0.33099999999999996,
+                  -0.20800000000000007
+                ],
+                "r": [
+                  -4.8,
+                  11.44,
+                  -3
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 1.55,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 1.6,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2.4,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2.8,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 0
+              }
+            ],
+            "curved": true,
+            "arcLength": true,
+            "smoothStart": true,
+            "smoothStop": true,
+            "faceCamera": false,
+            "faceShare": 0.35,
+            "introMotion": {
+              "keys": [
+                {
+                  "t": 0,
+                  "p": [
+                    -1.5,
+                    -1.45,
+                    -1.6
+                  ],
+                  "r": [
+                    -16,
+                    52,
+                    -12
+                  ],
+                  "s": 1,
+                  "lid": 110
+                },
+                {
+                  "t": 0.8989999999999999,
+                  "p": [
+                    -0.5700000000000001,
+                    -0.33099999999999996,
+                    -0.20800000000000007
+                  ],
+                  "r": [
+                    -4.8,
+                    11.44,
+                    -3
+                  ],
+                  "s": 1,
+                  "lid": 110
+                },
+                {
+                  "t": 1.55,
+                  "p": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "r": [
+                    12,
+                    0,
+                    0
+                  ],
+                  "s": 1,
+                  "lid": 110
+                }
+              ],
+              "curved": true,
+              "arcLength": true,
+              "smoothStart": true,
+              "smoothStop": true,
+              "faceCamera": true,
+              "faceShare": 0.35
+            },
+            "introLength": 1.6,
+            "continueFrom": 1.6,
+            "segmentEase": true,
+            "enabled": true,
+            "returnBack": false,
+            "reverse": false,
+            "loop": "none"
+          },
+          "notch": true,
+          "quick": {
+            "device": "laptop",
+            "entrance": "float",
+            "startFrom": "bottomLeft",
+            "finishAt": "centre",
+            "duration": 2.5,
+            "rotation": "cinematic",
+            "smooth": true,
+            "holdAtEnd": true,
+            "returnMotion": false,
+            "exit": "none",
+            "exitDuration": 0.8,
+            "length": 1.6
+          },
+          "screen": {
+            "events": [
+              {
+                "t": 0,
+                "on": false
+              },
+              {
+                "t": 2,
+                "on": true
+              }
+            ],
+            "startMode": "action",
+            "onAt": 2,
+            "playAt": 2,
+            "src": "assets/corridor.MOV"
+          },
+          "actions": [
+            {
+              "type": "openLid",
+              "at": 1.6,
+              "duration": 0.3999999999999999
+            },
+            {
+              "type": "screenOn",
+              "at": 2,
+              "duration": 0.3999999999999999
+            },
+            {
+              "type": "closeLid",
+              "at": 2.4,
+              "duration": 0.3999999999999999
+            }
+          ],
+          "sequenceEnd": 2.8
+        }
+      ],
+      "preset": "floatingReveal",
+      "motionBlur": 0,
+      "softShadow": true
+    },
+    "model": {
+      "id": "layer-3d-mvukh0wb5hf",
+      "kind": "scene3d",
+      "name": "3D character scene",
+      "duration": 0.8,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "objects": [
+        {
+          "type": "model",
+          "model": "assets/panel.gltf",
+          "name": "panel.gltf",
+          "height": 1.8,
+          "width": 1.8,
+          "clips": [
+            {
+              "name": "Move",
+              "index": 0,
+              "duration": 1
+            }
+          ],
+          "motion": {
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  0,
+                  0,
+                  0
+                ],
+                "s": 1
+              }
+            ]
+          },
+          "animations": [
+            {
+              "src": "assets/panel.gltf",
+              "clip": 0,
+              "at": 0,
+              "duration": 0.4,
+              "speed": 1,
+              "loop": true,
+              "inPlace": true,
+              "fade": 0.15
+            },
+            {
+              "src": "assets/panel.gltf",
+              "clip": 0,
+              "at": 0.4,
+              "duration": 0.4,
+              "speed": 1,
+              "loop": true,
+              "inPlace": true,
+              "fade": 0.15
+            }
+          ]
+        }
+      ],
+      "preset": "manual",
+      "motionBlur": 0,
+      "softShadow": true
+    },
+    "story": {
+      "id": "layer-story-wyr-mvukh6ld",
+      "kind": "wyr",
+      "name": "Would you rather",
+      "duration": 8.4,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "questions": [
+        {
+          "id": "q8i0mgq",
+          "a": "Choice A",
+          "b": "Choice B",
+          "percent": 60,
+          "label": true
+        }
+      ],
+      "timing": {
+        "countdown": 3,
+        "results": 2.4,
+        "gap": 0.55
+      },
+      "toolState": {
+        "questions": [
+          {
+            "id": "q8i0mgq",
+            "a": "Choice A",
+            "b": "Choice B",
+            "percent": 60,
+            "label": true
+          }
+        ],
+        "timing": {
+          "countdown": 3,
+          "results": 2.4,
+          "gap": 0.55
+        },
+        "aiSeed": true
+      }
+    },
+    "camera": {
+      "id": "layer-cam-mvukh52m6ip",
+      "kind": "camera",
+      "name": "3D Camera · No preset · custom path",
+      "duration": 2.8,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "camera": {
+        "mode": "3d",
+        "preset": "manual",
+        "opts": {
+          "distance": 4.5,
+          "orbit": 65,
+          "fov": 35,
+          "start": 0,
+          "stop": 2.8,
+          "smoothStart": true,
+          "smoothStop": true
+        },
+        "motion": {
+          "smoothStart": true,
+          "smoothStop": true,
+          "returnBack": false,
+          "returnDuration": 0.8,
+          "smoothReturn": true,
+          "curved": true,
+          "arcLength": false,
+          "keys": [
+            {
+              "t": 0,
+              "p": [
+                0,
+                0,
+                4.5
+              ],
+              "look": [
+                0,
+                0,
+                0
+              ],
+              "fov": 35
+            },
+            {
+              "r": [
+                0,
+                0,
+                0
+              ],
+              "s": 1,
+              "o": 1,
+              "fov": 42,
+              "look": [
+                0.2,
+                0.3,
+                0
+              ],
+              "p": [
+                1,
+                1,
+                5
+              ],
+              "tangent": [
+                0.010000000000000009,
+                0.010000000000000009,
+                0.004999999999999893
+              ],
+              "moving": true,
+              "phase": "move",
+              "t": 1
+            }
+          ],
+          "enabled": true
+        },
+        "bounds": "constrain",
+        "holdAfter": false,
+        "stageW": 1080,
+        "stageH": 1920,
+        "media": null,
+        "custom": true
+      }
+    },
+    "key": {
+      "ok": true,
+      "message": "Saved the 3D timeline diamond at 1s.",
+      "clipIds": [
+        "layer-cam-mvukh52m6ip"
+      ]
+    },
+    "agent": {
+      "reply": "The saved title and colour were verified.",
+      "touched": [
+        "layer-mvukgthi0"
+      ]
+    },
+    "events": [
+      {
+        "tool": "inspect_layer",
+        "state": "running"
+      },
+      {
+        "tool": "inspect_layer",
+        "state": "done",
+        "result": {
+          "ok": true,
+          "message": "{\n  \"clip\": {\n    \"id\": \"layer-mvukgthi0\",\n    \"src\": \"frame/layer-mvukgthi0.html\",\n    \"time\": [\n      0,\n      2\n    ]\n  },\n  \"track\": 4,\n  \"start\": 0,\n  \"end\": 2,\n  \"settings\": {\n    \"id\": \"layer-mvukgthi0\",\n    \"kind\": \"text\",\n    \"name\": \"Text\",\n    \"duration\": 2,\n    \"keyframes\": {\n      \"y\": [\n        {\n          \"id\": \"kf_mvukgv980rs0o\",\n          \"time\": 0,\n          \"value\": 70,\n          \"ease\": \"Linear\"\n        },\n        {\n          \"id\": \"kf_mvukgv981pj3o\",\n          \"time\": 1,\n          \"value\": 40,\n          \"ease\": \"Linear\"\n        }\n      ]\n    },\n    \"x\": 50,\n    \"y\": 50,\n    \"scale\": 100,\n    \"rotation\": 0,\n    \"opacity\": 100,\n    \"text\": \"WORKFLOW TEST\",\n    \"fontSize\": 90,\n    \"color\": \"#ffffff\",\n    \"weight\": 800,\n    \"strokeColor\": \"#000000\",\n    \"strokeWidth\": 0,\n    \"width\": 80,\n    \"height\": 20\n  }\n}"
+        }
+      },
+      {
+        "tool": "update_layer",
+        "state": "running"
+      },
+      {
+        "tool": "update_layer",
+        "state": "done",
+        "result": {
+          "ok": true,
+          "message": "Updated Text (layer-mvukgthi0).",
+          "clipIds": [
+            "layer-mvukgthi0"
+          ]
+        }
+      },
+      {
+        "tool": "review_project",
+        "state": "running"
+      },
+      {
+        "tool": "review_project",
+        "state": "done",
+        "result": {
+          "ok": true,
+          "message": "{\"verified\":[\"layer-cam-mvukh52m6ip\",\"layer-3d-mvukh0wb5hf\",\"layer-3d-mvukgwh91z2\",\"layer-3d-mvukgwh91z2-action-mvukgx3f\",\"layer-3d-mvukgwh91z2-action-mvukgxw4\",\"layer-3d-mvukgwh91z2-action-mvukgyug\",\"layer-sub-mvukgvq1\",\"layer-mvukgthi0\",\"layer-story-wyr-mvukh6ld\"],\"issues\":[],\"scope\":\"Saved settings and timeline verified. This check does not claim visual quality or measured 3D geometry.\"}"
+        }
+      }
+    ],
+    "before": 10,
+    "after": 10,
+    "text": {
+      "id": "layer-mvukgthi0",
+      "kind": "text",
+      "name": "Text",
+      "duration": 2,
+      "keyframes": {
+        "y": [
+          {
+            "id": "kf_mvukgv980rs0o",
+            "time": 0,
+            "value": 70,
+            "ease": "Linear"
+          },
+          {
+            "id": "kf_mvukgv981pj3o",
+            "time": 1,
+            "value": 40,
+            "ease": "Linear"
+          }
+        ]
+      },
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "text": "VERIFIED WORKFLOW",
+      "fontSize": 90,
+      "color": "#4568ee",
+      "weight": 800,
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "width": 80,
+      "height": 20
+    },
+    "subtitles": {
+      "id": "layer-sub-mvukgvq1",
+      "kind": "subtitle",
+      "name": "Subtitles",
+      "duration": 2,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "mode": "Lines",
+      "styleId": 2,
+      "fontSize": 78,
+      "font": "Sora",
+      "textCase": "none",
+      "animation": "Slide up",
+      "animationSpeed": 0.25,
+      "customColors": false,
+      "appearedColor": "#ffffff",
+      "activeColor": "#ffffff",
+      "emphasisColor": "#ffffff",
+      "outlineColor": "#000000",
+      "outline": 0,
+      "cues": [
+        {
+          "id": "ce5hfm9",
+          "start": 0,
+          "duration": 2,
+          "text": "One two three"
+        }
+      ]
+    },
+    "layers": [
+      {
+        "index": 0,
+        "clips": [
+          {
+            "id": "layer-cam-mvukh52m6ip",
+            "src": "frame/layer-cam-mvukh52m6ip.html",
+            "time": [
+              0,
+              2.8
+            ],
+            "at": 3
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "clips": [
+          {
+            "id": "layer-3d-mvukh0wb5hf",
+            "src": "frame/layer-3d-mvukh0wb5hf.html",
+            "time": [
+              0,
+              0.8
+            ],
+            "at": 8
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "clips": [
+          {
+            "id": "layer-3d-mvukgwh91z2",
+            "src": "frame/layer-3d-mvukgwh91z2.html",
+            "time": [
+              0,
+              1.6
+            ],
+            "at": 3
+          },
+          {
+            "id": "layer-3d-mvukgwh91z2-action-mvukgx3f",
+            "src": "frame/layer-3d-mvukgwh91z2.html",
+            "time": [
+              1.6,
+              2
+            ],
+            "at": 4.6,
+            "attrs": {
+              "data-frame-action": "Open lid"
+            }
+          },
+          {
+            "id": "layer-3d-mvukgwh91z2-action-mvukgxw4",
+            "src": "frame/layer-3d-mvukgwh91z2.html",
+            "time": [
+              2,
+              2.4
+            ],
+            "at": 5,
+            "attrs": {
+              "data-frame-action": "Screen on"
+            }
+          },
+          {
+            "id": "layer-3d-mvukgwh91z2-action-mvukgyug",
+            "src": "frame/layer-3d-mvukgwh91z2.html",
+            "time": [
+              2.4,
+              2.8
+            ],
+            "at": 5.4,
+            "attrs": {
+              "data-frame-action": "Close lid"
+            }
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "clips": [
+          {
+            "id": "layer-sub-mvukgvq1",
+            "src": "frame/layer-sub-mvukgvq1.html",
+            "time": [
+              0,
+              2
+            ]
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "clips": [
+          {
+            "id": "layer-mvukgthi0",
+            "src": "frame/layer-mvukgthi0.html",
+            "time": [
+              0,
+              2
+            ]
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "clips": [
+          {
+            "id": "footage",
+            "src": "assets/corridor.MOV",
+            "time": [
+              0,
+              3
+            ]
+          },
+          {
+            "id": "layer-story-wyr-mvukh6ld",
+            "src": "frame/layer-story-wyr-mvukh6ld.html",
+            "time": [
+              0,
+              8.4
+            ],
+            "at": 12
+          }
+        ]
+      }
+    ]
+  },
+  "aiTransport": "scripted SSE, real production agent/tools/API",
+  "requests": [
+    "Change the existing title to VERIFIED WORKFLOW with colour #4568ee. Verify the saved result.\n\nPROJECT (now): stage 1080×1920, length 20.4s, playhead 0s. Lines top to bottom:\n  line 0 (Titles & shapes):\n    layer-cam-mvukh52m6ip: 3D camera manual: moves 0–2.8s @ 3–5.8s\n  line 1 (Titles & shapes):\n    layer-3d-mvukh0wb5hf: 3D scene \"3D character scene\" (model) @ 8–8.8s\n  line 2 (Titles & shapes):\n    layer-3d-mvukgwh91z2: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 3–4.6s\n    layer-3d-mvukgwh91z2-action-mvukgx3f: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 4.6–5s\n    layer-3d-mvukgwh91z2-action-mvukgxw4: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5–5.4s\n    layer-3d-mvukgwh91z2-action-mvukgyug: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5.4–5.8s\n  line 3 (Subtitles):\n    layer-sub-mvukgvq1: subtitles: 1 lines (\"One two three\"), Lines style 2 @ 0–2s\n  line 4 (Titles & shapes):\n    layer-mvukgthi0: text \"WORKFLOW TEST\" at x50 y50, size 90, #ffffff, keyframes on y @ 0–2s\n  line 5 (Video):\n    footage: assets/corridor.MOV @ 0–3s\n    layer-story-wyr-mvukh6ld: Would You Rather: \"Choice A\" vs \"Choice B\" @ 12–20.4s\nMEDIA files in the project:\n  assets/corridor.MOV (video)\n  assets/panel.gltf (other)",
+    "RESULTS:\n- inspect_layer: done — {\n  \"clip\": {\n    \"id\": \"layer-mvukgthi0\",\n    \"src\": \"frame/layer-mvukgthi0.html\",\n    \"time\": [\n      0,\n      2\n    ]\n  },\n  \"track\": 4,\n  \"start\": 0,\n  \"end\": 2,\n  \"settings\": {\n    \"id\": \"layer-mvukgthi0\",\n    \"kind\": \"text\",\n    \"name\": \"Text\",\n    \"duration\": 2,\n    \"keyframes\": {\n      \"y\": [\n        {\n          \"id\": \"kf_mvukgv980rs0o\",\n          \"time\": 0,\n          \"value\": 70,\n          \"ease\": \"Linear\"\n        },\n        {\n          \"id\": \"kf_mvukgv981pj3o\",\n          \"time\": 1,\n          \"value\": 40,\n          \"ease\": \"Linear\"\n        }\n      ]\n    },\n    \"x\": 50,\n    \"y\": 50,\n    \"scale\": 100,\n    \"rotation\": 0,\n    \"opacity\": 100,\n    \"text\": \"WORKFLOW TEST\",\n    \"fontSize\": 90,\n    \"color\": \"#ffffff\",\n    \"weight\": 800,\n    \"strokeColor\": \"#000000\",\n    \"strokeWidth\": 0,\n    \"width\": 80,\n    \"height\": 20\n  }\n}\n- update_layer: done — Updated Text (layer-mvukgthi0).\n\nPROJECT (now): stage 1080×1920, length 20.4s, playhead 0s. Lines top to bottom:\n  line 0 (Titles & shapes):\n    layer-cam-mvukh52m6ip: 3D camera manual: moves 0–2.8s @ 3–5.8s\n  line 1 (Titles & shapes):\n    layer-3d-mvukh0wb5hf: 3D scene \"3D character scene\" (model) @ 8–8.8s\n  line 2 (Titles & shapes):\n    layer-3d-mvukgwh91z2: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 3–4.6s\n    layer-3d-mvukgwh91z2-action-mvukgx3f: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 4.6–5s\n    layer-3d-mvukgwh91z2-action-mvukgxw4: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5–5.4s\n    layer-3d-mvukgwh91z2-action-mvukgyug: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5.4–5.8s\n  line 3 (Subtitles):\n    layer-sub-mvukgvq1: subtitles: 1 lines (\"One two three\"), Lines style 2 @ 0–2s\n  lin",
+    "REVIEW: check the saved result against the user's requested scope and your plan: timing, missing sources, unintended duplication, placement and legibility. Fix concrete defects. Do not add music, camera movement or decorations that were not requested. Saved settings checks do not prove rendered quality or perfect tracking. Finish with what RESULTS confirmed and any material limitation, then <final/>.\n\nPROJECT (now): stage 1080×1920, length 20.4s, playhead 0s. Lines top to bottom:\n  line 0 (Titles & shapes):\n    layer-cam-mvukh52m6ip: 3D camera manual: moves 0–2.8s @ 3–5.8s\n  line 1 (Titles & shapes):\n    layer-3d-mvukh0wb5hf: 3D scene \"3D character scene\" (model) @ 8–8.8s\n  line 2 (Titles & shapes):\n    layer-3d-mvukgwh91z2: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 3–4.6s\n    layer-3d-mvukgwh91z2-action-mvukgx3f: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 4.6–5s\n    layer-3d-mvukgwh91z2-action-mvukgxw4: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5–5.4s\n    layer-3d-mvukgwh91z2-action-mvukgyug: 3D scene \"3D MacBook Showcase\" (laptop screen=assets/corridor.MOV) @ 5.4–5.8s\n  line 3 (Subtitles):\n    layer-sub-mvukgvq1: subtitles: 1 lines (\"One two three\"), Lines style 2 @ 0–2s\n  line 4 (Titles & shapes):\n    layer-mvukgthi0: text \"VERIFIED WORKFLOW\" at x50 y50, size 90, #4568ee, keyframes on y @ 0–2s\n  line 5 (Video):\n    footage: assets/corridor.MOV @ 0–3s\n    layer-story-wyr-mvukh6ld: Would You Rather: \"Choice A\" vs \"Choice B\" @ 12–20.4s\nMEDIA files in the project:\n  assets/corridor.MOV (video)\n  assets/panel.gltf (other)"
+  ]
+}

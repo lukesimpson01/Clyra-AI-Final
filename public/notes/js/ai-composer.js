@@ -37,26 +37,33 @@ export function runAiComposer({ editor, block, action, selection, seedText, moun
   let lastAction = action || null;
   let lastPrompt = "";
 
-  const input = el("input", {
-    type: "text",
-    placeholder: action ? LABELS[action] || "Working…" : selection ? "Tell AI how to change this" : "Edit with AI",
+  /* Same shape as Chat's composer: the prompt on top, a control row beneath with the send button at the right. */
+  const input = el("textarea", {
+    rows: 1,
+    placeholder: action ? LABELS[action] || "Working…" : selection ? "Tell AI how to change this…" : "Ask AI to write, edit or explain…",
     "aria-label": "Ask AI",
-    oninput: () => syncSend(),
+    oninput: () => { syncSend(); autosize(); },
     onkeydown: (event) => {
-      if (event.key === "Enter") { event.preventDefault(); submit(input.value.trim()); }
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(input.value.trim()); }
       if (event.key === "Escape") { event.preventDefault(); dismiss(); }
     },
   });
+  const autosize = () => { input.style.height = "auto"; input.style.height = `${Math.min(160, input.scrollHeight)}px`; };
   const send = el("button", {
     class: "ai-send", type: "button", "aria-label": "Send", disabled: true,
     onclick: () => submit(input.value.trim()),
-  }, icon("arrow_up", 14));
-  const syncSend = () => { send.disabled = !input.value.trim(); };
+  }, el("span", { class: "ai-send-icon", "aria-hidden": "true", html: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>' }));
+  const syncSend = () => { send.disabled = !input.value.trim(); host.classList.toggle("has-text", Boolean(input.value.trim())); };
+  const context = selection
+    ? el("span", { class: "ai-context" }, icon("text", 12), "Selection")
+    : el("span", { class: "ai-context" }, icon("page", 12), editor.page?.title ? String(editor.page.title).slice(0, 28) : "This page");
   const inputRow = el("div", { class: `ai-composer-input${selection ? " has-selection" : ""}` },
-    el("span", { class: "ai-avatar" }, bloub(20)),
-    input,
-    send,
-    iconButton("close", "Close", () => dismiss(), { size: 14, className: "ai-close" }),
+    el("div", { class: "ai-field" }, el("span", { class: "ai-avatar" }, bloub(18)), input),
+    el("div", { class: "ai-controls" },
+      context,
+      el("span", { class: "ai-action-spacer" }),
+      el("span", { class: "ai-hint", text: "esc to close" }),
+      send),
   );
   const body = el("div", { class: "ai-output", hidden: true });
   const actions = el("div", { class: "ai-actions", hidden: true });
@@ -86,6 +93,14 @@ export function runAiComposer({ editor, block, action, selection, seedText, moun
     paintPresets();
   }
   host.append(inputRow, presets, body, actions);
+  /* Like Notion's inline AI: clicking elsewhere closes an untouched composer (never one holding a draft or a result). */
+  const onOutside = (event) => {
+    if (!host.isConnected) { document.removeEventListener("pointerdown", onOutside, true); return; }
+    if (host.contains(event.target) || input.value.trim() || output || controller) return;
+    document.removeEventListener("pointerdown", onOutside, true);
+    dismiss();
+  };
+  setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
   if (!action) queueMicrotask(() => input.focus());
 
   /* Closing plays the reverse of the entrance so the chips come back in the
@@ -110,7 +125,7 @@ export function runAiComposer({ editor, block, action, selection, seedText, moun
     body.hidden = false;
     clear(body);
     body.append(el("div", { class: "ai-thinking" },
-      el("div", { class: "ai-thinking-label" }, el("span", { class: "shimmer-text", text: label }),
+      el("div", { class: "ai-thinking-label" }, el("span", { class: "ai-shine", text: label }),
         el("button", { class: "ai-cancel", type: "button", onclick: () => { controller?.abort(); showError("Generation cancelled."); } }, "Cancel")),
       el("div", { class: "shimmer-line w1" }),
       el("div", { class: "shimmer-line w2" }),

@@ -1,0 +1,122 @@
+[
+  {
+    "width": 320,
+    "outer": {
+      "width": 320,
+      "scrollWidth": 320
+    },
+    "story": {
+      "innerWidth": 238,
+      "scrollWidth": 238,
+      "buttons": [
+        {
+          "text": "Import",
+          "width": 75,
+          "scroll": 75
+        },
+        {
+          "text": "AI Writer",
+          "width": 77,
+          "scroll": 77
+        }
+      ],
+      "messagesHeight": 334
+    }
+  },
+  {
+    "width": 375,
+    "outer": {
+      "width": 375,
+      "scrollWidth": 375
+    },
+    "story": {
+      "innerWidth": 293,
+      "scrollWidth": 293,
+      "buttons": [
+        {
+          "text": "Import",
+          "width": 51,
+          "scroll": 51
+        },
+        {
+          "text": "AI Writer",
+          "width": 63,
+          "scroll": 63
+        }
+      ],
+      "messagesHeight": 372
+    }
+  },
+  {
+    "width": 768,
+    "outer": {
+      "width": 768,
+      "scrollWidth": 768
+    },
+    "story": {
+      "innerWidth": 340,
+      "scrollWidth": 340,
+      "buttons": [
+        {
+          "text": "Import",
+          "width": 51,
+          "scroll": 51
+        },
+        {
+          "text": "AI Writer",
+          "width": 63,
+          "scroll": 63
+        }
+      ],
+      "messagesHeight": 372
+    }
+  },
+  {
+    "width": 1024,
+    "outer": {
+      "width": 1024,
+      "scrollWidth": 1024
+    },
+    "story": {
+      "innerWidth": 340,
+      "scrollWidth": 340,
+      "buttons": [
+        {
+          "text": "Import",
+          "width": 51,
+          "scroll": 51
+        },
+        {
+          "text": "AI Writer",
+          "width": 63,
+          "scroll": 63
+        }
+      ],
+      "messagesHeight": 372
+    }
+  },
+  {
+    "width": 1440,
+    "outer": {
+      "width": 1440,
+      "scrollWidth": 1440
+    },
+    "story": {
+      "innerWidth": 340,
+      "scrollWidth": 340,
+      "buttons": [
+        {
+          "text": "Import",
+          "width": 51,
+          "scroll": 51
+        },
+        {
+          "text": "AI Writer",
+          "width": 63,
+          "scroll": 63
+        }
+      ],
+      "messagesHeight": 412
+    }
+  }
+]

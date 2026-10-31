@@ -59,13 +59,12 @@
     stream = source = node = mute = null;
   }
 
-  async function start() {
+  // Opens (or reuses) the microphone graph. Returns true when the mic was already warm.
+  async function ensureMic() {
     clearTimeout(warmTimer); warmTimer = 0;
     if (stream && stream.getAudioTracks().some((t) => t.readyState === 'live') && node) {
       if (ctx.state === 'suspended') await ctx.resume();
-      capturing = true;
-      window.flowCapture.live();
-      return;
+      return true;
     }
     closeMic();
     const opening = openMic();
@@ -97,8 +96,31 @@
       window.flowCapture.chunk(out.buffer);
     };
     source.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    return false;
+  }
+
+  async function start() {
+    clearTimeout(armTimer); armTimer = 0;
+    await ensureMic();
     capturing = true;
     window.flowCapture.live();
+  }
+
+  // Key-down pre-warm: open the mic and start recording into main's short rolling buffer BEFORE the tap is
+  // finished, so the first words after it are never lost. If no start follows quickly it shuts itself off.
+  let armTimer = 0, armedFresh = false;
+  async function warm() {
+    clearTimeout(armTimer);
+    armedFresh = !(await ensureMic());
+    capturing = true;
+    armTimer = setTimeout(cool, 3_000);
+  }
+
+  function cool() {
+    clearTimeout(armTimer); armTimer = 0;
+    capturing = false;
+    if (armedFresh) closeMic(); else warmTimer = setTimeout(closeMic, WARM_MS);
+    armedFresh = false;
   }
 
   function stop() {
@@ -110,6 +132,8 @@
 
   window.flowCapture.onStart(() => { start().catch((error) => window.flowCapture.failed(String(error && error.message || error))); });
   window.flowCapture.onStop(stop);
+  window.flowCapture.onWarm(() => { warm().catch(() => { capturing = false; }); });
+  window.flowCapture.onCool(cool);
   window.flowCapture.ready();
 </script>
 </body></html>

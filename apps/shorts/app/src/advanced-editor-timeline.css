@@ -1,0 +1,94 @@
+.ae-track .ae-clip {
+  touch-action: none;
+  cursor: grab;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+.ae-track .ae-clip:active { cursor: grabbing; }
+.ae-trim-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 2;
+  cursor: ew-resize;
+}
+.ae-trim-start { left: 0; }
+.ae-trim-end { right: 0; }
+.ae-trim-handle::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  width: 2px;
+  height: 15px;
+  border-radius: 2px;
+  background: #6981d8;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.ae-trim-start::after { left: 3px; }
+.ae-trim-end::after { right: 3px; }
+.ae-clip:hover .ae-trim-handle::after,
+.ae-clip.active .ae-trim-handle::after { opacity: 1; }
+.ae-toolbar button:disabled { opacity: .38; cursor: not-allowed; }
+.ae-toolbar button:disabled:hover { color: #6d747c; }
+.ae-timeline-overlays .ae-marker { pointer-events: auto; border: 0; background: transparent; font-size: 15px; padding: 0 4px; transform: translateX(-6px); cursor: grab; touch-action: none; }
+.ae-timeline-overlays .ae-marker:active { cursor: grabbing; }
+.ae-marker-editor { display: grid; gap: 12px; }
+.ae-marker-editor label { display: grid; gap: 5px; color: #5d6572; font-size: 12px; }
+.ae-marker-editor input { border: 1px solid #e1e5eb; border-radius: 6px; padding: 8px; min-height: 36px; }
+.ae-marker-editor input[type=color] { width: 62px; padding: 3px; }
+.ae-marker-editor button { display: flex; justify-content: center; align-items: center; gap: 7px; border: 1px solid #f0d7d9; border-radius: 6px; background: #fff8f8; color: #be414b; padding: 9px; }
+/* ---- layer rows with expandable property tracks ---- */
+.ae-layer{position:relative}
+.ae-layer .ae-track{margin-bottom:2px}
+.ae-expand{position:absolute;left:-26px;top:14px;width:22px;height:22px;padding:0;border:0;background:none;color:#98a1b0;border-radius:6px;z-index:3;display:grid;place-items:center;transition:color .15s,background .15s}
+.ae-expand:hover{background:#eef2ff;color:#4568ee}
+.ae-expand svg{transition:transform .2s cubic-bezier(.22,1,.36,1)}.ae-expand.open svg{transform:rotate(90deg)}
+.ae-proptrack{position:relative;height:28px;margin-bottom:2px;background:linear-gradient(#fafbfd,#f4f6fa);border-radius:4px;animation:ae-prop-in .2s cubic-bezier(.22,1,.36,1);transform-origin:top}
+.ae-proptrack.idle{opacity:.55}
+@keyframes ae-prop-in{from{opacity:0;transform:scaleY(.4)}to{opacity:1;transform:none}}
+.ae-proplabel{position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:650;color:#8590a3;background:#fafbfdcc;padding:1px 6px;border-radius:99px;pointer-events:none;z-index:1}
+.ae-propbar{position:absolute;top:13px;height:2px;background:#bcc9fb;border-radius:2px;pointer-events:none}
+.ae-kf{position:absolute;top:6px;width:16px;height:16px;margin-left:-8px;padding:0;border:0;background:none;cursor:grab;touch-action:none;z-index:2}
+.ae-kf:active{cursor:grabbing}
+.ae-kf svg{display:block;margin:1px;overflow:visible}
+.ae-kf path{fill:#fff;stroke:#4568ee;stroke-width:1.6;transition:fill .12s,stroke .12s,transform .12s;transform-origin:center}
+.ae-kf:hover path{fill:#dfe7ff;transform:scale(1.18)}
+.ae-kf.on path{fill:#4568ee}.ae-kf.here path{stroke:#1f3ac0;stroke-width:2.2}
+.ae-kf.hold path{fill:#4568ee33;stroke-dasharray:2 1.5}
+/* toolbar */
+.ae-toolbar .ae-sep{width:1px;height:20px;background:#e3e6ec;margin:0 3px}
+.ae-toolbar button.on{color:#4568ee;background:#eef2ff;border-radius:6px}
+.ae-toolbar .ae-kfbar{display:flex;gap:6px;align-items:center;padding-left:4px;animation:ae-prop-in .18s ease-out}
+.ae-clip-sfx{background:#eefbf4!important;border-color:#bfe8d1!important}.ae-clip-sfx.active{border-color:#2fae75!important}
+.ae-clip-sfx .ae-clip-name{position:relative;z-index:1}
+.ae-sfx-wave{position:absolute;inset:6px 8px;width:calc(100% - 16px);height:calc(100% - 12px);opacity:.55;pointer-events:none}
+.ae-fps{height:30px;border:1px solid #e6e8ee;border-radius:7px;background:#fff;padding:0 6px!important;font-size:11px;font-weight:650;color:#566073;width:auto!important}
+.ae-clip.dim{opacity:.45}.ae-clip.locked{cursor:not-allowed!important}.ae-clip.locked::after{content:"";position:absolute;right:6px;top:6px;width:10px;height:10px;border-radius:2px;background:#8a93a3;opacity:.6}
+.ae-layer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}.ae-layer-head .ae-back{margin-bottom:0!important}
+.ae-layer-actions{display:inline-flex;gap:3px}.ae-panel .ae-layer-actions button{width:28px;height:28px;padding:0;border:0;background:none;border-radius:7px;color:#7b8493}.ae-panel .ae-layer-actions button:hover{background:#eef2ff;color:#4568ee}.ae-panel .ae-layer-actions button.on{background:#eef2ff;color:#3459dc}
+.ae-kf.here path{stroke-width:1.6}
+.ae-marquee{position:absolute;pointer-events:none;border:1px solid #4568ee;background:#4568ee1a;border-radius:3px;z-index:6}
+.ae-tracks{position:relative}
+.ae-kfmenu-wrap{position:fixed;inset:0;z-index:90}
+.ae-kfmenu{position:fixed;width:216px;max-height:calc(100vh - 16px);overflow:auto;background:#fff;border:1px solid #dfe4ef;border-radius:12px;box-shadow:0 16px 40px #1a2a5a33;padding:5px;display:flex;flex-direction:column;animation:mi-pop .14s ease-out;font-size:12px}
+.ae-kfmenu header{padding:6px 9px;font-size:10px;color:#7b8493;font-weight:650}
+.ae-root .ae-kfmenu button{display:flex;justify-content:flex-start;border:0;background:none;padding:7px 9px;border-radius:7px;color:#2a313d;font-size:12px;text-align:left}.ae-root .ae-kfmenu button:hover:not(:disabled){background:#f1f4ff}.ae-root .ae-kfmenu button:disabled{opacity:.35}
+.ae-kfmenu-sep{padding:6px 9px 2px;font-size:10px;font-weight:700;color:#98a1b0;text-transform:uppercase;letter-spacing:.05em;border-top:1px solid #eef0f5;margin-top:3px}
+.ae-kfmenu-ease{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+.ae-root .ae-kfmenu .danger{color:#c13e46;border-top:1px solid #eef0f5;margin-top:3px;border-radius:0 0 7px 7px}
+/* Crayo-style clips: icon + bold name, slimmer rows */
+.ae-layer .ae-track,.ae-track{height:44px}
+.ae-track .ae-clip{height:44px!important;display:flex!important;align-items:center;gap:7px;padding-left:16px!important;border-radius:6px!important;border:1px solid #dfe5f5;background:#eef2ff;transition:border-color .14s,box-shadow .14s,background .14s}
+.ae-track .ae-clip:hover{background:#e6ecff}.ae-track .ae-clip.active{border:2px solid #4568ee;background:#e8eeff;box-shadow:0 0 0 3px #4568ee1a}
+.ae-clip-icon{display:inline-flex;color:#5873e0;flex:none}.ae-clip-name{font-weight:650;color:#3d4a63;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;z-index:1}
+.ae-clip-sfx .ae-clip-icon{color:#2a9d6a}.ae-track .ae-clip-sfx{background:#eefbf4!important;border-color:#c7ead8!important}.ae-track .ae-clip-sfx.active{border-color:#2fae75!important;background:#e6f8ee!important;box-shadow:0 0 0 3px #2fae751a!important}
+.ae-expand{top:11px}.ae-diamond{top:12px}
+/* layer reorder handle */
+.ae-expand{top:2px!important;height:20px;width:22px}.ae-grip{position:absolute;left:-26px;top:22px;width:22px;height:20px;padding:0;border:0;background:none;color:#b4bccb;border-radius:6px;z-index:3;display:grid;place-items:center;cursor:grab;touch-action:none;transition:color .15s,background .15s}
+.ae-grip:hover{color:#4568ee;background:#eef2ff}.ae-grip:active{cursor:grabbing}
+.ae-layer{transition:transform .12s,box-shadow .15s,opacity .15s}.ae-layer.dragging{position:relative;z-index:12;opacity:.92;box-shadow:0 10px 26px #1a2a5a40;border-radius:8px;background:#fff}
+/* keyframe-all button on the timeline toolbar */
+.ae-toolbar .ae-keyall{display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #d9def0;border-radius:6px;background:#fff;color:#4a5578;font-size:11px;font-weight:700;transition:all .14s}.ae-toolbar .ae-keyall svg path{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}.ae-toolbar .ae-keyall:hover:not(:disabled){border-color:#4d6ff0;color:#4d6ff0;background:#f3f6ff}.ae-toolbar .ae-keyall.on{background:#4d6ff0;border-color:#4d6ff0;color:#fff}.ae-toolbar .ae-keyall.on svg path{fill:#fff}
+@media(max-width:1300px){.ae-toolbar .ae-keyall span{display:none}}

@@ -1,0 +1,912 @@
+[
+  [
+    {
+      "name": "Camera Shutter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Camera Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Razor Slash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swipe",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Zoom In / Out",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Reverse Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Transition Sweep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Glitch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Riser",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Impact Hit",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Cinematic Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bass Drop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Vine Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Metal Clang",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Record Scratch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Mouse Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "UI Tap",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Keyboard Typing",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Typewriter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Text Reveal",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Digital Beep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Notification Ding",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bubble Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Shimmer",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Sparkle",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    }
+  ],
+  [
+    {
+      "name": "Camera Shutter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Camera Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Razor Slash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swipe",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Zoom In / Out",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Reverse Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Transition Sweep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Glitch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Riser",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Impact Hit",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Cinematic Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bass Drop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Vine Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Metal Clang",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Record Scratch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Mouse Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "UI Tap",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Keyboard Typing",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Typewriter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Text Reveal",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Digital Beep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Notification Ding",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bubble Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Shimmer",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Sparkle",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    }
+  ],
+  [
+    {
+      "name": "Camera Shutter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Camera Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Razor Slash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swipe",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Zoom In / Out",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Reverse Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Transition Sweep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Glitch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Riser",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Impact Hit",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Cinematic Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bass Drop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Vine Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Metal Clang",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Record Scratch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Mouse Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "UI Tap",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Keyboard Typing",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Typewriter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Text Reveal",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Digital Beep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Notification Ding",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bubble Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Shimmer",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Sparkle",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    }
+  ],
+  [
+    {
+      "name": "Camera Shutter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Camera Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Razor Slash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swipe",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Zoom In / Out",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Reverse Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Transition Sweep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Glitch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Riser",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Impact Hit",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Cinematic Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bass Drop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Vine Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Metal Clang",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Record Scratch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Mouse Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "UI Tap",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Keyboard Typing",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Typewriter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Text Reveal",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Digital Beep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Notification Ding",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bubble Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Shimmer",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Sparkle",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    }
+  ],
+  [
+    {
+      "name": "Camera Shutter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Camera Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Flash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Razor Slash",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Swipe",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Zoom In / Out",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Reverse Whoosh",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Transition Sweep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Glitch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Riser",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Impact Hit",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Cinematic Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bass Drop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Vine Boom",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Metal Clang",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Record Scratch",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Mouse Click",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "UI Tap",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Keyboard Typing",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Typewriter",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Text Reveal",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Digital Beep",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Notification Ding",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Bubble Pop",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Shimmer",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    },
+    {
+      "name": "Sparkle",
+      "height": 16,
+      "scroll": 16,
+      "overflow": "clip"
+    }
+  ]
+]

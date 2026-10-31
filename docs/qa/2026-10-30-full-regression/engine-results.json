@@ -1,0 +1,482 @@
+[
+  {
+    "file": "src/browser-pool.test.mjs",
+    "code": 0,
+    "elapsedMs": 1670,
+    "tail": "✔ a pool lends its idle browsers again and starts only what it lacks (4.774138ms)\n✔ a browser that crashed, one that failed a render, and one that drew many pages are not lent again (5.392219ms)\n✔ a browser that fails to start gives the others back and says why (0.958525ms)\n✔ a render is drawn again in new browsers only when its browser failed it (0.810193ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1078.967749\n"
+  },
+  {
+    "file": "src/doctor.test.mjs",
+    "code": 0,
+    "elapsedMs": 3404,
+    "tail": "✔ a path under the home folder reads ~ (1.7896ms)\n✔ the agent that ran it is told by its variables' names, never their values (1.688231ms)\n✔ the log's errors: the last few, a repeated one once with its count (0.75689ms)\n✔ a WebGL drawn in software is told apart from a graphics chip (0.364987ms)\n✔ the report lists each check, then what to fix (0.713714ms)\n✔ doctor: the folders and the log, paths under home as ~ (2444.825944ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2660.070014\n"
+  },
+  {
+    "file": "src/encoders.test.mjs",
+    "code": 1,
+    "elapsedMs": 4113,
+    "tail": "e encoder may be busy, or not supported.\n[vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] [enc:h264_videotoolbox @ 0x7f7c60013600] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n[vf#0:0 @ 0x7f7c6080e000] Error sending frames to consumers: Generic error in an external library\n[vf#0:0 @ 0x7f7c6080e000] Task finished with error code: -542398533 (Generic error in an external library)\n[vf#0:0 @ 0x7f7c6080e000] Terminating thread with return code -542398533 (Generic error in an external library)\n[vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] [enc:h264_videotoolbox @ 0x7f7c60013600] Could not open encoder before EOF\n[vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] Task finished with error code: -22 (Invalid argument)\n[vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] Terminating thread with return code -22 (Invalid argument)\n[out#0/mp4 @ 0x7f7c60008940] Nothing was written into output file, because at least one of its streams received no packets.\n✖ on a Mac with a ProRes engine, ProRes keeps half alpha; the chip's H.264 keeps an sRGB transfer when told it (557.318554ms)\nℹ tests 8\nℹ suites 0\nℹ pass 7\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3406.369118\n\n✖ failing tests:\n\ntest at src/encoders.test.mjs:104:1\n✖ on a Mac with a ProRes engine, ProRes keeps half alpha; the chip's H.264 keeps an sRGB transfer when told it (557.318554ms)\n  Error: Command failed: ffmpeg -v error -y -i /var/folders/d0/65f0j4m97_bdps5sb4kfktfr0000gn/T/clyra-fulltest-h90vyu/of-encoders-0Nl4TF/srgb.mp4 -pix_fmt nv12 -c:v h264_videotoolbox -profile:v high -b:v 4000k -g 8 -bsf:v h264_metadata=colour_primaries=1:transfer_characteristics=13:matrix_coefficients=1:video_full_range_flag=0 /var/folders/d0/65f0j4m97_bdps5sb4kfktfr0000gn/T/clyra-fulltest-h90vyu/of-encoders-0Nl4TF/copy.mp4\n  [h264_videotoolbox @ 0x7f7c60013680] Cannot create compression session: -12903\n  [h264_videotoolbox @ 0x7f7c60013680] Try -allow_sw 1. The hardware encoder may be busy, or not supported.\n  [vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] [enc:h264_videotoolbox @ 0x7f7c60013600] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.\n  [vf#0:0 @ 0x7f7c6080e000] Error sending frames to consumers: Generic error in an external library\n  [vf#0:0 @ 0x7f7c6080e000] Task finished with error code: -542398533 (Generic error in an external library)\n  [vf#0:0 @ 0x7f7c6080e000] Terminating thread with return code -542398533 (Generic error in an external library)\n  [vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] [enc:h264_videotoolbox @ 0x7f7c60013600] Could not open encoder before EOF\n  [vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] Task finished with error code: -22 (Invalid argument)\n  [vost#0:0/h264_videotoolbox @ 0x7f7c60012f80] Terminating thread with return code -22 (Invalid argument)\n  [out#0/mp4 @ 0x7f7c60008940] Nothing was written into output file, because at least one of its streams received no packets.\n  \n      at genericNodeError (node:internal/errors:999:15)\n      at wrappedFn (node:internal/errors:544:14)\n      at checkExecSyncError (node:child_process:943:11)\n      at execFileSync (node:child_process:979:15)\n      at TestContext.<anonymous> (file:///Users/lukesimpson/Documents/Coding%20Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/src/encoders.test.mjs:123:5)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n    status: 187,\n    signal: null,\n    output: [ null, <Buffer >, <Buffer 5b 68 32 36 34 5f 76 69 64 65 6f 74 6f 6f 6c 62 6f 78 20 40 20 30 78 37 66 37 63 36 30 30 31 33 36 38 30 5d 20 43 61 6e 6e 6f 74 20 63 72 65 61 74 65 ... 1087 more bytes> ],\n    pid: 87303,\n    stdout: <Buffer >,\n    stderr: <Buffer 5b 68 32 36 34 5f 76 69 64 65 6f 74 6f 6f 6c 62 6f 78 20 40 20 30 78 37 66 37 63 36 30 30 31 33 36 38 30 5d 20 43 61 6e 6e 6f 74 20 63 72 65 61 74 65 ... 1087 more bytes>\n  }\n"
+  },
+  {
+    "file": "src/film-doc.test.mjs",
+    "code": 0,
+    "elapsedMs": 859,
+    "tail": "✔ a film.html reads as its value: the viewport its stage, each section a track, each element a clip (12.221661ms)\n✔ written back, an unchanged film is the same text; a change rewrites only its own element (3.727244ms)\n✔ a clip moved to another track takes its text along; a new track and a new stage are written (1.261394ms)\n✔ a clip written without an id gets its name written, so it stays put (0.885581ms)\n✔ a file's name may hold any character: src escapes only %, # and ?, and reads back the same path (1.852302ms)\n✔ a src written by hand: its escapes are read, a bare % is a %, an address is kept, a # in a name is told (2.76619ms)\n✔ a new film is a whole page; a box at 0, 0 is written as one (0.623235ms)\n✔ the head, body and html tags may be left out, as in any page (0.398387ms)\n✔ every problem is said at once, at its line, with what to write instead (0.619392ms)\n✔ what says nothing to the film is kept: a track's id, class or label, a sound's class (2.813885ms)\n✔ an <audio> of a video file is that video's sound alone, its picture a clip of its own (1.433272ms)\n✔ a film runs no script, and holds nothing but tracks of clips (0.951712ms)\n✔ what the value says wrong is said at the clip's line (0.805162ms)\n✔ media fragments: seconds, a start alone, clock times (0.778304ms)\n✔ a valid edit comes back with its fields in their written order (0.676574ms)\n✔ a page has no sound and no speed: its clip takes neither, a video or a sound clip does (0.472288ms)\n✔ a clip starts at 0 or later on the film (0.22896ms)\n✔ ids: missing ones are named after their source, duplicates refused (0.311743ms)\n✔ the value has only stage and tracks (0.72811ms)\n✔ a place (its box) is checked (0.39228ms)\n✔ clipSpan: trims, speed, stills and pages (0.720684ms)\n✔ pictureRect: a video or still is its box; a page is fitted whole inside its box, centered (0.477773ms)\n✔ fades: any clip takes them, as the overrides entry without at, read to the millisecond and written back alike (1.902765ms)\n✔ fades are checked: seconds 0 or more, one entry of the clip's own, in + out within its length; element entries stay a page's (1.923296ms)\n✔ fadeGain: a straight ramp in and out, fitted to the clip when longer than it (0.262906ms)\n✔ a page's size is the px it is laid out at: read from size=\"WxH\", written back as it was, a page's alone (4.112311ms)\n✔ soundRole: the nearest folder named for a role decides, then the name, else a voice (1.189531ms)\n✔ a clip named after its file has no dashes at its ends, however many there are (1.606072ms)\n✔ an override's style takes CSS properties in camelCase and custom properties as CSS names them (0.698881ms)\n✔ an attribute holding JSON (Studio's data-props) is written in single quotes, as overrides are, and read back as it was (0.514583ms)\nℹ tests 30\nℹ suites 0\nℹ pass 30\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 271.567368\n"
+  },
+  {
+    "file": "src/host-clock.test.mjs",
+    "code": 0,
+    "elapsedMs": 2392,
+    "tail": "✔ a hosted page reads the frame's t from every clock once drawing starts (934.478146ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1738.138068\n"
+  },
+  {
+    "file": "src/host.test.mjs",
+    "code": 0,
+    "elapsedMs": 1926,
+    "tail": "✔ cancelled media requests close their files so the project can be renamed (102.858948ms)\n✔ an open-ended media range returns at most 8 MiB (167.498143ms)\n✔ the served folder is all a page reads: no way out through .., a link or a malformed address (26.586594ms)\n✔ look and render serve the film's project, never the folders around it (3.343784ms)\n✔ Windows: Vulkan when its renderer is a GPU, read once; otherwise the default, for every later browser too (2.132919ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1126.407719\n"
+  },
+  {
+    "file": "src/locations.test.mjs",
+    "code": 0,
+    "elapsedMs": 853,
+    "tail": "✔ new projects go to the folder chosen, before any default (4.343271ms)\n✔ exports go to the default: no folder kept in prefs.json moves them (the export dialog picks one) (1.244327ms)\n✔ without a choice or a build's own: a Studio kept apart exports into its home; the person's own to the Desktop (1.196359ms)\n✔ each folder for Settings: where it is, its default, whether chosen, and free space on its disk (4.816431ms)\n✔ a folder offered is made and kept by its full path; a disk, Studio's own home or a relative path is refused (2.58046ms)\n✔ a library's projects are its folders that hold a film; Settings counts them (5.030974ms)\n✔ with a shared home, the folder chosen there is the library; a folder inside either home is refused (1.812278ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 247.601431\n"
+  },
+  {
+    "file": "src/look.test.mjs",
+    "code": 0,
+    "elapsedMs": 49362,
+    "tail": "✔ high-bit-depth media sheets embed thumbnails; single frames keep their full resolution (5076.293266ms)\n✔ a transparent clip keeps its alpha in a media sheet, so its cells show the checkerboard behind it (1169.634643ms)\n✔ a transparent WebM keeps its alpha in a media sheet (1585.43562ms)\n  drawing 12 frames twice (0s–4s) and mixing the sound…\n✔ a page timed by the clock and seeded by Math.random while loading is still pure: the host owns every clock (2890.337495ms)\n  drawing 12 frames twice (0s–4s) and mixing the sound…\n✔ a page whose picture depends on more than t fails (4324.601856ms)\n  drawing 12 frames twice (0s–4s) and mixing the sound…\n✔ a small shift that depends on drawing order fails, at the frames where it shows (4039.806532ms)\n  drawing 12 frames twice (0s–3s) and mixing the sound…\n✔ text cut off by the frame or by its box is named, with its element (2454.249616ms)\n  drawing 12 frames twice (0s–4s) and mixing the sound…\n✔ layered pages with transparency are pure (5756.537043ms)\n  drawing 12 frames twice (0s–2s) and mixing the sound…\n✔ a page whose library failed to load says which request failed (1362.594766ms)\n  drawing 2 frames twice (0s–2s) and mixing the sound…\n✔ a film of page clips on its timeline reports no failed request (1505.704766ms)\n  drawing 12 frames twice (0s–12s) and mixing the sound…\n✔ a film of more pages than are kept open reports no failed request as its pages close and open again (6965.457301ms)\n  drawing 2 frames twice (0s–4s) and mixing the sound…\n✔ a page that still lists sounds in window.film.audio is told, once, that they are not played (3801.965971ms)\n  drawing 2 frames twice (0s–6s) and mixing the sound…\n✔ a page without a duration has no end: look and render of it alone need a range (2904.515294ms)\n  drawing 2 frames twice (0s–3.5s) and mixing the sound…\n  drawing 2 frames twice (0s–4s) and mixing the sound…\n✔ clips that overlap on a track are told; touching ones, a millisecond of rounding apart, are not (3652.251231ms)\nℹ tests 14\nℹ suites 0\nℹ pass 14\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 48546.623171\n"
+  },
+  {
+    "file": "src/official-skills.test.mjs",
+    "code": 0,
+    "elapsedMs": 1392,
+    "tail": "✔ every official skill: a SKILL.md named as its folder, with a description, and a title and summary in five languages (13.030812ms)\n✔ every file a skill names in its own folder is there (1.075596ms)\n✔ the official skills are a copy of openfilm/skills, and say of which commit (0.576205ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 347.735839\n"
+  },
+  {
+    "file": "src/overrides.test.mjs",
+    "code": 0,
+    "elapsedMs": 1446,
+    "tail": "✔ a custom property is set as it is named, its value as it is; a camelCase one as CSS names it (3.585406ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 438.210512\n"
+  },
+  {
+    "file": "src/problems.test.mjs",
+    "code": 0,
+    "elapsedMs": 1656,
+    "tail": "✔ a problem is kept as a line, tidied: the home folder as ~, no keys, tokens or email addresses (18.553549ms)\n✔ one with nothing to say is not kept; one that cannot be written does not throw (1.919321ms)\n✔ kept: the last two weeks, at most KEEP_MAX; a broken line is left out (166.884586ms)\n✔ read in the order they happened, whichever process wrote one first (1.494002ms)\n✔ the report's lines: the last week's, the last few, each when, what about and what it said; none without any (13.088389ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 551.691851\n"
+  },
+  {
+    "file": "src/rate.test.mjs",
+    "code": 0,
+    "elapsedMs": 1258,
+    "tail": "✔ the NTSC rates are their exact rates; another rate is kept as it is (7.779052ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 310.569438\n"
+  },
+  {
+    "file": "src/render.test.mjs",
+    "code": 0,
+    "elapsedMs": 138433,
+    "tail": "✔ the render command accepts decimal frame rates and still rejects invalid rates (3913.520456ms)\n✔ the render command renders 29.97 as exactly 30000/1001, and keeps another decimal rate, through encoding, blur and parallel parts (17561.277285ms)\n✔ a render with no format of its own encodes on the graphics chip when it can: H.264 for an MP4, ProRes for a MOV (8900.633489ms)\n  rendering 30 frames with 1 browser…\n  3/30 frames · about 6 s left\n  6/30 frames · about 6 s left\n✔ an encoder that fails to start fails the render with ffmpeg's error, instead of waiting forever (2748.909589ms)\n✔ a failed encode is the error told, even when its parts folder cannot be removed (2555.205985ms)\n✔ an encoder out of memory is said plainly, with fewer browsers to try (0.798978ms)\n✔ browsers: one per performance core but one, as many as the free memory holds with room to spare, enough frames each, at most four (64.489783ms)\n✔ a render runs below the person's own apps, with every process it starts (13453.076665ms)\n✔ a transparent page comes out the same however many browsers share it (29040.960817ms)\n✔ a render is written once: its parts straight into the file with the sound, and one part with nothing to add moved there (19892.013581ms)\n✔ a page drawn opaque until a pixel shows through is drawn again with its alpha, in the same tabs (22873.42218ms)\nopenfilm render: 1s-5s runs past the film's end (2s): rendered to there\n✔ --subtitles burns the project's subtitles into its film, named as its render is; a page of it, or a film with none, is refused (14975.710597ms)\nℹ tests 12\nℹ suites 0\nℹ pass 12\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 137503.128879\n"
+  },
+  {
+    "file": "src/seekable.test.mjs",
+    "code": 0,
+    "elapsedMs": 127138,
+    "tail": "✔ a video with key frames far apart gets a copy with the same frames at the same times; one that seeks fast does not (11115.353055ms)\n✔ a render serves the film's slow-seeking videos as their copies (24552.180163ms)\n✔ footage the browser does not decode gets a copy it plays, with its alpha when it has one; footage it decodes is not asked about (7448.526309ms)\n✔ a render shows ProRes footage, which no browser decodes, through its copy (9038.024296ms)\n✔ a copy once made is found for each request after it, and none before (4830.92738ms)\n✔ renders asking for the same copy at once share one, whole; one cancelled leaves it to the other (57060.415871ms)\n✔ two processes making the same copy at once never write the same file (6634.513198ms)\n✔ look shows ProRes footage, which no browser decodes, through its copy (2140.068432ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 125232.158072\n"
+  },
+  {
+    "file": "src/shared.test.mjs",
+    "code": 0,
+    "elapsedMs": 10321,
+    "tail": "✔ an ffmpeg that does not end is stopped, and says what did not finish (416.542966ms)\n✔ a mix is exactly the film's length: padded when its sounds end early, cut when one runs on (835.905006ms)\n✔ a sound's fades ramp its level in the mix, straight, from where its clip starts (cut by a range too) (537.840614ms)\n✔ a mono sound is mixed on both sides at its own level, as a browser plays it; a stereo one as it is (594.735877ms)\n✔ fadeFilter: the ramps as a per-sample expression, nothing without fades (0.586829ms)\n✔ fileOf: a sound stays inside the film's folder, however its path is written (6.796342ms)\n✔ fileOf: a link to media the person linked is followed; a link a project brought from elsewhere is not (8.423943ms)\n✔ checkSound: a sound's numbers are numbers before they reach ffmpeg (1.115197ms)\n✔ a sound used by many clips is one input, split and cut in the graph: the same mix as one input each (628.113201ms)\n✔ a mix of hundreds of sounds keeps its command short: its graph goes in a file, gone once mixed (5839.652691ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 9695.937904\n"
+  },
+  {
+    "file": "src/skills.test.mjs",
+    "code": 0,
+    "elapsedMs": 1661,
+    "tail": "✔ cover edits do not follow a personal skill folder outside its library or write through metadata symlinks (22.098879ms)\n✔ a chosen cover is kept with the copied skill, preserving its metadata and source (36.251417ms)\n✔ covers follow each skill through a fetched collection; unselected covers remain unchanged (45.921242ms)\n✔ invalid cover data is rejected before replacing an existing skill (5.460736ms)\n✔ a SKILL.md front matter: plain, quoted and block values; the body after it (0.831094ms)\n✔ skills are listed from the project, then yours, then the official ones, the first holding a name winning (43.880907ms)\n✔ a skill is named by its front matter, else its folder (5.157664ms)\n✔ adding a skill copies it into yours (a folder of skills adds each), the one of the same name to the trash (58.256083ms)\n✔ yours are kept beside the projects, and those kept in Studio's home before move there (6.059574ms)\n✔ adding from an address is looked at first: kept, or let go (46.192133ms)\n✔ a folder on this computer looked at where it is; one already among the person's own, or not a skill, refused (6.83127ms)\n✔ openfilm skills and skill: the list, one printed whole, one added from an address (56.368655ms)\n✔ a skill as people see it: its openfilm.json title and summary by language; none, or not one, read as nothing (2.575521ms)\n✔ a skill's openfilm.json: its version, kind, order, mark and media; anything wrong left out; else the front matter's version (4.242365ms)\n✔ where the person's skills came from: a folder, or the address commitSkills was given; forgotten when removed (94.125419ms)\n✔ a cover's format is what its bytes are, and a cover chosen before goes when it is replaced; the skill's own picture stays (8.94599ms)\nℹ tests 16\nℹ suites 0\nℹ pass 16\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 983.732903\n"
+  },
+  {
+    "file": "src/timeline.test.mjs",
+    "code": 0,
+    "elapsedMs": 105187,
+    "tail": "\n  2/15 frames · about 1 s left\n  3/15 frames · about 1 s left\n  5/15 frames · about 1 s left\n  6/15 frames · about 1 s left\n  8/15 frames · about 1 s left\n  9/15 frames · about 1 s left\n  11/15 frames · about 1 s left\n  12/15 frames · about 1 s left\n  14/15 frames · about 1 s left\n✔ a film of a page without a duration renders for its clip's time, with its sound (4552.743581ms)\n✔ a film that cannot load says why when its host awaits `ready`, and is no uncaught error before (2109.548374ms)\n✔ a missing file stops a film, said by its name; an editor's preview (film-missing=skip) plays on past it (1048.810809ms)\n✔ a film of many video clips is ready without loading their pictures; a frame loads the videos near it, nearest first (1479.367239ms)\n✔ a video loaded only when its frame is asked draws the same picture as one long loaded: exact for export (4633.096915ms)\n✔ an exact frame of a video sought there waits for its own frame on screen, not one presented before the seek was done (1179.363763ms)\n✔ a sought frame that is decoded but never presented (a seek just after loading, Chromium) is sought again until it shows (2239.603312ms)\n✔ watched, a still moment whose video frame is decoded but never presented (Chromium) is sought again until it shows (4046.83706ms)\n✔ a video woken ahead while hidden, then shown: its old frame presented again after the seek is not taken for the sought one (2051.75343ms)\n✔ a video coming on is drawn visible before it is sought: a frame made current as it turns visible kept the old picture (1113.770124ms)\n✔ an edit that splits, adds, removes or moves clips to a new track changes the film in place, without loading it again (1222.320064ms)\n✔ another stage size changes the film in place: the body, the film's size and every clip placed again (821.805373ms)\n✔ a text override with line breaks: all the words of an element of <br>s, a <br> at each break; taken away, it is as it was (790.25583ms)\n✔ a film of many pages keeps only a few open: one far from the playhead is closed, and opened again draws as before (1357.853097ms)\n✔ a host waits for a film as long as it keeps loading; a page that never gets further fails in time (6047.961048ms)\n  drawing 8 frames twice (0s–15s) and mixing the sound…\n✔ look's check and a render of a film of many video clips: the same t draws the same picture, every frame there (23179.665184ms)\n✔ fades: a clip's picture shows its own opacity times its ramp at t, the same at the same t; its sound carries them (745.590389ms)\n✔ watched, a film shows the video on at the moment first asked for, sought once its file is there (at its first second too) (867.397897ms)\n✔ an edit that puts a new video on at the moment shown has its frame ready before the edit shows: the picture is never black for it (1007.253901ms)\n✔ a clip's look changed (an inspector's value, an edit) keeps its fade on screen; a clip added is out of sight until drawn (1503.519061ms)\n✔ watched, a page coming on shows once its frame is drawn, the picture going off staying until then; a later frame keeps what it shows (1202.149454ms)\n✔ playing, a video plays by itself on the film's clock, not sought frame by frame; a still moment stops it there (2990.621234ms)\n✔ playing, a page's own video asked for frame by frame plays by itself, each frame drawn at once; stopped, it is where the page asked (2795.733387ms)\n✔ playing through a stretch rendered for the preview, its render shows, the clips under it drawn only now and then; stopped, they are (3406.460971ms)\n✔ playing, frames asked before the last is drawn (a host giving up on a slow one) do not leave a page's footage sought back and forth (5210.946308ms)\n✔ scrubbing, frames asked before the last is drawn (a host giving up on a slow one) do not leave a page's footage sought back and forth (5987.065453ms)\n✔ an exact frame is drawn when the frame duration never answers (11080.943607ms)\nℹ tests 34\nℹ suites 0\nℹ pass 34\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 104412.766394\n"
+  },
+  {
+    "file": "studio/client.test.mjs",
+    "code": 0,
+    "elapsedMs": 12723,
+    "tail": "✔ the CLI starts one Studio in the background, reuses it, and it cleans up when stopped (1649.970172ms)\n✔ an older Studio is replaced, and one whose run.json was lost is still found (1296.323831ms)\n✔ versions compare as numbers (0.324191ms)\n✔ `openfilm open` never makes the current folder a project unasked, nor a code project one (8879.618946ms)\n✔ a newer openfilm on npm is told from what was learnt (no network when not asked), never an older one (1.899384ms)\n✔ `openfilm update` in a source checkout says git pull updates it, and touches nothing (0.450577ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 12113.657036\n"
+  },
+  {
+    "file": "studio/ruler-refer.test.mjs",
+    "code": 0,
+    "elapsedMs": 9435,
+    "tail": "✔ with the app's chat, a ruler click moves the playhead and a ⌘-click (Ctrl-click) refers the moment (7472.111433ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 8784.175576\n"
+  },
+  {
+    "file": "studio/selection-toolbar.test.mjs",
+    "code": 1,
+    "elapsedMs": 40074,
+    "tail": "✖ export covers the selection toolbar, keeps its menus usable, and leaves the range intact (38023.129154ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 39339.685829\n\n✖ failing tests:\n\ntest at studio/selection-toolbar.test.mjs:11:1\n✖ export covers the selection toolbar, keeps its menus usable, and leaves the range intact (38023.129154ms)\n  locator.waitFor: Timeout 30000ms exceeded.\n  Call log:\n  \u001b[2m  - waiting for getByRole('dialog', { name: 'Export', exact: true }) to be visible\u001b[22m\n  \n      at TestContext.<anonymous> (/Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/selection-toolbar.test.mjs:81:18) {\n    name: 'TimeoutError',\n    log: [ \"  - waiting for getByRole('dialog', { name: 'Export', exact: true }) to be visible\" ]\n  }\n"
+  },
+  {
+    "file": "studio/server/bridge.test.mjs",
+    "code": 0,
+    "elapsedMs": 4793,
+    "tail": "✔ an edit changed in place while the first moment is still drawing is drawn at that moment, not at 0 s (67.230562ms)\n✔ a load of the film behind the picture shown says its first moment is drawn only once it is, however long that takes (2627.510266ms)\n✔ playing, the film draws its own frames from the line it was given, each frame of its rate once, a refresh ahead (122.909397ms)\n✔ playing, a frame still drawing when the screen refreshes is let finish, and the next one drawn is where the film is then (113.223792ms)\n✔ the film's clock is read with a ping, and an edit while playing is drawn by the next frame, not as a still (58.175274ms)\n✔ a web page on its own plays from the line too, drawn by its own frame(t): each frame of the rate once, never past its end, until a seek (575.960775ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 4181.62062\n"
+  },
+  {
+    "file": "studio/server/browse.test.mjs",
+    "code": 0,
+    "elapsedMs": 902,
+    "tail": "✔ a folder's folders, sorted, hidden ones and files left out, film folders marked (33.292226ms)\n✔ nothing outside the home folder: not by a path, a .. or a link (6.047697ms)\n✔ a folder this account cannot read is refused as such (1.722805ms)\n✔ places: home, the library and the usual folders that exist, then where recent projects are; none outside (4.46967ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 301.131231\n"
+  },
+  {
+    "file": "studio/server/captions.test.mjs",
+    "code": 0,
+    "elapsedMs": 2044,
+    "tail": "✔ a transcript breaks into lines at sentence ends, timed by its words (4.693642ms)\n✔ a slowly spoken line lasts through its words instead of the text-length estimate (0.79491ms)\n✔ word starts alone also keep a slow line visible through its final mark (0.718827ms)\n✔ subtitles leave out fillers and false starts (2.405792ms)\n✔ a voice clip says its transcript's lines where it sits on the film, each word timed, each line traced to its source (31.562604ms)\n✔ a trim keeps only the words inside it, and speed scales the times (9.666874ms)\n✔ the same source cut in two places says each part once (7.681672ms)\n✔ a transcript names who speaks; the subtitles name them only when two do (14.179777ms)\n✔ a transcript written by hand, timed by line only, is its lines as they are (47.563939ms)\n✔ what cannot be heard has no subtitles; speech with no transcript is listed, music and pages are not (7.79169ms)\n✔ translations are transcripts beside it (name.<language>.vtt); Studio translates line by line and keeps them there (19.638049ms)\n✔ a clip whose src leads out of the project (`../`) has no subtitles: its transcript is neither read, made, translated nor changed (62.732878ms)\n✔ the person's style is kept in the project folder, checked field by field (10.740395ms)\n✔ the routes: captions, style, and translation without a service (56.724333ms)\n✔ the person corrects a line: it goes back into its transcript; emptied, the line goes (24.220267ms)\n✔ a translated line is corrected in its own language; a line with no translation yet gets one at its original's times (19.730135ms)\n✔ making subtitles transcribes the speech with no transcript; with no service, it says where to connect one (181.830765ms)\n✔ a transcript written a word (or a character) per cue is its words: they are joined into lines, each still timed (5.950588ms)\n✔ a spoken line becomes a subtitle per clause, each with its own timed words, each traced to its piece of the line (5.679712ms)\n✔ a transcript of one word (or character) per cue is cut the same way (4.909225ms)\n✔ the person corrects one subtitle of a line: those words change in the transcript, the rest keep their times (21.881719ms)\n✔ a translation follows the original's subtitles; one that cannot be cut spans them, shown as one (13.148517ms)\n✔ a transcript that runs past the end of its file is listed to be made again (7.019141ms)\nℹ tests 23\nℹ suites 0\nℹ pass 23\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1410.624008\n"
+  },
+  {
+    "file": "studio/server/closure.test.mjs",
+    "code": 0,
+    "elapsedMs": 931,
+    "tail": "✔ a film's closure: its clips, what its pages load, subtitles beside its media, Studio's state of it (63.164796ms)\n✔ a clip's file is the film's whatever its name holds: quotes, #, ?, % (7.034391ms)\n✔ a folder without film.html holds no film (1.403114ms)\n✔ a reference made a project path, or nothing (0.482011ms)\n✔ a picture an override draws in a page is the film's, named from the page's folder (9.233692ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 320.73319\n"
+  },
+  {
+    "file": "studio/server/cover.test.mjs",
+    "code": 0,
+    "elapsedMs": 2713,
+    "tail": "✔ a picture from this computer becomes the card, even of an empty film; taken off, the film's poster again (205.124289ms)\n✔ only a picture is a cover: anything else is refused and the cover is kept (27.5842ms)\n✔ a picture of the project becomes the cover; one outside it cannot (26.372571ms)\n✔ the film at a moment becomes the cover, a JPEG, in place of a picture set before (836.988266ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2084.562168\n"
+  },
+  {
+    "file": "studio/server/custom-services.test.mjs",
+    "code": 0,
+    "elapsedMs": 2063,
+    "tail": "✔ a service is added with a name the command line calls it by; its key is never shown (14.651734ms)\n✔ a request stays under the service's address (1.346636ms)\n✔ JSON comes back as it is; the key goes in its header and never in what the agent reads (60.853619ms)\n✔ a file comes back into assets/<service>/; text without a type is read as text (29.458041ms)\n✔ a voice saved over the last take takes the last take's subtitles to the trash (18.601627ms)\n✔ only the project's files are sent, and one body at a time (6.945258ms)\n✔ a service that is not running says so (10.150143ms)\n✔ the key goes where the agent writes {key}, as the service's docs say; with none, as the usual header (16.735448ms)\n✔ a service changed without saying where its key goes keeps where it went (0.544282ms)\nℹ tests 9\nℹ suites 0\nℹ pass 9\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1053.997562\n"
+  },
+  {
+    "file": "studio/server/derived.test.mjs",
+    "code": 0,
+    "elapsedMs": 14810,
+    "tail": "✔ probe: length, picture size, frame rate and sound of a video; a sound has no picture (194.691375ms)\n✔ probe: a still's size, and a video turned a quarter (a phone's portrait video) as it is shown (292.179287ms)\n✔ poster and frames are JPEG, cached until the file changes (334.841069ms)\n✔ waveform: loud where the tone is, silent after (130.576664ms)\n✔ loudness: the part of the file asked for, in LUFS; 6 dB quieter reads 6 LU less; silence has none (823.287668ms)\n✔ loudness is read from ebur128's summary, not its running lines (0.538132ms)\n✔ a missing file is a 404, a file that is not media a 422 (69.376635ms)\n✔ a file's sound for the editor is small and in step: a video's AAC kept as it is, any other sound made AAC, once (10751.79514ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 14148.699524\n"
+  },
+  {
+    "file": "studio/server/diagnostics.test.mjs",
+    "code": 0,
+    "elapsedMs": 842,
+    "tail": "✔ a turn's log goes in as how it went, without what was said unless asked (4.07ms)\n✔ the diagnostic file: the report, the problems, the logs, the failed turns, and Codex's own log around its problem (37.42243ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 246.839014\n"
+  },
+  {
+    "file": "studio/server/examples.test.mjs",
+    "code": 0,
+    "elapsedMs": 967,
+    "tail": "✔ an index's examples: each with the address that fetches its folder, its poster from the repository (6.224996ms)\n✔ a duration is seconds or m:ss (0.360747ms)\n✔ the index from a file on this computer, or from an address; one that cannot be read is no examples (60.729351ms)\n✔ an example's folder: beside a local index, or fetched into the cache and kept a day (15.441127ms)\n✔ GitHub's index shows at once: the copy OpenFilm came with, then the last one read, while GitHub is asked (22.819899ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 325.855725\n"
+  },
+  {
+    "file": "studio/server/export-capabilities.test.mjs",
+    "code": 0,
+    "elapsedMs": 1775,
+    "tail": "✔ an ffmpeg that arrives after Studio started is found: having none is not remembered (131.024685ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1099.717584\n"
+  },
+  {
+    "file": "studio/server/exports.test.mjs",
+    "code": 0,
+    "elapsedMs": 425916,
+    "tail": " a film without cues is refused (202.24546ms)\n✔ slides: a PowerPoint deck and a PDF, one page per scene, the scene named in the notes (3318.471604ms)\n✔ a portrait deck has portrait slides (0.788839ms)\n✔ the editor's timeline: frames rounded edge by edge, tracks spread, placement as Basic Motion (0.601757ms)\n✔ fades in the editor's timeline: a picture that fades is rendered; a sound that fades is its own part with level keyframes (3.540021ms)\n✔ Final Cut Pro keeps source audio rows when an effect overlaps adjacent narration clips (4.463472ms)\n✔ Final Cut Pro footage audio follows its own picture, including reused sources and processed audio (486.023477ms)\n✔ Final Cut Pro keeps original audio paired when its picture is rendered (425.290483ms)\n✔ Final Cut Pro exports Studio row names for empty tracks, overlaps and footage sound (2569.369742ms)\n✔ Final Cut Pro reports unreadable subtitles before writing an incomplete export (50.880024ms)\n✔ Final Cut Pro connections retain their parent and sequence positions across cuts, trims and gaps (428.057416ms)\n✔ Final Cut Pro export packages FCPXML, rendered pages, audio and optional subtitle sidecars (12789.53281ms)\n✔ editing software: an xmeml folder; pages rendered with alpha, footage placed, sound as clips or stems, subtitles as SRT (23979.526602ms)\n✔ 剪映: the same timeline as a draft in 剪映's drafts folder, its media beside it, subtitles a text track (60002.856529ms)\n✔ 剪映: a page with no clear pixel in any frame comes as H.264, one clear for a single frame stays PNG (32786.124236ms)\n✔ 剪映: a page that fails stops the export, its error said, nothing left behind (15918.184684ms)\nopenfilm: the browser drawing the page closed (it crashed, or the system ended it): drawn again in new browsers\nopenfilm: the browser drawing the page closed (it crashed, or the system ended it): drawn again in new browsers\nopenfilm: the browser drawing the page closed (it crashed, or the system ended it): drawn again in new browsers\n✔ 剪映: the pages' browsers, ended partway as a crash would end them, are started again and the draft is whole (35179.884663ms)\n✔ 剪映: the process drawing the pages, ended partway, fails the draft with the reason and leaves nothing (9622.586879ms)\n✔ 剪映: a draft cancelled partway stops drawing at once, its browsers closed, nothing left (6061.856733ms)\n✔ an editing project's pages share the browsers by their frames (0.337797ms)\n✔ an export is written under a name of its own until it is whole, then renamed: none is left behind (20175.093948ms)\n✔ a PNG video keeps each picture once, for as long as it shows: a pixel apart is not a repeat (5593.353312ms)\n✔ burned-in subtitles: drawn over the frame, bars included; a subtitle file beside the video (8951.177982ms)\n✔ burned-in bilingual subtitles: the original and its translation, each once (5578.946801ms)\n✔ a zip of many files, readable (36.135474ms)\n✔ a zip copies a big file a piece at a time, its checksum right (215.551329ms)\n✔ a project's export takes its work and the parts asked, never its id, cache or another tool's files (132.987237ms)\n✔ a project exports as a zip holding its folder, or as the folder, each opened like any project (168.912987ms)\n✔ a project export named where it is asked for: the zip and the folder in it take that name (116.726159ms)\n✔ the API: where exports go and what can be made here; several at once; open and reveal only what is there (849.127056ms)\n✔ an editing-software export of a film whose clip leads out of the project (`../`) fails before anything is copied (56.450483ms)\n✔ a poster, and a video with its subtitles burned in, show footage no browser decodes (ProRes) through its copy (7807.536678ms)\n✔ platforms that take the same picture are drawn once, the others get its file under their own name (6744.885698ms)\n✔ a drafts folder that refuses a new folder is told apart, and the probe leaves nothing behind (1.710252ms)\nℹ tests 58\nℹ suites 0\nℹ pass 58\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 425142.966966\n"
+  },
+  {
+    "file": "studio/server/fcpxml.test.mjs",
+    "code": 0,
+    "elapsedMs": 946,
+    "tail": "✔ continuous main-track pictures occupy the primary storyline instead of connecting to a gap (4.702655ms)\n✔ FCPXML keeps exact NTSC times, source trims, layering, transforms and separate sound without duplicate audio (1.718076ms)\n✔ only real empty intervals become primary gaps, with overlays anchored in source time (1.008001ms)\n✔ FCPXML also writes integer-rate, audio-only timelines with a full-length primary storyline (1.340011ms)\n✔ mixed stems keep Voice and Footage in separate dialogue subroles (2.015758ms)\n✔ FCPXML includes editable subtitle titles above pictures, clipped to the sequence, with escaped multiline text (1.724487ms)\n✔ subtitle titles keep their relative size and white outlined text across sequence resolutions (2.616037ms)\n✔ subtitle titles on an audio-only timeline omit empty cues and end at the next subtitle (0.838893ms)\n✔ invalid plans fail instead of silently attaching a connection to an unrelated primary clip (1.245765ms)\n﹣ FCPXML validates against Final Cut Pro’s installed 1.10 DTD (0.384211ms) # Final Cut Pro DTD not installed\nℹ tests 10\nℹ suites 0\nℹ pass 9\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 270.988389\n"
+  },
+  {
+    "file": "studio/server/fetch-repo.test.mjs",
+    "code": 0,
+    "elapsedMs": 7801,
+    "tail": "✔ a repository address, with or without .git, a slash or the scheme (26.414654ms)\n✔ a folder's address: what follows /tree/ is the ref and the folder, told apart later; a file's means its folder (0.767051ms)\n✔ only https github.com and gitlab.com addresses of a repository are taken (1.857864ms)\n✔ the ref is the longest start of the path that is a branch or tag (0.928238ms)\n✔ a folder is a partial clone: only its files download, and only it is checked out (582.128526ms)\n✔ a fetched folder lands in the library under its own name, without .git; a second copy gets a new name (1259.970062ms)\n✔ a whole repository is copied without its .git; a file's address fetches its folder (937.056036ms)\n✔ no film.html, no such folder, no such branch, too big: said plainly, and nothing is left in the library (1525.395219ms)\n✔ the job list: a wrong address is refused at once; a job says how it went (23.989278ms)\n✔ over https: the size is known before the first byte, and the bar only goes up, to 100 (76.686687ms)\n✔ over https: a branch with a slash in its name; the whole repository; a file's address means its folder (87.547881ms)\n✔ over https: no film, no folder, no branch, too big: said before anything downloads (17.176747ms)\n✔ over https: a connection that drops is tried again, and its bytes are not counted twice (549.869721ms)\n✔ a repository GitHub's API cannot see (private) is fetched with git instead (536.51607ms)\n✔ over https: cancelled while downloading, it stops and leaves nothing (9.94713ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 6860.301652\n"
+  },
+  {
+    "file": "studio/server/files-transcripts.test.mjs",
+    "code": 0,
+    "elapsedMs": 1989,
+    "tail": "✔ assets/voice.wav → assets/narration.wav preserves raw transcripts and translated film captions (65.213801ms)\n✔ assets/voice.mp4 → assets/cuts/interview.mp4 preserves raw transcripts and translated film captions (27.314783ms)\n✔ a case-only media rename keeps canonical subtitles and translated captions (32.036746ms)\n✔ voice.mp4 and voice.m4a keep shared subtitles when one is renamed (31.007501ms)\n✔ a case-only rename of one of two media sharing subtitles keeps them for both (24.218782ms)\n✔ page links follow moved media and follow unique VTT tracks (20.591214ms)\n✔ page links follow moved media and keep shared VTT tracks (23.733865ms)\n✔ an existing target base VTT file prevents all changes (10.392668ms)\n✔ an existing target fr VTT directory prevents all changes (15.719249ms)\n✔ sidecar failure rolls back moved sidecars before changing the film (13.913242ms)\n✔ media failure rolls back moved sidecars before changing the film (13.85817ms)\n✔ sidecar failure rolls back shared copies before changing the film (15.944408ms)\n✔ media failure rolls back shared copies before changing the film (17.436563ms)\n✔ media with no source transcript can still be renamed beside an existing destination VTT (16.345735ms)\n✔ an extension-only rename keeps existing sidecars and captions (19.555835ms)\n✔ a whole-folder move keeps existing sidecars and captions (16.888516ms)\nℹ tests 16\nℹ suites 0\nℹ pass 16\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1339.682666\n"
+  },
+  {
+    "file": "studio/server/files.test.mjs",
+    "code": 0,
+    "elapsedMs": 3886,
+    "tail": "✔ paths stay inside the project and out of .film/ (24.449532ms)\n✔ a link in a downloaded project leads nowhere: nothing is imported, moved, made or trashed through it (53.069909ms)\n✔ a link to .film/ is .film/ (3.700481ms)\n﹣ Studio's folder by any spelling Windows reads as it: a stream of it, its short name (0.180856ms) # Windows names\n✔ media under assets/ at any depth, pages outside it, folders even when empty (37.075292ms)\n✔ an import is streamed under a free name, and a failed one leaves nothing (23.238752ms)\n✔ files imported at once (a message with two) each land, none in the other's way (25.243907ms)\n✔ the same file imported again is the one there; other bytes by that name get the next free name (79.934289ms)\n✔ concurrent imports by the same name keep every distinct file and reuse identical bytes (319.102544ms)\n✔ concurrent imports through two names for the same directory do not overwrite each other (72.716858ms)\n✔ moving a file or a folder points film.html at the new place; nothing is moved over another (32.106458ms)\n✔ a page moved into a folder keeps its links; a page linking to a moved picture follows it (22.097254ms)\n✔ a rename never changes what a file is: another ending of the same kind is fine, a name in another case too (20.176097ms)\n✔ delete goes to the trash, not away (6.254588ms)\n✔ one naming rule for imports, renames, moves and new folders: spaces and every script stay (12.891446ms)\n✔ a video's sound is taken out beside it, as it is, its transcript along; a second one gets a free name (596.855989ms)\n✔ a freeze frame is the video's frame at that moment, full size, a PNG beside it; never over another file (434.240447ms)\n✔ media linked from elsewhere (a NAS): read through the link, listed, never written there (21.500743ms)\n✔ a link that leads nowhere (the NAS is off) is listed as missing, relinked, and collected into the project (14.349639ms)\n✔ collecting a linked folder (b-roll) keeps its files when the source goes offline (26.291284ms)\n✔ collecting a linked folder (.b-roll) keeps its files when the source goes offline (19.743673ms)\n✔ a link a project brings from elsewhere is not followed, even to a file that is there; one the person makes is (7.207682ms)\n✔ files copied in from this computer: a copy each under a free name, the originals left as they are (13.231838ms)\n✔ media is dated when it came into the project: a copy now, a link when it was made (12.110616ms)\nℹ tests 24\nℹ suites 0\nℹ pass 23\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 3204.88623\n"
+  },
+  {
+    "file": "studio/server/film-subtitle.test.mjs",
+    "code": 0,
+    "elapsedMs": 955,
+    "tail": "✔ a stored style is read field by field; the earlier { look, size } shape still reads (4.633288ms)\n✔ a look is picked while the style is exactly it, at any size (0.787084ms)\n✔ the CSS grows away from the nearest edge and keeps the stroke outside the letters (2.44272ms)\n✔ on a vertical frame an unmoved subtitle rises above the feed's own buttons (0.742001ms)\n✔ the shown line: the later one where two overlap; the picked language, or both (1.450567ms)\n✔ word highlight: the word being said, by its share of the line (30.411037ms)\n✔ files: overlapping lines give way, speakers stay apart from the text (1.006439ms)\n✔ files: a VTT line with & or < reads as written, not as a tag (0.459563ms)\n✔ a burned-in frame: the line in the frame's pixels, escaped, nothing when off or silent (1.362929ms)\n✔ a line fades in and out over fadeMs at its ends, off when 0, and the export draws the same opacity (3.113402ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 292.400184\n"
+  },
+  {
+    "file": "studio/server/film.test.mjs",
+    "code": 0,
+    "elapsedMs": 1142,
+    "tail": "✔ a folder without film.html reads as empty, and the first insert makes the film (26.659897ms)\n✔ a clip is found by its id wherever the agent moved it (8.758763ms)\n✔ an edit naming a clip the agent removed fails whole, and the file is left as it was (4.92876ms)\n✔ a film.html that does not read is never written over (2.562668ms)\n✔ an edit that would break the film is refused with the reason (5.263271ms)\n✔ move: to another time, an existing track, or a new track; empty tracks go (8.759819ms)\n✔ insert names the clip after its file, never reusing an id (5.801178ms)\n✔ split keeps the first half and adds the rest right after it, with a new id (4.946023ms)\n✔ track flags and order (7.295487ms)\n✔ the revision follows the text, and Studio writes over the file, the rest of it as it was (7.02136ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 354.518062\n"
+  },
+  {
+    "file": "studio/server/folder-picker.test.mjs",
+    "code": 0,
+    "elapsedMs": 1084,
+    "tail": "✔ macOS: the words and the folder are arguments of the script, never inside it (7.180449ms)\n✔ a starting folder that is not a full path is left out (0.35463ms)\n✔ Windows: PowerShell reads the words from its environment (0.35768ms)\n✔ Linux: zenity, else kdialog, else none (0.410803ms)\n✔ files: several at once, a path a line; the words are arguments, never inside the script (1.392399ms)\n✔ macOS: Finder opens the dialog, in front, and the app that was in front comes back (0.637577ms)\n✔ only a real cancel is a cancel: osascript failing (Finder not allowed) is an error the page answers (1.606287ms)\n✔ a dialog starts in the folder asked, or the nearest one above it that is there (0.76827ms)\n✔ macOS: the starting folder is made before Finder is asked, and one that is gone opens none (1.009638ms)\n﹣ Windows: folder paths survive PowerShell output as UTF-8 (0.667594ms) # SKIP\n﹣ Windows: files paths survive PowerShell output as UTF-8 (0.243907ms) # SKIP\nℹ tests 11\nℹ suites 0\nℹ pass 9\nℹ fail 0\nℹ cancelled 0\nℹ skipped 2\nℹ todo 0\nℹ duration_ms 397.685239\n"
+  },
+  {
+    "file": "studio/server/folders.test.mjs",
+    "code": 0,
+    "elapsedMs": 2501,
+    "tail": "✔ folders of the Projects list: make, rename, move projects in and out, kept in studio.json (250.839827ms)\n✔ deleting a folder answers the projects that were in it; deleting those moves them to the Trash (62.951285ms)\n✔ the film's length is listed once Studio has learnt it, and only while film.html is unchanged (17.802542ms)\n✔ folders inside folders: made in their parent, and deleted with it, their projects too (32.951245ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1647.567674\n"
+  },
+  {
+    "file": "studio/server/fonts.test.mjs",
+    "code": 0,
+    "elapsedMs": 1078,
+    "tail": "✔ a face's family, weight class and italic bit (8.880005ms)\n✔ a variable font: its weight axis on CSS's scale, and an italic axis (1.422882ms)\n✔ families gather their faces' weights and italics (27.716456ms)\n✔ a CJK font's sample only when its character map has it (2.914574ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 298.751254\n"
+  },
+  {
+    "file": "studio/server/frame-file.test.mjs",
+    "code": 0,
+    "elapsedMs": 1829,
+    "tail": "✔ FRAME layer pages are written in place, again and again (21.729207ms)\n✔ only frame/ pages and scripts can be written that way (5.50348ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1031.774467\n"
+  },
+  {
+    "file": "studio/server/get.test.mjs",
+    "code": 0,
+    "elapsedMs": 10716,
+    "tail": "✔ tts: the file lands, its timed words a WebVTT beside it, and the receipt says what landed, not what it cost (170.580485ms)\n✔ a file is never written through a link the project brings under assets/ (37.184696ms)\n✔ wrong options are refused before anything is sent (exit 2) (21.308201ms)\n✔ not enough balance: the agent is told to stop and where the person tops it up, the person is told in Studio, nothing landed (18.153342ms)\n✔ the model: the person's choice for each kind of media, the provider's first otherwise, --model for one run (59.427689ms)\n✔ video: the person confirms what will be made first, without amounts; no page means ask them and run again with --yes (83.073232ms)\n✔ asr: the speech alone is sent, its transcript lands beside the recording, and is not made twice (458.612551ms)\n✔ asr: a recording outside assets/ gets its transcript beside it too; the tools' files are refused (473.191702ms)\n✔ what lands stays in assets/, and the receipt leaves out what it cost (10.236524ms)\n✔ subtitles translate through the provider chosen for it: each line its own, kept beside the transcript (53.385504ms)\n✔ Studio: GET /api/get lists what can be got, never who makes it; a video run asks the page showing the project (189.46227ms)\n✔ openfilm get: what can be got here, connected, partly or not at all; wrong commands exit 2 (7095.482501ms)\n✔ nothing connected: no verbs, and a note naming only what the services make (7.214803ms)\n✔ call: the person's own services are listed with what they do, and reached with their key (24.861315ms)\n✔ a voice-over spoken again without word timings: the last take's transcript goes, and the receipt says there is none (15.00092ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 10016.563493\n"
+  },
+  {
+    "file": "studio/server/history.test.mjs",
+    "code": 0,
+    "elapsedMs": 64932,
+    "tail": "✔ nothing is committed unless the person commits, with their message; only the film's files are kept (2141.945968ms)\n✔ what a commit changed is told as the film: scenes and sounds added, removed and edited (2559.770179ms)\n✔ media is kept by its content outside git, and comes back byte for byte (2684.472115ms)\n✔ discard puts back the last commit; files the film takes since go to the trash, others stay (1432.577128ms)\n✔ going back to a commit puts its files in the folder as uncommitted changes; nothing is committed (3177.732655ms)\n✔ restore, switch and merge write only the film's files that differ, and nothing else (4787.827661ms)\n✔ branches: a new one takes the changes along; switching leaves them on their branch and brings them back (8047.745672ms)\n✔ a branch from an earlier commit; rename takes its parked changes; delete guards commits on no other branch (9069.760429ms)\n✔ merge: a clean one, a collision that stops, and one where the person says whose side wins (11665.696682ms)\n✔ merge: film.html edits on both sides in different places come together line by line (4563.456822ms)\n✔ the folder's own .git is never touched (857.278687ms)\n✔ a history the folder brought with it never runs its commands: it is put aside and a new one made (1574.690051ms)\n✔ a project moved or renamed keeps its history: every call names the folder where it is now (2665.373207ms)\n✔ a commit an earlier edition made shows the name the person gave it (795.734254ms)\n✔ progress is told while an action runs (576.823105ms)\n✔ an earlier Studio's history is brought up to date on first use: its versions kept, the rest left out (7372.920871ms)\nℹ tests 16\nℹ suites 0\nℹ pass 16\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 64264.059624\n"
+  },
+  {
+    "file": "studio/server/jianying.test.mjs",
+    "code": 0,
+    "elapsedMs": 29960,
+    "tail": "✔ a 剪映 draft: microseconds edge by edge, the plan's tracks, bottom first, as 剪映 stacks them (29.858494ms)\n✔ placement: fitted in the canvas, then the plan's scale; moved in half-canvas units, y upward (6.068726ms)\n✔ footage plays its own sound at its level; other sounds are audio clips with 剪映's fades (4.031683ms)\n✔ subtitles: a text track over all, one clip a cue, white with a dark edge, low in the picture (1.637715ms)\n✔ the drafts folders: 剪映's and CapCut's, on a Mac and on Windows, when they are there (2.279509ms)\n▶ custom drafts folders: Qt quotes and escapes are decoded for both apps on Mac and Windows\n  ✔ jianying on darwin: quoted punctuation (0.96839ms)\n  ✔ jianying on darwin: escaped backslashes (0.380932ms)\n  ✔ jianying on darwin: escaped Unicode (0.701293ms)\n  ✔ jianying on darwin: escaped quotes (0.408802ms)\n  ✔ jianying on win32: quoted punctuation (0.349375ms)\n  ✔ jianying on win32: escaped backslashes (0.257156ms)\n  ✔ jianying on win32: escaped Unicode (0.230444ms)\n  ✔ jianying on win32: escaped quotes (0.175074ms)\n  ✔ capcut on darwin: quoted punctuation (0.16789ms)\n  ✔ capcut on darwin: escaped backslashes (0.56028ms)\n  ✔ capcut on darwin: escaped Unicode (0.269378ms)\n  ✔ capcut on darwin: escaped quotes (0.239081ms)\n  ✔ capcut on win32: quoted punctuation (1.410847ms)\n  ✔ capcut on win32: escaped backslashes (0.523658ms)\n  ✔ capcut on win32: escaped Unicode (0.157465ms)\n  ✔ capcut on win32: escaped quotes (0.131744ms)\n✔ custom drafts folders: Qt quotes and escapes are decoded for both apps on Mac and Windows (11.48606ms)\n✔ custom drafts folders: read the General section, allowing whitespace and CRLF (0.440357ms)\n✔ custom drafts folders: empty or missing decoded paths fall back to an existing default (0.611625ms)\n✔ a draft says which app wrote it: 剪映 or CapCut (3.435796ms)\n✔ each file is in the draft's media library, once, and each material names its entry (0.800253ms)\nℹ tests 26\nℹ suites 0\nℹ pass 26\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 467.257799\n"
+  },
+  {
+    "file": "studio/server/keys.test.mjs",
+    "code": 0,
+    "elapsedMs": 3687,
+    "tail": "✔ keys are kept in a file only this user can read, in a folder only this user can open; loosened, it is repaired (108.447815ms)\n✔ a key pasted in Studio wins over the environment's, which counts unless disconnected; Google's goes by either name (2.157013ms)\n✔ a pasted key is trimmed, and refused when it is not one key (3.098489ms)\n✔ the providers API: keys go in and never come back out; choices for each kind of media (245.247033ms)\n✔ a provider's own page for its balance opens in the person's browser, for every provider alike (7.518332ms)\n✔ a provider that checks its pasted key refuses one that cannot work, where it is pasted (30.937269ms)\n✔ a key removed: what it made goes to another key that makes it, else to nothing (26.740705ms)\n✔ an own key comes with its model: the provider's first unless chosen, kept only when it is not; voices go with voice-over (32.222852ms)\n✔ what a newer OpenFilm keeps in providers.json stays when this one writes it (5.529814ms)\nℹ tests 9\nℹ suites 0\nℹ pass 9\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2765.025354\n"
+  },
+  {
+    "file": "studio/server/main.test.mjs",
+    "code": 0,
+    "elapsedMs": 27849,
+    "tail": "✔ a Studio that ends unexpectedly is started again on the same address; one asked to quit is not (11162.907764ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 26582.586051\n"
+  },
+  {
+    "file": "studio/server/markers.test.mjs",
+    "code": 0,
+    "elapsedMs": 4990,
+    "tail": "✔ markers are read one by one: what is not one is left out (60.000565ms)\n✔ a project keeps its markers in .film/markers.json, outside film.html (192.813926ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2069.297438\n"
+  },
+  {
+    "file": "studio/server/open-sources.test.mjs",
+    "code": 0,
+    "elapsedMs": 8088,
+    "tail": "✔ a folder is opened only when it holds a film (create false); a folder without one is said with its code (899.730986ms)\n✔ the folder browser shows the home folder only (120.908182ms)\n✔ a fetch: a wrong address is refused at once, with its code; an unknown job is a 404 (38.726971ms)\n✔ the examples, from the index Studio is pointed at (11.090765ms)\n✔ a project whose folder moved is located, though its folder is gone; it opens again (179.872237ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5572.144228\n"
+  },
+  {
+    "file": "studio/server/ops.test.mjs",
+    "code": 0,
+    "elapsedMs": 2653,
+    "tail": "✔ props: fields as film.html writes them (defaults not written, times to the millisecond) (12.777913ms)\n✔ props: track flags, moves planned against the clips (a batch of moves lands where each was sent), track order (2.127055ms)\n✔ split into halves the timeline worked out: deep copies, the right one named <id>-b (3.22412ms)\n✔ insert: a copy of a clip, after a clip, on a new track, or on the last track of its kind (11.77371ms)\n✔ insert: a clip put back by its id that is there already is not put there twice (24.070168ms)\n✔ links: `link` writes data-link among the attributes a clip keeps, and takes it away; a copy gets its own or none (4.781929ms)\n✔ component properties: `props` writes data-props beside a link, takes it away, and a copy of the clip has them too (10.357395ms)\n✔ props: clips that moved in time are written in the order they play (3.085642ms)\n✔ fade: kept as the clip's own entry of its overrides, beside a page's element tweaks; [0, 0] or null takes it away (17.524684ms)\n✔ fade: a split leaves the fade in on the left half and the fade out on the right; a trim shorter than both fits them in (38.618925ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 938.215623\n"
+  },
+  {
+    "file": "studio/server/page-links.test.mjs",
+    "code": 0,
+    "elapsedMs": 3510,
+    "tail": "✔ a page moved one folder down: every link it can read still reaches its file (68.903185ms)\n✔ moved back where it was, nothing changes; a file moved along is followed (2.979485ms)\n✔ stylesheets and module scripts are rewritten as well; an import stays relative (1.460977ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1048.234695\n"
+  },
+  {
+    "file": "studio/server/pageframes.test.mjs",
+    "code": 0,
+    "elapsedMs": 48639,
+    "tail": "✔ a project's card: its film's poster; once the film changes, the last one at once while the new one is drawn (7131.946717ms)\n✔ a card waits a moment only for a film's first poster: drawn on, it is asked for again (the request held no connection) (6905.114655ms)\n✔ a film that has nothing in it has no poster (17.630802ms)\n✔ a page's thumbnail follows the files the page loads: a stylesheet it shares changed, it is drawn again (831.563013ms)\n✔ a page clip's thumbnail shows the changes made in it (its overrides): another change, another picture (1419.135953ms)\n✔ a page clip with a size is drawn laid out at it, as the film lays it out: a portrait page is a portrait picture (1418.081512ms)\n✔ a page that never gets ready (a loop that never ends) fails in its own time, and the pages after it are drawn (17600.603743ms)\n✔ a page asked for by a path out of the project (`../`) is not there: never opened, probed or drawn (15.661ms)\n✔ a page's facts: its own size, or none (reflows: shown alone at 1920 × 1080, in a film at what it is given) (336.927219ms)\n✔ a film whose footage no browser decodes (ProRes) has its picture on its card, through a copy (4339.651794ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 46464.533249\n"
+  },
+  {
+    "file": "studio/server/prefs.test.mjs",
+    "code": 0,
+    "elapsedMs": 1809,
+    "tail": "✔ the version whose notes were last shown: a version, else none (4.30334ms)\n✔ what a newer OpenFilm keeps in prefs.json stays when this one writes it (3.017486ms)\n✔ the keyboard shortcuts are kept as given, in shape only; none is null (0.640578ms)\n✔ the keyboard shortcuts written are read back, and the rest of prefs.json stays (3.618224ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 451.076822\n"
+  },
+  {
+    "file": "studio/server/preview-cache.test.mjs",
+    "code": 0,
+    "elapsedMs": 9994,
+    "tail": "✔ a render is named by all its picture depends on: film.html and the pages change it, a sound does not (17.647868ms)\n✔ renders are made one at a time, on the frame grid; asked again under other names, the old ones are let go (82.407216ms)\n✔ the film's origin serves a render by its name from the project's cache, and nothing else there (106.065648ms)\n✔ a stretch is rendered by the film's own renderer, its picture only, at the size asked (7383.261083ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 9061.490079\n"
+  },
+  {
+    "file": "studio/server/project-fonts.test.mjs",
+    "code": 0,
+    "elapsedMs": 1382,
+    "tail": "✔ @font-face rules: family, weight range, style, sources resolved from the file (13.475689ms)\n✔ weights and addresses (0.700618ms)\n✔ the families CSS names: font-family and the font shorthand, no generics or worked-out names (1.661783ms)\n✔ the stylesheets a page loads (1.103651ms)\n✔ families from faces: weights in a range, italics, a family whose files are gone (29.887338ms)\n✔ a project's fonts are read again only for files that changed (52.974447ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 505.327107\n"
+  },
+  {
+    "file": "studio/server/project-settings.test.mjs",
+    "code": 0,
+    "elapsedMs": 1237,
+    "tail": "✔ a probed rate is named as editors name it; other rates are not project rates (1.640497ms)\n✔ settings are read field by field: what is not one is left out (1.660684ms)\n✔ a project keeps its settings in .film/settings.json; null takes one away (16.953886ms)\n✔ track heights are kept with the clips their tracks had, within the heights a track can be (7.679502ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 321.87472\n"
+  },
+  {
+    "file": "studio/server/projects.test.mjs",
+    "code": 0,
+    "elapsedMs": 1567,
+    "tail": "✔ opening a new folder makes it a project: an empty film, .film/ with an id, kept out of git (24.474939ms)\n✔ an existing film.html is never touched, and reopening keeps the id and moves it to the top (18.501297ms)\n✔ a copied folder brings its original id and gets its own (14.441178ms)\n✔ new projects go to the library as Untitled, Untitled 2 (13.264696ms)\n✔ new projects go to the folder chosen in Settings; those made before stay where they are (14.879428ms)\n✔ one folder is one project, however its path reaches it (12.557573ms)\n✔ one folder by another spelling of its case is still one project (9.851662ms)\n✔ renaming a project renames its folder; a taken name is refused (29.467695ms)\n✔ forgetting a project leaves its folder; a deleted folder shows as missing (25.121871ms)\n✔ the disk root, the home folder and files are not projects (1.220223ms)\n✔ opened only when there is a film (create false): a folder without one is said, and nothing is written (7.826292ms)\n✔ a moved project is located: same id and place in the list, its history with it; a wrong folder is refused (32.981984ms)\n✔ what a newer OpenFilm keeps in studio.json stays when this one writes it (7.960969ms)\n✔ the list shows every project in the library, made in Studio or not; plain folders and hidden ones are not projects (17.316337ms)\n✔ a project deleted from the library outside Studio leaves the list; one opened from elsewhere stays, missing (14.550212ms)\n✔ while the library's folder is not there (a disk unplugged), its projects stay in the list (6.522497ms)\n✔ moving the library with its projects: each folder whole, a name taken becomes \"Name 2\", the rest stays (28.408504ms)\n✔ moving the library without its projects: they stay where they are, still in the list (7.643567ms)\n✔ a Studio with a home of its own shares the library the person chose, kept in the shared home (8.665263ms)\n✔ a listed project moved into the library outside Studio is the same project at its new folder, listed once (9.354925ms)\n✔ changes to the list made at the same moment all hold: projects made while others are taken off stay on it (39.522344ms)\n✔ a folder moves into another with what it holds, back to the top level, and never inside itself (11.983222ms)\nℹ tests 22\nℹ suites 0\nℹ pass 22\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 646.201489\n"
+  },
+  {
+    "file": "studio/server/proxies.test.mjs",
+    "code": 0,
+    "elapsedMs": 7875,
+    "tail": "✔ heavy footage: past 1080p, or not 8-bit H.264, VP8/9 or AV1 (3.432601ms)\n✔ a proxy is its height on the short side, even, the shape kept, never larger than the footage (1.4837ms)\n✔ heavy footage gets a proxy in the background, with the same frames at the same times; light footage none (5675.198051ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 6841.2901\n"
+  },
+  {
+    "file": "studio/server/saved.test.mjs",
+    "code": 0,
+    "elapsedMs": 2652,
+    "tail": "✔ a saved clip is a folder of the library named as the person reads it, with every file it loads and none it does not (92.885414ms)\n✔ the library lists files of any kind and folders as a project's media, a bundle as one entry with what it is (72.305151ms)\n✔ a bundle moves and is renamed as a folder; taken into a project, its files go under saved/ there once, its page still finding them (49.732067ms)\n✔ a file of any kind is saved as itself, and taken as an import into assets/; a page with what it loads (40.512323ms)\n✔ clips saved together keep their tracks and times from the first, and the links among them only (35.516015ms)\n✔ a place in the library is named from saved/ (0.977052ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1654.383815\n"
+  },
+  {
+    "file": "studio/server/server.test.mjs",
+    "code": 0,
+    "elapsedMs": 25384,
+    "tail": "451341ms)\n✔ rename refreshes only its open pages, including writes still waiting to settle (753.176862ms)\n✔ saving the same project name does not redraw its open page or replace its watcher (1034.29612ms)\n✔ rename waits for this project’s running or queued exports, but other projects can be renamed (198.15669ms)\n✔ an open project keeps film, file, history and export events after rename without reconnecting (1376.722354ms)\n✔ a film whose clips have no ids comes back with each named after its file, as the preview names them (13.154893ms)\n✔ rename renames the folder and tells the pages showing it; delete moves it to the Trash and off the list (361.156241ms)\n✔ the preview plays heavy footage from its proxy once made; what the file is (film-facts), an export and proxies off read the original (5151.868569ms)\n✔ media linked in the media pane is served to the film; a link a project brings from elsewhere is not (68.10038ms)\n✔ the film origin serves a project's files, with ranges, never .film/, and pages get the film clock (93.950289ms)\n✔ files over the API: import a body of any size, list, move with film.html following, trash (427.166386ms)\n✔ history: nothing is committed on its own; the person commits, goes back as uncommitted changes, branches (2929.470143ms)\n✔ a project whose folder is gone says so, never takes Studio down, and can be taken off the list (35.409518ms)\n✔ a page gone mid-request (its connection reset) ends only its own stream, never Studio (228.7352ms)\n✔ an export is shown in the file manager only while it is there (11.532084ms)\n✔ the Desktop button opens the installer for this computer, or the project's website, in the person's browser (2.387155ms)\n✔ Settings → General: this Studio's version, and whether npm has a newer one (330.340936ms)\n✔ the fonts installed here, for the inspector's font menu (1667.51048ms)\n✔ a project's own fonts: what its pages declare, and what one page can draw with and names (26.626061ms)\n✔ a web page's poster and frames are drawn (it has no file to cut from) (1630.219955ms)\n✔ files and addresses open without a shell: a name with & or | is never a command (0.520682ms)\n✔ an advertised Studio writes run.json, quits when asked by a key holder, and removes the file (81.207309ms)\n✔ a project an app's agent is working in is marked so, and is neither renamed nor deleted until it stops (32.538978ms)\n✔ an app's Studio (`stays`) is not stopped by `openfilm open`, and says why at once (8.815153ms)\n✔ Update is not run from a source checkout (git pull updates it), nor without the key (6.69784ms)\n✔ `openfilm open` without a folder opens the project opened last, and makes none (17.251731ms)\n✔ a film opened in Studio is the one opened last: `openfilm open` alone comes back to it (38.00696ms)\n✔ a project's film address stays the same when Studio starts again with the same key, and when it is renamed (54.960934ms)\n✔ a page's stream is a WebSocket: only with the key, and from the editor's own origin; closing Studio ends it (34.419585ms)\n✔ a sound a browser cannot play (AIFF) reaches the preview as a WAV, made once and kept in .film/cache (351.647226ms)\n✔ the preview's mixer gets a file's sound alone (?film-sound), never the whole video: small, made once, 204 when there is none (3675.214794ms)\n✔ only requests addressed to this machine by name are answered, on both origins (another site rebound to 127.0.0.1 gets nothing) (30.08052ms)\n✔ the film origin serves the film's files only: no dot file or folder (.git, .env), no Windows stream, nothing a link leads out to (20.090066ms)\n✔ a frame from a page larger than the cap closes its stream; small ones are still answered (24.969987ms)\n✔ Settings moves the library: how many projects it holds, then the folder and, when asked, its projects (41.58559ms)\n✔ a project deleted: every page showing it is told it is gone; several deleted at once all leave the list (340.614316ms)\nℹ tests 45\nℹ suites 0\nℹ pass 45\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 24495.287107\n"
+  },
+  {
+    "file": "studio/server/skill-covers.test.mjs",
+    "code": 0,
+    "elapsedMs": 2867,
+    "tail": "✔ a replacement skill cover has a new gallery URL and serves the chosen bytes (469.273383ms)\n✔ skills: turned off and on, an official one installed and uninstalled, one of the person's removed to the trash (186.857755ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2089.697284\n"
+  },
+  {
+    "file": "studio/server/stage.test.mjs",
+    "code": 0,
+    "elapsedMs": 14367,
+    "tail": "✔ a click on a page's backdrop (a box filling the page) takes the clip, not the box; a smaller box is taken (812.835348ms)\n✔ a click on a title under a full-frame overlay (letterbox, vignette) takes the title; on nothing but the overlay, the clip (871.414634ms)\n✔ a line typed in place starts with all of its words selected; a click on them moves the caret, though something unseen lies over them (807.832807ms)\n✔ a line typed in place tells the editor its words as they are typed, and kept at Enter (945.467596ms)\n✔ a click on words takes them, though a line drawn behind runs across its own box there (743.0209ms)\n✔ a title with its subtitle written inside it: its own words are a layer, typed over with the subtitle still shown (1051.105005ms)\n✔ a title with its subtitle inside it: its box hugs its own words, and moved or restyled the subtitle stays as it was (1049.986173ms)\n✔ words drawn in a fill of their page's own (gold words) say so; recolored with it taken over, they are drawn in the new color and the block inside keeps its own (853.175254ms)\n✔ a layer restyled leaves the others where they are, and takes its new size: the words beside a number stay put (845.732885ms)\n✔ a hold kept before gives way: the number set back smaller takes its own size, and the words stay (1954.603583ms)\n✔ words in a block as wide as their box restyled: the box hugs them, they stay centered where they were (803.784804ms)\n✔ more words leave the others where they are: previewed, and typed in place (946.199791ms)\n✔ a picture inside a page says what it draws: an <img>, a box painted with one, a frame holding one <img>, and a file put there (692.295746ms)\nℹ tests 13\nℹ suites 0\nℹ pass 13\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 13411.804073\n"
+  },
+  {
+    "file": "studio/server/subtitle-edits.test.mjs",
+    "code": 0,
+    "elapsedMs": 3249,
+    "tail": "✔ a source's subtitles are read as the film shows them, each named as its cue is (57.901072ms)\n✔ written back, each subtitle is a cue of its own, cut by hand: Studio does not cut it again (31.406306ms)\n✔ cues are written in order, never overlapping, none empty (2.830779ms)\n✔ translations are written at the same times; undo puts every file back, and only over what it left (44.819288ms)\n✔ the routes: a source's subtitles, written, and put back (238.943885ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2213.889525\n"
+  },
+  {
+    "file": "studio/server/subtitle-segments.test.mjs",
+    "code": 0,
+    "elapsedMs": 1367,
+    "tail": "✔ the two lines that started it: a clause per subtitle, its comma gone (108.428153ms)\n✔ a clause mark makes no orphan: both sides need 4 CJK characters or 2 words (13.503275ms)\n✔ a long clause with no punctuation is cut where it costs least: before a conjunction, never inside a word (3.173649ms)\n✔ mixed CJK and English: an English word or name is never cut, and a term like \"MIT 协议\" stays together (1.761291ms)\n✔ English: sentences end at full stops, not at abbreviations, initials or decimals; commas start clauses and stay (3.649993ms)\n✔ a number keeps its unit, however tight the line (1.566197ms)\n✔ very short lines stay whole; a piece too short to read joins its neighbor (1.303589ms)\n✔ a pause of half a second ends a subtitle; a short breath does not (1.027919ms)\n✔ times: a subtitle holds 200 ms after its last word, never into the next; small gaps close; at most 7 s (1.949964ms)\n✔ the end of a subtitle: Chinese drops ，。、；：, keeps ？！… and quotes; Latin keeps its punctuation (0.729508ms)\n✔ a translation is cut to follow the original's pieces, at its own clause marks, or spans them when it cannot be (3.103318ms)\n✔ a correction of one piece goes into its words in the line; the other pieces keep their times (2.035783ms)\n✔ the rules are one table (3.252209ms)\nℹ tests 13\nℹ suites 0\nℹ pass 13\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 455.70375\n"
+  },
+  {
+    "file": "studio/server/transcripts.test.mjs",
+    "code": 0,
+    "elapsedMs": 2552,
+    "tail": "✔ a transcript is read and written only inside the project, never at a `../` source (41.017914ms)\n✔ a link in the project to a folder out of it is not followed for transcripts (11.889197ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1591.143756\n"
+  },
+  {
+    "file": "studio/server/transition-pages.test.mjs",
+    "code": 0,
+    "elapsedMs": 2442,
+    "tail": "✔ a transition's page is kept once, under its name; one there already stays as it is (11.439235ms)\n✔ the route (136.52654ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1600.479843\n"
+  },
+  {
+    "file": "studio/server/watch.test.mjs",
+    "code": 0,
+    "elapsedMs": 8885,
+    "tail": "✔ film.html changes come with their revision, other files as one files event; .film/ is not watched (1815.944077ms)\n✔ watching folder by folder (Linux): a file replaced by a rename is seen every time, and new folders are taken in (634.362625ms)\n✔ renamed folders keep their listeners and original unsubscribe functions through repeated moves (2645.142334ms)\n✔ moving into an already watched path preserves both subscriptions (5.293081ms)\n✔ a watched project's folder that goes is said gone; one renamed in Studio (moved) is not (2709.123845ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 8056.874071\n"
+  },
+  {
+    "file": "studio/server/providers/azure.test.mjs",
+    "code": 0,
+    "elapsedMs": 1212,
+    "tail": "✔ voice-over: SSML in the voice's locale, as WAV, its length from the file; the key and region split apart (63.744467ms)\n✔ a key without a region is refused before anything is sent, unless AZURE_SPEECH_REGION says it (12.512714ms)\n✔ a region that could not be a host name is refused before anything is sent (1.66583ms)\n✔ checkKey holds a pasted key to the same rule, so Settings refuses one that cannot work (0.919187ms)\n✔ voices: the service's list, searched by the prompt, then by language and gender (27.916829ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 422.298629\n"
+  },
+  {
+    "file": "studio/server/providers/brave.test.mjs",
+    "code": 0,
+    "elapsedMs": 1427,
+    "tail": "✔ each query is one search for web results, with the key, without highlighting (84.270378ms)\n✔ pages are read here, without the key; one that cannot be read is said beside the rest (26.821298ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 468.82126\n"
+  },
+  {
+    "file": "studio/server/providers/common.test.mjs",
+    "code": 0,
+    "elapsedMs": 1479,
+    "tail": "✔ words from character timings: spaces split, punctuation stays, each Chinese character is a word, times clamped (7.42101ms)\n✔ a WAV of PCM plays as long as its samples, whatever its header claims (0.854148ms)\n✔ WAV duration excludes trailing metadata and is capped by the available samples (0.832476ms)\n✔ picture sizes from PNG and JPEG headers (0.561177ms)\n✔ results land as assets/<dir>/<name>.<ext>; --out is a name, not a path (1.250653ms)\n✔ translation: one string per line asked, in order; anything else is refused (1.784665ms)\n✔ no balance, as each service says it, is one error for all; a plain rate limit is not one (153.08037ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 515.071184\n"
+  },
+  {
+    "file": "studio/server/providers/doubao.test.mjs",
+    "code": 0,
+    "elapsedMs": 5029,
+    "tail": "✔ word timings are real and numeric; whitespace-only tokens are ignored (26.435589ms)\n✔ normalized numbers and symbols may differ from spoken word tokens (0.527472ms)\n✔ replays word timings from a real Doubao response for non-sensitive synthetic speech (0.817441ms)\n✔ native key settings honor explicit keys, environment keys and disconnect (0.654231ms)\n✔ MP4 to fake Doubao to word-timed VTT; cache reuse, HTTP failures and uncertain requests (1688.11808ms)\n✔ a real mixed-language response lands a VTT whose cues contain all timed words (843.835187ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3791.20913\n"
+  },
+  {
+    "file": "studio/server/providers/elevenlabs.test.mjs",
+    "code": 0,
+    "elapsedMs": 1250,
+    "tail": "✔ voice-over: timed per character, landed as words, the length from the MP3's size (62.52411ms)\n✔ voices: the prompt searches, then language and gender narrow; nothing found by the prompt shows others (16.553307ms)\n✔ sound effects and music: the length asked, within what the service takes (12.772752ms)\n✔ transcription: the speech uploaded as what it is, words kept and spacing dropped (11.501355ms)\n✔ a refused key says so without the service's words; an echoed key is blanked out (40.815008ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 442.209898\n"
+  },
+  {
+    "file": "studio/server/providers/fal.test.mjs",
+    "code": 0,
+    "elapsedMs": 1466,
+    "tail": "✔ a picture through the queue: submitted with the key, asked after, its file downloaded (198.419465ms)\n✔ a video from a first and last frame: the image-to-video model, the pictures inline, the length within 4–15 s (99.782052ms)\n✔ the model the person chose: its own endpoints and fields (Kling: start_image_url, no resolution, no reference pictures) (42.386091ms)\n✔ music: Stable Audio 2.5 by default, the length asked in whole seconds within what it makes, measured from the WAV (35.960709ms)\n✔ music from Lyria 2: its tracks are 30 s, said when another length was asked (18.587731ms)\n✔ a sound effect: ElevenLabs Sound Effects through fal as 128 kbps MP3, its length from its size (51.174895ms)\n✔ a cancelled video run cancels the queued request too (71.884364ms)\n✔ a failed request says what fal said (3.796991ms)\n✔ the key goes only to fal's own queue: a status or result address elsewhere is refused, unasked (3.337683ms)\nℹ tests 9\nℹ suites 0\nℹ pass 9\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 832.408119\n"
+  },
+  {
+    "file": "studio/server/providers/google.test.mjs",
+    "code": 0,
+    "elapsedMs": 2045,
+    "tail": "✔ voice-over: the raw PCM wrapped as a WAV, its length from the samples (154.365029ms)\n✔ transcription: speech is uploaded, word timestamps returned, and the temporary file deleted (88.705597ms)\n✔ a picture: the ratio and size asked, the extension from what came back, transparency noted (12.842954ms)\n✔ a video: started, asked after until done, downloaded with the key; the length Veo makes (74.137976ms)\n✔ a video that fails says why; a cancelled run stops asking (137.034861ms)\n✔ translation: JSON asked for, the lines back in order (6.757023ms)\n✔ a video's address elsewhere is not downloaded with the key (3.717323ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1041.779865\n"
+  },
+  {
+    "file": "studio/server/providers/groq.test.mjs",
+    "code": 0,
+    "elapsedMs": 1546,
+    "tail": "✔ transcription: Whisper Large v3 Turbo with word timestamps, under /openai/v1 (69.452408ms)\n✔ voice-over: Orpheus as WAV, its length from the file; a line too long for it is refused before it is sent (13.324459ms)\n✔ voices: the chosen model's, by gender; another language is said (0.884666ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 601.501941\n"
+  },
+  {
+    "file": "studio/server/providers/index.test.mjs",
+    "code": 0,
+    "elapsedMs": 2136,
+    "tail": "✔ the own-key providers, in the order Settings lists them (1.999944ms)\n✔ nothing serves a kind of media nobody chose, even with a key that could (0.817803ms)\n✔ the person's choice serves while it can; a key gone serves nothing (0.935281ms)\n✔ voices always come from the provider that does voice-over, whatever else can list them (0.858967ms)\n✔ --via names one: it must exist, do the verb and have a key, or it says why (1.497016ms)\n✔ a key in the environment counts as much as a kept one (0.37841ms)\n✔ Settings shows a choice only while its provider has a key; the choice itself is kept (0.782046ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1214.972448\n"
+  },
+  {
+    "file": "studio/server/providers/openai.test.mjs",
+    "code": 0,
+    "elapsedMs": 1964,
+    "tail": "✔ a picture: the ratio as pixels, the quality, a transparent background when asked (218.25559ms)\n✔ voice-over: a WAV whose length is known, no word timings (Studio spreads the text) (15.072417ms)\n✔ transcription: whisper-1 with word timestamps; too big a file is refused before it is sent (105.902713ms)\n✔ translation: one request with a strict JSON schema, one line back per line (14.860958ms)\n✔ voices: its built-in ones, the filters it cannot apply said (0.889447ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 902.033375\n"
+  },
+  {
+    "file": "studio/server/providers/pexels.test.mjs",
+    "code": 0,
+    "elapsedMs": 2098,
+    "tail": "✔ photos found with the key, the large ones downloaded and named after --out, each with its credit (82.015133ms)\n✔ nothing found says so; a refused key says where to check it (11.27765ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 647.004161\n"
+  },
+  {
+    "file": "studio/server/providers/pixabay.test.mjs",
+    "code": 0,
+    "elapsedMs": 1561,
+    "tail": "✔ pictures found with the key, the largest a key gets downloaded, each with its credit (115.13293ms)\n✔ photos unless the person chose otherwise; a long prompt is cut to what Pixabay takes, and said (38.54072ms)\n✔ a key it does not take is said like any refused key; an error echoing the key does not show it (14.372989ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 552.05909\n"
+  },
+  {
+    "file": "studio/server/providers/tavily.test.mjs",
+    "code": 0,
+    "elapsedMs": 1260,
+    "tail": "✔ a search with the key, at the depth the person chose (107.55756ms)\n✔ pages read by Tavily as Markdown, the heading as the title; the ones it could not read are said (8.47431ms)\n✔ out of credits is an empty balance, the same as every provider (7.757299ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 518.276793\n"
+  },
+  {
+    "file": "studio/server/providers/web.test.mjs",
+    "code": 0,
+    "elapsedMs": 1598,
+    "tail": "✔ a page's text: its article, headings and list items kept, scripts, navigation and footers left out (15.455746ms)\n✔ the page is read in the character set it says it is in (149.411418ms)\n✔ redirects are followed (each checked again); what is not a page or not there says so (21.080634ms)\n✔ only public pages: this machine and its network are refused before anything is sent (5.720134ms)\n✔ search hits on one line and short; one query as it is, more as searches (0.682616ms)\n✔ pages read are saved as Markdown named after their address, with where they came from (3.392589ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 770.172751\n"
+  }
+]

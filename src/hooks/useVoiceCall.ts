@@ -584,7 +584,9 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     void teardownEngine();
     const voiceSessionId = sessionIdRef.current;
     sessionIdRef.current = null;
-    await delay(520);
+    // Let the screen's ending animation (root fade: 240ms + 420ms delay)
+    // finish before the overlay unmounts and returns to chat.
+    await delay(720);
     if (endSequenceRef.current !== sequence) return;
     dispatch({ type: "CLOSED" });
     if (voiceSessionId) void fetch("/voice/end", {

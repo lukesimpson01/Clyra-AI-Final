@@ -13,9 +13,7 @@ import { initAnywhereSettings, isAnywhereEnabled, isFlowBackgroundEnabled, setAn
 /** Stay alive in the tray (window closed / quit from the Dock) — Anywhere OR Flow background. */
 const keepRunningInBackground = () => isAnywhereEnabled() || isFlowBackgroundEnabled();
 import { ChromiumBrowserManager } from "./browser-manager.mjs";
-import { EyeView } from "./eye-view.mjs";
 import { ChromiumSurfaceManager } from "./surface-manager.mjs";
-import { AgentsManager } from "./agents/agents-manager.mjs";
 import { DictationManager } from "./dictation-manager.mjs";
 import { HOTKEY_PRESETS } from "./dictation-hotkey.mjs";
 import { FlowEngine } from "./flow-engine.mjs";
@@ -68,9 +66,7 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 let mainWindow = null;
 let uiView = null;
 let browserManager = null;
-let eyeView = null;
 
-/** Reachability of the Clyra Eye server, for the workspace's offline message. */
 let locationRequest = null;
 async function getPreciseLocation(timeoutSeconds) {
   if (process.platform !== "darwin") return { ok: false, error: "unsupported" };
@@ -96,40 +92,7 @@ async function getPreciseLocation(timeoutSeconds) {
   return locationRequest;
 }
 
-let eyeServerChild = null;
-/** Spawns the Clyra Eye dev server (apps/clyra-eye) once per app session; returns true while it is starting. */
-function ensureEyeServer() {
-  if (process.env.CLYRA_EYE_URL) return false;
-  if (eyeServerChild && eyeServerChild.exitCode === null) return true;
-  const eyeRoot = path.join(projectRoot, "apps", "clyra-eye");
-  if (!existsSync(path.join(eyeRoot, "node_modules"))) return false;
-  try {
-    const log = openSync(path.join(tmpdir(), "clyra-eye.log"), "a");
-    const env = { ...process.env, BROWSER: "none" };
-    delete env.ELECTRON_RUN_AS_NODE;
-    eyeServerChild = spawn("npm", ["--prefix", eyeRoot, "run", "dev", "--", "--port", "5179", "--strictPort"], { cwd: projectRoot, env, stdio: ["ignore", log, log] });
-    eyeServerChild.once("exit", () => { eyeServerChild = null; });
-    app.once("will-quit", () => { try { eyeServerChild?.kill(); } catch { /* gone */ } });
-    return true;
-  } catch (error) {
-    console.warn("[eye] could not start the Clyra Eye server:", error?.message || error);
-    return false;
-  }
-}
-
-function probeEyeUrl(url) {
-  return new Promise((resolve) => {
-    const request = http.get(url, { timeout: 1500 }, (response) => {
-      response.resume();
-      resolve(response.statusCode < 500);
-    });
-    request.on("timeout", () => { request.destroy(); resolve(false); });
-    request.on("error", () => resolve(false));
-  });
-}
 let surfaceManager = null;
-/** Clyra Agents: the local Rakazo stack (electron/agents). */
-let agentsManager = null;
 let dictationManager = null;
 let flowEngine = null;
 let flowNative = null;
@@ -1071,17 +1034,6 @@ function registerIpc() {
     authorize(event);
     return getPreciseLocation(Number(options?.timeoutSeconds) || 12);
   });
-  ipcMain.handle("agents:status", async (event) => { authorize(event); return agentsManager ? agentsManager.status() : { phase: "idle" }; });
-  ipcMain.handle("agents:start", async (event) => { authorize(event); if (!agentsManager) return { phase: "error", message: "Agents are not ready yet." }; void agentsManager.start(); return agentsManager.state; });
-  ipcMain.handle("eye:status", async (event) => {
-    authorize(event);
-    const reachable = await probeEyeUrl(eyeView.url);
-    // Opening Clyra Eye starts its local server the first time, instead of asking for a terminal command.
-    const starting = reachable ? false : ensureEyeServer();
-    return { ok: true, url: eyeView.url, reachable, starting };
-  });
-  ipcMain.handle("eye:set-location", (event, payload) => { authorize(event); eyeView.setLocation(payload); return { ok: true }; });
-  ipcMain.handle("eye:set-surface", (event, payload) => { authorize(event); eyeView.setSurface(payload || { visible: false }); return { ok: true }; });
   ipcMain.handle("browser:get-state", (event) => { authorize(event); return { ok: true, state: browserManager.getState() }; });
   ipcMain.handle("browser:set-surface", async (event, payload) => { authorize(event); await browserManager.setSurface(payload || {}); return { ok: true }; });
   ipcMain.handle("browser:navigate", async (event, { target }) => { authorize(event); return { ok: true, state: await browserManager.navigate(target) }; });
@@ -1188,6 +1140,23 @@ function registerIpc() {
   ipcMain.handle("dictation:toggle", (event, options) => { authorize(event); void dictationManager?.toggle({ inline: Boolean(options?.inline), selection: String(options?.selection || "") }); return { ok: true }; });
   ipcMain.handle("dictation:cancel", (event) => { authorize(event); void dictationManager?.action("cancel"); return { ok: true }; });
   ipcMain.handle("dictation:shortcut-status", (event) => { authorize(event); return { registered: Boolean(dictationManager?.shortcutRegistered || dictationManager?.hotkeyMode === "hold"), ...dictationManager?.hotkeyInfo() }; });
+  /* Flow's local speech engine for Clyra's own pages (lecture capture in Notes). Audio stays on this machine. */
+  ipcMain.handle("speech:status", (event) => { authorize(event); return { ok: true, available: Boolean(flowEngine?.available) }; });
+  ipcMain.handle("speech:warm", async (event) => {
+    authorize(event);
+    if (!flowEngine?.available) return { ok: false, error: "Clyra's speech engine isn't installed." };
+    try { await flowEngine.warm(); return { ok: true }; } catch (error) { return { ok: false, error: error?.message || String(error) }; }
+  });
+  ipcMain.handle("speech:transcribe", async (event, payload) => {
+    authorize(event);
+    if (!flowEngine) return { ok: false, error: "Speech engine unavailable." };
+    const raw = payload?.pcm;
+    const pcm = Buffer.isBuffer(raw) ? raw : raw instanceof Uint8Array ? Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength) : raw instanceof ArrayBuffer ? Buffer.from(raw) : null;
+    if (!pcm || pcm.length < 3200 || pcm.length > 16_000 * 2 * 90) return { ok: false, error: "Invalid audio segment." };
+    try { return { ok: true, text: await flowEngine.transcribe(pcm, Number(payload?.sampleRate) || 16_000) }; }
+    catch (error) { return { ok: false, error: error?.message || String(error) }; }
+  });
+
   ipcMain.handle("dictation:service-url", (event) => {
     authorize(event);
     return `http://127.0.0.1:${appPort}`;
@@ -1384,7 +1353,7 @@ function registerIpc() {
       return { ok:false, error: error?.message || "Spotify search failed.", code: error?.code };
     }
   });
-  const SPOTIFY_BROWSE_KINDS = new Set(["artist", "artist-top-tracks", "artist-albums", "album", "search-all", "followed-artists", "saved-albums", "top-artists", "top-tracks", "is-following", "follow-artist", "unfollow-artist", "create-playlist", "add-to-playlist"]);
+  const SPOTIFY_BROWSE_KINDS = new Set(["artist", "artist-top-tracks", "artist-albums", "album", "search-all", "followed-artists", "saved-albums", "top-artists", "top-tracks", "new-releases", "made-for-you", "popular-playlists", "recommendations", "is-following", "follow-artist", "unfollow-artist", "create-playlist", "add-to-playlist"]);
   ipcMain.handle("spotify:browse", async (event, payload) => {
     authorize(event);
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.kind !== "string" || !SPOTIFY_BROWSE_KINDS.has(payload.kind)) throw new Error("Invalid Spotify browse IPC payload.");
@@ -1613,16 +1582,7 @@ async function createWindow() {
     userDataPath: path.join(app.getPath("userData"), "browser"),
     downloadsPath: app.getPath("downloads"),
   });
-  eyeView = new EyeView({ window: mainWindow, url: process.env.CLYRA_EYE_URL || "http://localhost:5179/" });
   surfaceManager = new ChromiumSurfaceManager({ window: mainWindow });
-  // The Agents view's own session (see surface-manager "agents" kind): signing in through it puts the cookie where
-  // the embedded app reads it.
-  agentsManager ??= new AgentsManager({ projectRoot, sessionFetch: (url, init) => session.fromPartition("persist:clyra-agents").fetch(url, init) });
-  agentsManager.onState((state) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("agents:state", state);
-    }
-  });
   smartToolbarManager = new SmartToolbarManager({
     uiContents: () => uiView?.webContents ?? null,
     preloadPath: path.join(here, "smart-toolbar-preload.cjs"),
@@ -1885,7 +1845,8 @@ function initFlowEarly() {
 function ensureFullBoot() {
   if (!fullBootPromise) {
     fullBootPromise = (async () => {
-      app.dock?.show?.();
+      // No dock.show() here: dictation can boot the service in the background, and the Dock icon popping
+      // up looked like a random app opening. showOrCreateWindow() shows the Dock when a window is wanted.
       configureUiSession();
       reportDesktopLifecycle("booting browser bridge");
       await startBrowserBridge();

@@ -1,0 +1,10 @@
+{
+  "lightAccent": "#4568ee",
+  "darkAccent": "#4568ee",
+  "darkEmbeddedTools": [
+    "text-video",
+    "reddit-video",
+    "would-you-rather"
+  ],
+  "pageErrors": []
+}

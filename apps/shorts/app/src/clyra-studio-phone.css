@@ -1,0 +1,21 @@
+/* Clyra's original phone styles are imported intact; only its FRAME housing differs. */
+.csp-root{height:100%;min-height:0;display:flex;flex-direction:column;background:#fff}
+.csp-heading{height:77px;min-height:77px;display:flex;align-items:center;padding:20px 30px;border-bottom:1px solid #e6e7ea}
+.csp-heading strong{font-size:26px;line-height:38px;font-weight:550;letter-spacing:-.65px}
+.csp-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:18px 50px;background:#fff}
+.cs-root.csp-root .phone{width:256px;height:454px;min-width:256px;min-height:454px;border-radius:15px;box-shadow:0 0 0 1px #d4dbe6;flex:none;zoom:.9}
+.cs-root.csp-root .phone .bgVideo{object-fit:cover}
+.csp-fullshade{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:#111925;padding:0;overflow:clip;overscroll-behavior:contain}
+.csp-side-video{position:absolute;inset:-40px;width:calc(100% + 80px);height:calc(100% + 80px);object-fit:cover;filter:blur(30px) brightness(.46);transform:scale(1.08);pointer-events:none}
+.cs-root.csp-root .csp-fullshade .phone.full{position:relative;z-index:1;width:min(calc(100dvh*9/16),100vw);height:min(100dvh,calc(100vw*16/9));aspect-ratio:9/16;min-width:0;min-height:0;max-width:none;max-height:none;zoom:1;border-radius:0;box-shadow:0 0 70px #0008}
+.cs-root.csp-root .phone .storyChat .bubbleLine{opacity:var(--bubble-o,1)!important;transform:translateY(var(--bubble-y,0px)) scale(var(--bubble-s,1))!important;animation:none!important}
+.cs-root.csp-root .phone .storyChat .bubble.has-image{padding:3px;max-width:90%;overflow:hidden}
+.cs-root.csp-root .phone .storyChat .bubble img{display:block;width:min(100%,calc(155px * var(--chat-scale)));max-height:calc(185px * var(--chat-scale));object-fit:cover;border-radius:calc(9px * var(--chat-scale))}
+.cs-root.csp-root .phone .storyChat .bubble.has-image .messageCopy:not(:empty){display:block;padding:calc(5px * var(--chat-scale)) calc(4px * var(--chat-scale)) calc(2px * var(--chat-scale))}
+.csp-close{position:absolute;z-index:2;top:20px;right:24px;width:40px;height:40px;border:1px solid #ffffff40;border-radius:50%;background:#ffffff20;color:#fff;font-size:30px;line-height:1;cursor:pointer;transition:background .18s ease,transform .18s ease}
+.csp-close:hover{background:#ffffff38;transform:scale(1.07)}
+@media(max-width:700px){.csp-stage{padding-inline:18px}.csp-heading{height:58px;min-height:58px;padding:10px 18px}.csp-heading strong{font-size:18px}}
+.cs-root.csp-root.csp-render-root{width:256px;height:454px;min-width:256px;min-height:454px;overflow:hidden}
+.cs-root.csp-root.csp-render-root .csp-stage{width:256px;height:454px;padding:0;display:block}
+.cs-root.csp-root.csp-render-root .phone{width:256px;height:454px;min-width:256px;min-height:454px;zoom:1;border-radius:0;box-shadow:none}
+.cs-root.csp-root.csp-render-root .phone .playerControls{display:none}

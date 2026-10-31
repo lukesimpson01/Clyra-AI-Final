@@ -1,0 +1,878 @@
+/*
+ * Clyra assistant conversation — graphite ink on white.
+ *
+ * Everything on the assistant side of a chat turn: the column, the reply's typography and Markdown, the thinking
+ * line, tool activity rows, disclosures, web sources, file / command / diff rows, menus, tooltips, the response
+ * and user-message actions, the inline message editor and "jump to latest".
+ *
+ * Entirely achromatic. No shadows, no blur, no gradients but the active-text shimmer, nothing above 24px. The
+ * composer (ClyraComposerShell) and the user bubble (.clyra-chat-user-bubble) are not styled here.
+ */
+.clyra-chat-page,
+.clyra-chat-ui {
+  /* Surfaces */
+  --chat-white: #ffffff;
+  --chat-mist: #f9f9f9;
+  --chat-hover: #0000000d;
+  /* Text */
+  --chat-ink: #0d0d0d;
+  --chat-secondary: #5d5d5d;
+  --chat-muted: #8f8f8f;
+  /* Borders */
+  --chat-line: #0000001a;
+  --chat-hairline-soft: #0000000d;
+  --chat-edge: #e6e6e6;
+  /* Inverted */
+  --chat-inverted: #000000;
+  --chat-scrim: #00000080;
+  /* Typeface: the system's own */
+  --chat-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --chat-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  /* Text */
+  --chat-body-size: 16px;
+  --chat-body-leading: 1.5;
+  --chat-caption-size: 14px;
+  --chat-caption-leading: 1.43;
+  --chat-heading-size: 24px;
+  --chat-heading-leading: 1.33;
+  /* Spacing */
+  --chat-space-6: 6px;
+  --chat-space-8: 8px;
+  --chat-space-10: 10px;
+  --chat-space-12: 12px;
+  --chat-space-16: 16px;
+  --chat-space-20: 20px;
+  --chat-space-24: 24px;
+  /* Radius */
+  --chat-radius: 10px;
+  --chat-radius-link: 16px;
+  /* Layout */
+  --chat-content-width: 760px;
+  /* Motion */
+  --chat-ease: cubic-bezier(.22, 1, .36, 1);
+  --chat-ease-standard: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* ───────────────────────── Viewport, column, scrollbar ───────────────────────── */
+
+/* While a conversation is open the stage fills the workspace (the composer keeps its own width), and the scroller
+   reaches the workspace's right edge: the scrollbar is at the edge of the viewport, not of the column. */
+.clyra-chat-page .clyra-composer-shell__stage:has(#chat-container) {
+  width: 100% !important;
+  max-width: none !important;
+  padding-inline: 0 !important;
+}
+/* with the chats panel docked the shell pads both sides; the scroller extends over the right padding so its
+   scrollbar still sits at the window's edge, and pads by the same amount so the column stays centred */
+.clyra-chat-page .clyra-composer-shell__stage:has(#chat-container) .clyra-composer-scroll-frame {
+  width: calc(100% + var(--clyra-shell-pad, 0px)) !important;
+  margin-right: calc(-1 * var(--clyra-shell-pad, 0px));
+}
+.clyra-chat-page #chat-container.clyra-composer-scroll {
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: none !important;
+  align-self: stretch !important;
+  padding: 0 var(--clyra-shell-pad, 0px) 0 0 !important;
+  gap: 0 !important;
+  background: var(--chat-white);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #00000040 transparent;
+  overflow-anchor: auto;
+}
+.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar { width: 8px; }
+.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar-track { background: transparent; }
+.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar-thumb {
+  background: #00000040;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.clyra-conversation-inner {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  /* separate user / assistant turns */
+  gap: var(--chat-space-24);
+  width: 100%;
+  max-width: 808px;
+  margin-inline: auto;
+  padding-inline: var(--chat-space-24);
+  padding-block: 24px 32px;
+}
+@media (max-width: 700px) {
+  .clyra-conversation-inner { padding-inline: var(--chat-space-16); }
+}
+
+.clyra-assistant-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--chat-space-12);
+  width: 100%;
+  max-width: var(--chat-content-width);
+  min-width: 0;
+  margin-inline: auto;
+  font-family: var(--chat-font);
+  color: var(--chat-ink);
+  background: transparent;
+}
+/* one assistant turn: status or completed activity (12px), the answer, sources (16px), actions (10px) */
+.clyra-ai-stack,
+.clyra-ai-embed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--chat-space-12);
+  min-width: 0;
+}
+.clyra-ai-stack > .clyra-ai-sources { margin-top: 4px; }
+.clyra-assistant-column > .clyra-ai-actions { margin-top: -2px; }
+
+/* ───────────────────────── Reply typography ───────────────────────── */
+
+.clyra-ai-response,
+.clyra-assistant-prose {
+  font-family: var(--chat-font);
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--chat-ink);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+}
+.clyra-ai-response p { margin: 0 0 16px; }
+.clyra-ai-response h1 { font-size: 24px; line-height: 1.33; font-weight: 600; margin: 24px 0 12px; }
+.clyra-ai-response h2 { font-size: 16px; line-height: 1.5; font-weight: 600; margin: 20px 0 10px; }
+.clyra-ai-response h3,
+.clyra-ai-response h4,
+.clyra-ai-response h5,
+.clyra-ai-response h6 { font-size: 14px; line-height: 1.43; font-weight: 600; margin: 16px 0 8px; }
+.clyra-ai-response strong { font-weight: 600; }
+.clyra-ai-response em { font-style: italic; }
+.clyra-ai-response > :first-child { margin-top: 0; }
+.clyra-ai-response > :last-child { margin-bottom: 0; }
+
+.clyra-ai-response ul,
+.clyra-ai-response ol { margin: 0 0 16px; padding-left: 22px; }
+.clyra-ai-response ul { list-style: disc; }
+.clyra-ai-response ol { list-style: decimal; }
+.clyra-ai-response li { margin: 0; padding-left: 2px; }
+.clyra-ai-response li + li { margin-top: 6px; }
+.clyra-ai-response li > p { margin: 0; }
+.clyra-ai-response li > ul,
+.clyra-ai-response li > ol { margin: 6px 0 0; }
+.clyra-ai-response li::marker { color: var(--chat-secondary); }
+
+.clyra-ai-response blockquote {
+  margin: 0 0 16px;
+  padding-left: 12px;
+  border-left: 2px solid var(--chat-line);
+  color: var(--chat-ink);
+}
+.clyra-ai-response blockquote > :last-child { margin-bottom: 0; }
+.clyra-ai-response hr { border: 0; border-top: 1px solid var(--chat-line); margin: 20px 0; }
+
+/* links and citations: graphite, underlined */
+.clyra-ai-response a:not(.clyra-workspace-open-link):not(.clyra-document-open-link) {
+  color: var(--chat-ink);
+  text-decoration: underline;
+  text-decoration-color: #0000004d;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-response a:not(.clyra-workspace-open-link):not(.clyra-document-open-link):hover { text-decoration-color: var(--chat-ink); }
+.clyra-ai-response a:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 2px; border-radius: 2px; }
+.clyra-ai-response sup { font-size: 12px; line-height: 0; color: var(--chat-secondary); }
+
+/* inline code */
+.clyra-ai-response :not(pre):not(.clyra-code-block *) > code {
+  font-family: var(--chat-mono);
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--chat-mist);
+  color: var(--chat-ink);
+}
+
+/* code blocks */
+.clyra-ai-response .clyra-code-block {
+  margin: 0 0 16px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-mist);
+  overflow: hidden;
+}
+.clyra-ai-response .clyra-code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 6px 0 16px;
+  border-bottom: 1px solid var(--chat-hairline-soft);
+}
+.clyra-ai-response .clyra-code-block__language { font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
+.clyra-ai-response .clyra-code-block__actions { display: flex; gap: 2px; }
+.clyra-ai-response .clyra-code-block__copy,
+.clyra-ai-response .clyra-code-block__run {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-secondary);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard), color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-response .clyra-code-block__copy svg,
+.clyra-ai-response .clyra-code-block__run svg { width: 14px; height: 14px; }
+.clyra-ai-response .clyra-code-block__copy:hover,
+.clyra-ai-response .clyra-code-block__run:hover { background: var(--chat-hover); color: var(--chat-ink); }
+.clyra-ai-response .clyra-code-block > div:not(.clyra-code-block__header),
+.clyra-ai-response .clyra-code-block pre {
+  margin: 0 !important;
+  padding: 16px !important;
+  background: transparent !important;
+  overflow-x: auto;
+}
+/* code is shown in ink: the highlighter's tokens read by tone only */
+.clyra-ai-response .clyra-code-block pre,
+.clyra-ai-response .clyra-code-block code,
+.clyra-ai-response .clyra-code-block code span {
+  font-family: var(--chat-mono) !important;
+  font-size: 13px !important;
+  line-height: 20px !important;
+  background: transparent !important;
+}
+.clyra-ai-response .clyra-code-block code { filter: grayscale(1) contrast(1.15); }
+.clyra-ai-response pre:not(.clyra-code-block pre) {
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-mist);
+  font: 400 13px/20px var(--chat-mono);
+  overflow-x: auto;
+}
+
+/* tables */
+.clyra-ai-response .clyra-md-table-wrap { margin: 0 0 16px; overflow-x: auto; }
+.clyra-ai-response .clyra-md-table { width: 100%; border-collapse: collapse; font: 400 14px/20px var(--chat-font); }
+.clyra-ai-response .clyra-md-table th,
+.clyra-ai-response .clyra-md-table td {
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--chat-line);
+  color: var(--chat-ink);
+}
+.clyra-ai-response .clyra-md-table thead th { font-weight: 600; }
+.clyra-ai-response .clyra-md-table tbody tr:last-child td { border-bottom: 0; }
+.clyra-ai-response .katex-display { margin: 0 0 16px; overflow-x: auto; overflow-y: hidden; }
+
+.clyra-ai-response--error { color: var(--chat-ink); }
+
+/* ───────────────────────── Response motion ───────────────────────── */
+
+@keyframes clyra-response-enter {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes clyra-block-enter {
+  from { opacity: 0; transform: translate3d(0, 4px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.clyra-response-enter { animation: clyra-response-enter 180ms var(--chat-ease) both; }
+.clyra-block-enter { animation: clyra-block-enter 150ms var(--chat-ease) both; }
+/* while a reply streams, a block that has just appeared (a new paragraph, list, heading, code block) settles in;
+   blocks already on screen are never remounted, so they never move again */
+.clyra-ai-response--live > :not(:first-child) { animation: clyra-block-enter 150ms var(--chat-ease) both; }
+/* a message the user has just sent rises in from the composer; reopened chats never replay it */
+@keyframes clyra-user-enter {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+.clyra-user-turn--fresh { animation: clyra-user-enter 360ms cubic-bezier(.22, 1, .36, 1) both; transform-origin: 100% 100%; }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-response-enter,
+  .clyra-block-enter,
+  .clyra-ai-response--live > *,
+  .clyra-user-turn--fresh { animation: none !important; }
+}
+
+/* ───────────────────────── Thinking / active status ───────────────────────── */
+
+.clyra-activity-label,
+.clyra-ai-status__label { display: inline-block; font: 500 14px/20px var(--chat-font); color: var(--chat-secondary); }
+.clyra-activity-meta { font: 400 14px/20px var(--chat-font); color: var(--chat-muted); }
+
+.clyra-active-shimmer,
+.clyra-ai-shimmer {
+  display: inline-block;
+  font-family: var(--chat-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #5d5d5d;
+  /* a soft band of ink sweeps across at a constant pace: linear, so it never surges or stalls */
+  background-image: linear-gradient(100deg, #8f8f8f 0%, #8f8f8f 38%, #3a3a3a 46%, #0d0d0d 50%, #3a3a3a 54%, #8f8f8f 62%, #8f8f8f 100%);
+  background-size: 260% 100%;
+  background-position: 100% 0;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: clyra-shimmer 2.2s linear infinite;
+}
+@keyframes clyra-shimmer {
+  from { background-position: 100% 0; }
+  /* 100% → 0% keeps the 240% gradient covering the text throughout (beyond it the text, transparent, vanishes) */
+  to { background-position: 0% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-active-shimmer,
+  .clyra-ai-shimmer { animation: none; background: none; color: #5d5d5d; -webkit-text-fill-color: currentColor; }
+}
+
+.clyra-ai-status { display: flex; flex-direction: column; gap: 6px; min-width: 0; animation: clyra-status-enter 150ms var(--chat-ease) both; }
+@keyframes clyra-status-enter { from { opacity: 0; transform: translate3d(0, 4px, 0); } to { opacity: 1; transform: none; } }
+/* thinking: a graphite orb that breathes, slow in and out, while the work runs */
+.clyra-ai-orb { position: relative; display: grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.clyra-ai-orb::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--chat-ink); animation: clyra-orb 1.6s cubic-bezier(.45, 0, .55, 1) infinite; will-change: transform, opacity; }
+.clyra-ai-orb::after { content: ""; position: absolute; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--chat-ink); opacity: 0; animation: clyra-orb-ring 1.6s cubic-bezier(.22, 1, .36, 1) infinite; }
+@keyframes clyra-orb { 0%, 100% { transform: scale(.7); opacity: .5; } 50% { transform: scale(1); opacity: 1; } }
+@keyframes clyra-orb-ring { 0% { transform: scale(.9); opacity: .28; } 70%, 100% { transform: scale(2); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-ai-status { animation: none; }
+  .clyra-ai-orb::before, .clyra-ai-orb::after { animation: none; }
+}
+.clyra-ai-status__line { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.clyra-ai-status__icon { display: grid; place-items: center; width: 16px; height: 16px; color: var(--chat-secondary); flex: none; }
+.clyra-ai-status__icon svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.clyra-ai-status__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  margin-left: 7px;
+  vertical-align: middle;
+}
+.clyra-ai-status__dots i {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .32;
+  animation: clyra-status-dot 1.25s ease-in-out infinite;
+}
+.clyra-ai-status__dots i:nth-child(2) { animation-delay: 160ms; }
+.clyra-ai-status__dots i:nth-child(3) { animation-delay: 320ms; }
+@keyframes clyra-status-dot {
+  0%, 70%, 100% { opacity: .32; transform: translateY(0); }
+  35% { opacity: .9; transform: translateY(-1.5px); }
+}
+.clyra-ai-status__detail,
+.clyra-ai-query {
+  margin: 0;
+  padding-left: 22px;
+  font: 400 14px/20px var(--chat-font);
+  color: var(--chat-secondary);
+}
+.clyra-ai-disclosure__content .clyra-ai-query { padding-left: 0; }
+.clyra-ai-note { margin: 0; font: 400 14px/20px var(--chat-font); color: var(--chat-muted); }
+
+/* ───────────────────────── Activity rows ───────────────────────── */
+
+.clyra-ai-activity { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.clyra-ai-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  min-width: 0;
+  font: 500 14px/20px var(--chat-font);
+  color: var(--chat-secondary);
+  animation: clyra-activity-enter 150ms var(--chat-ease) both;
+}
+@keyframes clyra-activity-enter {
+  from { opacity: 0; transform: translate3d(0, 3px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-ai-status__dots i,
+  .clyra-ai-row { animation: none; transform: none; }
+}
+.clyra-ai-row__icon { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--chat-secondary); }
+.clyra-ai-row__icon svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.clyra-ai-row__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-ai-row__label strong { font-weight: 500; color: var(--chat-ink); }
+.clyra-ai-row__meta { margin-left: auto; padding-left: 12px; font: 400 14px/20px var(--chat-font); color: var(--chat-muted); white-space: nowrap; }
+.clyra-ai-row__counts { font: 500 14px/20px var(--chat-font); color: var(--chat-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.clyra-ai-row--queued .clyra-ai-row__label { color: var(--chat-muted); }
+.clyra-ai-row--failed .clyra-ai-row__label,
+.clyra-ai-row--failed .clyra-ai-row__icon { color: var(--chat-ink); }
+.clyra-ai-row__dot { width: 5px; height: 5px; border-radius: 50%; background: var(--chat-muted); }
+.clyra-ai-row__pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--chat-secondary); animation: clyra-pulse 1.2s ease-in-out infinite; }
+@keyframes clyra-pulse { 50% { opacity: .35; } }
+/* a child detail, indented under its group */
+.clyra-ai-children { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 2px 0 2px 20px; list-style: none; }
+.clyra-ai-children .clyra-ai-row { font-weight: 400; color: var(--chat-secondary); }
+.clyra-ai-commentary { margin: 0; font: 400 16px/1.5 var(--chat-font); color: var(--chat-ink); white-space: pre-wrap; }
+
+/* ───────────────────────── Disclosures ───────────────────────── */
+
+.clyra-ai-disclosure { min-width: 0; }
+.clyra-ai-disclosure__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% + 16px);
+  min-height: 32px;
+  margin-left: -8px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--chat-radius);
+  background: transparent;
+  color: var(--chat-secondary);
+  font: 500 14px/20px var(--chat-font);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-disclosure__trigger:hover { background: var(--chat-hover); }
+.clyra-ai-disclosure__trigger:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 0; }
+.clyra-ai-disclosure__icon { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--chat-secondary); }
+.clyra-ai-disclosure__icon svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.clyra-ai-disclosure__leading { display: flex; align-items: center; flex: none; }
+.clyra-ai-disclosure__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-ai-disclosure__meta { margin-left: auto; padding-left: 12px; font: 500 14px/20px var(--chat-font); color: var(--chat-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.clyra-ai-disclosure__chevron { display: grid; place-items: center; flex: none; margin-left: auto; color: var(--chat-muted); }
+.clyra-ai-disclosure__meta + .clyra-ai-disclosure__chevron { margin-left: 8px; }
+.clyra-ai-disclosure__content { padding: 4px 0 2px 20px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ───────────────────────── Web sources ───────────────────────── */
+
+.clyra-ai-source-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding-left: 22px; }
+.clyra-ai-source-favicon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  box-sizing: border-box;
+  border: 1px solid var(--chat-line);
+  border-radius: 10px;
+  background: var(--chat-white);
+  color: var(--chat-ink);
+  text-decoration: none;
+  overflow: hidden;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-source-favicon img { width: 18px; height: 18px; object-fit: contain; }
+a.clyra-ai-source-favicon:hover { background: var(--chat-mist); }
+.clyra-ai-source-favicon:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 1px; }
+.clyra-ai-source-favicon__fallback { font: 600 12px/1 var(--chat-font); color: var(--chat-secondary); }
+
+/* the grouped footer under an answer */
+.clyra-ai-sources { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.clyra-ai-sources__heading { margin: 0; font: 500 14px/20px var(--chat-font); color: var(--chat-ink); }
+.clyra-ai-source-stack { display: flex; align-items: center; padding: 0; gap: 0; min-height: 26px; }
+.clyra-ai-source-stack .clyra-ai-source-favicon + .clyra-ai-source-favicon { margin-left: -4px; }
+.clyra-ai-sources .clyra-ai-disclosure__trigger { gap: 10px; }
+.clyra-ai-sources__count { font: 400 14px/20px var(--chat-font); color: var(--chat-secondary); }
+.clyra-ai-sources .clyra-ai-disclosure__content { padding-left: 0; gap: 0; }
+
+.clyra-ai-source-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.clyra-ai-source-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border-radius: var(--chat-radius);
+  color: var(--chat-ink);
+  text-decoration: none;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-source-item:hover { background: var(--chat-hover); }
+.clyra-ai-source-item__meta { display: flex; flex-direction: column; min-width: 0; }
+.clyra-ai-source-item__title { font: 400 14px/20px var(--chat-font); color: var(--chat-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-ai-source-item__host { font: 400 12px/18px var(--chat-font); color: var(--chat-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-ai-source-more { margin-left: 6px; font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
+
+/* ───────────────────────── Files, diffs, commands ───────────────────────── */
+
+.clyra-ai-file { font: 500 14px/20px var(--chat-font); color: var(--chat-ink); }
+.clyra-ai-diff,
+.clyra-ai-terminal {
+  margin: 6px 0 2px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-mist);
+  overflow: hidden;
+}
+.clyra-ai-diff__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--chat-hairline-soft);
+  font: 500 14px/20px var(--chat-font);
+  color: var(--chat-ink);
+}
+.clyra-ai-diff__head small { font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
+.clyra-ai-diff__body,
+.clyra-ai-terminal__body {
+  margin: 0;
+  padding: 12px;
+  max-height: 220px;
+  overflow: auto;
+  font: 400 13px/20px var(--chat-mono);
+  color: var(--chat-ink);
+  white-space: pre;
+}
+.clyra-ai-diff__body[data-full="true"],
+.clyra-ai-terminal__body[data-full="true"] { max-height: none; }
+.clyra-ai-diff__body { padding: 8px 0; }
+.clyra-ai-diff__line { display: grid; grid-template-columns: 44px 16px max-content; padding-right: 12px; }
+.clyra-ai-diff__lines { display: inline-block; min-width: 100%; vertical-align: top; }
+.clyra-ai-diff__line[data-kind="add"] { background: #0000000a; }
+/* a new file is all additions: the "+" marks say so, without tinting every line */
+.clyra-ai-diff__body[data-new="true"] .clyra-ai-diff__line[data-kind="add"] { background: none; }
+.clyra-ai-diff__line[data-kind="del"] { background: #00000005; color: var(--chat-secondary); }
+.clyra-ai-diff__no { color: var(--chat-muted); text-align: right; padding-right: 10px; user-select: none; }
+.clyra-ai-diff__mark { color: var(--chat-secondary); user-select: none; }
+.clyra-ai-more {
+  display: block;
+  width: 100%;
+  height: 30px;
+  border: 0;
+  border-top: 1px solid var(--chat-hairline-soft);
+  background: transparent;
+  font: 500 14px/20px var(--chat-font);
+  color: var(--chat-secondary);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-more:hover { background: var(--chat-hover); }
+
+/* ───────────────────────── Response actions, tooltips ───────────────────────── */
+
+.clyra-ai-actions { position: relative; display: flex; align-items: center; gap: 2px; margin-left: -6px; animation: clyra-fade 140ms var(--chat-ease) both; }
+@keyframes clyra-fade { from { opacity: 0; } to { opacity: 1; } }
+.clyra-ai-action {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--chat-radius);
+  background: transparent;
+  color: var(--chat-secondary);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard), color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-action svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.clyra-ai-action:hover,
+.clyra-ai-action[aria-expanded="true"] { background: var(--chat-hover); color: var(--chat-ink); }
+.clyra-ai-action[aria-pressed="true"] { color: var(--chat-ink); }
+.clyra-ai-action:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 0; }
+.clyra-ai-action[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translate(-50%, 2px);
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: var(--chat-inverted);
+  color: #ffffff;
+  font: 400 12px/16px var(--chat-font);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms var(--chat-ease-standard), transform 120ms var(--chat-ease-standard);
+  z-index: 30;
+}
+.clyra-ai-action[data-tip]:hover::after,
+.clyra-ai-action[data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 350ms; }
+.clyra-ai-action[aria-expanded="true"]::after { display: none; }
+
+/* ───────────────────────── Focused chat layout ─────────────────────────
+   A calm, ChatGPT-inspired reading surface: the history becomes a quiet
+   application rail, while messages and the fixed-feeling composer share one
+   centred measure. This stays deliberately neutral so Clyra's workspace tabs
+   and Vibe Coder remain unmistakably Clyra. */
+.clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__stage {
+  max-width: none !important;
+  padding: 24px 24px 18px !important;
+}
+.clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-scroll-frame {
+  margin-bottom: 12px !important;
+}
+.clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__bar {
+  width: min(760px, calc(100% - 48px)) !important;
+  border-radius: 24px !important;
+  box-shadow:
+    0 1px 2px rgba(16, 18, 24, 0.04),
+    0 8px 22px -14px rgba(16, 18, 24, 0.24),
+    inset 0 0 0 1px rgba(16, 18, 24, 0.10) !important;
+}
+.clyra-conversation-inner {
+  max-width: 768px;
+  gap: 28px;
+  padding-block: 18px 24px;
+}
+.clyra-assistant-column {
+  --chat-content-width: 720px;
+  gap: 14px;
+}
+.clyra-chat-page .clyra-chat-user-bubble {
+  max-width: min(84%, 560px) !important;
+  padding: 10px 14px !important;
+  border-radius: 18px !important;
+  background: #f4f4f4 !important;
+}
+.clyra-ai-actions {
+  margin-top: 2px;
+  opacity: .72;
+  transition: opacity 160ms var(--chat-ease-standard);
+}
+.clyra-assistant-column:hover > .clyra-ai-actions,
+.clyra-assistant-column:focus-within > .clyra-ai-actions { opacity: 1; }
+.clyra-composer-shell__sidebar {
+  background: #f9f9f9 !important;
+  box-shadow: inset -1px 0 0 rgba(16,18,24,.07) !important;
+}
+@media (max-width: 760px) {
+  .clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__stage {
+    padding: 14px 0 12px !important;
+  }
+  .clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__bar {
+    width: calc(100% - 24px) !important;
+    border-radius: 22px !important;
+  }
+  .clyra-conversation-inner {
+    gap: 24px;
+    padding: 16px 16px 20px;
+  }
+}
+
+/* ───────────────────────── Menus and dropdowns ───────────────────────── */
+
+.clyra-ai-menu {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  min-width: 220px;
+  padding: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  display: flex;
+  flex-direction: column;
+}
+.clyra-ai-menu[data-side="bottom"] { top: calc(100% + 4px); }
+.clyra-ai-menu[data-side="top"] { bottom: calc(100% + 4px); }
+.clyra-ai-menu[data-align="end"] { left: auto; right: 0; }
+.clyra-ai-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-ink);
+  font: 400 14px/20px var(--chat-font);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-menu__item svg { width: 16px; height: 16px; stroke-width: 1.75; color: var(--chat-secondary); flex: none; }
+.clyra-ai-menu__item:hover,
+.clyra-ai-menu__item:focus-visible { background: var(--chat-hover); outline: none; }
+.clyra-ai-menu__item[aria-checked="true"] { font-weight: 500; }
+.clyra-ai-menu__check { margin-left: auto; width: 16px; height: 16px; }
+.clyra-ai-menu__label { padding: 6px 10px 4px; font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
+.clyra-ai-menu__sep { height: 1px; margin: 4px 2px; background: var(--chat-hairline-soft); }
+
+/* ───────────────────────── User message actions and editor ───────────────────────── */
+
+.clyra-user-turn { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; width: 100%; }
+.clyra-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  height: 32px;
+  opacity: 0;
+  transition: opacity 140ms var(--chat-ease-standard);
+}
+.clyra-user-turn:hover .clyra-user-actions,
+.clyra-user-turn:focus-within .clyra-user-actions { opacity: 1; }
+
+.clyra-message-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 620px);
+  margin-left: auto;
+  font-family: var(--chat-font);
+  animation: clyra-block-enter 180ms var(--chat-ease) both;
+}
+.clyra-message-editor__label { font: 500 14px/20px var(--chat-font); color: var(--chat-secondary); }
+.clyra-message-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  color: var(--chat-ink);
+  font: 400 16px/1.5 var(--chat-font);
+  resize: vertical;
+  outline: none;
+  transition: border-color 120ms var(--chat-ease-standard);
+}
+.clyra-message-editor textarea:focus { border-color: var(--chat-ink); }
+.clyra-message-editor__actions { display: flex; justify-content: flex-end; gap: 6px; }
+.clyra-chat-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  color: var(--chat-ink);
+  font: 500 14px/20px var(--chat-font);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-chat-button:hover { background: var(--chat-hover); }
+.clyra-chat-button--primary { border-color: var(--chat-ink); background: var(--chat-ink); color: #ffffff; }
+.clyra-chat-button--primary:hover { background: #2a2a2a; }
+.clyra-chat-button:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 1px; }
+
+/* ───────────────────────── Missions, approvals, controls ───────────────────────── */
+
+.clyra-ai-mission { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.clyra-ai-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.clyra-ai-controls:empty { display: none; }
+.clyra-ai-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  color: var(--chat-ink);
+  font: 500 14px/20px var(--chat-font);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-control svg { width: 16px; height: 16px; }
+.clyra-ai-control:hover:not(:disabled) { background: var(--chat-hover); }
+.clyra-ai-control:disabled { opacity: .5; cursor: default; }
+.clyra-ai-control:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 1px; }
+.clyra-ai-control--primary { border-color: var(--chat-ink); background: var(--chat-ink); color: #ffffff; }
+.clyra-ai-control--primary:hover:not(:disabled) { background: #2a2a2a; }
+.clyra-ai-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  font: 400 14px/20px var(--chat-font);
+  color: var(--chat-ink);
+}
+.clyra-ai-citations { display: flex; flex-wrap: wrap; gap: 6px; }
+.clyra-ai-citation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius-link);
+  font: 400 12px/18px var(--chat-font);
+  color: var(--chat-secondary);
+  text-decoration: none;
+}
+.clyra-ai-citation__id { font-weight: 500; color: var(--chat-ink); }
+/* an inline citation in the answer: the source's host, as a quiet chip */
+.clyra-chat-page .clyra-assistant-prose a.clyra-ai-cite {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: 1px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--chat-soft, #f3f3f3);
+  font: 400 12px/20px var(--chat-font);
+  color: var(--chat-secondary);
+  text-decoration: none;
+  transition: background-color .12s, color .12s;
+}
+.clyra-chat-page .clyra-assistant-prose a.clyra-ai-cite:hover { background: #e8e8e8; color: var(--chat-ink); }
+
+/* ───────────────────────── Jump to latest ───────────────────────── */
+
+.clyra-ai-jump-anchor { position: absolute; left: 0; right: 0; bottom: 12px; display: flex; justify-content: center; pointer-events: none; z-index: 20; }
+.clyra-ai-jump {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-white);
+  color: var(--chat-ink);
+  font: 500 14px/20px var(--chat-font);
+  cursor: pointer;
+  transition: background-color 120ms var(--chat-ease-standard);
+}
+.clyra-ai-jump svg { width: 14px; height: 14px; }
+.clyra-ai-jump:hover { background: var(--chat-mist); }
+.clyra-ai-jump:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 1px; }
+
+/* ───────────────────────── Sidebar: a chat that is running ───────────────────────── */
+
+.clyra-chat-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  box-sizing: border-box;
+  border: 1.5px solid #0000001f;
+  border-top-color: #0d0d0d;
+  border-radius: 50%;
+  animation: clyra-spin .8s linear infinite;
+}
+@keyframes clyra-spin { to { transform: rotate(360deg); } }

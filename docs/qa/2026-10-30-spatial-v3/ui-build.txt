@@ -1,0 +1,38 @@
+
+> openfilm@0.2.5 build:ui
+> vite build --config studio/ui/vite.config.ts
+
+vite v7.3.7 building client environment for production...
+transforming...
+
+new URL('./fonts/',import.meta.url) doesn't exist at build time, it will remain unchanged to be resolved at runtime. If this is intended, you can use the /* @vite-ignore */ comment to suppress this warning.
+✓ 1994 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/spatial-analysis.ts is dynamically imported by /Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/analysis.ts but also statically imported by /Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/TrackInspector.tsx, /Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/ai-tools.ts, /Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/analysis.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                                1.18 kB │ gzip:     0.70 kB
+dist/assets/scene-worker-a8h7Fciy.js                           1.70 kB
+dist/assets/mask-worker-DA10Fslk.js                            5.90 kB
+dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2       10.25 kB
+dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2        11.23 kB
+dist/assets/track-worker-jGUU4mkP.js                          11.62 kB
+dist/assets/universal-worker-CeL2dNQQ.js                      15.11 kB
+dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2         18.75 kB
+dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2            19.00 kB
+dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2     25.96 kB
+dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2            48.26 kB
+dist/assets/transition-preview-worker-4e2aumd3.js             55.76 kB
+dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2        85.07 kB
+dist/assets/index-k98ySVFm.css                               134.71 kB │ gzip:    22.61 kB
+dist/assets/universal-analysis-B43BBoCe.js                     9.25 kB │ gzip:     3.99 kB
+dist/assets/places-BWEJyR9l.js                               431.08 kB │ gzip:   165.92 kB
+dist/assets/index-COHg3ooW.js                                722.71 kB │ gzip:   185.96 kB
+dist/assets/index-CU0p9CBg.js                              3,787.75 kB │ gzip: 1,236.48 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 18.16s

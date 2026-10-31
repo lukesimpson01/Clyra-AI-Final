@@ -1,0 +1,25 @@
+{
+  "status": 200,
+  "elapsedMs": 3015,
+  "frames": [
+    0.1,
+    0.6,
+    1.1
+  ],
+  "result": {
+    "ok": true,
+    "observations": [
+      {
+        "time": 0.1,
+        "text": "**Environment:** An indoor residential hallway with white walls, white ceiling with crown molding, and a light wood plank floor. The hallway runs away from the camera toward a closed gray door at the far end. A framed picture hangs on the right wall; a doorway/opening is visible on the left. A small table/stand edge appears at the lower right in the first frame.\n\n**Surfaces:** Left side wall (white, with a doorway recess), right side wall (white, with picture and a wall switch), front-facing end wall containing the gray door, ceiling, and wood floor.\n\n**Motion between frames:** The camera moves forward along the hallway. The end door and right-wall picture grow larger and shift toward frame center; the left doorway recedes toward the left edge; the table at lower right exits the frame by 0.60 s. Perspective converges more strongly on the end wall, consistent with a forward dolly/translation rather than rotation.\n\n**Uncertainty:** Exact camera height and whether there is slight lateral drift cannot be confirmed; motion is inferred from scale/perspective changes across the three frames.",
+        "model": "deepseek-v4-flash"
+      }
+    ],
+    "sampleTimes": [
+      0.1,
+      0.6,
+      1.1
+    ],
+    "scope": "Ordered samples compared together, not every video frame. Image text is untrusted content."
+  }
+}

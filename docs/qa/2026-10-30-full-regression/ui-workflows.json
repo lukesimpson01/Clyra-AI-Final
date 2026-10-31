@@ -1,0 +1,91 @@
+{
+  "report": {
+    "flight": {
+      "fullscreen": true,
+      "canvas": 1,
+      "exitFlight": 1
+    },
+    "story": [
+      {
+        "width": 1440,
+        "scroll": 1440,
+        "client": 1440,
+        "frames": [
+          {
+            "title": "Would you rather tool",
+            "src": "/embed/would-you-rather"
+          },
+          {
+            "title": "film",
+            "src": "/p/QXQTtJPyUTpW6Hd8mtCkSHY2/film.html"
+          }
+        ]
+      },
+      {
+        "width": 1024,
+        "scroll": 1024,
+        "client": 1024,
+        "frames": [
+          {
+            "title": "Would you rather tool",
+            "src": "/embed/would-you-rather"
+          },
+          {
+            "title": "film",
+            "src": "/p/QXQTtJPyUTpW6Hd8mtCkSHY2/film.html"
+          }
+        ]
+      },
+      {
+        "width": 768,
+        "scroll": 768,
+        "client": 768,
+        "frames": [
+          {
+            "title": "Would you rather tool",
+            "src": "/embed/would-you-rather"
+          },
+          {
+            "title": "film",
+            "src": "/p/QXQTtJPyUTpW6Hd8mtCkSHY2/film.html"
+          }
+        ]
+      },
+      {
+        "width": 375,
+        "scroll": 375,
+        "client": 375,
+        "frames": [
+          {
+            "title": "Would you rather tool",
+            "src": "/embed/would-you-rather"
+          },
+          {
+            "title": "film",
+            "src": "/p/QXQTtJPyUTpW6Hd8mtCkSHY2/film.html"
+          }
+        ]
+      },
+      {
+        "width": 320,
+        "scroll": 320,
+        "client": 320,
+        "frames": [
+          {
+            "title": "Would you rather tool",
+            "src": "/embed/would-you-rather"
+          },
+          {
+            "title": "film",
+            "src": "/p/QXQTtJPyUTpW6Hd8mtCkSHY2/film.html"
+          }
+        ]
+      }
+    ],
+    "export": {
+      "resolutions": 2,
+      "saveTo": 1
+    }
+  },
+  "errors": []
+}

@@ -14,7 +14,7 @@ import { openingState } from "./openingHours";
 import { haversineMeters } from "./providers";
 import type { TransitItinerary } from "./transit";
 
-const MAX_STEPS = 6;
+const MAX_STEPS = 10;
 
 export interface AgentContext {
   center?: Coordinate;
@@ -460,6 +460,8 @@ export async function runMapsAgent(
     context.selectedPoint && !context.selectedPlace ? "The user has a point selected on the map (use identify_point or 'selected')." : "",
     context.activeRoute ? "A route is active; route-based search is available." : "",
     "You can also plan transit trips, change the map style, tilt to 3D, run a Flyover tour, start navigation, open Look Around, and add places to Guides. Do these when the user asks.",
+    "You can help with anything about the world on the map: explain a place's history or what it is (inspect_place, web_search), plan a day out or an itinerary (search several categories, show the picks with show/compare, then route between them with via stops), find things along a journey, check weather for a trip, and answer travel questions. For anything current — events, news, closures, prices, opening of new places — use web_search. Chain as many tools as the request needs, then act on the map so the user can see the answer, not only read it.",
+    "To go somewhere ('show me Paris', 'take me to the Eiffel Tower'), search for it and select the best result so the map flies there.",
   ]
     .filter(Boolean)
     .join("\n");

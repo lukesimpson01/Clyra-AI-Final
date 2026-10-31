@@ -1,0 +1,224 @@
+/* A story tool inside the advanced editor's sidebar: the tool's own menu, full width, no preview (the editor shows the
+   video), the step bar on top. Nothing else about the tool changes. */
+html:has(.embed-root), body:has(.embed-root) { margin: 0; background: #fff; }
+.embed-root { min-height: var(--embed-h, 100vh); background: #fff; }
+.embed-wait { background: #fff; }
+
+/* Text story */
+.embed-text-video .ftl-root { height: var(--embed-h) !important; min-height: 0 !important; overflow: hidden !important; padding: 8px; background: #fff; }
+.embed-text-video .ftl-main { flex: 1; min-height: 0; }
+.embed-text-video .ftl-editor { height: 100% !important; min-height: 0; }
+.embed-text-video .ftl-main { grid-template-columns: 1fr; }
+.embed-text-video .ftl-preview { display: none !important; }
+.embed-text-video .ftl-steps { margin-bottom: 8px; padding: 0 8px; overflow-x: auto; }
+.embed-text-video .ftl-steps > div { gap: 4px; }
+.embed-text-video .ftl-panel-body { padding: 14px; }
+
+/* Reddit story */
+.embed-reddit-video .sw-root { padding: 8px 8px 24px; }
+.embed-reddit-video .sw-preview-card { display: none !important; }
+.embed-reddit-video .sw-script-grid,
+.embed-reddit-video .sw-script-grid.reddit,
+.embed-reddit-video .sw-theme-grid { grid-template-columns: 1fr !important; }
+.embed-reddit-video .sw-background-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.embed-reddit-video .sw-script-grid.reddit .sw-script-card { height: auto !important; max-height: none !important; min-height: 0 !important; overflow: visible !important; }
+.embed-reddit-video .sw-steps { position: sticky; top: 0; z-index: 5; background: #fff; overflow-x: auto; }
+
+/* Would you rather: the engine's bottom bar moves to the top */
+.embed-would-you-rather .wyr-host.cs-root .workspace { grid-template-columns: 1fr !important; height: calc(100% - 78px) !important; margin-top: 78px; }
+.embed-would-you-rather .wyr-host.cs-root aside#right { display: none !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer { top: 0; bottom: auto; height: 70px; min-height: 70px; padding: 0 10px; border-bottom: 1px solid #eef0f4; }
+.embed-would-you-rather .wyr-host.cs-root .footer .step { font-size: 13px; }
+
+/* the sidebar is narrow: keep the step names (the tools hide them below 850px) */
+.embed-root .sw-steps > div > button span { display: none !important; }
+.embed-root .sw-steps > div > button.active span { display: inline !important; }
+.embed-root .sw-steps > div { gap: 4px; }
+.embed-root .sw-steps > div > button { font-size: 12px; padding-left: 4px; padding-right: 4px; }
+
+/* the engine's phone-size rules (≤700px) send the bar below the content; in the sidebar it stays on top */
+.embed-would-you-rather .wyr-host { height: var(--embed-h) !important; min-height: 0 !important; overflow: hidden !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer { position: absolute !important; top: 0 !important; bottom: auto !important; margin: 0 !important; display: flex !important; align-items: center; gap: 6px; overflow-x: auto; }
+.embed-would-you-rather .wyr-host.cs-root .workspace { height: calc(100% - 78px) !important; margin-top: 78px !important; display: block !important; }
+.embed-would-you-rather .wyr-host.cs-root .workspace > .panel,
+.embed-would-you-rather .wyr-host.cs-root main#editor { height: 100% !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer { height: 56px !important; min-height: 56px !important; padding: 0 8px !important; flex-wrap: nowrap !important; justify-content: space-between; }
+.embed-would-you-rather .wyr-host.cs-root .footer .steps { flex-wrap: nowrap; min-width: 0; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns { flex-wrap: nowrap; gap: 6px; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns button { height: 36px !important; min-height: 36px !important; padding: 0 14px !important; font-size: 13px !important; }
+.embed-would-you-rather .wyr-host.cs-root .workspace { height: calc(100% - 64px) !important; margin-top: 64px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer { flex-direction: row !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns button { padding: 0 11px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .steps .step { gap: 5px; }
+.embed-root .sw-steps > div > svg { width: 11px; height: 11px; flex: none; }
+.embed-root .sw-steps .sw-next { flex: none; white-space: nowrap; padding: 6px 12px; font-size: 12.5px; min-height: 34px; }
+.embed-root .sw-steps { gap: 6px; }
+.embed-root .sw-steps > div > svg { display:none; }
+.embed-root .sw-steps > div > button { flex:0 0 auto; min-height:36px; }
+.embed-root .sw-steps > div { overflow-x:auto; }
+.embed-root .ftl-panel-body { padding:16px 12px; }
+.embed-root .ftl-script-source .ftl-panel-body { display:flex;flex-direction:column; }
+.embed-root .ftl-script-source textarea { flex:1;min-height:280px; }
+.embed-text-video .fts-source,
+.embed-text-video .fts-source .editor,
+.embed-text-video .fts-source .inner { height:100%;min-height:0; }
+.embed-text-video .fts-source .inner { display:flex;flex-direction:column; }
+.embed-text-video .fts-source { zoom:1; }
+.embed-text-video .cs-root.fts-source .inner { padding:10px;gap:0; }
+.embed-text-video .cs-root.fts-source .messageRow { grid-template-columns:minmax(0,1fr) 42px 32px;gap:6px; }
+.embed-text-video .cs-root.fts-source .messageText input { font-size:13px; }
+.embed-text-video .fts-source .pagehead { gap:8px;align-items:center; }
+.embed-text-video .fts-source .pagehead h1 { font-size:16px;line-height:1.3;white-space:nowrap; }
+.embed-text-video .fts-source .topButtons .pill { font-size:11px;height:28px;min-height:28px;padding:0 8px;border-radius:7px; }
+.embed-text-video .fts-source .messageList { flex:1;min-height:120px;max-height:none;overflow-y:auto; }
+.embed-text-video .fts-source .pagehead,
+.embed-text-video .fts-source .profile,
+.embed-text-video .fts-source .messagesHead,
+.embed-text-video .fts-source .messageComposer,
+.embed-text-video .fts-source .addMessage { flex-shrink:0; }
+.embed-text-video .cs-root.fts-source .pagehead {height:44px;}
+.embed-text-video .cs-root.fts-source .pagehead h1 {font-size:14px;line-height:20px;letter-spacing:-.2px;}
+.embed-text-video .cs-root.fts-source .profile {height:74px;gap:9px;}
+.embed-text-video .cs-root.fts-source .avatarBig {width:34px;height:34px;font-size:14px;}
+.embed-text-video .cs-root.fts-source .fieldLabel {font-size:10px;margin-bottom:4px;}
+.embed-text-video .cs-root.fts-source .profileEdit input {height:32px;font-size:13px;padding:0 9px;border-width:1px;border-radius:7px;}
+.embed-text-video .cs-root.fts-source .messagesHead {height:44px;gap:6px;}
+.embed-text-video .cs-root.fts-source .messagesHead strong {font-size:12px;}
+.embed-text-video .cs-root.fts-source .smallActions {display:flex;gap:4px;}
+.embed-text-video .cs-root.fts-source .outlineBtn {font-size:10px;padding:0 6px;height:27px;min-width:0;gap:4px;}
+.embed-text-video .cs-root.fts-source .messageList {padding-top:10px;}
+.embed-text-video .cs-root.fts-source .messageRow {height:34px;margin-bottom:7px;grid-template-columns:minmax(0,1fr) 38px 28px;}
+.embed-text-video .cs-root.fts-source .messageText {gap:6px;min-width:0;height:32px;min-height:32px;padding:0 8px;border-radius:7px;}
+.embed-text-video .cs-root.fts-source .messageText input {height:32px;min-width:0;}
+.embed-text-video .cs-root.fts-source .sideSwitch {width:38px;height:24px;padding:3px;}
+.embed-text-video .cs-root.fts-source .sideKnob {width:18px;height:18px;}
+.embed-text-video .cs-root.fts-source .actionRound {width:28px;height:28px;}
+.embed-text-video .cs-root.fts-source .i {width:14px;height:14px;}
+.embed-text-video .cs-root.fts-source .messageComposer {margin-top:10px;gap:6px;grid-template-columns:minmax(0,1fr) 38px 28px;}
+.embed-text-video .cs-root.fts-source .composeBox {height:34px;padding:0 8px;gap:7px;border-radius:7px;}
+.embed-text-video .cs-root.fts-source .composeBox input {font-size:12px;min-width:0;}
+.embed-text-video .cs-root.fts-source .addMessage {height:32px;font-size:12px;border-radius:8px;margin-top:8px;}
+@media(max-width:280px){
+  .embed-text-video .ftl-script-source .ftl-panel-body {padding:8px;}
+  .embed-text-video .cs-root.fts-source .pagehead {height:auto;min-height:72px;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding-bottom:9px;}
+  .embed-text-video .cs-root.fts-source .topButtons {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:5px;}
+  .embed-text-video .cs-root.fts-source .topButtons .pill {width:100%;min-width:0;justify-content:center;}
+  .embed-text-video .cs-root.fts-source .messagesHead {height:auto;min-height:64px;display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:8px 0;}
+  .embed-text-video .cs-root.fts-source .smallActions {width:100%;}
+  .embed-text-video .cs-root.fts-source .outlineBtn {flex:1;justify-content:center;}
+  .embed-text-video .cs-root.fts-source .messageRow,.embed-text-video .cs-root.fts-source .messageComposer {grid-template-columns:minmax(0,1fr) 30px 26px;gap:4px;}
+  .embed-text-video .cs-root.fts-source .sideSwitch {width:30px;height:22px;}
+  .embed-text-video .cs-root.fts-source .sideKnob {width:16px;height:16px;}
+  .embed-text-video .cs-root.fts-source .messageText>.i {display:none;}
+}
+.embed-reddit-video .sw-card {padding:12px;}
+.embed-reddit-video .sw-card :where(input,select,button) {font-size:12px;}
+.embed-reddit-video .sw-card :where(input:not([type=range]),select) {min-height:32px;padding:6px 8px;}
+.embed-reddit-video .sw-card :where(h2,h3) {font-size:14px;line-height:1.35;}
+.embed-would-you-rather .cs-root :where(input,select,textarea,button) {font-size:12px;}
+.embed-would-you-rather .cs-root :where(.questionCard,.questionBlock,.card) {padding:12px;}
+.embed-would-you-rather .cs-root :where(.pill,.outlineBtn) {height:30px;padding:0 10px;}
+.embed-would-you-rather .cs-root .pagehead h1 {font-size:15px;line-height:22px;}
+.embed-would-you-rather .wyr-host.cs-root .inner {padding:12px;font-size:13px;}
+.embed-would-you-rather .wyr-host.cs-root .pagehead {height:44px;gap:6px;}
+.embed-would-you-rather .wyr-host.cs-root .pagehead h1 {margin:0;}
+.embed-would-you-rather .wyr-host.cs-root .topButtons {min-width:0;gap:6px;}
+.embed-would-you-rather .wyr-host.cs-root .pill {height:30px;min-height:30px;padding:0 10px;font-size:11px;border-radius:8px;}
+.embed-would-you-rather .wyr-host.cs-root .questionCount {font-size:10px;padding:5px 7px;border-radius:6px;white-space:nowrap;}
+.embed-would-you-rather .wyr-host.cs-root .questionScroller {min-height:0;padding:10px 0 6px;}
+.embed-would-you-rather .wyr-host.cs-root .questionCard {padding:10px;margin-bottom:9px;border-radius:10px;}
+.embed-would-you-rather .wyr-host.cs-root .questionTop {font-size:12px;margin-bottom:8px;}
+.embed-would-you-rather .wyr-host.cs-root .questionLine {grid-template-columns:minmax(0,1fr) 26px;grid-template-rows:32px 32px;gap:6px;}
+.embed-would-you-rather .wyr-host.cs-root .qChoiceField {height:32px;min-height:0;margin:0;padding:0 7px;gap:5px;border-radius:7px;}
+.embed-would-you-rather .wyr-host.cs-root .qChoiceField input {height:30px;padding:0;font-size:12px;}
+.embed-would-you-rather .wyr-host.cs-root .qPic {position:static;flex:none;width:22px;height:22px;padding:0;}
+.embed-would-you-rather .wyr-host.cs-root .questionTrash {width:26px;height:26px;}
+.embed-would-you-rather .wyr-host.cs-root .questionMore {display:grid;grid-template-columns:minmax(0,1fr) 30px auto;gap:6px;margin-top:9px;}
+.embed-would-you-rather .wyr-host.cs-root .voteSliderWrap {min-width:0;width:100%;}
+.embed-would-you-rather .wyr-host.cs-root .voteSliderLabels {font-size:10px;gap:6px;margin-bottom:4px;}
+.embed-would-you-rather .wyr-host.cs-root .voteSliderLabels span {gap:3px;}
+.embed-would-you-rather .wyr-host.cs-root .voteSliderLabels b {font-size:11px;}
+.embed-would-you-rather .wyr-host.cs-root .voteSliderLabels i {width:5px;height:5px;}
+.embed-would-you-rather .wyr-host.cs-root .sideSwitch {width:30px;height:22px;}
+.embed-would-you-rather .wyr-host.cs-root .sideKnob {width:16px;height:16px;}
+.embed-would-you-rather .wyr-host.cs-root .sideKnob .i {width:11px;height:11px;}
+.embed-would-you-rather .wyr-host.cs-root .toggleLabel {font-size:10px;}
+.embed-would-you-rather .wyr-host.cs-root .addQuestion {height:32px;min-height:32px;font-size:12px;margin-top:8px;border-radius:8px;}
+.embed-reddit-video .sw-reddit-post-editor :where(input,button) {height:32px;min-height:32px;}
+
+/* Embedded chrome follows the editor theme; video/story colours remain authored content. */
+html[data-ui-theme=dark] {color-scheme:dark;}
+html[data-ui-theme=dark] :where(body,.embed-root,.embed-wait) {background:#202020;color:#ededed;}
+html[data-ui-theme=dark] .embed-root :where(.ftl-root,.ftl-editor,.ftl-panel-body,.ftl-steps,.cs-root,.inner,.editor,.sw-root,.sw-card,.sw-steps,.panel,.footer,.workspace,.questionCard,.qChoiceField) {background-color:#202020;color:#ededed;border-color:#ffffff16;--line:#ffffff16;}
+html[data-ui-theme=dark] .embed-root :where(input,select,textarea,.outlineBtn,.pill:not(.primary),.actionRound,.composeBox,.addMessage) {background-color:#2b2b2b;color:#e6e6e6;border-color:#ffffff20;}
+html[data-ui-theme=dark] .embed-root .cs-root {--ink:#ededed;--muted:#b4b4b4;--border:#ffffff20;--line:#ffffff16;color-scheme:dark;}
+html[data-ui-theme=dark] .embed-root .cs-root :is(input,select,textarea,.outlineBtn,.pill:not(.primary),.actionRound,.composeBox,.addMessage,.questionCount,.questionTrash,.navBtn:not(.primaryAction)) {background-color:#2b2b2b;color:#e6e6e6;border-color:#ffffff20;}
+html[data-ui-theme=dark] .embed-root .cs-root :is(.footer,.step,.pagehead,.qChoiceField,.voteSliderLabels,.voteSliderLabels b) {color:#e6e6e6;}
+html[data-ui-theme=dark] .embed-root .cs-root .footer {background:#202020;border-color:#ffffff16;}
+html[data-ui-theme=dark] .embed-root .cs-root .qChoiceField {background:#2b2b2b;border-color:#ffffff20;}
+html[data-ui-theme=dark] .embed-root .cs-root .qChoiceField input {background:transparent;}
+html[data-ui-theme=dark] .embed-root .cs-root .messageText {background:#2b2b2b;border-color:#ffffff20;color:#e6e6e6;}
+html[data-ui-theme=dark] .embed-root .cs-root .messageText input {background:transparent;}
+html[data-ui-theme=dark] .embed-root .cs-root :is(.pill.primary,.navBtn.primaryAction) {background:#4568ee;color:#fff;}
+html[data-ui-theme=dark] .embed-root .cs-root input::placeholder {color:#a5a5a5;}
+html[data-ui-theme=dark] .embed-root .sw-reddit-post-editor {background:#202020;border-color:#ffffff20;color:#ededed;}
+html[data-ui-theme=dark] .embed-root :is(.sw-reddit-top button,.sw-reddit-options button,.sw-card-head button:not(.blue),.sw-add-reddit-post) {background:#2b2b2b;color:#e6e6e6;border-color:#ffffff20;}
+html[data-ui-theme=dark] .embed-root .sw-steps>div>button {color:#b4b4b4;}
+html[data-ui-theme=dark] .embed-root .sw-steps>div>button.active {color:#ededed;}
+html[data-ui-theme=dark] .embed-root :where(.fieldLabel,.messagesHead strong,.sw-card label) {color:#b4b4b4;}
+html[data-ui-theme=dark] .embed-root :where(h1,h2,h3,.questionTop,.questionCount,.toggleLabel,.voteSliderLabels b) {color:#e6e6e6;}
+.embed-root :where(div,section,header,button,input,select,textarea,span) {transition:background-color .28s ease,color .28s ease,border-color .28s ease;}
+@media(prefers-reduced-motion:reduce){.embed-root *{transition:none!important;animation:none!important;}}
+.embed-reddit-video .sw-root { min-height:var(--embed-h);display:flex;flex-direction:column; }
+.embed-reddit-video .sw-script-card { flex:1; }
+.embed-reddit-video .sw-script-card textarea { min-height:280px; }
+.embed-reddit-video .sw-script-card textarea.sw-title-input { min-height:88px;height:88px; }
+.embed-reddit-video .sw-reddit-post-editor .sw-reddit-top { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
+.embed-reddit-video .sw-reddit-top > * { min-width:0;width:100%; }
+.embed-reddit-video .sw-reddit-top > input:nth-child(2) { grid-column:auto; }
+.embed-text-video .ftl-steps { overflow: hidden; padding: 0 6px; }
+.embed-root .sw-steps > div { min-width: 0; flex: 1 1 auto; }
+.embed-root .sw-steps > div > button { padding: 4px 2px !important; gap: 4px !important; }
+.embed-root .sw-steps > div > button b { width: 20px; height: 20px; font-size: 11px; }
+.embed-would-you-rather .wyr-host.cs-root .footer .steps .stepIcon { width: 28px !important; height: 28px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .steps .step { font-size: 12.5px !important; padding: 0 2px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns button { height: 34px !important; min-height: 34px !important; font-size: 12.5px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .steps { flex:1;overflow:hidden; }
+.embed-would-you-rather .wyr-host.cs-root .footer .step:not(.current),
+.embed-would-you-rather .wyr-host.cs-root .footer .stepDivider { display:none; }
+.embed-would-you-rather .wyr-host.cs-root .footer .step.current { min-width:0;white-space:nowrap;font-size:11px !important; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns { flex:none; }
+.embed-would-you-rather .wyr-host.cs-root .footer .footerBtns button { padding:0 8px !important;min-width:58px !important; }
+.embed-would-you-rather .cs-root .questionLine { grid-template-columns:minmax(0,1fr) 32px;gap:8px; }
+.embed-would-you-rather .cs-root .qChoiceField { grid-column:1; }
+.embed-would-you-rather .cs-root .questionTrash { grid-column:2;grid-row:1/3; }
+@media(max-width:280px){
+  .embed-would-you-rather .wyr-host.cs-root .questionCount {display:none;}
+  .embed-would-you-rather .wyr-host.cs-root .footer .stepSep {display:none;}
+  .embed-would-you-rather .wyr-host.cs-root .footer #back {min-width:30px!important;width:30px;padding:0!important;font-size:0!important;}
+  .embed-would-you-rather .wyr-host.cs-root .footer #back .i {width:14px;height:14px;}
+  .embed-would-you-rather .wyr-host.cs-root .questionMore {grid-template-columns:30px minmax(0,1fr);gap:6px;}
+  .embed-would-you-rather .wyr-host.cs-root .voteSliderWrap {grid-column:1/-1;}
+  .embed-would-you-rather .wyr-host.cs-root .toggleLabel {justify-self:start;}
+}
+
+/* smooth, quiet motion for the step changes */
+.embed-root .ftl-panel-body, .embed-root .sw-card { animation-duration: .22s; }
+
+/* AI clipper (AutoClip): the source page and clip settings, full width, the preview left to the editor */
+.embed-auto-clip .at-clip-source-page { min-height: var(--embed-h, 100vh); padding: 10px 8px; background: #fff; align-items: stretch; }
+.embed-auto-clip .at-clip-source-card { width: 100%; max-width: none; box-shadow: none; border: 0; padding: 8px 6px; }
+.embed-auto-clip .acs2-root { height: var(--embed-h) !important; min-height: 0 !important; overflow: hidden !important; padding: 6px 8px 8px; }
+.embed-auto-clip .acs2-workspace { grid-template-columns: 1fr !important; flex: 1; min-height: 0; }
+.embed-auto-clip .acs2-preview { display: none !important; }
+.embed-auto-clip .acs2-editor { height: auto !important; min-height: 0; }
+.embed-auto-clip .acs2-footer { position: static; }
+
+/* the last step's "Add to timeline" (EmbedAddButton.jsx, and the WYR studio's own Next on its last step) */
+.embed-root .sw-add { display: inline-flex; align-items: center; gap: 6px; background: var(--accent, #4568ee); color: #fff; border: 0; font-weight: 650; padding: 0 16px; min-height: 38px; border-radius: 11px; box-shadow: 0 6px 16px rgba(69,104,238,0.28); transition: transform .15s ease, filter .15s ease, background-color .2s ease; }
+.embed-root .sw-add:hover { filter: brightness(1.06); }
+.embed-root .sw-add:active { transform: scale(0.98); }
+.embed-root .sw-add.added { background: #16a34a; box-shadow: 0 6px 16px rgba(22,163,74,0.28); }
+.embed-root .sw-add[disabled] { opacity: .85; cursor: progress; }
+.embed-root .sw-add-spin { animation: sw-add-spin .8s linear infinite; }
+@keyframes sw-add-spin { to { transform: rotate(360deg); } }

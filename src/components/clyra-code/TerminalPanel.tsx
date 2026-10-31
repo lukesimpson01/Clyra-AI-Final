@@ -175,7 +175,14 @@ function TerminalPanelInner({ projectId, open, height, onHeightChange, onToggle,
   useEffect(() => {
     const node = mountRef.current;
     if (!node || !open) return;
+    let lastW = node.clientWidth;
+    let lastH = node.clientHeight;
     const observer = new ResizeObserver(() => {
+      // Only a real size change needs a refit; moving the panel's node (Task View) reports one too.
+      const w = node.clientWidth;
+      const h = node.clientHeight;
+      if (!w || !h || (w === lastW && h === lastH)) return;
+      lastW = w; lastH = h;
       requestAnimationFrame(() => { fit(); followLatest(); });
     });
     observer.observe(node);

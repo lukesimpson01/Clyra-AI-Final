@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type { ComposerEffortOption } from "./ClyraComposerShell";
 
 /**
- * Reasoning effort: a small popover attached to its button (with a caret) holding a horizontal slider.
- * Drag the thumb, click the track, click a level name or use the arrow keys — every route animates the same way:
- * the thumb springs to the stop, the fill follows, the level name slides in and a soft ring pulses out of the thumb.
- * It opens with a springy scale from the button and closes with a quick fade.
+ * Reasoning effort: a small popover attached to its button holding a horizontal slider.
+ *
+ * The thumb is a motion value, so dragging never re-renders React: it follows the pointer 1:1 on the compositor
+ * (transform only), with a light rubber band past either end. On release, or on a click anywhere on the track, it
+ * springs to the nearest stop, carrying the pointer's velocity, so a flick lands softly. The level's name previews
+ * live while dragging and commits on release. Arrow keys, Home/End and the level names below move it the same way.
+ * The popover rises from its button in 200ms and fades out in 140ms.
  */
-const WIDTH = 218;
+const WIDTH = 248;
 const PAD = 14;
-const TRACK_H = 24;
-const THUMB = 20;
-const EASE = "cubic-bezier(.16,1,.3,1)";
-const SPRING = "cubic-bezier(.34,1.5,.5,1)";
+const TRACK_H = 26;
+const THUMB = 22;
+const INSET = (TRACK_H - THUMB) / 2;
+/* settle: quick, soft, no visible overshoot */
+const SETTLE = { type: "spring", stiffness: 560, damping: 44, mass: 0.7 } as const;
+const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
 export function EffortSlider({
   efforts,
@@ -20,107 +26,108 @@ export function EffortSlider({
   accentColor,
   open,
   defaultValue,
+  fixedAnchor,
 }: {
   efforts: ComposerEffortOption[];
   current: string;
   accentColor: string;
   open: boolean;
   defaultValue?: string;
+  /** When set (portal use), position the popover at this viewport point instead of anchoring it to its in-flow parent. */
+  fixedAnchor?: { left: number; bottom: number } | null;
 }) {
   const count = efforts.length;
   const index = Math.max(0, efforts.findIndex((e) => e.value === current));
+  const reduceMotion = useReducedMotion();
   const trackRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<number | null>(null);   // 0..1 along the track while dragging
-  const [swept, setSwept] = useState(false);                // the fill sweeps out from empty each time it opens
-  const [pulse, setPulse] = useState(0);                    // bumps on every change, restarting the thumb ring
-  const lastIndex = useRef(index);
-  const direction = useRef(1);
   const inner = WIDTH - PAD * 2;
-  const travel = inner - THUMB;
-  const ratio = drag ?? (count > 1 ? index / (count - 1) : 0);
-  const active = efforts[index] ?? efforts[0];
+  const travel = inner - THUMB - INSET * 2;
+  const step = count > 1 ? travel / (count - 1) : 0;
 
-  useEffect(() => {
-    if (!open) { setDrag(null); setSwept(false); return undefined; }
-    const id = window.setTimeout(() => setSwept(true), 110);
-    return () => window.clearTimeout(id);
-  }, [open]);
+  const x = useMotionValue(index * step);
+  const fill = useTransform(x, (v) => Math.max(0, v) + THUMB + INSET * 2);
+  const [pressed, setPressed] = useState(false);
+  /* the stop under the thumb while dragging: previews the level before it commits */
+  const [preview, setPreview] = useState<number | null>(null);
+  const session = useRef<{ id: number; grab: number; moved: boolean; downX: number } | null>(null);
+  const lastShown = useRef(index);
+  const shownIndex = preview ?? index;
+  const direction = shownIndex >= lastShown.current ? 1 : -1;
+  useEffect(() => { lastShown.current = shownIndex; }, [shownIndex]);
 
-  useEffect(() => {
-    if (index !== lastIndex.current) {
-      direction.current = index > lastIndex.current ? 1 : -1;
-      lastIndex.current = index;
-      setPulse((n) => n + 1);
-    }
-  }, [index]);
+  const settle = useCallback((to: number, velocity = 0) => {
+    if (reduceMotion || !open) { x.set(to * step); return; }
+    animate(x, to * step, { ...SETTLE, velocity });
+  }, [open, reduceMotion, step, x]);
 
-  const pickIndex = useCallback((i: number) => { const t = efforts[Math.min(count - 1, Math.max(0, i))]; if (t && t.value !== current) t.onPick(); }, [count, current, efforts]);
-  const pickFromRatio = useCallback((r: number) => pickIndex(Math.round(Math.min(1, Math.max(0, r)) * (count - 1))), [count, pickIndex]);
-  const ratioFromEvent = (clientX: number) => {
+  /* the level changed from outside (keys, labels, reset, another surface): glide there */
+  useEffect(() => { if (!session.current) settle(index); }, [index, settle]);
+  useEffect(() => { if (!open) { session.current = null; setPressed(false); setPreview(null); x.set(index * step); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = useCallback((i: number) => {
+    const next = Math.min(count - 1, Math.max(0, i));
+    const target = efforts[next];
+    if (target && target.value !== current) target.onPick();
+    return next;
+  }, [count, current, efforts]);
+
+  const localX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
-    return rect ? Math.min(1, Math.max(0, (clientX - rect.left - THUMB / 2) / travel)) : 0;
+    return rect ? clientX - rect.left - INSET : 0;
   };
-
-  const shown = swept ? ratio : 0;
-  const thumbLeft = shown * travel;
-  const fillWidth = thumbLeft + THUMB / 2 + 2;
-  const move = drag === null ? `${swept ? ".5s" : ".75s"}` : "0s";
-  const stagger = (n: number): React.CSSProperties => ({
-    opacity: open ? 1 : 0,
-    transform: open ? "none" : "translateY(6px)",
-    transition: `opacity .35s ease ${open ? 0.07 + n * 0.05 : 0}s, transform .55s ${EASE} ${open ? 0.07 + n * 0.05 : 0}s`,
-  });
+  /* past either end the thumb gives a little, then resists */
+  const band = (v: number) => (v < 0 ? -Math.sqrt(-v) * 2 : v > travel ? travel + Math.sqrt(v - travel) * 2 : v);
+  const nearest = (v: number) => Math.round(Math.min(travel, Math.max(0, v)) / (step || 1));
 
   return (
     <div
       style={{
-        position: "absolute",
-        bottom: "calc(100% + 11px)",
-        left: -6,
+        ...(fixedAnchor
+          ? { position: "fixed" as const, left: fixedAnchor.left, bottom: fixedAnchor.bottom }
+          : { position: "absolute" as const, bottom: "calc(100% + 10px)", left: -6 }),
         width: WIDTH,
-        padding: `${PAD}px ${PAD}px 11px`,
-        borderRadius: 20,
-        background: "linear-gradient(180deg, #FFFFFF 0%, #FAFBFD 100%)",
+        padding: `${PAD}px ${PAD}px 12px`,
+        borderRadius: 18,
+        background: "#FFFFFF",
         zIndex: 20,
-        boxShadow: "0 1px 1px rgba(16,18,24,0.04), 0 14px 36px -12px rgba(16,18,24,0.24), inset 0 0 0 1px rgba(16,18,24,0.07)",
+        boxShadow: "0 0 0 1px rgba(16,18,24,0.07), 0 8px 24px -10px rgba(16,18,24,0.18)",
         opacity: open ? 1 : 0,
-        transform: open ? "none" : "translateY(10px) scale(.88)",
+        transform: open ? "none" : "translateY(4px) scale(.98)",
         transformOrigin: "16% 100%",
         pointerEvents: open ? "auto" : "none",
         visibility: open ? "visible" : "hidden",
         transition: open
-          ? `opacity .2s ease, transform .55s ${SPRING}, visibility 0s`
-          : `opacity .15s ease, transform .2s cubic-bezier(.4,0,1,1), visibility 0s linear .2s`,
+          ? `opacity .18s ease-out, transform .2s cubic-bezier(.22,1,.36,1), visibility 0s`
+          : `opacity .14s ease-in, transform .14s ease-in, visibility 0s linear .14s`,
         userSelect: "none",
+        willChange: "transform, opacity",
       }}
     >
-      {/* caret: attaches the popover to the button it belongs to */}
-      <span aria-hidden="true" style={{ position: "absolute", left: 30, bottom: -5, width: 10, height: 10, background: "#FAFBFD", transform: "rotate(45deg)", borderRadius: 2, boxShadow: "inset -1px -1px 0 rgba(16,18,24,0.07)" }} />
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 22, ...stagger(0) }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 22 }}>
         <div style={{ position: "relative", height: 20, minWidth: 0, flex: 1, overflow: "hidden" }}>
-          <span
-            key={active?.value}
-            style={{ position: "absolute", left: 0, top: 0, display: "flex", alignItems: "baseline", gap: 7, whiteSpace: "nowrap", animation: `clyraEffortIn${direction.current > 0 ? "R" : "L"} .42s ${EASE} both` }}
+          <motion.span
+            key={efforts[shownIndex]?.value}
+            initial={reduceMotion ? false : { opacity: 0, x: direction * 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.22, ease: EASE_OUT }}
+            style={{ position: "absolute", left: 0, top: 0, display: "flex", alignItems: "baseline", gap: 7, whiteSpace: "nowrap" }}
           >
-            <span style={{ fontSize: 14.5, fontWeight: 650, letterSpacing: "-0.018em", color: accentColor }}>{active?.label}</span>
-            <span style={{ fontSize: 11.5, color: "#8A919E" }}>{active?.hint}</span>
-          </span>
+            <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.015em", color: "#0D0D0D" }}>{efforts[shownIndex]?.label}</span>
+            <span style={{ fontSize: 12, color: "#8F8F8F" }}>{efforts[shownIndex]?.hint}</span>
+          </motion.span>
         </div>
         <button
           type="button"
           title="Reset to default"
           aria-label="Reset effort"
-          onClick={() => pickIndex(efforts.findIndex((e) => e.value === defaultValue))}
-          style={{ display: "grid", placeItems: "center", width: 22, height: 22, border: "none", background: "transparent", color: "#A0A7B4", cursor: "pointer", borderRadius: 11, flex: "0 0 22px", transition: "color .2s ease, background .2s ease, transform .4s " + EASE }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(16,18,24,.05)"; e.currentTarget.style.color = "#5F636B"; e.currentTarget.style.transform = "rotate(-40deg)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#A0A7B4"; e.currentTarget.style.transform = "none"; }}
+          onClick={() => commit(efforts.findIndex((e) => e.value === defaultValue))}
+          className="clyra-effort-reset"
         >
           <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
         </button>
       </div>
 
-      <div style={{ marginTop: 11, ...stagger(1) }}>
+      <div style={{ marginTop: 12 }}>
         <div
           ref={trackRef}
           role="slider"
@@ -129,38 +136,84 @@ export function EffortSlider({
           aria-valuemin={0}
           aria-valuemax={count - 1}
           aria-valuenow={index}
-          aria-valuetext={active?.label}
+          aria-valuetext={efforts[index]?.label}
           onKeyDown={(e) => {
-            if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); pickIndex(index + 1); }
-            if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); pickIndex(index - 1); }
+            const to = e.key === "ArrowRight" || e.key === "ArrowUp" ? index + 1
+              : e.key === "ArrowLeft" || e.key === "ArrowDown" ? index - 1
+              : e.key === "Home" ? 0 : e.key === "End" ? count - 1 : null;
+            if (to === null) return;
+            e.preventDefault();
+            commit(to);
           }}
-          onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); setDrag(ratioFromEvent(e.clientX)); }}
-          onPointerMove={(e) => { if (drag !== null) setDrag(ratioFromEvent(e.clientX)); }}
-          onPointerUp={(e) => { const r = ratioFromEvent(e.clientX); setDrag(null); pickFromRatio(r); }}
-          onPointerCancel={() => setDrag(null)}
-          style={{ position: "relative", width: "100%", height: TRACK_H, borderRadius: TRACK_H / 2, background: "#EEF0F4", cursor: "pointer", outline: "none", touchAction: "none", boxShadow: "inset 0 1px 2px rgba(16,18,24,0.07)" }}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const at = localX(e.clientX) - THUMB / 2;
+            const onThumb = Math.abs(at - x.get()) <= THUMB / 2 + 4;
+            /* grabbing the thumb keeps its offset; pressing the track pulls the thumb to the pointer */
+            session.current = { id: e.pointerId, grab: onThumb ? at - x.get() : 0, moved: false, downX: e.clientX };
+            setPressed(true);
+            if (!onThumb) {
+              const to = nearest(at);
+              setPreview(to);
+              settle(to);
+            }
+          }}
+          onPointerMove={(e) => {
+            const s = session.current;
+            if (!s || s.id !== e.pointerId) return;
+            if (!s.moved && Math.abs(e.clientX - s.downX) < 3) return;
+            s.moved = true;
+            x.stop();
+            const v = band(localX(e.clientX) - THUMB / 2 - s.grab);
+            x.set(v);
+            const to = nearest(v);
+            setPreview((p) => (p === to ? p : to));
+          }}
+          onPointerUp={(e) => {
+            const s = session.current;
+            if (!s || s.id !== e.pointerId) return;
+            session.current = null;
+            setPressed(false);
+            const to = s.moved ? nearest(x.get()) : nearest(localX(e.clientX) - THUMB / 2 - s.grab);
+            setPreview(null);
+            const committed = commit(to);
+            settle(committed, s.moved ? x.getVelocity() : 0);
+          }}
+          onPointerCancel={() => { session.current = null; setPressed(false); setPreview(null); settle(index); }}
+          className="clyra-effort-track"
+          style={{ height: TRACK_H, borderRadius: TRACK_H / 2 }}
         >
-          <div style={{ position: "absolute", inset: 0, borderRadius: TRACK_H / 2, overflow: "hidden" }}>
-            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: fillWidth, background: `linear-gradient(90deg, ${accentColor}, ${accentColor})`, borderRadius: TRACK_H / 2, transition: `width ${move} ${drag === null ? SPRING : "linear"}` }} />
-            {efforts.map((_, i) => (
-              <span key={i} style={{ position: "absolute", top: "50%", marginTop: -2, left: (count > 1 ? i / (count - 1) : 0) * travel + THUMB / 2 - 2, width: 4, height: 4, borderRadius: 2, background: i <= index ? "rgba(255,255,255,.65)" : "rgba(16,18,24,.2)", transition: "background .3s ease" }} />
-            ))}
-          </div>
-          {/* soft ring pulsing out of the thumb on every change */}
-          <span key={pulse} aria-hidden="true" style={{ position: "absolute", top: (TRACK_H - THUMB) / 2, left: thumbLeft, width: THUMB, height: THUMB, borderRadius: "50%", pointerEvents: "none", transition: `left ${move} ${SPRING}`, animation: pulse ? `clyraEffortRing .7s ${EASE} both` : "none" }} />
-          <div style={{ position: "absolute", top: (TRACK_H - THUMB) / 2, left: thumbLeft, width: THUMB, height: THUMB, borderRadius: "50%", background: "#FFFFFF", boxShadow: "0 1px 4px rgba(16,18,24,.28), 0 0 0 .5px rgba(16,18,24,.12)", transition: `left ${move} ${drag === null ? SPRING : "linear"}, transform .25s ${EASE}`, transform: drag !== null ? "scale(1.1)" : "none" }} />
+          <motion.div aria-hidden className="clyra-effort-fill" style={{ width: fill, borderRadius: TRACK_H / 2, background: accentColor }} />
+          {efforts.map((_, i) => (
+            <span
+              key={i}
+              aria-hidden
+              className="clyra-effort-stop"
+              style={{ left: INSET + i * step + THUMB / 2 - 2, background: i <= shownIndex ? "rgba(255,255,255,.7)" : "rgba(16,18,24,.18)" }}
+            />
+          ))}
+          <motion.div
+            aria-hidden
+            className="clyra-effort-thumb"
+            style={{ x, top: INSET, left: INSET, width: THUMB, height: THUMB }}
+            animate={{ scale: pressed ? 1.08 : 1 }}
+            transition={{ duration: 0.16, ease: EASE_OUT }}
+          />
         </div>
-        <div style={{ position: "relative", height: 18, marginTop: 7 }}>
+        <div style={{ position: "relative", height: 18, marginTop: 8, marginLeft: INSET + THUMB / 2, width: travel, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           {efforts.map((e, i) => {
-            const center = (count > 1 ? i / (count - 1) : 0) * travel + THUMB / 2;
-            const on = i === index;
+            const on = i === shownIndex;
             return (
               <button
                 key={e.value}
                 type="button"
-                onClick={() => pickIndex(i)}
-                style={{ position: "absolute", top: 0, left: center, transform: `translateX(-50%) scale(${on ? 1.04 : 1})`, padding: "1px 5px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: on ? 650 : 500, color: on ? accentColor : "#8A919E", letterSpacing: "-0.004em", whiteSpace: "nowrap", transition: `color .3s ease, transform .4s ${SPRING}` }}
+                onClick={() => commit(i)}
+                className="clyra-effort-label"
+                data-on={on ? "true" : undefined}
+                style={on ? { color: accentColor } : undefined}
               >
+                <span className="clyra-effort-label-icon" aria-hidden>{e.icon}</span>
                 {e.label}
               </button>
             );
@@ -168,9 +221,20 @@ export function EffortSlider({
         </div>
       </div>
       <style>{`
-        @keyframes clyraEffortInR { from { opacity: 0; transform: translateX(10px); filter: blur(2px); } to { opacity: 1; transform: none; filter: blur(0); } }
-        @keyframes clyraEffortInL { from { opacity: 0; transform: translateX(-10px); filter: blur(2px); } to { opacity: 1; transform: none; filter: blur(0); } }
-        @keyframes clyraEffortRing { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, ${accentColor} 40%, transparent); } 100% { box-shadow: 0 0 0 14px color-mix(in srgb, ${accentColor} 0%, transparent); } }
+        .clyra-effort-track { position: relative; width: 100%; background: #F0F1F3; cursor: pointer; outline: none; touch-action: none; overflow: hidden; }
+        .clyra-effort-track:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(16,18,24,.35); }
+        .clyra-effort-fill { position: absolute; left: 0; top: 0; bottom: 0; }
+        .clyra-effort-stop { position: absolute; top: 50%; margin-top: -2px; width: 4px; height: 4px; border-radius: 2px; transition: background-color .2s ease; pointer-events: none; }
+        .clyra-effort-thumb { position: absolute; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); will-change: transform; cursor: grab; }
+        .clyra-effort-track:active .clyra-effort-thumb { cursor: grabbing; }
+        .clyra-effort-label { display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px; margin: 0 -5px; border: 0; background: transparent; cursor: pointer; font: 500 11.5px/16px inherit; font-family: inherit; color: #8F8F8F; border-radius: 8px; white-space: nowrap; transition: color .18s ease; }
+        .clyra-effort-label[data-on] { font-weight: 600; }
+        .clyra-effort-label:hover { color: #0D0D0D; }
+        .clyra-effort-label-icon { display: grid; place-items: center; opacity: .72; transition: opacity .18s ease; }
+        .clyra-effort-label[data-on] .clyra-effort-label-icon { opacity: 1; }
+        .clyra-effort-label-icon svg { width: 12px; height: 12px; display: block; }
+        .clyra-effort-reset { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 0; border-radius: 11px; background: transparent; color: #A0A0A0; cursor: pointer; transition: color .15s ease, background-color .15s ease, transform .3s cubic-bezier(.22,1,.36,1); }
+        .clyra-effort-reset:hover { background: rgba(16,18,24,.05); color: #5D5D5D; transform: rotate(-40deg); }
       `}</style>
     </div>
   );

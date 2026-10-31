@@ -286,12 +286,12 @@ export function DictationController() {
         // trailing pause. This avoids cutting off the first word while
         // still handing a finished sentence to transcription promptly.
         if (now - speechStartedAtRef.current < VOICE_MIN_UTTERANCE_MS) return;
-        const remaining = autoStopRef.current ? Math.max(120, 1500 - (now - lastSpeechAtRef.current)) : remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
+        const remaining = autoStopRef.current ? Math.max(120, 8000 - (now - lastSpeechAtRef.current)) : remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
         silenceTimerRef.current = window.setTimeout(() => {
           silenceTimerRef.current = null;
           const current = activeRef.current;
           if (!current || !heardSpeechRef.current) return;
-          if (performance.now() - lastSpeechAtRef.current < (autoStopRef.current ? 1400 : VOICE_TRAILING_SILENCE_MS)) return;
+          if (performance.now() - lastSpeechAtRef.current < (autoStopRef.current ? 7900 : VOICE_TRAILING_SILENCE_MS)) return;
           heardSpeechRef.current = false;
           stopRef.current();
         }, remaining);

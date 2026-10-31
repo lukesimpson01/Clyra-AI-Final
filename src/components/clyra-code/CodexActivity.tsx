@@ -9,7 +9,11 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpen,
+  Check,
   ChevronDown,
+  Minus,
+  Square,
+  X,
   Download,
   FolderTree,
   Globe,
@@ -69,7 +73,8 @@ function baseName(path: string) {
 export function liveStepLabel(actions: AgentAction[]) {
   for (let index = actions.length - 1; index >= 0; index -= 1) {
     const action = actions[index];
-    if (action.kind === "permission" || !isRunning(action)) continue;
+    if (!isRunning(action)) continue;
+    if (action.kind === "permission") return "Waiting for approval";
     const verb = (VERBS[action.kind] ?? VERBS.generic).active;
     const target = FILE_KINDS.test(action.kind) || action.kind === "read" ? baseName(action.target) : action.target;
     const short = target.length > 44 ? `${target.slice(0, 43)}…` : target;
@@ -95,6 +100,28 @@ export function activitySummary(actions: AgentAction[]) {
   return sentence[0].toUpperCase() + sentence.slice(1);
 }
 
+/** The row's status on the timeline rail: a quiet check when done, a small turning arc while running, red when it failed. */
+function StatusNode({ state }: { state: "running" | "queued" | "done" | "failed" | "stopped" }) {
+  return (
+    <span className="cxa-node" data-state={state} aria-hidden>
+      {state === "done" ? <Check strokeWidth={2.4} /> : state === "failed" ? <X strokeWidth={2.4} /> : state === "stopped" ? <Minus strokeWidth={2.4} /> : null}
+    </span>
+  );
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${Math.max(0.1, ms / 1000).toFixed(1)}s`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+/** The real exit status, when the command's own output reports one. Never inferred. */
+function exitCodeFrom(output: string) {
+  const match = /exit(?:ed with)?(?:\s+code)?\s*[:=]?\s*(-?\d{1,3})\b/i.exec(output);
+  return match ? Number(match[1]) : null;
+}
+
 function Stats({ additions, deletions }: { additions?: number; deletions?: number }) {
   if (additions === undefined && deletions === undefined) return null;
   return (
@@ -106,7 +133,7 @@ function Stats({ additions, deletions }: { additions?: number; deletions?: numbe
 }
 
 /** Glides its own height to fit its content, so rows arriving or opening never make the transcript jump. */
-function SmoothHeight({ children }: { children: React.ReactNode }) {
+function SmoothHeight({ children, className }: { children: React.ReactNode; className?: string }) {
   const inner = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -120,7 +147,7 @@ function SmoothHeight({ children }: { children: React.ReactNode }) {
   }, []);
   return (
     <div className="cxa-smooth" style={height === null ? undefined : { height }}>
-      <div ref={inner}>{children}</div>
+      <div ref={inner} className={className}>{children}</div>
     </div>
   );
 }
@@ -178,7 +205,8 @@ export const ActivityRow = memo(function ActivityRow({
         aria-expanded={hasBody ? open : undefined}
         onClick={() => { if (hasBody) setOpen((value) => !value); setSeen(true); }}
       >
-        <Icon className="cxa-icon" strokeWidth={1.75} aria-hidden />
+        <StatusNode state={running ? (action.status === "queued" ? "queued" : "running") : failed ? "failed" : action.status === "cancelled" ? "stopped" : "done"} />
+        <Icon className="cxa-kind" strokeWidth={1.75} aria-hidden />
         <span className="cxa-text">
           <span className={cn("cxa-verb", live && !reduced && "cx-shine")}>{verb}</span>
           {target ? (
@@ -200,7 +228,12 @@ export const ActivityRow = memo(function ActivityRow({
         </span>
         {isFile && !failed ? <Stats additions={action.kind === "delete" ? undefined : action.additions} deletions={action.kind === "create" ? undefined : action.deletions} /> : null}
         {isFile && !seen && !running && !failed ? <span className="cxa-unseen" aria-label="New change" /> : null}
-        {failed ? <span className="cxa-failed">failed</span> : null}
+        {isTerminal && !running && action.endedAt ? (
+          <span className="cxa-outcome">
+            {(() => { const code = exitCodeFrom(output); return code !== null ? `exit ${code} · ` : ""; })()}{formatDuration(action.endedAt - action.startedAt)}
+          </span>
+        ) : null}
+        {running ? <span className="cxa-outcome">{action.status === "queued" ? "Pending" : isTerminal ? "Running…" : ""}</span> : null}
       </button>
       <AnimatePresence initial={false}>
         {open && hasBody ? (
@@ -296,8 +329,10 @@ export function ActivityGroup({
     return () => observer.disconnect();
   }, [open]);
 
+  // While working, the run header above names the live step; the group line summarises what is already done.
+  const settled = actions.filter((action) => !isRunning(action));
   const header = working && live
-    ? null
+    ? (settled.length ? `${activitySummary(settled)}…` : "Starting…")
     : activitySummary(actions);
   // The header names the step in progress by its icon (the live row below carries the words); once done, a pencil
   // when files changed, otherwise the first action's kind.
@@ -309,11 +344,7 @@ export function ActivityGroup({
     <div className="cxa-group" data-open={open || undefined}>
       <button type="button" className="cxa-head" aria-expanded={open} onClick={() => setUserChoice(!open)}>
         <HeadIcon className="cxa-icon" strokeWidth={1.75} aria-hidden />
-        {header === null ? (
-          <span className={cn("cxa-head-text", !reduced && "cx-shine")}>Working…</span>
-        ) : (
-          <span className="cxa-head-text">{header}</span>
-        )}
+        <span className="cxa-head-text">{header}</span>
         <motion.span className="cxa-chevron" animate={{ rotate: open ? 0 : -90 }} transition={{ duration: 0.2, ease: AGENT_EASE }} aria-hidden>
           <ChevronDown className="h-[14px] w-[14px]" strokeWidth={1.8} />
         </motion.span>
@@ -329,7 +360,7 @@ export function ActivityGroup({
             className="cxa-rows-clip"
           >
             <div ref={scrollRef} onScroll={updateEdges} className="cxa-rows" data-fade-top={edges.top || undefined} data-fade-bottom={edges.bottom || undefined}>
-              <SmoothHeight>
+              <SmoothHeight className="cxa-timeline">
                 {shown.map((action) => (
                   <ActivityRow key={action.id} action={action} live={action.id === liveId} fresh={fresh} onOpenFile={onOpenFile} onRetry={onRetry} onOpenTerminal={onOpenTerminal} />
                 ))}
@@ -338,6 +369,94 @@ export function ActivityGroup({
           </motion.div>
         ) : null}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/** "00:12" / "1:04:09" — the elapsed time of the run. */
+function clock(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+/** Ticks once a second, and only while the run is live; nothing else re-renders for it. */
+function ElapsedClock({ since, until }: { since: number; until: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (until) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [until]);
+  return <span className="cxr-clock">{clock((until ?? now) - since)}</span>;
+}
+
+/** What the run is doing right now, phrased from the real action in progress:
+ *  "Editing Calculator.tsx", "Running npm run test", "Searching the web for …".
+ *  Never a generic category when the event itself names the work. */
+export function runLabel(live: AgentAction | undefined) {
+  if (!live) return "Working";
+  return liveStepLabel([live]) ?? "Working";
+}
+
+/**
+ * The status line at the top of the agent's response: what it is doing, an elapsed timer that never resets between
+ * steps, an optional stop control, and a hairline beneath. While work is live a soft sheen travels along the line
+ * (no invented percentage); when the run ends the timer stops and the line settles.
+ */
+export function RunHeader({
+  phase,
+  label,
+  since,
+  until,
+  summary,
+  onStop,
+}: {
+  phase: "running" | "complete" | "failed" | "cancelled";
+  label: string;
+  since: number;
+  until: number | null;
+  summary?: string | null;
+  onStop?: () => void;
+}) {
+  const reduced = useReducedMotion();
+  const live = phase === "running";
+  const title = live ? label : phase === "complete" ? "Completed" : phase === "failed" ? "Needs attention" : "Stopped";
+  return (
+    <div className="cxr" data-phase={phase} role="status" aria-live="polite">
+      <div className="cxr-top">
+        <span className="cxr-indicator" aria-hidden>{live ? null : phase === "complete" ? <Check strokeWidth={2.6} /> : phase === "failed" ? <X strokeWidth={2.6} /> : <Minus strokeWidth={2.6} />}</span>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={title}
+            className="cxr-label"
+            initial={reduced ? false : { opacity: 0, y: 2 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -2 }}
+            transition={{ duration: 0.16, ease: AGENT_EASE }}
+          >
+            {title}
+          </motion.span>
+        </AnimatePresence>
+        {/* A settled run only shows its duration when both ends are known (restored sessions may lack the end). */}
+        {live || (until && until >= since) ? (
+          <>
+            <span className="cxr-dot" aria-hidden>·</span>
+            <ElapsedClock since={since} until={live ? null : until} />
+          </>
+        ) : null}
+        {!live && summary ? <span className="cxr-summary">{summary}</span> : null}
+        {live && onStop ? (
+          <button type="button" className="cxr-stop" onClick={onStop} title="Stop">
+            <Square strokeWidth={0} fill="currentColor" aria-hidden />
+            Stop
+          </button>
+        ) : null}
+      </div>
+      <div className="cxr-line" aria-hidden><span className="cxr-sheen" /></div>
     </div>
   );
 }

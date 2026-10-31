@@ -67,7 +67,9 @@
 .cc-agent-status--warning { color: var(--warning-amber); }
 .cc-agent-status--error { color: var(--deletion-red); }
 
-/* Codex-style thread header actions: a quiet status line, diff stat and Open. */
+/* Codex-style thread header actions: a quiet status line, diff stat and Open.
+   The label stays still while the dot beside it pulses — the working state is
+   conveyed by the indicator, never by flashing text. */
 .cc-thread-status {
   display: inline-flex;
   align-items: center;
@@ -77,17 +79,10 @@
   font-size: 11.5px;
   font-weight: 500;
   white-space: nowrap;
-  background: linear-gradient(110deg, #404040, 35%, #fff, 50%, #404040, 75%, #404040);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: cx-shine 2s linear infinite;
 }
 .cc-thread-status-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--accent-blue);
-  -webkit-text-fill-color: initial;
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-blue) 45%, transparent);
   animation: cc-status-pulse 1.4s ease-out infinite;
 }
@@ -501,7 +496,6 @@ button.dsh-leading { cursor: pointer; }
 .dsh-todo-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   padding: 6px 12px;
 }
 
@@ -558,10 +552,26 @@ button.dsh-leading { cursor: pointer; }
   flex-direction: column;
   gap: 8px;
   margin: 0;
-  padding: 0;
+  padding: 8px 0 0;
   list-style: none;
   max-height: 180px;
   overflow-y: auto;
+}
+
+/* The checklist opens and closes by animating the real height of a single
+   grid row, so the eased curve touches the actual content height — a slow
+   start and a slow stop, with no max-height guesswork. */
+.dsh-todo-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 320ms cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+.dsh-todo-collapse[data-open="true"] { grid-template-rows: 1fr; }
+
+.dsh-todo-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .dsh-todo-item {
@@ -574,7 +584,11 @@ button.dsh-leading { cursor: pointer; }
   color: var(--text-secondary);
 }
 
-.dsh-todo-item[data-status="completed"] .dsh-todo-content { color: var(--text-tertiary); }
+.dsh-todo-item[data-status="completed"] .dsh-todo-content {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-tertiary) 65%, transparent);
+}
 .dsh-todo-item[data-status="in_progress"] .dsh-todo-content { color: var(--text-primary); font-weight: 500; }
 
 .dsh-todo-glyph {
@@ -597,6 +611,7 @@ button.dsh-leading { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .dsh-glyph-progress { animation: none; }
+  .dsh-todo-collapse { transition: none; }
 }
 
 .dsh-todo-content {
@@ -604,6 +619,7 @@ button.dsh-leading { cursor: pointer; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 240ms ease;
 }
 
 /* ============================================================
@@ -734,7 +750,46 @@ button.dsh-leading { cursor: pointer; }
    that would sit permanently at the end of moving text. */
 .dsh-summary[data-follow-end="true"] { text-overflow: clip; }
 
-/* Sidebar activity marker: one small, gently pulsing dot. Never a whole-row animation. */
+/* Live "Thinking" indicator: three small dots breathing in sequence beside the
+   label. Colour and motion only — the label text itself never flashes. */
+.dsh-thinking-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: var(--dsh-row-height);
+}
+
+.dsh-thinking-dots i {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  opacity: 0.28;
+  animation: dsh-thinking-breathe 1.25s ease-in-out infinite;
+}
+
+.dsh-thinking-dots i:nth-child(2) { animation-delay: 0.16s; }
+.dsh-thinking-dots i:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes dsh-thinking-breathe {
+  0%, 65%, 100% { opacity: 0.25; transform: translateY(0); }
+  32% { opacity: 1; transform: translateY(-1.5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-thinking-dots i { animation: none; opacity: 0.55; }
+}
+
+/* Sidebar activity marker: one small blue dot. It is intentionally STATIC while
+   the agent works — the old pulse was removed so the sidebar costs nothing while
+   the AI is coding. The pulse code is KEPT below (disabled) for any AI to find:
+   to bring the pulse back, uncomment the `animation` line on `.cc-running-dot`. */
 .cc-running-dot {
   display: inline-block;
   width: 6px;
@@ -742,7 +797,9 @@ button.dsh-leading { cursor: pointer; }
   flex-shrink: 0;
   border-radius: 9999px;
   background: #3977f6;
-  animation: cc-running-pulse 1.6s ease-in-out infinite;
+  opacity: 1;
+  /* DISABLED — see the note above this block. */
+  /* animation: cc-running-pulse 1.6s ease-in-out infinite; */
 }
 
 .cc-running-dot--inline {
@@ -751,6 +808,8 @@ button.dsh-leading { cursor: pointer; }
   vertical-align: middle;
 }
 
+/* DISABLED: the old "agent working" pulse. Left in place (with the animation
+   line commented out above) so any AI or human can re-enable it in one step. */
 @keyframes cc-running-pulse {
   0%,
   100% {
@@ -761,8 +820,20 @@ button.dsh-leading { cursor: pointer; }
   }
 }
 
+/* One-shot completion reveal: when the agent finishes, the finished task shows
+   a check that settles into place once, gently. Never loops. */
+.cc-done-in {
+  animation: cc-done-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cc-done-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cc-running-dot {
+  .cc-running-dot,
+  .cc-done-in {
     animation: none;
   }
 }
@@ -905,3 +976,54 @@ button.dsh-leading { cursor: pointer; }
   .cc-pb-glow, .cc-pb-window, .cc-pb-window[data-done] .cc-pb-sweep { animation: none; }
   .cc-pb-block, .cc-pb-page { transition: none; }
 }
+
+/* Small list entrances as CSS animations: if an app is hidden or its node moves mid-way, they simply end at the
+   normal style instead of being stranded at opacity 0 the way an interrupted JS animation can be. */
+.cc-title-in { animation: cc-title-in 180ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes cc-title-in { from { opacity: 0; transform: translateY(2px); } }
+.cc-row-in { animation: cc-row-in 220ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes cc-row-in { from { opacity: 0; transform: translateX(-4px); } }
+@media (prefers-reduced-motion: reduce) { .cc-title-in, .cc-row-in { animation: none; } }
+
+/* ---------- Codex timeline: status rail ---------- */
+.cxa-node { position: relative; z-index: 1; display: inline-grid; flex: none; width: 15px; height: 15px; place-items: center; border-radius: 50%; color: rgba(26, 28, 31, 0.42); background: var(--main-background, #fff); transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
+.cxa-node svg { width: 10px; height: 10px; }
+.cxa-node[data-state="queued"] { box-shadow: inset 0 0 0 1.25px rgba(26, 28, 31, 0.22); width: 11px; height: 11px; margin: 0 2px; }
+.cxa-node[data-state="running"] { box-shadow: inset 0 0 0 1.5px rgba(57, 119, 246, 0.22); }
+.cxa-node[data-state="running"]::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid transparent; border-top-color: #3977f6; animation: cxa-turn 0.9s linear infinite; }
+@keyframes cxa-turn { to { transform: rotate(360deg); } }
+.cxa-node[data-state="failed"] { color: #fff; background: #d1242f; }
+.cxa-node[data-state="failed"] svg { width: 9px; height: 9px; }
+.cxa-kind { width: 14px; height: 14px; flex: none; opacity: 0.55; }
+.cxa-item[data-state="running"] .cxa-row { color: var(--cxa-ink); }
+.cxa-outcome { flex: none; margin-left: 4px; font-size: 12.5px; color: var(--cxa-faint); font-variant-numeric: tabular-nums; }
+/* the thin neutral line connecting consecutive nodes */
+.cxa-timeline > .cxa-item { position: relative; }
+.cxa-timeline > .cxa-item:not(:last-child)::before { content: ""; position: absolute; left: 7px; top: 17px; bottom: -6px; width: 1px; background: rgba(26, 28, 31, 0.1); }
+@media (prefers-reduced-motion: reduce) { .cxa-node[data-state="running"]::after { animation: none; border-color: #3977f6; opacity: .5; } }
+
+/* ---------- Run header: label, elapsed timer, hairline ---------- */
+.cxr { margin: 10px 0 4px; }
+.cxr-top { display: flex; min-height: 24px; align-items: center; gap: 7px; font-size: 13px; line-height: 20px; color: rgba(26, 28, 31, 0.62); }
+.cxr-indicator { position: relative; display: inline-grid; width: 14px; height: 14px; flex: none; place-items: center; border-radius: 50%; }
+.cxr-indicator svg { width: 9px; height: 9px; }
+.cxr[data-phase="running"] .cxr-indicator { box-shadow: inset 0 0 0 1.5px rgba(57, 119, 246, 0.2); }
+.cxr[data-phase="running"] .cxr-indicator::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid transparent; border-top-color: #3977f6; animation: cxa-turn 0.9s linear infinite; }
+.cxr[data-phase="complete"] .cxr-indicator { color: rgba(26, 28, 31, 0.55); background: rgba(26, 28, 31, 0.06); }
+.cxr[data-phase="failed"] .cxr-indicator { color: #fff; background: #d1242f; }
+.cxr[data-phase="cancelled"] .cxr-indicator { color: rgba(26, 28, 31, 0.5); background: rgba(26, 28, 31, 0.06); }
+.cxr-label { font-weight: 500; color: rgba(26, 28, 31, 0.86); white-space: nowrap; }
+.cxr-dot, .cxr-clock { color: rgba(26, 28, 31, 0.42); }
+.cxr-clock { font-variant-numeric: tabular-nums; }
+.cxr-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(26, 28, 31, 0.5); }
+.cxr-summary::before { content: "·"; margin: 0 7px 0 0; color: rgba(26, 28, 31, 0.3); }
+.cxr-stop { display: inline-flex; height: 24px; margin-left: auto; align-items: center; gap: 5px; padding: 0 9px; border: 0; border-radius: 999px; background: rgba(26, 28, 31, 0.05); color: rgba(26, 28, 31, 0.72); font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
+.cxr-stop:hover { background: rgba(26, 28, 31, 0.09); color: #1a1c1f; }
+.cxr-stop svg { width: 8px; height: 8px; }
+.cxr-line { position: relative; height: 1px; margin-top: 6px; overflow: hidden; background: rgba(26, 28, 31, 0.08); transition: background-color 300ms ease; }
+.cxr-sheen { position: absolute; inset: 0 auto 0 0; width: 34%; background: linear-gradient(90deg, rgba(57, 119, 246, 0), rgba(57, 119, 246, 0.75), rgba(57, 119, 246, 0)); opacity: 0; transform: translateX(-100%); }
+.cxr[data-phase="running"] .cxr-sheen { opacity: 1; animation: cxr-sheen 1.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+@keyframes cxr-sheen { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.cxr[data-phase="complete"] .cxr-line { background: rgba(26, 28, 31, 0.12); }
+.cxr[data-phase="failed"] .cxr-line { background: rgba(209, 36, 47, 0.35); }
+@media (prefers-reduced-motion: reduce) { .cxr[data-phase="running"] .cxr-sheen { animation: none; opacity: .5; transform: none; width: 100%; } .cxr[data-phase="running"] .cxr-indicator::after { animation: none; } }

@@ -1,0 +1,30 @@
+{
+  "baseline": {
+    "frames": 601,
+    "p50": 16.699999999999818,
+    "p95": 16.700000000000728,
+    "over100": 0,
+    "decoded": 303,
+    "dropped": 2,
+    "canvas": null,
+    "reduced": null
+  },
+  "active": {
+    "frames": 1333,
+    "p50": 33.29999999999927,
+    "p95": 50,
+    "over100": 7,
+    "decoded": 1216,
+    "dropped": 2,
+    "canvas": {
+      "width": 304,
+      "height": 540,
+      "display": "",
+      "waves": "3"
+    },
+    "reduced": null
+  },
+  "reducedMotion": true,
+  "cleaned": true,
+  "errors": []
+}

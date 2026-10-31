@@ -1,0 +1,1180 @@
+{
+  "project": {
+    "id": "v5HW7fLXeg-h",
+    "path": "/Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/app/frame-projects/Exact sounds verified QA 29 Oct"
+  },
+  "verifiedPlayback": 52,
+  "playback": [
+    {
+      "id": "camera-shutter",
+      "playing": true,
+      "error": null,
+      "duration": 0.882,
+      "time": 0.037827
+    },
+    {
+      "id": "camera-flash",
+      "playing": true,
+      "error": null,
+      "duration": 1.750188,
+      "time": 0.042998
+    },
+    {
+      "id": "whoosh",
+      "playing": true,
+      "error": null,
+      "duration": 4.075102,
+      "time": 0.042304
+    },
+    {
+      "id": "swoosh",
+      "playing": true,
+      "error": null,
+      "duration": 0.496327,
+      "time": 0.032656
+    },
+    {
+      "id": "glitch",
+      "playing": true,
+      "error": null,
+      "duration": 15.046531,
+      "time": 0.073342
+    },
+    {
+      "id": "riser",
+      "playing": true,
+      "error": null,
+      "duration": 3.030204,
+      "time": 0.046882
+    },
+    {
+      "id": "cinematic-boom",
+      "playing": true,
+      "error": null,
+      "duration": 5.381224,
+      "time": 0.041855
+    },
+    {
+      "id": "bass-drop",
+      "playing": true,
+      "error": null,
+      "duration": 3.456,
+      "time": 0.034136
+    },
+    {
+      "id": "vine-boom",
+      "playing": true,
+      "error": null,
+      "duration": 1.254943,
+      "time": 0.046155
+    },
+    {
+      "id": "metal-clang",
+      "playing": true,
+      "error": null,
+      "duration": 2.786395,
+      "time": 0.07704
+    },
+    {
+      "id": "record-scratch",
+      "playing": true,
+      "error": null,
+      "duration": 0.940408,
+      "time": 0.044812
+    },
+    {
+      "id": "click",
+      "playing": true,
+      "error": null,
+      "duration": 0.05805,
+      "time": 0.04533
+    },
+    {
+      "id": "mouse-click",
+      "playing": true,
+      "error": null,
+      "duration": 1.439637,
+      "time": 0.03799
+    },
+    {
+      "id": "keyboard-typing",
+      "playing": true,
+      "error": null,
+      "duration": 4.623673,
+      "time": 0.036014
+    },
+    {
+      "id": "typewriter",
+      "playing": true,
+      "error": null,
+      "duration": 0.3425,
+      "time": 0.045033
+    },
+    {
+      "id": "digital-beep",
+      "playing": true,
+      "error": null,
+      "duration": 0.1,
+      "time": 0.031765
+    },
+    {
+      "id": "notification-ding",
+      "playing": true,
+      "error": null,
+      "duration": 0.627846,
+      "time": 0.032753
+    },
+    {
+      "id": "pop",
+      "playing": true,
+      "error": null,
+      "duration": 0.399615,
+      "time": 0.045217
+    },
+    {
+      "id": "bubble-pop",
+      "playing": true,
+      "error": null,
+      "duration": 6.4,
+      "time": 0.038844
+    },
+    {
+      "id": "shimmer",
+      "playing": true,
+      "error": null,
+      "duration": 10.736327,
+      "time": 0.04021
+    },
+    {
+      "id": "sparkle",
+      "playing": true,
+      "error": null,
+      "duration": 6.138776,
+      "time": 0.04033
+    },
+    {
+      "id": "rizz-sound-effect",
+      "playing": true,
+      "error": null,
+      "duration": 1.9331,
+      "time": 0.085219
+    },
+    {
+      "id": "among-us-role-reveal",
+      "playing": true,
+      "error": null,
+      "duration": 4.493061,
+      "time": 0.038274
+    },
+    {
+      "id": "taco-bell-bong",
+      "playing": true,
+      "error": null,
+      "duration": 1.908005,
+      "time": 0.043766
+    },
+    {
+      "id": "death-sound-fortnite",
+      "playing": true,
+      "error": null,
+      "duration": 0.984,
+      "time": 0.048039
+    },
+    {
+      "id": "fah",
+      "playing": true,
+      "error": null,
+      "duration": 1.927234,
+      "time": 0.030904
+    },
+    {
+      "id": "fah-2",
+      "playing": true,
+      "error": null,
+      "duration": 1.724063,
+      "time": 0.038725
+    },
+    {
+      "id": "dexter-meme",
+      "playing": true,
+      "error": null,
+      "duration": 10.710188,
+      "time": 0.041563
+    },
+    {
+      "id": "tuco-get-out",
+      "playing": true,
+      "error": null,
+      "duration": 1.160998,
+      "time": 0.0466
+    },
+    {
+      "id": "romance",
+      "playing": true,
+      "error": null,
+      "duration": 10.160068,
+      "time": 0.04738
+    },
+    {
+      "id": "the-undertaker-bell",
+      "playing": true,
+      "error": null,
+      "duration": 4.205714,
+      "time": 0.047716
+    },
+    {
+      "id": "fart-with-reverb",
+      "playing": true,
+      "error": null,
+      "duration": 3.2,
+      "time": 0.044078
+    },
+    {
+      "id": "discord-leave-noise",
+      "playing": true,
+      "error": null,
+      "duration": 1.128,
+      "time": 0.141763
+    },
+    {
+      "id": "emotional-damage-meme",
+      "playing": true,
+      "error": null,
+      "duration": 3.320454,
+      "time": 0.05036
+    },
+    {
+      "id": "mx-sneaky-snitch",
+      "playing": true,
+      "error": null,
+      "duration": 136.556563,
+      "time": 0.032313
+    },
+    {
+      "id": "mx-fluffing-a-duck",
+      "playing": true,
+      "error": null,
+      "duration": 67.314396,
+      "time": 0.043865
+    },
+    {
+      "id": "mx-scheming-weasel",
+      "playing": true,
+      "error": null,
+      "duration": 89.315563,
+      "time": 0.065988
+    },
+    {
+      "id": "mx-monkeys-spinning-monkeys",
+      "playing": true,
+      "error": null,
+      "duration": 125,
+      "time": 0.035333
+    },
+    {
+      "id": "mx-investigations",
+      "playing": true,
+      "error": null,
+      "duration": 93.5445,
+      "time": 0.039478
+    },
+    {
+      "id": "mx-run-amok",
+      "playing": true,
+      "error": null,
+      "duration": 108.042458,
+      "time": 0.032061
+    },
+    {
+      "id": "mx-space-cadet",
+      "playing": true,
+      "error": null,
+      "duration": 203.52,
+      "time": 0.033352
+    },
+    {
+      "id": "mx-dragonfly",
+      "playing": true,
+      "error": null,
+      "duration": 357.709333,
+      "time": 0.033517
+    },
+    {
+      "id": "mx-thank-you",
+      "playing": true,
+      "error": null,
+      "duration": 375.386667,
+      "time": 0.04501
+    },
+    {
+      "id": "mx-freedom",
+      "playing": true,
+      "error": null,
+      "duration": 164.4205,
+      "time": 0.039662
+    },
+    {
+      "id": "mx-a-good-man-with-a-broken-heart",
+      "playing": true,
+      "error": null,
+      "duration": 118.710583,
+      "time": 0.041098
+    },
+    {
+      "id": "mx-echo-sax-end",
+      "playing": true,
+      "error": null,
+      "duration": 77.879729,
+      "time": 0.091742
+    },
+    {
+      "id": "mx-runaway",
+      "playing": true,
+      "error": null,
+      "duration": 339.44,
+      "time": 0.067008
+    },
+    {
+      "id": "mx-mist-cinematic-intro",
+      "playing": true,
+      "error": null,
+      "duration": 130.464979,
+      "time": 0.03936
+    },
+    {
+      "id": "mx-memory-reboot",
+      "playing": true,
+      "error": null,
+      "duration": 236.39075,
+      "time": 0.049381
+    },
+    {
+      "id": "mx-resonance",
+      "playing": true,
+      "error": null,
+      "duration": 212.938625,
+      "time": 0.042359
+    },
+    {
+      "id": "mx-mice-on-venus",
+      "playing": true,
+      "error": null,
+      "duration": 281.495521,
+      "time": 0.135017
+    },
+    {
+      "id": "mx-can-you-feel-my-heart",
+      "playing": true,
+      "error": null,
+      "duration": 228.194125,
+      "time": 0.049509
+    }
+  ],
+  "blocked": [
+    "flash",
+    "razor-slash",
+    "swipe",
+    "zoom-in-out",
+    "reverse-whoosh",
+    "transition-sweep",
+    "impact-hit",
+    "ui-tap",
+    "text-reveal",
+    "heavenly-music"
+  ],
+  "imports": [
+    {
+      "id": "whoosh",
+      "path": "/Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/app/frame-projects/Exact sounds verified QA 29 Oct/audio/whoosh.mp3",
+      "sha256": "9d2404f405b9dd0aab3febaaffd610699d8d0bc53c0a82d5fe374ec2a9376e81"
+    },
+    {
+      "id": "fah",
+      "path": "/Users/lukesimpson/Documents/Coding Projects/Clyra-AI-Final/apps/shorts/app/frame-projects/Exact sounds verified QA 29 Oct/audio/fah.mp3",
+      "sha256": "f65311d5eea216616cde00edc9e0ee0e2be1f5a03aeeb5aef8b23d55f676826a"
+    }
+  ],
+  "layouts": [
+    {
+      "width": 320,
+      "scroll": 320,
+      "rows": [
+        {
+          "id": "camera-shutter",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "camera-flash",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "flash",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "razor-slash",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "whoosh",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "swoosh",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "swipe",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "zoom-in-out",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "reverse-whoosh",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "transition-sweep",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "glitch",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "riser",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "impact-hit",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "cinematic-boom",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "bass-drop",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "vine-boom",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "metal-clang",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "record-scratch",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "click",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "mouse-click",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "ui-tap",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "keyboard-typing",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "typewriter",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "text-reveal",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "digital-beep",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "notification-ding",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "pop",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "bubble-pop",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "shimmer",
+          "width": 218,
+          "scroll": 218
+        },
+        {
+          "id": "sparkle",
+          "width": 218,
+          "scroll": 218
+        }
+      ]
+    },
+    {
+      "width": 375,
+      "scroll": 375,
+      "rows": [
+        {
+          "id": "camera-shutter",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "camera-flash",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "flash",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "razor-slash",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "whoosh",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "swoosh",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "swipe",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "zoom-in-out",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "reverse-whoosh",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "transition-sweep",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "glitch",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "riser",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "impact-hit",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "cinematic-boom",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "bass-drop",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "vine-boom",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "metal-clang",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "record-scratch",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "click",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "mouse-click",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "ui-tap",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "keyboard-typing",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "typewriter",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "text-reveal",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "digital-beep",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "notification-ding",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "pop",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "bubble-pop",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "shimmer",
+          "width": 273,
+          "scroll": 273
+        },
+        {
+          "id": "sparkle",
+          "width": 273,
+          "scroll": 273
+        }
+      ]
+    },
+    {
+      "width": 768,
+      "scroll": 768,
+      "rows": [
+        {
+          "id": "camera-shutter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "camera-flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "razor-slash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swipe",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "zoom-in-out",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "reverse-whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "transition-sweep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "glitch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "riser",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "impact-hit",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "cinematic-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bass-drop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "vine-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "metal-clang",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "record-scratch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "mouse-click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "ui-tap",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "keyboard-typing",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "typewriter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "text-reveal",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "digital-beep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "notification-ding",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bubble-pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "shimmer",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "sparkle",
+          "width": 320,
+          "scroll": 320
+        }
+      ]
+    },
+    {
+      "width": 1024,
+      "scroll": 1024,
+      "rows": [
+        {
+          "id": "camera-shutter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "camera-flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "razor-slash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swipe",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "zoom-in-out",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "reverse-whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "transition-sweep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "glitch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "riser",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "impact-hit",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "cinematic-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bass-drop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "vine-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "metal-clang",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "record-scratch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "mouse-click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "ui-tap",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "keyboard-typing",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "typewriter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "text-reveal",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "digital-beep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "notification-ding",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bubble-pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "shimmer",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "sparkle",
+          "width": 320,
+          "scroll": 320
+        }
+      ]
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "rows": [
+        {
+          "id": "camera-shutter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "camera-flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "flash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "razor-slash",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "swipe",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "zoom-in-out",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "reverse-whoosh",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "transition-sweep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "glitch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "riser",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "impact-hit",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "cinematic-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bass-drop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "vine-boom",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "metal-clang",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "record-scratch",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "mouse-click",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "ui-tap",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "keyboard-typing",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "typewriter",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "text-reveal",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "digital-beep",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "notification-ding",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "bubble-pop",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "shimmer",
+          "width": 320,
+          "scroll": 320
+        },
+        {
+          "id": "sparkle",
+          "width": 320,
+          "scroll": 320
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -7,6 +7,9 @@ let anchorEl: HTMLElement | null = null;
 
 export function setOrbAnchor(element: HTMLElement | null) {
   anchorEl = element;
+  // Mirror to a window global so the self-contained VoiceCallScreen can read
+  // the anchor without importing this module.
+  (window as { __clyraOrbAnchorEl?: HTMLElement | null }).__clyraOrbAnchorEl = element;
 }
 
 export function getOrbAnchorRect(): DOMRect | null {

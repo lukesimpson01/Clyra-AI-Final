@@ -1,0 +1,12 @@
+.at-clip-source-page{min-height:calc(100vh - 150px);display:flex;justify-content:center;align-items:flex-start;padding:36px 20px;background:#f8faff}
+.at-clip-source-card{width:min(720px,100%);padding:30px;border:1px solid #e4e9f2;border-radius:18px;background:#fff;box-shadow:0 8px 30px #1a34540c}
+.at-clip-source-card h2{font-size:25px;letter-spacing:-.035em;margin:0 0 5px}.at-clip-source-card>p{margin:0 0 24px;color:#697587}
+.at-clip-source-card .at-modal-tabs{margin-bottom:22px}.at-clip-source-card .at-youtube-panel{margin:0 0 22px}.at-clip-source-card .at-uploadbox{width:100%}
+.at-clip-source-continue{margin-top:20px;width:100%;display:flex;justify-content:center;align-items:center;gap:8px}
+.at-youtube-player{position:relative;aspect-ratio:16/9;background:#111}
+.at-youtube-player iframe{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto}
+.at-youtube-poster{position:absolute;inset:0;display:block;width:100%;height:100%;padding:0;border:0;background:#111;cursor:pointer;overflow:hidden}
+.at-youtube-poster>img{width:100%;height:100%;object-fit:cover;display:block;opacity:.88;transition:transform .25s ease,opacity .25s ease}
+.at-youtube-poster:hover>img{transform:scale(1.025);opacity:1}
+.at-youtube-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:grid;place-items:center;width:70px;height:50px;border-radius:15px;background:#ff0033;box-shadow:0 8px 28px #0007}
+.at-youtube-play svg{width:30px;height:23px}.at-youtube-play svg rect{fill:none}

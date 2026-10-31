@@ -265,8 +265,16 @@ function pushLayer(node, { onClose, scrim = false, closeOnOutside = true } = {})
       const index = openLayers.indexOf(entry);
       if (index === -1) return;
       openLayers.splice(index, 1);
-      node.remove();
-      backdrop.remove();
+      /* Leave the way it arrived — a short fade and settle — rather than vanishing. The layer stops taking input
+         at once; only its picture lingers for the exit. */
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        || document.documentElement.classList.contains("reduce-motion");
+      if (reduced) { node.remove(); backdrop.remove(); }
+      else {
+        node.classList.add("is-leaving");
+        backdrop.classList.add("is-leaving");
+        setTimeout(() => { node.remove(); backdrop.remove(); }, 170);
+      }
       onClose?.(reason);
     },
   };

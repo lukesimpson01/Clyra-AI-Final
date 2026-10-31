@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Editor, { type OnMount, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 // Load Monaco from the local bundle instead of the CDN loader default so the
@@ -8,6 +8,7 @@ loader.config({ monaco });
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -20,11 +21,16 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
-  Cpu,
   ListChecks,
   Maximize2,
+  MessageSquarePlus,
   Minimize2,
+  Monitor,
+  MousePointer2,
   RotateCw,
+  SlidersHorizontal,
+  Smartphone,
+  Tablet,
   Save,
   Search,
   Pencil,
@@ -41,7 +47,6 @@ import { liveStepLabel } from "./CodexActivity";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
-import { PlatformView } from "./PlatformView";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { stripFilePrefix } from "./format";
 import type { ComposerContext } from "./Composer";
@@ -52,7 +57,7 @@ import {
   type InspectPayload,
 } from "./VisualInspector";
 
-export type RightTab = "browser" | "plan" | "changes" | "files" | "platform";
+export type RightTab = "browser" | "plan" | "changes" | "files";
 
 /** Match Clyra Browser: anything that is not a URL is a Google search. */
 export function normalizePreviewNavigation(input: string) {
@@ -200,6 +205,73 @@ function BrowserView({
   const [navigatedSrc, setNavigatedSrc] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
+  // Viewport sizing (device presets + free responsive width) and zoom.
+  type ViewportPreset = "desktop" | "tablet" | "mobile" | "custom";
+  const [viewport, setViewport] = useState<ViewportPreset>("desktop");
+  const [viewportWidth, setViewportWidth] = useState(768);
+  const [zoom, setZoom] = useState<"fit" | number>("fit");
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const zoomMenuRef = useRef<HTMLDivElement | null>(null);
+  const [stageWidth, setStageWidth] = useState(0);
+
+  const PRESET_WIDTH: Record<"tablet" | "mobile", number> = { tablet: 768, mobile: 390 };
+  const effectiveWidth =
+    viewport === "desktop" ? null : viewport === "custom" ? viewportWidth : PRESET_WIDTH[viewport];
+  const zoomFactor = zoom === "fit"
+    ? (effectiveWidth && stageWidth ? Math.min(1, (stageWidth - 20) / effectiveWidth) : 1)
+    : zoom;
+
+  // Toolbar collapses secondary labels when the preview pane gets narrow (e.g.
+  // sidebar open + a non-maximised window), so controls never overlap or wrap.
+  const compact = stageWidth > 0 && stageWidth < 480;
+
+  useEffect(() => {
+    const node = surfaceRef.current;
+    if (!node) return;
+    const update = () => setStageWidth(node.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // Dismiss the zoom menu on outside press / Escape.
+  useEffect(() => {
+    if (!zoomMenuOpen) return;
+    const onDown = (event: PointerEvent) => {
+      if (zoomMenuRef.current?.contains(event.target as Node)) return;
+      setZoomMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setZoomMenuOpen(false); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [zoomMenuOpen]);
+
+  const onResizeStart = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = effectiveWidth ?? viewportWidth;
+      const move = (moveEvent: PointerEvent) => {
+        const upper = Math.max(240, (stageWidth || 800) - 8);
+        const next = Math.round(Math.min(upper, Math.max(240, startWidth + (moveEvent.clientX - startX))));
+        setViewportWidth(next);
+        setViewport("custom");
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [effectiveWidth, stageWidth, viewportWidth],
+  );
+
   const url = session?.url ?? "";
   const activeSrc = navigatedSrc ?? projectPreviewSrc;
   const displayAddress = address || (navigatedSrc ?? url).replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -331,10 +403,13 @@ function BrowserView({
             aria-label="Open project on development server"
             title="Open project on development server"
             onClick={() => window.open(url, "_blank", "noopener")}
-            className="flex h-7 items-center gap-1 rounded-[7px] px-2 text-[10.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
+            className={cn(
+              "flex h-7 items-center rounded-[7px] text-[10.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]",
+              compact ? "px-1.5" : "gap-1 px-2",
+            )}
           >
             <ExternalLink className="h-[12px] w-[12px]" strokeWidth={1.8} />
-            Dev server
+            {!compact ? "Dev server" : null}
           </button>
         ) : null}
         {activeSrc ? (
@@ -347,6 +422,53 @@ function BrowserView({
             <ExternalLink className="h-[14px] w-[14px]" strokeWidth={1.8} />
           </button>
         ) : null}
+        <div className="ml-1 flex h-7 shrink-0 items-center rounded-[8px] bg-[color:var(--surface-muted)] p-0.5">
+          {([["desktop", Monitor, "Desktop"], ["tablet", Tablet, "Tablet"], ["mobile", Smartphone, "Mobile"]] as const).map(([id, Icon, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-label={`${label} viewport`}
+              title={label}
+              onClick={() => setViewport(id)}
+              className={cn(
+                "flex h-6 w-6 items-center justify-center rounded-[6px] transition-colors",
+                viewport === id ? "bg-white text-[#1E6FFF] shadow-[0_1px_2px_rgba(0,0,0,0.1)]" : "text-[#93959A] hover:text-[#5F6368]",
+              )}
+            >
+              <Icon className="h-[13px] w-[13px]" strokeWidth={1.8} />
+            </button>
+          ))}
+        </div>
+        <div ref={zoomMenuRef} className="relative shrink-0">
+          <button
+            type="button"
+            aria-label="Zoom"
+            title="Zoom"
+            onClick={() => setZoomMenuOpen((open) => !open)}
+            className="flex h-7 items-center gap-0.5 rounded-[7px] px-1.5 text-[11px] font-medium text-[#5F6368] transition-colors hover:bg-[color:var(--surface-hover)]"
+          >
+            {zoom === "fit" ? "Fit" : `${Math.round(zoom * 100)}%`}
+            <ChevronDown className="h-[11px] w-[11px]" strokeWidth={1.8} />
+          </button>
+          {zoomMenuOpen ? (
+            <div className="absolute right-0 top-[calc(100%+6px)] z-40 w-[118px] rounded-[10px] border border-[color:var(--border-subtle)] bg-white p-1 shadow-[0_10px_28px_rgba(15,23,42,0.13)]">
+              {([["fit", "Fit"], [1, "100%"], [0.75, "75%"], [0.5, "50%"]] as const).map(([value, label]) => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  onClick={() => { setZoom(value); setZoomMenuOpen(false); }}
+                  className={cn(
+                    "flex h-7 w-full items-center justify-between rounded-[6px] px-2 text-[11.5px] transition-colors",
+                    zoom === value ? "bg-[color:var(--surface-selected)] font-medium text-[#1E6FFF]" : "text-[#5F6368] hover:bg-[color:var(--surface-hover)]",
+                  )}
+                >
+                  {label}
+                  {zoom === value ? <Check className="h-[12px] w-[12px]" strokeWidth={2} /> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           aria-label={fullscreen ? "Exit full screen preview" : "Full screen preview"}
@@ -359,83 +481,110 @@ function BrowserView({
         <button
           type="button"
           onClick={onToggleInspect}
+          aria-label={inspectMode ? "Exit edit mode" : "Edit"}
+          title={inspectMode ? "Exit edit mode" : "Edit"}
           className={cn(
-            "ml-1 flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] transition-colors",
+            "flex h-7 items-center rounded-[8px] text-[11.5px] transition-colors",
+            compact ? "ml-0.5 gap-0 px-2" : "ml-0.5 gap-1.5 px-2.5",
             inspectMode
-              ? "bg-[#E8F0FE] font-medium text-[#3977F6]"
+              ? "bg-[#E8F0FE] font-medium text-[#1E6FFF]"
               : "font-medium text-[color:var(--text-secondary)] hover:bg-[color:var(--surface-hover)]",
           )}
         >
-          {inspectMode ? "✓ Editing" : "Commenting"}
+          <Pencil className={cn(compact ? "h-[13.5px] w-[13.5px]" : "h-[12.5px] w-[12.5px]")} strokeWidth={1.8} />
+          {compact ? null : (inspectMode ? "Editing" : "Edit")}
         </button>
       </div>
 
-      <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-white">
-        {(ready || navigatedSrc) && !agentRunning ? (
-          isElectronRuntime() ? (
-            <ElectronWebContentsSurface
-              key={`${projectId}:${frameVersion}:${activeSrc}`}
-              source={activeSrc}
-              title={navigatedSrc ? "Vibe browser" : "Live preview"}
-              surfaceId="clyra-code-live-preview"
-              kind="preview"
-              className="h-full w-full"
-            />
-          ) : (
-            <iframe
-              key={`${projectId}:${frameVersion}:${activeSrc}`}
-              // Keep the trailing slash so the preview behaves as a directory:
-              // relative JS/CSS assets and the injected inspect bridge resolve
-              // inside this project's proxied namespace.
-              src={activeSrc}
-              title={navigatedSrc ? "Vibe browser" : "Live preview"}
-              className="h-full w-full border-0 bg-white"
-              sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-              onLoad={(event) => {
-                const win = event.currentTarget.contentWindow;
-                onFrameReady(win);
-                if (!navigatedSrc) win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
+      <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-[#F7F7F6]">
+        <div className="cc-scroll absolute inset-0 overflow-auto">
+          {(ready || navigatedSrc) && !agentRunning ? (
+            <div
+              className={cn("relative", effectiveWidth ? "mx-auto" : "h-full w-full")}
+              style={{
+                width: effectiveWidth ? `${effectiveWidth}px` : "100%",
+                height: "100%",
+                transform: zoomFactor !== 1 ? `scale(${zoomFactor})` : undefined,
+                transformOrigin: "top center",
               }}
-            />
-          )
-        ) : failed ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
-            <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
-            {session?.lastError?.message ? (
-              <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[#8A8A8A]">
-                {session.lastError.message}
-              </p>
-            ) : null}
-            <div className="mt-1 flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={onRestart}
-                className="h-7 rounded-[7px] border border-[#EEEEEC] px-2.5 text-[11.5px] text-[#171717] transition-colors hover:bg-[#F6F6F5]"
-              >
-                Retry
-              </button>
-              <button
-                type="button"
-                onClick={onOpenTerminal}
-                className="h-7 rounded-[7px] px-2.5 text-[11.5px] text-[#5F6368] transition-colors hover:bg-[#F6F6F5]"
-              >
-                View logs
-              </button>
+            >
+              {isElectronRuntime() ? (
+                <ElectronWebContentsSurface
+                  key={`${projectId}:${frameVersion}:${activeSrc}`}
+                  source={activeSrc}
+                  title={navigatedSrc ? "Vibe browser" : "Live preview"}
+                  surfaceId="clyra-code-live-preview"
+                  kind="preview"
+                  className="h-full w-full"
+                />
+              ) : (
+                <iframe
+                  key={`${projectId}:${frameVersion}:${activeSrc}`}
+                  // Keep the trailing slash so the preview behaves as a directory:
+                  // relative JS/CSS assets and the injected inspect bridge resolve
+                  // inside this project's proxied namespace.
+                  src={activeSrc}
+                  title={navigatedSrc ? "Vibe browser" : "Live preview"}
+                  className="h-full w-full border-0 bg-white"
+                  sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+                  onLoad={(event) => {
+                    const win = event.currentTarget.contentWindow;
+                    onFrameReady(win);
+                    if (!navigatedSrc) win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
+                  }}
+                />
+              )}
+              {effectiveWidth ? (
+                <button
+                  type="button"
+                  aria-label="Resize preview width"
+                  title="Drag to resize preview width"
+                  onPointerDown={onResizeStart}
+                  className="absolute -right-[9px] top-0 z-20 h-full w-[18px] cursor-ew-resize"
+                >
+                  <span className="absolute left-1/2 top-1/2 h-[44px] w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/[0.12] transition-colors hover:bg-[#1E6FFF]" />
+                </button>
+              ) : null}
             </div>
-          </div>
-        ) : (!starting && !agentRunning) ? (
-          <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[#F7F7F6]">
-            <div className="relative z-[1] flex max-w-[300px] flex-col items-center px-5 text-center">
-              <Globe className="mb-2.5 h-6 w-6 text-[#B7B9BD]" strokeWidth={1.4} />
-              <h3 className="text-[13px] font-medium tracking-[-0.015em] text-[#3D3F43]">
-                Preview will appear here
-              </h3>
-              <p className="mt-1 text-[11.5px] leading-[1.45] text-[#94969A]">
-                Describe what to create in the chat. The live preview opens here once files are ready.
-              </p>
+          ) : failed ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
+              <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
+              {session?.lastError?.message ? (
+                <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[#8A8A8A]">
+                  {session.lastError.message}
+                </p>
+              ) : null}
+              <div className="mt-1 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onRestart}
+                  className="h-7 rounded-[7px] border border-[#EEEEEC] px-2.5 text-[11.5px] text-[#171717] transition-colors hover:bg-[#F6F6F5]"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenTerminal}
+                  className="h-7 rounded-[7px] px-2.5 text-[11.5px] text-[#5F6368] transition-colors hover:bg-[#F6F6F5]"
+                >
+                  View logs
+                </button>
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : (!starting && !agentRunning) ? (
+            <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[#F7F7F6]">
+              <div className="relative z-[1] flex max-w-[300px] flex-col items-center px-5 text-center">
+                <Globe className="mb-2.5 h-6 w-6 text-[#B7B9BD]" strokeWidth={1.4} />
+                <h3 className="text-[13px] font-medium tracking-[-0.015em] text-[#3D3F43]">
+                  Preview will appear here
+                </h3>
+                <p className="mt-1 text-[11.5px] leading-[1.45] text-[#94969A]">
+                  Describe what to create in the chat. The live preview opens here once files are ready.
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <AnimatePresence>
           {(starting || agentRunning) && !failed ? (
@@ -838,8 +987,77 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
 const EXTRA_TABS: Array<{ id: RightTab; label: string; icon?: typeof Globe }> = [
   { id: "changes", label: "Changes" },
   { id: "files", label: "Files" },
-  { id: "platform", label: "Platform", icon: Cpu },
 ];
+
+/* A selection made in the live preview is offered as a reference before it is
+   edited. The primary action turns it into a chat reference chip; the
+   secondary action opens the full style inspector for live source edits. */
+function SelectionPopover({
+  payload,
+  added,
+  onAdd,
+  onEdit,
+  onClose,
+}: {
+  payload: InspectPayload;
+  added: boolean;
+  onAdd: () => void;
+  onEdit: () => void;
+  onClose: () => void;
+}) {
+  const sourceHint = payload.sourceHint ?? payload.rules?.find((rule) => rule.file)?.file ?? null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className="cc-composer absolute right-3 top-[52px] z-30 w-[250px] rounded-[14px] border border-black/[0.08] bg-white p-2.5 shadow-[0_2px_4px_rgba(0,0,0,0.03),0_12px_30px_rgba(0,0,0,0.10)]"
+    >
+      <div className="flex items-center gap-1.5">
+        <MousePointer2 className="h-3.5 w-3.5 shrink-0 text-[#1E6FFF]" strokeWidth={1.8} />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#202124]">
+          {payload.label ?? payload.name ?? payload.kind ?? "Element"}
+        </span>
+        <button
+          type="button"
+          aria-label="Dismiss selection"
+          onClick={onClose}
+          className="rounded-[6px] p-1 text-[#96989D] transition-colors hover:bg-black/[0.04] hover:text-[#202124]"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[10.5px] text-[#96989D]">
+        <span className="truncate">{payload.kind ?? "Element"}</span>
+        {sourceHint ? (
+          <span className="cc-mono truncate text-[#B7B9BD]">· {sourceHint.split("/").pop()}</span>
+        ) : null}
+      </p>
+      <div className="mt-2.5 flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={added}
+          className={cn(
+            "flex h-8 w-full items-center justify-center gap-1.5 rounded-[9px] text-[12px] font-medium transition-colors",
+            added ? "bg-[#E8F0FE] text-[#1E6FFF]" : "bg-[#1E6FFF] text-white hover:brightness-105",
+          )}
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.9} />
+          {added ? "Referenced in chat" : "Ask Clyra"}
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex h-8 w-full items-center justify-center gap-1.5 rounded-[9px] text-[12px] font-medium text-[#5F6368] transition-colors hover:bg-black/[0.04]"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.9} />
+          Edit properties
+        </button>
+      </div>
+    </motion.div>
+  );
+}
 
 export function RightPanel({
   state,
@@ -879,11 +1097,22 @@ export function RightPanel({
 }) {
   const [inspectMode, setInspectMode] = useState(false);
   const [selection, setSelection] = useState<InspectPayload | null>(null);
+  const [showInspector, setShowInspector] = useState(false);
+  const [addedToChat, setAddedToChat] = useState(false);
   const frameWindowRef = useRef<Window | null>(null);
   const buildStep = useMemo(() => (agentRunning ? liveStepLabel(actionList) : null), [actionList, agentRunning]);
+  const reduceMotion = useReducedMotion();
 
   const postToFrame = (message: unknown) => {
     frameWindowRef.current?.postMessage(message, "*");
+  };
+
+  const addSelectionContext = (payload: InspectPayload) => {
+    onAddContext({
+      id: `inspect-${Date.now()}`,
+      label: selectionChipLabel(payload),
+      detail: selectionContextDetail(payload),
+    });
   };
 
   // Messages from the injected inspect script inside the preview frame.
@@ -900,11 +1129,8 @@ export function RightPanel({
       if (event.source !== frameWindowRef.current) return;
       if (data.type === "clyra:element" && data.payload) {
         setSelection(data.payload);
-        onAddContext({
-          id: `inspect-${Date.now()}`,
-          label: selectionChipLabel(data.payload),
-          detail: selectionContextDetail(data.payload),
-        });
+        setAddedToChat(false);
+        setShowInspector(false);
       } else if (data.type === "clyra:clear") {
         setSelection(null);
       } else if (data.type === "clyra:drag" && data.rect) {
@@ -926,6 +1152,8 @@ export function RightPanel({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && (selection || inspectMode)) {
         setSelection(null);
+        setShowInspector(false);
+        setAddedToChat(false);
         postToFrame({ type: "clyra:clear" });
       }
     };
@@ -936,7 +1164,11 @@ export function RightPanel({
 
   useEffect(() => {
     postToFrame({ type: "clyra:mode", mode: inspectMode });
-    if (!inspectMode) setSelection(null);
+    if (!inspectMode) {
+      setSelection(null);
+      setShowInspector(false);
+      setAddedToChat(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspectMode]);
 
@@ -1028,7 +1260,11 @@ export function RightPanel({
   ];
 
   return (
-    <section className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-[color:var(--preview-background)] transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]", fullscreen && "fixed inset-0 z-[100] bg-white shadow-2xl")}>
+    <motion.section
+      layout
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.42, ease: [0.32, 0.72, 0, 1] }}
+      className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-[color:var(--preview-background)]", fullscreen && "fixed inset-0 z-[130] bg-white")}
+    >
       <div className="relative flex h-[42px] min-w-max items-center gap-1 border-b border-[color:var(--border-subtle)] px-2.5">
         {tabs.map((entry) => {
           const Icon = entry.icon;
@@ -1078,22 +1314,38 @@ export function RightPanel({
         <PlanView plan={plan} />
       ) : tab === "changes" ? (
         <ChangesView diffs={state.diffs} actions={actionList} focusFile={focusFile} />
-      ) : tab === "platform" ? (
-        <PlatformView projectId={state.activeProjectId} />
       ) : (
         <FilesView projectId={state.activeProjectId} diffs={state.diffs} />
       )}
 
       {inspectMode && selection ? (
-        <VisualInspector
-          payload={selection}
-          onClose={() => {
-            setSelection(null);
-            postToFrame({ type: "clyra:clear" });
-          }}
-          onChange={handleChange}
-        />
+        showInspector ? (
+          <VisualInspector
+            payload={selection}
+            onClose={() => {
+              setShowInspector(false);
+              setSelection(null);
+              postToFrame({ type: "clyra:clear" });
+            }}
+            onChange={handleChange}
+          />
+        ) : (
+          <SelectionPopover
+            payload={selection}
+            added={addedToChat}
+            onAdd={() => {
+              addSelectionContext(selection);
+              setAddedToChat(true);
+            }}
+            onEdit={() => setShowInspector(true)}
+            onClose={() => {
+              setSelection(null);
+              setAddedToChat(false);
+              postToFrame({ type: "clyra:clear" });
+            }}
+          />
+        )
       ) : null}
-    </section>
+    </motion.section>
   );
 }

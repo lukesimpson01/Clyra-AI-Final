@@ -9,7 +9,7 @@
  * like the reference.
  */
 
-import { useId, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import "./harness.css";
 
@@ -333,8 +333,21 @@ function progressLabel(todos: readonly TodoRow[]): string {
  * Opens itself the first time a plan arrives — the checklist appearing is the
  * event worth seeing — and afterwards remembers whatever the user chose.
  */
-export function TodoChecklist({ todos, className }: { todos: readonly TodoRow[]; className?: string }) {
-  const [collapsed, setCollapsed] = useState(false);
+export function TodoChecklist({ todos, className, finished = false }: { todos: readonly TodoRow[]; className?: string; finished?: boolean }) {
+  // A reopened completed task starts collapsed so the finished plan does not
+  // flash open before settling; a live plan still opens itself on arrival.
+  const [collapsed, setCollapsed] = useState(
+    () => finished && todos.length > 0 && todos.every((item) => item.status === "completed"),
+  );
+
+  // When the run finishes with every task complete, collapse the checklist on
+  // the same eased motion a manual toggle uses, so the finished plan clears
+  // out of the composer instead of sitting there.
+  const allDone = todos.length > 0 && todos.every((item) => item.status === "completed");
+  useEffect(() => {
+    if (finished && allDone) setCollapsed(true);
+  }, [finished, allDone]);
+
   if (todos.length === 0) return null;
   return (
     <section className={cn("dsh-todo", className)} aria-label="Task list">
@@ -358,20 +371,22 @@ export function TodoChecklist({ todos, className }: { todos: readonly TodoRow[];
             <ChevronDown14 />
           </span>
         </button>
-        {!collapsed && (
-          <ul className="dsh-todo-list">
-            {todos.map((item, index) => (
-              <li key={`${item.content}-${index}`} className="dsh-todo-item" data-status={item.status}>
-                <span className="dsh-todo-glyph" aria-hidden>
-                  <StatusGlyph status={item.status} />
-                </span>
-                <span className="dsh-todo-content" title={item.content}>
-                  {item.content}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="dsh-todo-collapse" data-open={!collapsed}>
+          <div className="dsh-todo-collapse-inner">
+            <ul className="dsh-todo-list">
+              {todos.map((item, index) => (
+                <li key={`${item.content}-${index}`} className="dsh-todo-item" data-status={item.status}>
+                  <span className="dsh-todo-glyph" aria-hidden>
+                    <StatusGlyph status={item.status} />
+                  </span>
+                  <span className="dsh-todo-content" title={item.content}>
+                    {item.content}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </div>
     </section>
   );

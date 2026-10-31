@@ -15,10 +15,10 @@
     /* #pill is the unclipped shell (so a halo can shine outside it); .clip holds the white body and all content. */
     #pill { --w: 40px; --h: 40px; --r: 20px; --lvl: 0; --shine: 0; position: relative; box-sizing: border-box; width: var(--w); height: var(--h); border-radius: var(--r); cursor: grab;
       opacity: 0; transform: translateY(10px) scale(.5); transform-origin: 50% 100%; pointer-events: auto;
-      transition: width .48s var(--ease), height .48s var(--ease), border-radius .48s var(--ease), opacity .28s ease, transform .48s var(--ease); will-change: width, height, transform, opacity; }
+      transition: width .34s var(--ease), height .34s var(--ease), border-radius .34s var(--ease), opacity .24s ease, transform .34s var(--ease); will-change: width, height, transform, opacity; contain: layout style; }
     .clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; box-sizing: border-box;
       background: linear-gradient(180deg, #ffffff 0%, #f6f9ff 100%);
-      border: 1px solid rgba(var(--ring, 15,23,42), calc(.11 + var(--lvl) * .32)); transition: border-color .18s ease; }
+      border: 1px solid rgba(15,23,42,.11); }
     /* selection chip: what you highlighted and what Flow will do with it (replace it, or rewrite it from your instruction) */
     .selchip { position: absolute; left: 50%; bottom: calc(100% + 8px); max-width: 360px; height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; border-radius: 13px; white-space: nowrap;
       background: #fff; border: 1px solid rgba(15,23,42,.10); font-size: 12px; color: #5b6472; opacity: 0; transform: translate(-50%, 6px); transition: opacity .3s ease, transform .4s var(--ease); pointer-events: none; }
@@ -50,7 +50,7 @@
       -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); }
     .has-text .text { opacity: 1; } .has-text .meter { opacity: 0; }
     /* One line, newest words on the right; older words slide off to the left. Height never changes. */
-    .track { margin-block: auto; white-space: nowrap; flex: 0 0 auto; font-size: 13.5px; font-weight: 500; letter-spacing: -.01em; color: var(--ink); will-change: transform; transition: transform .5s var(--ease); }
+    .track { margin-block: auto; white-space: nowrap; flex: 0 0 auto; font-size: 13.5px; font-weight: 500; letter-spacing: -.01em; color: var(--ink); will-change: transform; transition: transform .22s var(--ease); }
     .final-mode .text { justify-content: flex-start; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); }
     .final-mode .text { inset: 0; }
     .final-mode .track { white-space: normal; flex: 1 1 auto; line-height: 16px; transform: none !important; }
@@ -60,7 +60,7 @@
     .w { display: inline-block; transition: color .4s ease, opacity .4s ease, text-decoration-color .4s ease, transform .5s var(--ease); }
     /* each word eases up into place — opacity and transform only, so it stays on the compositor */
     .w.in { animation: wordIn .34s var(--ease) both; }
-    @keyframes wordIn { from { opacity: 0; transform: translateY(5px); filter: blur(1.5px); } to { opacity: 1; transform: none; filter: none; } }
+    @keyframes wordIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
     /* edits: removed = red + crossed out; added = blue (text only) */
     .w.del { text-decoration: line-through; text-decoration-thickness: 1.7px; text-decoration-color: transparent; }
     .w.del.struck { color: #dc2626; text-decoration-color: #dc2626; }
@@ -143,7 +143,7 @@
     const pill = document.getElementById('pill');
     const api = window.clyraDictationPill;
     const $ = (id) => document.getElementById(id);
-    const meter = $('meter'), mid = $('mid'), track = $('track'), row = $('row');
+    const clipEl = pill.querySelector('.clip'), meter = $('meter'), mid = $('mid'), track = $('track'), row = $('row');
     const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const H = 44;
     let phase = 'idle', mode = 'circle', hovering = false, dragging = null;
@@ -166,7 +166,7 @@
       else if (next === 'select') setSize(236, H, H / 2);
       else if (next === 'msg') setSize(maxW(), H, H / 2);
       else if (next === 'card') setSize(parseFloat(pill.style.getPropertyValue('--w')) || widthFor('card'), parseFloat(pill.style.getPropertyValue('--h')) || H, parseFloat(pill.style.getPropertyValue('--r')) || H / 2);
-      else setSize(widthFor(next), H, H / 2);   // listening/thinking: constant height; width follows the words
+      else { lastWidth = widthFor(next); setSize(lastWidth, H, H / 2); }   // listening/thinking: constant height; width follows the words
       const hasText = Boolean(liveText) && next !== 'circle';
       mid.classList.toggle('has-text', hasText);
       mid.classList.toggle('show-label', next === 'think' && !hasText);
@@ -181,19 +181,27 @@
       requestAnimationFrame(() => requestAnimationFrame(() => { pill.dataset.ready = 'true'; next(); }));
     }
 
-    /** Width that follows the words smoothly: compact while empty, growing with the text up to a max. */
+    // Listening/thinking capsule: starts at BASE_W and widens with the words by at most 50%, then the newest words
+    // slide in from the right. Widths come from canvas text measurement (no layout reads) and move in 8px steps, so
+    // a live transcript never forces layout or keeps retargeting the width transition.
+    const BASE_W = 200, GROW_W = 300, CHROME_W = 28 + 28 + 8 * 2 + 6 * 2 + 14;
+    const measureCtx = document.createElement('canvas').getContext('2d');
+    measureCtx.font = '500 13.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif';
+    const textWidth = (t) => t ? measureCtx.measureText(t).width - t.length * .135 : 0;
+    let lastWidth = 0;
     function widthFor(m) {
       if (m === 'card') return maxW();
-      const chrome = 28 + 28 + 8 * 2 + 6 * 2 + 14;          // two buttons, gaps, padding, breathing room
-      const textW = liveText ? track.scrollWidth : 0;
-      return Math.round(Math.max(150, Math.min(maxW(), chrome + textW)));
+      const need = CHROME_W + textWidth(track.textContent);
+      return Math.min(Math.ceil(Math.max(BASE_W, need) / 8) * 8, GROW_W, maxW());
     }
-    /** Keep the newest words in view: the track slides left smoothly as it outgrows the capsule. */
+    /** Keep the newest words in view: the track slides left as it outgrows the capsule. */
     function followTail() {
       if (mode !== 'listen' && mode !== 'think') return;
-      setSize(widthFor(mode), H, H / 2);
-      const over = Math.max(0, track.scrollWidth - mid.clientWidth + 4);
-      track.style.transform = `translateX(${-over}px)`;
+      const w = widthFor(mode);
+      if (w !== lastWidth) { lastWidth = w; setSize(w, H, H / 2); }
+      const visible = w - (CHROME_W - 14) - 2;   // width of the text window inside the capsule
+      const over = Math.max(0, textWidth(track.textContent) - visible + 6);
+      track.style.transform = `translateX(${-Math.round(over)}px)`;
     }
     // ---------------------------------------------------------------- words
     function wordSpan(text, cls, i) { const s = document.createElement('span'); s.className = 'w ' + cls; s.style.setProperty('--i', i); s.textContent = text; return s; }
@@ -226,8 +234,10 @@
     }
     /** Live transcript: displayed words are revised in place, new words are paced in on the right, older ones slide off left. */
     function setLive(text, flush) {
-      printing = false; paceBase = 92;
       const next = String(text || '').split(/\s+/).filter(Boolean);
+      // Level updates re-send the same transcript ~14x a second: do nothing unless the words changed.
+      if (!flush && next.join(' ') === liveText) return;
+      printing = false; paceBase = 92;
       liveText = next.join(' ');
       target = next;
       const spans = Array.from(track.querySelectorAll('.w'));
@@ -345,7 +355,7 @@
       }
     }
     const SOUNDS = {
-      start:  () => { note(523.25, 0, .1, { gain: .1, dry: true }); note(783.99, .05, .15, { gain: .11, dry: true }); },     // C5 -> G5, short and dry: done before you speak
+      start:  () => {},   // silent on purpose: a beep here leaks into the microphone and swallows the first words
       stop:   () => { note(659.25, 0, .13, { gain: .11 }); note(493.88, .07, .22, { gain: .11 }); },                         // E5 -> B4
       done:   () => { note(659.25, 0, .18, { gain: .11 }); note(830.61, .08, .2, { gain: .11 }); note(1046.5, .16, .42, { gain: .12 }); }, // E-G#-C triad sparkle
       copied: () => { note(783.99, 0, .14, { gain: .1 }); note(987.77, .09, .3, { gain: .1 }); },
@@ -381,8 +391,8 @@
         bar.style.transform = `scaleY(${Math.min(1, px / 18).toFixed(3)})`;
         bar.style.opacity = String(.35 + bell * (.3 + Math.min(.35, currentVolume * .6)));
       });
-      pill.style.setProperty('--lvl', phase === 'listening' ? Math.min(1, currentVolume * 1.2).toFixed(3) : '0');
-      pill.style.setProperty('--ring', phase === 'listening' ? '0,82,251' : '15,23,42');
+      // Set on the one element that uses it: a custom property changed on #pill would restyle the whole subtree every frame.
+      clipEl.style.borderColor = phase === 'listening' ? `rgba(0,82,251,${(.11 + Math.min(1, currentVolume * 1.2) * .32).toFixed(2)})` : '';
       waveRaf = (!prefersReducedMotion && phase === 'listening') ? requestAnimationFrame(animateWave) : 0;
     }
     let waveRaf = 0;

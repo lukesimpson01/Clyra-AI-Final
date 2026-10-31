@@ -1,0 +1,44 @@
+{
+  project: { work: 98514819, history: 106987, chat: null, logs: null },
+  exports: [
+    {
+      id: '78cb43e8d22c',
+      project: 'ht27HsZ64pIz',
+      name: 'FRAME project',
+      label: '720p MP4',
+      kind: 'video',
+      ask: [Object],
+      status: 'done',
+      progress: 1,
+      phase: null,
+      framesDone: 346,
+      framesTotal: 346,
+      rate: 5.023369588957323,
+      etaMs: null,
+      encoder: 'h264_videotoolbox',
+      outputs: [Array],
+      bytes: 4664188,
+      alpha: null,
+      at: 1793340544832,
+      startedAt: 1793340544842,
+      finishedAt: 1793340634195,
+      out: '/Users/lukesimpson/Downloads/Clyra-verification-2026-10-30/FRAME project.mp4'
+    }
+  ],
+  folder: '/Users/lukesimpson/Desktop',
+  can: {
+    h264: true,
+    hevc: true,
+    hevcAlpha: true,
+    vp9: true,
+    prores: true,
+    mp3: true
+  },
+  drafts: { jianying: false, capcut: true },
+  subtitles: 0
+}
+{
+  project: 'ITfbu6zzQAya',
+  error: 'This project’s folder is not there any more: it was moved, renamed or deleted.',
+  code: 'missing'
+}

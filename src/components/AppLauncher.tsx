@@ -4,18 +4,16 @@ import {
   Clapperboard,
   Clock3,
   Code2,
-  Earth,
   Globe2,
   Grid2X2,
   MapPin,
   MessageCircle,
   Music2,
-  ShieldCheck,
-  Users,
 } from "lucide-react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Bloub, type BloubHandle } from "./bloub/Bloub";
+import { shortcut } from "../lib/platform";
 export type LauncherToolId =
   | "chat"
   | "vibe"
@@ -25,11 +23,8 @@ export type LauncherToolId =
   | "fake-text"
   | "shorts"
   | "notes"
-  | "cowork"
   | "spotify"
-  | "care"
-  | "maps"
-  | "eye";
+  | "maps";
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
@@ -46,15 +41,12 @@ interface LauncherTool {
 }
 
 const tools: LauncherTool[] = [
-  { id: "care", label: "Clyra Care", shortLabel: "Care", detail: "Understand storage and safely reclaim space", icon: ShieldCheck, accent: "#3977F6" },
   { id: "vibe", label: "Vibe Coder", shortLabel: "Vibe Coder", detail: "Build and preview production applications", icon: Code2, accent: "#0f172a" },
   { id: "chat", label: "Chat", shortLabel: "Chat", detail: "Think, write and reason with Clyra", icon: MessageCircle, accent: "#1e293b" },
   { id: "shorts", label: "Shorts Studio", shortLabel: "Shorts", detail: "Fake texts, Would You Rather, and AI clips", icon: Clapperboard, accent: "#334155" },
   { id: "browser", label: "AI Browser", shortLabel: "Browser", detail: "Research and act across live websites", icon: Globe2, accent: "#1e293b" },
   { id: "notes", label: "Clyra Notes", shortLabel: "Notes", detail: "Capture, organise, and review your notes", icon: BookOpen, accent: "#1e293b" },
   { id: "maps", label: "Clyra Maps", shortLabel: "Maps", detail: "Search, get directions, and navigate with AI", icon: MapPin, accent: "#3b82f6" },
-  { id: "eye", label: "Clyra Eye", shortLabel: "Eye", detail: "Explore Earth with live public data", icon: Earth, accent: "#3977F6" },
-  { id: "cowork", label: "Cowork", shortLabel: "Agents", detail: "Message your team of persistent AI coworkers", icon: Users, accent: "#1e6fff" },
   { id: "spotify", label: "Clyra Music", shortLabel: "Music", detail: "Browse, search, and play your music", icon: Music2, accent: "#4169f6" },
   // Dictation is no longer a launcher tile — it is a system-wide background
   // feature (Clyra Anywhere) that runs whether or not this window is open,
@@ -355,7 +347,7 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
         >
           Press{" "}
           <kbd className="mx-1 rounded border border-slate-200/90 bg-white px-1.5 py-0.5 text-[9px] text-slate-600">
-            Ctrl/⌘K
+            {shortcut("K")}
           </kbd>{" "}
           to close
         </motion.div>

@@ -140,7 +140,7 @@ export function renderFlashcards(host, app) {
           loader.advance(3);
           return { deck, added: saved.added };
         },
-      }).catch((error) => { toast(error?.message || "Could not create the deck", "error"); return null; });
+      }).catch((error) => { if (!error?.shown) toast(error?.message || "Could not create the deck", "error"); return null; });
       entry.close("created");
       if (!result) return;
       await loadWorkspace();

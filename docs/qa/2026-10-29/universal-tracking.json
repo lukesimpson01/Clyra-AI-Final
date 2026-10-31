@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "frames": 25,
+  "maxAnchorErrorPx": 0.75,
+  "meanMs": 6.373900666666664,
+  "p95Ms": 12.918379000000016,
+  "cameraHoldRegression": true
+}

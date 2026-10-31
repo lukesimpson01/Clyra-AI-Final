@@ -1,0 +1,24 @@
+{
+  "backup": "shorts-library/history/2026-10-31T05-32-29-112Z-substitutes",
+  "report": [
+    {
+      "id": "flash",
+      "title": "Camera Flash_Crackle_Near_Mono.wav",
+      "duration": 1.075542,
+      "sha256": "64554e269328def16d89573028b8a5947a3f02580865c00905b3f6c8ffd066be"
+    },
+    {
+      "id": "swipe",
+      "title": "Swipe.wav",
+      "duration": 0.879958,
+      "sha256": "a405756d41095ca8caa4b463e8a2a63abbbd05fe1c65f0f7253e191c0ec918c1"
+    },
+    {
+      "id": "heavenly-music",
+      "title": "Choir of Voices - Single Chord",
+      "duration": 6.302812,
+      "sha256": "4fa599b207618e064d2e1735cef3a7d73f3b70e9e8b1849a8e1542c4374bd845"
+    }
+  ],
+  "failed": []
+}

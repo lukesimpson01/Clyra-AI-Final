@@ -29,6 +29,12 @@ async function main() {
   assert.equal(content[1].image_url.url, SAMPLE_IMAGE);
   assert.equal(content[1].image_url.detail, "high");
   assert.equal(request.body.max_tokens, 777);
+  const sequence=buildDeepseekVisionRequest(config,SAMPLE_IMAGE,'Compare movement',{frames:[{time:0,image:SAMPLE_IMAGE},{time:2,image:SAMPLE_IMAGE}]});
+  const ordered=sequence.body.messages[1].content as any[];
+  assert.equal(ordered.filter(p=>p.type==='image_url').length,2);
+  assert.match(ordered[1].text,/0.00 seconds/);
+  assert.match(ordered[3].text,/2.00 seconds/);
+  assert.throws(()=>buildDeepseekVisionRequest(config,SAMPLE_IMAGE,'',{frames:[{time:2,image:SAMPLE_IMAGE},{time:1,image:SAMPLE_IMAGE}]}),VisionInputError);
 
   let captured: any;
   const result = await analyseDeepseekVisionFrame(SAMPLE_IMAGE, "Read the control", {
@@ -53,7 +59,7 @@ async function main() {
     VisionInputError,
   );
 
-  console.log("PASS deepseek vision contracts (15 assertions)");
+  console.log("PASS deepseek vision contracts, including ordered multi-frame grounding");
 }
 
 main().catch((error) => {

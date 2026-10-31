@@ -34,7 +34,7 @@ export const DEFAULT_HOTKEY = "right-option";
  * released within TAP_MAX_MS. Each tap toggles dictation (tap to start, tap to stop). Holding the
  * key, or using it with another key (Option+letter typing), is never mistaken for the hotkey.
  */
-export function createTapMachine({ now = () => Date.now(), onTap }) {
+export function createTapMachine({ now = () => Date.now(), onTap, onPress = () => {}, onAbort = () => {} }) {
   let downAt = null;
   let dirty = false;
   return {
@@ -44,16 +44,19 @@ export function createTapMachine({ now = () => Date.now(), onTap }) {
       if (downAt !== null && now() - downAt < 30_000) return;
       downAt = now();
       dirty = false;
+      // Key-down is the earliest signal that dictation may be coming: let the caller open the mic now,
+      // so the words you start saying right after the tap are already being recorded.
+      onPress();
     },
     release() {
       const held = downAt === null ? Infinity : now() - downAt;
       const clean = !dirty && held <= TAP_MAX_MS;
       downAt = null;
       dirty = false;
-      if (clean) onTap();
+      if (clean) onTap(); else if (held !== Infinity) onAbort();
     },
     otherKey() {
-      if (downAt !== null) dirty = true;
+      if (downAt !== null && !dirty) { dirty = true; onAbort(); }
     },
     reset() { downAt = null; dirty = false; },
   };

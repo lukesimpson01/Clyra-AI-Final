@@ -36,19 +36,23 @@ export function renderChat(host, app, options = {}) {
   /* The placeholder teaches the one thing the composer can do that a plain
      chat box cannot: attach notes. Naming the key is what makes it
      discoverable — there is nothing else on the bar that says so. */
-  const PLACEHOLDER = "Ask about your notes\u2026  Type @ to reference a note, or several";
+  const PLACEHOLDER = "Ask about your notes\u2026";
   const input = el("textarea", {
     class: "chat-input", rows: "1", placeholder: PLACEHOLDER, "aria-label": "Ask Clyra",
   });
-  const send = el("button", { class: "chat-send", type: "button", "aria-label": "Send message", disabled: true }, icon("arrow_up", 18));
+  const send = el("button", { class: "chat-send", type: "button", "aria-label": "Send message", disabled: true },
+    el("span", { class: "chat-send-icon", "aria-hidden": "true", html: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>' }));
 
+  /* Chat's composer shape: the prompt on top, a control row beneath — add a note on the left, send on the right. */
   const composer = el("div", { class: "chat-composer" },
-    chips,
     el("div", { class: "chat-bar" },
-      el("span", { class: "chat-bar-mark" }, bloub(20)),
-      input,
-      iconButton("at", "Add a page as context", () => addSource(), { size: 16, className: "chat-at" }),
-      send));
+      el("div", { class: "chat-bar-field" }, input),
+      el("div", { class: "chat-bar-controls" },
+        iconButton("plus", "Add a note as context", () => addSource(), { size: 16, className: "chat-at" }),
+        chips,
+        el("span", { class: "chat-bar-hint" }, "Type ", el("kbd", { text: "@" }), " to reference a note"),
+        el("span", { class: "chat-bar-spacer" }),
+        send)));
   /* History sits on the right, like any chat client: the thread you are in
      stays where your eye already is. */
   const history = el("aside", { class: "chat-history", "aria-label": "Chat history" },
@@ -188,7 +192,7 @@ export function renderChat(host, app, options = {}) {
     }).catch(() => {});
   };
 
-  const syncSend = () => { send.disabled = busy || !input.value.trim(); };
+  const syncSend = () => { send.disabled = busy || !input.value.trim(); composer.classList.toggle("has-text", Boolean(input.value.trim())); };
   const grow = () => { input.style.height = "auto"; input.style.height = `${Math.min(140, input.scrollHeight)}px`; };
   input.addEventListener("input", () => {
     grow();

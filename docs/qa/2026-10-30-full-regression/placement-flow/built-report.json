@@ -1,0 +1,95 @@
+{
+  "report": [
+    {
+      "width": 1440,
+      "overflow": false,
+      "status": [
+        "Position selected"
+      ],
+      "buttons": [
+        "Scan again",
+        "Choose another point",
+        "Add text at this point"
+      ],
+      "stage": {
+        "x": 618,
+        "y": 74,
+        "width": 312,
+        "height": 555
+      }
+    },
+    {
+      "width": 1024,
+      "overflow": false,
+      "status": [
+        "Position selected"
+      ],
+      "buttons": [
+        "Scan again",
+        "Choose another point",
+        "Add text at this point"
+      ],
+      "stage": {
+        "x": 387,
+        "y": 74,
+        "width": 312,
+        "height": 555
+      }
+    },
+    {
+      "width": 768,
+      "overflow": false,
+      "status": [
+        "Position selected"
+      ],
+      "buttons": [
+        "Scan again",
+        "Choose another point",
+        "Add text at this point"
+      ],
+      "stage": {
+        "x": 259,
+        "y": 74,
+        "width": 312,
+        "height": 555
+      }
+    },
+    {
+      "width": 375,
+      "overflow": false,
+      "status": [
+        "Position selected"
+      ],
+      "buttons": [
+        "Scan again",
+        "Choose another point",
+        "Add text at this point"
+      ],
+      "stage": {
+        "x": 86.5,
+        "y": 115.984375,
+        "width": 264,
+        "height": 471
+      }
+    },
+    {
+      "width": 320,
+      "overflow": false,
+      "status": [
+        "Position selected"
+      ],
+      "buttons": [
+        "Scan again",
+        "Choose another point",
+        "Add text at this point"
+      ],
+      "stage": {
+        "x": 86.5,
+        "y": 164.984375,
+        "width": 209,
+        "height": 373
+      }
+    }
+  ],
+  "errors": []
+}

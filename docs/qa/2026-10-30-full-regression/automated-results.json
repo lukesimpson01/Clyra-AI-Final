@@ -1,0 +1,72 @@
+[
+  {
+    "name": "root-typecheck",
+    "code": 0,
+    "elapsedMs": 34336,
+    "passed": true,
+    "tail": "\n> react-example@1.0.0 lint\n> tsc --noEmit\n\n"
+  },
+  {
+    "name": "editor-typecheck",
+    "code": 0,
+    "elapsedMs": 29696,
+    "passed": true,
+    "tail": ""
+  },
+  {
+    "name": "server-typecheck",
+    "code": 2,
+    "elapsedMs": 10130,
+    "passed": false,
+    "tail": "apps/shorts/openfilm/packages/openfilm/studio/server/server.mjs(570,85): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n  Type 'undefined' is not assignable to type 'string'.\n"
+  },
+  {
+    "name": "editor-unit",
+    "code": 0,
+    "elapsedMs": 71564,
+    "passed": true,
+    "tail": "ade when both pictures faded is still found, and resized to the outgoing one staying whole (0.885827ms)\n✔ audio crossfade between two sounds: the incoming one on a track below, overlapping (1.33401ms)\n✔ dips: half the length each side of the cut, nothing moves; to white over a white page cut in below (6.146615ms)\n✔ a clip's edge with nothing against it: a fade; fade presets; locked tracks refuse (2.95307ms)\n✔ cutNear: the cut under the pointer, or a clip's edge alone (0.62973ms)\n✔ fade handles: dragged inward on the frame grid, never past the other fade; linked clips at the same edge too (1.072721ms)\n✔ a tile clicked: the cut between two selected clips, else the nearest edge of the selection, else the nearest cut (1.351982ms)\n✔ line height: auto, %, px and multiples, written as CSS (2.886475ms)\n✔ letter spacing: % of the size as em, a bare number as px (0.60511ms)\n✔ the page's values, shown (3.024878ms)\n✔ stepping keeps the unit; from auto it starts at what auto is (0.765576ms)\n✔ a newer openfilm is offered; none to a Studio that runs the newest, or that does not update itself (3.803374ms)\n✔ an update Studio is running, or one that failed, is shown as Studio says it (0.273845ms)\n✔ an export or media being made is a wait; the newest already, nothing; anything else failed (0.304538ms)\n✔ versions in order, a pre-release before its release (2.615838ms)\n✔ after an update: the notes since the version last shown, the newest first; a new install none (1.496234ms)\n✔ each release says what is new in every language, a few lines each (1.449404ms)\n✔ this version has its notes: a release without them shows nothing after the update (as 0.1.7 did) (0.636364ms)\n✔ names keep spaces and every script; only what file systems refuse goes (the server’s rule, files.mjs) (5.742599ms)\n✔ a rename lands beside the old name and keeps the extension when none is typed (3.029641ms)\n✔ one duration format for every length (0.425238ms)\n✔ a rename that would change what a file is, by its ending, is caught ahead of the server (1.326807ms)\n✔ the media search ignores case and runs of spaces (0.47762ms)\n✔ a page put in a folder of the media pane is a page still, named as pages are; another file is \"other\" (1.712204ms)\n✔ links to media kept elsewhere ride on their files and folders (0.470877ms)\nℹ tests 633\nℹ suites 0\nℹ pass 633\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 70924.259755\n"
+  },
+  {
+    "name": "universal-tracking",
+    "code": 0,
+    "elapsedMs": 1300,
+    "passed": true,
+    "tail": "{\"passed\":true,\"frames\":25,\"maxAnchorErrorPx\":0,\"allowedAnchorErrorPx\":0.75,\"meanMs\":13.362003249999995,\"p95Ms\":20.367279999999994}\n"
+  },
+  {
+    "name": "recording-identity",
+    "code": 0,
+    "elapsedMs": 831,
+    "passed": true,
+    "tail": "{\"passed\":true,\"ready\":34,\"unresolved\":10,\"rejectsSimilarNames\":true,\"rejectsChangedPageMediaAndHash\":true}\n"
+  },
+  {
+    "name": "recording-endpoints",
+    "code": 0,
+    "elapsedMs": 6383,
+    "passed": true,
+    "tail": "{\"passed\":true,\"studioBlocked\":10,\"shortsBlocked\":10,\"verifiedRangeBytes\":256,\"changedSourceRejected\":true,\"originalBytesMatch\":true}\n"
+  },
+  {
+    "name": "recording-decode",
+    "code": 0,
+    "elapsedMs": 11075,
+    "passed": true,
+    "tail": "{\"downloaded\":62,\"music\":18,\"sfx\":44,\"verifiedSounds\":34,\"unresolvedSounds\":10,\"playableRecordings\":52,\"decodedCompletely\":true,\"allHashesMatch\":true}\n"
+  },
+  {
+    "name": "vision-contracts",
+    "code": 0,
+    "elapsedMs": 2644,
+    "passed": true,
+    "tail": "\n> react-example@1.0.0 test:deepseek-vision\n> tsx tools/deepseek-vision-contract-tests.ts\n\nPASS deepseek vision contracts, including ordered multi-frame grounding\n(node:88710) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n"
+  },
+  {
+    "name": "native-corrections",
+    "code": 0,
+    "elapsedMs": 3017,
+    "passed": true,
+    "tail": ".\n----------------------------------------------------------------------\nRan 1 test in 0.232s\n\nOK\n"
+  }
+]

@@ -1,0 +1,57 @@
+{
+  "preview": {
+    "state": "poster",
+    "pixel": [
+      240,
+      197,
+      151,
+      255
+    ]
+  },
+  "layouts": [
+    {
+      "width": 320,
+      "scroll": 320,
+      "flight": true,
+      "flightOverflow": false
+    },
+    {
+      "width": 375,
+      "scroll": 375,
+      "flight": true,
+      "flightOverflow": false
+    },
+    {
+      "width": 768,
+      "scroll": 768,
+      "flight": true,
+      "flightOverflow": false
+    },
+    {
+      "width": 1024,
+      "scroll": 1024,
+      "flight": true,
+      "flightOverflow": false
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "flight": true,
+      "flightOverflow": false
+    }
+  ],
+  "scan": {
+    "time": 6.777285,
+    "mode": "forward-reverse",
+    "waves": "3",
+    "marked": [
+      "corridor"
+    ],
+    "p50": 16.799999999999272,
+    "p95": 49.89999999999782,
+    "frames": 253,
+    "gpuVisible": true,
+    "reduced": true
+  },
+  "errors": []
+}

@@ -1,0 +1,43 @@
+{
+  "frames": 24,
+  "elapsedMs": 11836,
+  "peakRSSBytes": 299130880,
+  "dimensions": {
+    "sourceWidth": 960,
+    "sourceHeight": 540,
+    "width": 960,
+    "height": 540,
+    "rotation": 0,
+    "decoder": "videotoolbox",
+    "relativeScale": true,
+    "refinementLimitFrames": 900,
+    "refinedThroughUs": 766667,
+    "sourceCadence": true
+  },
+  "timesUs": [
+    0,
+    33333,
+    66667,
+    100000,
+    133333,
+    166667,
+    200000,
+    233333,
+    266667,
+    300000,
+    333333,
+    366667,
+    400000,
+    433333,
+    466667,
+    500000,
+    533333,
+    566667,
+    600000,
+    633333,
+    666667,
+    700000,
+    733333,
+    766667
+  ]
+}

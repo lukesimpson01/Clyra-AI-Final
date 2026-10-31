@@ -24,7 +24,7 @@
   --agents-shell-ease: cubic-bezier(.32, .72, 0, 1);
   --agents-spring: cubic-bezier(.16, 1, .3, 1);
   --agents-message-ease: cubic-bezier(.16, .86, .2, 1);
-  --agents-font: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --agents-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
 }
 
 :root[data-clyra-theme="dark"] .cowork {

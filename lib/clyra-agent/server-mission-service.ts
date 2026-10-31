@@ -9,6 +9,8 @@ import { MissionStore } from "./mission-store";
 import { filesList, filesRead, filesWrite, filesMove, filesDelete, pathExists } from "./fs-tools";
 import { terminalRun, gitStatus, gitDiff, gitCommit } from "./terminal-tools";
 import { getManagedBrowserObservation, navigateManagedBrowser, actOnManagedBrowser, type BrowserAction } from "../openbrowser/browser-runtime";
+import type { MemoryService } from "../memory/service";
+import { memoryToolBindings } from "../memory/tools";
 
 function requestedArtifactTitle(objective: string) {
   const explicit = objective.match(/\b(?:note|report|comparison)\s+(?:called|titled)\s+["“]?(.+?)["”]?(?:\s+(?:in|to)\s+(?:clyra\s+)?notes?|\s+and\s+|$)/i)
@@ -37,6 +39,11 @@ export class ServerMissionService {
    * persisted after every state boundary. A restart therefore never silently
    * resumes work, while Pause and Stop can still interrupt an active tool. */
   private active = new Map<string, MissionRuntime>();
+  private memoryService: MemoryService | null;
+
+  constructor(memoryService?: MemoryService) {
+    this.memoryService = memoryService || null;
+  }
   route(prompt: string) {
     const tools = createClyraToolRegistry(this.bindings());
     return { decision: routeObjective(prompt, new Set(tools.map((tool) => tool.id))), tools: tools.map(({ id, name, category, riskLevel, permissions }) => ({ id, name, category, riskLevel, permissions })) };
@@ -198,7 +205,9 @@ export class ServerMissionService {
     }, missionId, projectId);
   }
   private bindings() {
+    const memory = this.memoryService ? memoryToolBindings(this.memoryService) : {};
     return {
+      ...memory,
       "notes.search": async (args: Json): Promise<ToolResult> => {
         const query = String((args as { query?: string }).query || "");
         const hits = notes.search(query).slice(0, 12) as Array<{ page_id?: string }>;

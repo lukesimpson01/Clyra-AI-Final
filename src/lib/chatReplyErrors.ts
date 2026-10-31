@@ -6,6 +6,15 @@
 export function chatReplyFailureText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const status = Number(message.match(/API error: (\d{3})/)?.[1] ?? 0);
+  // Providers disagree on both their code and wording for an empty paid
+  // balance. Check this before generic 429 handling: some return 429 for a
+  // billing hard-limit, and waiting will never resolve that condition.
+  if (
+    status === 402 ||
+    /provider_credits_exhausted|insufficient(?:[_\s-]?(?:balance|quota|credit))|credit(?:s)?(?:\s+are)?\s+(?:exhausted|depleted)|billing(?:\s+hard)?\s+limit|payment required|exceeded your current quota/i.test(message)
+  ) {
+    return "Clyra's model account is out of credits. Add credits to the configured model provider, then press Retry.";
+  }
   if (status === 429 || /rate.?limit|too many requests/i.test(message)) {
     return "Clyra's model is rate-limited right now. Wait a moment, then press Retry.";
   }

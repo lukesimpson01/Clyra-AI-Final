@@ -1,0 +1,13 @@
+{
+  "result": {
+    "front": 24235,
+    "all": 16949,
+    "person1": 20547,
+    "person2": 20637,
+    "missing": 24235,
+    "depth3": 16949,
+    "depth5": 24235,
+    "wall": 0
+  },
+  "errors": []
+}

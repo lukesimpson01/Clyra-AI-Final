@@ -1,0 +1,44 @@
+{
+  "states": [
+    {
+      "top": {
+        "theme": "light",
+        "accent": "#4568ee",
+        "background": "rgb(242, 242, 242)",
+        "transition": false
+      },
+      "inside": {
+        "dark": "",
+        "background": "rgb(255, 255, 255)",
+        "overflow": false
+      }
+    },
+    {
+      "top": {
+        "theme": "dark",
+        "accent": "#4568ee",
+        "background": "rgb(31, 31, 31)",
+        "transition": false
+      },
+      "inside": {
+        "dark": "",
+        "background": "rgb(32, 32, 32)",
+        "overflow": false
+      }
+    },
+    {
+      "top": {
+        "theme": "light",
+        "accent": "#4568ee",
+        "background": "rgb(242, 242, 242)",
+        "transition": false
+      },
+      "inside": {
+        "dark": "",
+        "background": "rgb(255, 255, 255)",
+        "overflow": false
+      }
+    }
+  ],
+  "errors": []
+}

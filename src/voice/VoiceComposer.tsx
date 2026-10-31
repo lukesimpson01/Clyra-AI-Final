@@ -10,6 +10,8 @@ type Props = {
   onMute: () => void;
   onEnd: () => void;
   onSend: (text: string) => void | Promise<void>;
+  /** Fires on every keystroke so the presence can show its "typing" gaze. */
+  onActivity?: () => void;
 };
 
 const E = [0.22, 1, 0.36, 1] as const;
@@ -34,7 +36,7 @@ function MicIcon({ muted }: { muted: boolean }) {
   );
 }
 
-export function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, onSend }: Props) {
+export function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, onSend, onActivity }: Props) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const reduced = useReducedMotion();
@@ -135,7 +137,7 @@ export function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, 
               <input
                 ref={inputRef}
                 value={value}
-                onChange={(event) => setValue(event.target.value)}
+                onChange={(event) => { setValue(event.target.value); onActivity?.(); }}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") { event.preventDefault(); collapse(); return; }
                   if (event.key === "Enter") { event.preventDefault(); submit(); }

@@ -1,6 +1,6 @@
 import {
   forwardRef,
-  Fragment,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -29,57 +29,33 @@ export type TaskViewTab = {
 type Rect = { left: number; top: number; width: number; height: number };
 type Phase = "closed" | "opening" | "open" | "closing";
 type ExitingTab = { tab: TaskViewTab; target: Rect; scale: number };
-type TaskViewMode = "2d" | "3d";
-/** Per-card spatial-fan transform, layered on top of a shared center Rect. */
-type Fan3D = { fanX: number; fanY: number; fanZ: number; fanRot: number; opacity: number; scale: number; shadow: number };
+type Drag = { id: string; pointerId: number; startX: number; startY: number; origin: Rect; dx: number; dy: number; moved: boolean };
 
-// Must match the `transform` transition duration on .clyra-task-view__window
-// in index.css (520ms). SETTLE_BUFFER_MS is a small margin so the phase flip
-// that re-enables clicks / calls onSelect/onClose never preempts the visual
-// animation. That small margin prevents the phase change from clipping the
-// tail of the zoom with a visible snap as the window settles.
-const TRANSFORM_MS = 360;
-const SETTLE_BUFFER_MS = 30;
-// Card entrances are offset by at most six 18ms beats. Keep the opening
-// phase through that final beat so a card never becomes interactive midway
-// through its arrival.
-const OPEN_MS = TRANSFORM_MS + SETTLE_BUFFER_MS;
-const CLOSE_MS = TRANSFORM_MS + SETTLE_BUFFER_MS;
-// The outgoing card and the remaining grid move together as one gesture.
-const TAB_CLOSE_MS = 260;
-const GAP = 40;
-const PAD_X = 44;
-const PAD_Y = 54;
-// The Task View / 2D / 3D / Done bar sits across the top; cards start below it.
-const PAD_TOP = 58;
-const LABEL_H = 25;
+/*
+ * Task View is one light surface that rearranges itself around what you do. Every window is the real, mounted app
+ * at its full size; a single compositor transform places it (index.css, "Task View · light spatial overview"). The
+ * zoom out, the reflow after a window closes, drag-to-reorder and the zoom back in all move that one property, so
+ * windows travel from where they are to where they go instead of disappearing and reappearing.
+ */
+
+// Keep in step with the transform transitions in index.css (open 300 ms, close 280 ms, tab close 160 ms fade).
+const OPEN_MS = 320;
+const CLOSE_MS = 300;
+const TAB_CLOSE_MS = 240;
+// Switching apps outside Task View: the whole workspace slides as one surface.
+// Outgoing travels to -direction×W, incoming from +direction×W, sharing one ease.
+const SWITCH_MS = 500;
+// A long, weightless macOS-style ease: a gentle ease-in, a steady flowing
+// middle and a gradual ease-out, with no snap at either end. Both windows share
+// the one curve so they stay in perfect lockstep.
+const SWITCH_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+const GAP = 36;
+const PAD_X = 48;
+const PAD_Y = 52;
+const PAD_TOP = 48;
+const LABEL_H = 28;
+const DRAG_THRESHOLD = 5;
 const emptyRect: Rect = { left: 0, top: 0, width: 1, height: 1 };
-
-// Spacing between neighbouring cards in the 3D fan, in px, before the
-// viewport-relative falloff below is applied. Kept as a constant (rather
-// than derived from card width) so pointer-drag deltas and wheel deltas can
-// convert to "index units" with the exact same ratio the layout uses.
-// Layout constants are authored for a 640px-wide front card and scaled by
-// the real card width, so the deck keeps its proportions at any window size.
-const FAN_REF_CARD_W = 640;
-const FAN_SPACING = 190;
-const FAN_MAX_OFFSET = 8;
-const DRAG_CLICK_THRESHOLD = 6;
-// Every open tab keeps its real, live app mounted (so switching back is
-// instant), and in 3D the whole fan shares one `perspective` context, so a
-// card well off to either side still costs a full composite every frame even
-// though it's barely visible. With 10+ tabs open that adds up to a severe,
-// measured frame-rate hit (idle ~10fps). Cards beyond this many fan slots
-// from the focused one are visually negligible already (opacity/scale are
-// both near their floor out there), so hide them outright — `visibility`,
-// not unmounting, so their app state is untouched and they reappear the
-// instant the fan scrubs back within range.
-const FAN_CULL_DISTANCE = Number.POSITIVE_INFINITY;
-const MORPH_MS = 560;
-
-function aspectOf(source: Rect) {
-  return Math.max(0.45, Math.min(3.2, source.width / Math.max(1, source.height)));
-}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -90,7 +66,6 @@ export function computeTaskViewCards(count: number, source: Rect, viewport: Rect
   if (!count) return [];
   const availableW = Math.max(240, viewport.width - PAD_X * 2);
   const availableH = Math.max(180, viewport.height - PAD_TOP - PAD_Y);
-  aspectOf(source); // clamps pathological source measurements before solving.
   let best: { columns: number; scale: number } | null = null;
   for (let columns = 1; columns <= Math.min(count, 6); columns += 1) {
     const rows = Math.ceil(count / columns);
@@ -101,153 +76,131 @@ export function computeTaskViewCards(count: number, source: Rect, viewport: Rect
   }
   const columns = best?.columns ?? 1;
   const rows = Math.ceil(count / columns);
-  const cellW = (availableW - GAP * (columns - 1)) / columns;
-  const cellH = (availableH - GAP * (rows - 1)) / rows;
   const scale = Math.max(0.08, best?.scale ?? 1);
   const width = source.width * scale;
   const height = source.height * scale;
-  const usedH = rows * cellH + GAP * (rows - 1);
-  const topOffset = PAD_TOP + Math.max(0, (availableH - usedH) / 2);
+  const cellW = (availableW - GAP * (columns - 1)) / columns;
+  const usedH = rows * (height + LABEL_H) + GAP * (rows - 1);
+  const top0 = viewport.top + PAD_TOP + Math.max(0, (availableH - usedH) / 2);
   return Array.from({ length: count }, (_, index) => {
-    const col = index % columns;
     const row = Math.floor(index / columns);
+    const col = index % columns;
+    // A short last row is centred, the way Mission Control balances an uneven set of windows.
+    const inRow = row === rows - 1 ? count - row * columns : columns;
+    const rowW = inRow * cellW + GAP * (inRow - 1);
+    const left0 = viewport.left + PAD_X + (availableW - rowW) / 2;
     return {
-      left: viewport.left + PAD_X + col * (cellW + GAP) + (cellW - width) / 2,
-      top: viewport.top + topOffset + row * (cellH + GAP) + Math.max(0, (cellH - LABEL_H - height) / 2),
+      left: left0 + col * (cellW + GAP) + (cellW - width) / 2,
+      top: top0 + row * (height + LABEL_H + GAP),
       width,
       height,
     };
   });
 }
 
-/**
- * Lays every card over one shared, viewport-centered box. Horizontal
- * position, depth and rotation come entirely from the `fan*` transform the
- * caller layers on top of this rect (see the --task-view-fan-* CSS custom
- * properties), the same way `computeTaskViewCards` hands back a rect that
- * `transformFor` turns into a FLIP translate.
- */
-export function computeTaskView3DCenterRect(source: Rect, viewport: Rect): Rect {
-  const maxW = viewport.width * 0.5;
-  const maxH = viewport.height * 0.58;
-  const scale = clamp(Math.min(maxW / source.width, maxH / source.height, 1), 0.1, 1);
-  const width = source.width * scale;
-  const height = source.height * scale;
-  return {
-    left: viewport.left + (viewport.width - width) / 2,
-    top: viewport.top + viewport.height * 0.47 - height / 2,
-    width,
-    height,
-  };
-}
-
-/** A continuous spatial deck: every card's pose is a pure function of its
- *  distance from the focused position, so a fractional focus interpolates the
- *  whole deck together. Side cards step out, recede in depth, drop slightly
- *  and turn toward the centre, with the turn capped so the deck never reads as
- *  a classic cover-flow ring. */
-export function computeTaskView3DFan(count: number, focus: number, unit: number, baseScale: number): Fan3D[] {
-  return Array.from({ length: count }, (_, index) => {
-    const offset = index - focus;
-    const abs = Math.abs(offset);
-    const side = Math.sign(offset);
-    const capped = Math.min(abs, FAN_MAX_OFFSET);
-    return {
-      fanX: side * (FAN_SPACING + Math.max(0, abs - 1) * 105) * unit,
-      fanY: abs * 7 * unit,
-      fanZ: -abs * 125 * unit,
-      fanRot: -side * Math.min(abs, 1) * 45,
-      opacity: 1 - Math.min(abs * 0.05, 0.22),
-      scale: baseScale * (1 - Math.min(capped * 0.055, 0.24)),
-      shadow: Math.max(0.35, 1 - abs * 0.12),
-    };
-  });
-}
-
-function transformFor(source: Rect, target: Rect): CSSProperties {
-  // First = source rect, Last = target rect. The child keeps source geometry;
-  // only this outer compositor layer translates and uniformly scales. Scale
-  // is computed by the caller (guarded against a zero-size source) and passed
-  // in separately as --task-view-target-scale, which is the one CSS actually
-  // reads — this function only owns the translate offset.
-  const x = source.left - target.left;
-  const y = source.top - target.top;
-  return {
-    "--task-view-x": `${x}px`,
-    "--task-view-y": `${y}px`,
-  } as CSSProperties;
-}
+const placed = (rect: Rect, scale: number) => `translate3d(${rect.left}px, ${rect.top}px, 0) scale(${scale})`;
+/** A slightly smaller pose about the window's own centre: where a window fades in from and back out to. */
+const recessed = (rect: Rect, scale: number) => {
+  const shrink = 0.965;
+  return `translate3d(${rect.left + (rect.width * (1 - shrink)) / 2}px, ${rect.top + (rect.height * (1 - shrink)) / 2}px, 0) scale(${scale * shrink})`;
+};
+const FULL = "translate3d(0px, 0px, 0) scale(1)";
 
 export type TaskViewHandle = { closeToActive: () => void; toggle: () => void };
 
-export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
+export const WorkspaceTaskView = memo(forwardRef<TaskViewHandle, {
   open: boolean;
   tabs: TaskViewTab[];
   activeId: string;
+  /** Slide direction for a normal tab-bar switch: 1 = enter from right, -1 = enter from left, 0 = no slide. */
+  switchDirection?: number;
   onSelect: (id: string) => void;
   onClose: () => void;
   onCloseTab: (id: string) => void;
-  /** Fires when the user drags a card (2D grid or 3D fan) to a new slot. */
+  /** Fires when the user drags a window to a new slot. */
   onReorder?: (orderedIds: string[]) => void;
-}>(function WorkspaceTaskView({ open, tabs, activeId, onSelect, onClose, onCloseTab, onReorder }, ref) {
+}>(function WorkspaceTaskView({ open, tabs, activeId, switchDirection = 0, onSelect, onClose, onCloseTab, onReorder }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [source, setSource] = useState<Rect>(emptyRect);
-  const [viewport, setViewport] = useState<Rect>(emptyRect);
-  const [phase, setPhase] = useState<Phase>(open ? "opening" : "closed");
+  // Mounts "closed" (the active app exactly as it was on screen), then flips to "opening" once that frame is
+  // painted, so the zoom always starts from the real window rather than a blank or pre-placed frame.
+  const [phase, setPhase] = useState<Phase>("closed");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
-  const [closingTabId, setClosingTabId] = useState<string | null>(null);
   const [exitingTab, setExitingTab] = useState<ExitingTab | null>(null);
-  // 3D mode. The 2D path above is untouched by any of this — it is wired in
-  // only where a card's transform is actually computed, below.
-  const [mode, setMode] = useState<TaskViewMode>("2d");
-  const [focusIndex, setFocusIndex] = useState(0);
+  const [liveOrder, setLiveOrder] = useState<string[] | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [navDragging, setNavDragging] = useState(false);
-  const navDragRef = useRef<{ startX: number; startFocus: number; moved: boolean } | null>(null);
-  const navSuppressClickRef = useRef(false);
-  const [dragLiveOrder, setDragLiveOrder] = useState<string[] | null>(null);
-  const [dragDeltaX, setDragDeltaX] = useState(0);
   const phaseRef = useRef(phase);
-  const modeRef = useRef(mode);
+  phaseRef.current = phase;
   const completionRef = useRef<number | null>(null);
   const tabCloseTimerRef = useRef<number | null>(null);
-  const dragRef = useRef<{ id: string; startX: number; startIndex: number; moved: boolean; pointerId: number } | null>(null);
-  const dragFrameRef = useRef<number | null>(null);
-  const pendingDeltaRef = useRef(0);
-  // Mirrors `dragLiveOrder` so the pointerup handler can read the latest
-  // live-reordered ids synchronously (the handler's own closure is fixed at
-  // listener-registration time and would otherwise see a stale order).
-  const dragLiveOrderRef = useRef<string[] | null>(null);
-  phaseRef.current = phase;
-  modeRef.current = mode;
-  // Layout switches animate every card's box and transform together, so the
-  // 2D grid and the 3D deck read as one morph rather than a swap. Scoped to
-  // the switch itself: drag reorders stay on their direct, unanimated path.
-  const [morphing, setMorphing] = useState(false);
-  const morphTimerRef = useRef<number | null>(null);
-  const switchMode = useCallback((next: TaskViewMode) => {
-    if (next === modeRef.current) return;
-    setMorphing(true);
-    if (morphTimerRef.current != null) window.clearTimeout(morphTimerRef.current);
-    morphTimerRef.current = window.setTimeout(() => {
-      morphTimerRef.current = null;
-      setMorphing(false);
-    }, MORPH_MS);
-    setMode(next);
-  }, []);
-  useEffect(() => () => {
-    if (morphTimerRef.current != null) window.clearTimeout(morphTimerRef.current);
-  }, []);
+  const dragRef = useRef<Drag | null>(null);
+  const suppressClickRef = useRef(false);
+  const windowEls = useRef(new Map<string, HTMLDivElement>());
+  const domOrderRef = useRef<string[]>([]);
+  useEffect(() => { if (phase === "closed") setHoveredId(null); }, [phase]);
+  const [leavingId, setLeavingId] = useState<string | null>(null);
+  // The in-flight workspace slide: which window is outgoing, which way it
+  // travels, and whether the incoming window has been placed at its off-screen
+  // start (entering=false) or is now gliding toward 0 (entering=true).
+  const [switchAnim, setSwitchAnim] = useState<{ from: string; direction: -1 | 1; entering: boolean } | null>(null);
+  const switchDirectionRef = useRef(switchDirection);
+  switchDirectionRef.current = switchDirection;
+  const previousActiveRef = useRef(activeId);
+
+  // Detect the switch during render (not in an effect) so the outgoing window is
+  // committed as "leaving" in the SAME render that changes the active app. An
+  // effect runs after paint, which would let the outgoing app flash to its
+  // hidden recessed pose for a frame before the slide starts.
+  if (previousActiveRef.current !== activeId) {
+    const outgoing = previousActiveRef.current;
+    previousActiveRef.current = activeId;
+    // A selection from Task View has already zoomed the new app to full size; only a normal switch slides.
+    if (outgoing !== activeId && phaseRef.current === "closed") {
+      const direction = switchDirectionRef.current;
+      if (direction === 0) {
+        // No slide (Task-View selection): keep the outgoing window a beat so the
+        // hand-off is never a blank frame, then release it.
+        setLeavingId(outgoing);
+      } else {
+        setSwitchAnim({ from: outgoing, direction: direction > 0 ? 1 : -1, entering: false });
+      }
+    }
+  }
+
+  // Start the slide on this very frame. The incoming window is already committed
+  // off-screen with its transition disabled; force a synchronous layout flush so
+  // the browser records that pose, then flip both windows to their targets in the
+  // same commit. The browser sees the two poses in separate style passes and runs
+  // the transition immediately — no rAF wait, no dead frame before motion.
+  useLayoutEffect(() => {
+    if (!switchAnim || switchAnim.entering) return;
+    if (hostRef.current) void hostRef.current.getBoundingClientRect();
+    setSwitchAnim((current) => (current && !current.entering ? { ...current, entering: true } : current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [switchAnim]);
+
+  // Release the switch once the slide has finished so the outgoing window can
+  // drop back to its recessed pose and the windows' CSS transitions return to
+  // `none` (the latter keeps the compositor layer count and per-frame cost down
+  // between switches, instead of leaving the slide transition hot forever).
+  useEffect(() => {
+    if (!switchAnim?.entering) return;
+    const timer = window.setTimeout(() => setSwitchAnim(null), SWITCH_MS + 60);
+    return () => window.clearTimeout(timer);
+  }, [switchAnim?.entering]);
+
+  useEffect(() => {
+    if (!leavingId) return;
+    const timer = window.setTimeout(() => setLeavingId(null), 80);
+    return () => window.clearTimeout(timer);
+  }, [leavingId]);
 
   const measure = useCallback(() => {
     const rect = hostRef.current?.getBoundingClientRect();
     if (!rect || rect.width < 2 || rect.height < 2) return;
-    const next = { left: 0, top: 0, width: rect.width, height: rect.height };
-    setViewport(next);
-    setSource(next);
+    setSource((current) => (current.width === rect.width && current.height === rect.height ? current : { left: 0, top: 0, width: rect.width, height: rect.height }));
   }, []);
-
   useLayoutEffect(() => {
     measure();
     const observer = new ResizeObserver(measure);
@@ -255,40 +208,15 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
     return () => observer.disconnect();
   }, [measure]);
 
-  // While a drag is live, render the in-progress order instead of the
-  // committed `tabs` prop so neighbours visibly reflow before the drop.
+  // While dragging, neighbours reflow to the in-progress order before the drop.
   const orderedTabs = useMemo(() => {
-    if (!dragLiveOrder) return tabs;
+    if (!liveOrder) return tabs;
     const byId = new Map(tabs.map((tab) => [tab.id, tab]));
-    const next = dragLiveOrder.map((id) => byId.get(id)).filter((tab): tab is TaskViewTab => Boolean(tab));
+    const next = liveOrder.map((id) => byId.get(id)).filter((tab): tab is TaskViewTab => Boolean(tab));
     return next.length === tabs.length ? next : tabs;
-  }, [dragLiveOrder, tabs]);
-
-  const cards = useMemo(() => computeTaskViewCards(orderedTabs.length, source, viewport), [orderedTabs.length, source, viewport]);
-  const fanCenterRect = useMemo(() => computeTaskView3DCenterRect(source, viewport), [source, viewport]);
-  const fanBaseScale = useMemo(
-    () => Math.min(fanCenterRect.width / Math.max(1, source.width), fanCenterRect.height / Math.max(1, source.height), 1),
-    [fanCenterRect, source],
-  );
-  const fanUnit = fanCenterRect.width / FAN_REF_CARD_W;
-  const fans = useMemo(
-    () => computeTaskView3DFan(orderedTabs.length, focusIndex, fanUnit, fanBaseScale),
-    [orderedTabs.length, focusIndex, fanUnit, fanBaseScale],
-  );
-  // Keep the focused card inside the current tab count whenever tabs close
-  // or a reorder commits out from under the fan.
-  useEffect(() => {
-    setFocusIndex((current) => clamp(current, 0, Math.max(0, orderedTabs.length - 1)));
-  }, [orderedTabs.length]);
-  // Center the fan on the active app the moment 3D mode opens.
-  useEffect(() => {
-    if (mode !== "3d") return;
-    const index = orderedTabs.findIndex((tab) => tab.id === activeId);
-    if (index >= 0) setFocusIndex(index);
-    // Only on entering 3D / opening, not on every active-id change while
-    // already browsing the fan — the user's own navigation should win.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, open]);
+  }, [liveOrder, tabs]);
+  const cards = useMemo(() => computeTaskViewCards(orderedTabs.length, source, source), [orderedTabs.length, source]);
+  const scale = cards[0] ? cards[0].width / Math.max(1, source.width) : 1;
 
   const settle = useCallback((next: Phase, duration: number, complete?: () => void) => {
     if (completionRef.current != null) window.clearTimeout(completionRef.current);
@@ -301,15 +229,6 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
 
   useEffect(() => {
     if (open) {
-      // Two rAFs, not one: the frame that just committed still renders the
-      // "closed" transform (this effect runs after that paint), so a single
-      // rAF can land in the same paint cycle the browser is still preparing
-      // and get coalesced away — the class flip and the pre-flip state would
-      // never both hit the screen, and the transition plays no differently
-      // than a hard cut. A second rAF guarantees the browser has genuinely
-      // painted the pre-flip frame before the transition-triggering class
-      // change lands, so the transform reliably animates instead of
-      // occasionally snapping straight to its end state.
       let raf2 = 0;
       const raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => settle("opening", OPEN_MS, () => setPhase("open")));
@@ -317,304 +236,263 @@ export const WorkspaceTaskView = forwardRef<TaskViewHandle, {
       return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
     }
     if (phaseRef.current !== "closed") settle("closing", CLOSE_MS, () => setPhase("closed"));
-    return () => { if (completionRef.current != null) window.clearTimeout(completionRef.current); };
+    return undefined;
   }, [open, settle]);
+  useEffect(() => () => {
+    if (completionRef.current != null) window.clearTimeout(completionRef.current);
+    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
+  }, []);
 
   const closeToActive = useCallback(() => {
     if (phaseRef.current === "closed" || phaseRef.current === "closing") return;
-    // An empty overview has no active workspace to return to. Keep its launch
-    // state on screen until the user opens an app with Cmd+K.
     if (!tabs.length) return;
     settle("closing", CLOSE_MS, () => { setPhase("closed"); onClose(); });
   }, [onClose, settle, tabs.length]);
-  const closeTab = useCallback((id: string) => {
-    if (phaseRef.current !== "open" || closingTabId) return;
-    const index = orderedTabs.findIndex((tab) => tab.id === id);
-    const tab = orderedTabs[index];
-    const target = mode === "3d" ? fanCenterRect : cards[index];
-    if (!tab || !target) return;
-    setClosingTabId(id);
-    // Remove the live tab now so its neighbours can reflow immediately, while
-    // preserving its keyed element long enough to complete the exit motion.
-    setExitingTab({
-      tab,
-      target,
-      scale: mode === "3d" ? fans[index]?.scale ?? fanBaseScale : Math.min(target.width / Math.max(1, source.width), target.height / Math.max(1, source.height)),
-    });
-    onCloseTab(id);
-    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
-    tabCloseTimerRef.current = window.setTimeout(() => {
-      tabCloseTimerRef.current = null;
-      setClosingTabId(null);
-      setExitingTab(null);
-    }, TAB_CLOSE_MS);
-  }, [cards, closingTabId, fanBaseScale, fanCenterRect, fans, mode, onCloseTab, orderedTabs, source.height, source.width]);
+
   const select = useCallback((id: string) => {
     if (phaseRef.current === "closing" || selectingId) return;
     setSelectingId(id);
     settle("closing", CLOSE_MS, () => { setPhase("closed"); setSelectingId(null); onSelect(id); });
   }, [onSelect, selectingId, settle]);
+
   const toggle = useCallback(() => {
+    // Interruptible: pressing again mid-close sends the windows straight back out from wherever they are.
     if (phaseRef.current === "closing") {
-      // Reversing mid-close: the window is already mid-flight on the CSS
-      // transform, so re-applying the open transform target lets it animate
-      // smoothly back out from wherever it currently is — no snap, no
-      // restart from scratch.
       setSelectingId(null);
       settle("opening", OPEN_MS, () => setPhase("open"));
       return;
     }
     closeToActive();
   }, [closeToActive, settle]);
+  useImperativeHandle(ref, () => ({ closeToActive, toggle }), [closeToActive, toggle]);
 
-  // Arrow keys / Enter steer the 3D fan; Escape (below, unconditional) still
-  // leaves Task View in either mode.
+  const closeTab = useCallback((id: string) => {
+    if (phaseRef.current !== "open" || exitingTab) return;
+    const index = orderedTabs.findIndex((tab) => tab.id === id);
+    const tab = orderedTabs[index];
+    const target = cards[index];
+    if (!tab || !target) return;
+    // The window fades where it stands while its neighbours glide into the space it leaves.
+    setExitingTab({ tab, target, scale });
+    onCloseTab(id);
+    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
+    tabCloseTimerRef.current = window.setTimeout(() => {
+      tabCloseTimerRef.current = null;
+      setExitingTab(null);
+    }, TAB_CLOSE_MS);
+  }, [cards, exitingTab, onCloseTab, orderedTabs, scale]);
+
+  // Keyboard: arrows walk the grid, Enter opens, Escape returns to the active app.
   useEffect(() => {
     if (phase === "closed") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeToActive(); return; }
-      if (phaseRef.current !== "open") return;
-      // 2D grid: arrows walk the cards (rows by column count), Enter opens the highlighted one.
-      if (modeRef.current === "2d") {
-        if (!orderedTabs.length) return;
-        const columns = Math.max(1, new Set(cards.map((card) => Math.round(card.top))).size ? cards.filter((card) => Math.round(card.top) === Math.round(cards[0]?.top ?? 0)).length : 1);
-        const currentIndex = Math.max(0, orderedTabs.findIndex((tab) => tab.id === (hoveredId ?? activeId)));
-        const moves: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
-        if (event.key in moves) {
-          event.preventDefault();
-          const next = clamp(currentIndex + moves[event.key], 0, orderedTabs.length - 1);
-          setHoveredId(orderedTabs[next]?.id ?? null);
-        } else if (event.key === "Enter") {
-          const tab = orderedTabs[currentIndex];
-          if (tab) { event.preventDefault(); select(tab.id); }
-        }
-        return;
-      }
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (phaseRef.current !== "open" || !orderedTabs.length) return;
+      const columns = Math.max(1, cards.filter((card) => Math.abs(card.top - (cards[0]?.top ?? 0)) < 1).length);
+      const current = Math.max(0, orderedTabs.findIndex((tab) => tab.id === (hoveredId ?? activeId)));
+      const moves: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
+      if (event.key in moves) {
         event.preventDefault();
-        setFocusIndex((current) => clamp(Math.round(current) + (event.key === "ArrowLeft" ? -1 : 1), 0, Math.max(0, orderedTabs.length - 1)));
+        setHoveredId(orderedTabs[clamp(current + moves[event.key], 0, orderedTabs.length - 1)]?.id ?? null);
       } else if (event.key === "Enter") {
-        const index = clamp(Math.round(focusIndex), 0, Math.max(0, orderedTabs.length - 1));
-        const tab = orderedTabs[index];
+        const tab = orderedTabs[current];
         if (tab) { event.preventDefault(); select(tab.id); }
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [activeId, cards, closeToActive, focusIndex, hoveredId, orderedTabs, phase, select]);
+  }, [activeId, cards, closeToActive, hoveredId, orderedTabs, phase, select]);
 
-  // Trackpad / wheel: horizontal swipe (or shift+wheel) scrubs focus through
-  // the fan. Fast swipes cover several cards; slow ones stay precise, since
-  // this is a direct 1:1 px→index mapping rather than a snap-to-nearest.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const onWheel = (event: WheelEvent) => {
-      if (modeRef.current !== "3d" || phaseRef.current !== "open" || !orderedTabs.length) return;
-      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.shiftKey ? event.deltaY : 0;
-      if (!delta) return;
-      event.preventDefault();
-      setFocusIndex((current) => clamp(current + delta / FAN_SPACING, 0, Math.max(0, orderedTabs.length - 1)));
-    };
-    host.addEventListener("wheel", onWheel, { passive: false });
-    return () => host.removeEventListener("wheel", onWheel);
-  }, [orderedTabs.length]);
-
-  useEffect(() => () => {
-    if (tabCloseTimerRef.current != null) window.clearTimeout(tabCloseTimerRef.current);
-    if (dragFrameRef.current != null) cancelAnimationFrame(dragFrameRef.current);
-  }, []);
-  useImperativeHandle(ref, () => ({ closeToActive, toggle }), [closeToActive, toggle]);
-
-  // Drag-to-reorder, shared by both layouts. Pointer deltas convert to
-  // "slots" using each mode's own spacing (grid cell width for 2D, the fan's
-  // fixed FAN_SPACING for 3D); whichever slot the pointer currently sits over
-  // is live-applied to `dragLiveOrder` so neighbours visibly move aside
-  // before the drop, not just after mouse-up.
-  const flushDrag = useCallback((clientX: number) => {
+  // Drag to reorder. The dragged window follows the pointer 1:1 (its transform is written straight to the element,
+  // no transition, no re-render per move); React only re-renders when the slot under it changes, which slides the
+  // neighbours aside. On release it eases into its slot.
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  const onDragMove = useCallback((event: PointerEvent) => {
     const drag = dragRef.current;
-    if (!drag) return;
-    const deltaPx = clientX - drag.startX;
-    if (!drag.moved && Math.abs(deltaPx) > DRAG_CLICK_THRESHOLD) drag.moved = true;
-    setDragDeltaX(deltaPx);
-    if (!drag.moved) return;
-    const slotWidth = modeRef.current === "3d" ? FAN_SPACING : Math.max(1, (cards[1]?.left ?? cards[0]?.left ?? FAN_SPACING) - (cards[0]?.left ?? 0)) || FAN_SPACING;
-    const deltaSlots = Math.round(deltaPx / slotWidth);
-    const targetIndex = clamp(drag.startIndex + deltaSlots, 0, orderedTabs.length - 1);
-    setDragLiveOrder((current) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag.dx = event.clientX - drag.startX;
+    drag.dy = event.clientY - drag.startY;
+    if (!drag.moved) {
+      if (Math.hypot(drag.dx, drag.dy) < DRAG_THRESHOLD) return;
+      drag.moved = true;
+      setDraggingId(drag.id);
+    }
+    const el = windowEls.current.get(drag.id);
+    el?.style.setProperty("--tv-t", placed({ ...drag.origin, left: drag.origin.left + drag.dx, top: drag.origin.top + drag.dy }, scaleRef.current));
+    const cx = drag.origin.left + drag.dx + drag.origin.width / 2;
+    const cy = drag.origin.top + drag.dy + drag.origin.height / 2;
+    let nearest = 0;
+    let best = Infinity;
+    cardsRef.current.forEach((card, index) => {
+      const distance = Math.hypot(card.left + card.width / 2 - cx, card.top + card.height / 2 - cy);
+      if (distance < best) { best = distance; nearest = index; }
+    });
+    setLiveOrder((current) => {
       const base = current ?? tabs.map((tab) => tab.id);
-      const fromIndex = base.indexOf(drag.id);
-      const next = fromIndex === -1 || fromIndex === targetIndex ? (current ?? base) : (() => {
-        const copy = base.slice();
-        copy.splice(fromIndex, 1);
-        copy.splice(targetIndex, 0, drag.id);
-        return copy;
-      })();
-      dragLiveOrderRef.current = next;
+      const from = base.indexOf(drag.id);
+      if (from === -1 || from === nearest) return current ?? base;
+      const next = base.slice();
+      next.splice(from, 1);
+      next.splice(nearest, 0, drag.id);
       return next;
     });
-  }, [cards, orderedTabs.length, tabs]);
-
-  useEffect(() => {
-    if (!draggingId) return;
-    const onMove = (event: PointerEvent) => {
-      pendingDeltaRef.current = event.clientX;
-      if (dragFrameRef.current != null) return;
-      dragFrameRef.current = requestAnimationFrame(() => {
-        dragFrameRef.current = null;
-        flushDrag(pendingDeltaRef.current);
-      });
-    };
-    const onUp = () => {
-      if (dragFrameRef.current != null) { cancelAnimationFrame(dragFrameRef.current); dragFrameRef.current = null; }
-      const drag = dragRef.current;
-      const finalOrder = dragLiveOrderRef.current;
-      setDraggingId(null);
-      setDragDeltaX(0);
-      setDragLiveOrder(null);
-      dragRef.current = null;
-      dragLiveOrderRef.current = null;
-      // Called as a plain function here, never from inside a setState
-      // updater — React (rightly) flags a parent-state update triggered
-      // from within this component's own render/update cycle.
-      if (drag?.moved && finalOrder && onReorder) onReorder(finalOrder);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-  }, [draggingId, flushDrag, onReorder]);
-
-  const handleCardPointerDown = useCallback((tab: TaskViewTab, index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (phaseRef.current !== "open" || selectingId || closingTabId || event.button !== 0) return;
-    // In the 3D deck, pressing a card that isn't in front scrubs the deck; the
-    // front card keeps the reorder drag, so both gestures stay available.
-    if (modeRef.current === "3d" && index !== Math.round(focusIndex)) {
-      navDragRef.current = { startX: event.clientX, startFocus: focusIndex, moved: false };
-      setNavDragging(true);
-      return;
-    }
-    dragRef.current = { id: tab.id, startX: event.clientX, startIndex: index, moved: false, pointerId: event.pointerId };
-    setDraggingId(tab.id);
-  }, [closingTabId, focusIndex, selectingId]);
-
-  useEffect(() => {
-    if (!navDragging) return;
-    const onMove = (event: PointerEvent) => {
-      const drag = navDragRef.current;
-      if (!drag) return;
-      const deltaPx = event.clientX - drag.startX;
-      if (!drag.moved && Math.abs(deltaPx) > DRAG_CLICK_THRESHOLD) drag.moved = true;
-      if (!drag.moved) return;
-      const slotPx = FAN_SPACING * fanUnit;
-      setFocusIndex(clamp(drag.startFocus - deltaPx / slotPx, 0, Math.max(0, orderedTabs.length - 1)));
-    };
-    const onUp = () => {
-      const drag = navDragRef.current;
-      navDragRef.current = null;
-      setNavDragging(false);
-      if (!drag?.moved) return;
-      // The click that follows this release belongs to the drag, not a select.
-      navSuppressClickRef.current = true;
-      window.setTimeout(() => { navSuppressClickRef.current = false; }, 0);
-      setFocusIndex((current) => clamp(Math.round(current), 0, Math.max(0, orderedTabs.length - 1)));
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-  }, [fanUnit, navDragging, orderedTabs.length]);
+  }, [tabs]);
+  const liveOrderRef = useRef(liveOrder);
+  liveOrderRef.current = liveOrder;
+  const onDragEnd = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
+    if (!drag?.moved) return;
+    suppressClickRef.current = true;
+    window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+    const order = liveOrderRef.current;
+    setDraggingId(null);
+    setLiveOrder(null);
+    if (order && onReorder && order.join("|") !== tabs.map((tab) => tab.id).join("|")) onReorder(order);
+  }, [onDragMove, onReorder, tabs]);
+  useEffect(() => () => {
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragEnd);
+    window.removeEventListener("pointercancel", onDragEnd);
+  }, [onDragEnd, onDragMove]);
+  const startDrag = useCallback((tab: TaskViewTab, index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (phaseRef.current !== "open" || selectingId || exitingTab || event.button !== 0) return;
+    const origin = cards[index];
+    if (!origin) return;
+    dragRef.current = { id: tab.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin, dx: 0, dy: 0, moved: false };
+    window.addEventListener("pointermove", onDragMove);
+    window.addEventListener("pointerup", onDragEnd);
+    window.addEventListener("pointercancel", onDragEnd);
+  }, [cards, exitingTab, onDragEnd, onDragMove, selectingId]);
 
   const overview = phase === "opening" || phase === "open";
-  const transitioning = phase !== "closed";
-  // Preserve the departing app's key after the source tabs have shrunk. This
-  // lets it slide out as its neighbours glide into their new grid positions.
+  const frontId = selectingId ?? activeId;
   const visibleTabs = exitingTab ? [...orderedTabs, exitingTab.tab] : orderedTabs;
-  return <div ref={hostRef} className={cn("clyra-task-view", overview && "clyra-task-view--open", phase === "closing" && "clyra-task-view--closing", mode === "3d" && "clyra-task-view--mode-3d", morphing && "clyra-task-view--morphing")} data-task-view-phase={phase} data-task-view-selecting={selectingId ? "true" : "false"} data-task-view-dragging={draggingId ? "true" : "false"}>
+  // Windows stay in the DOM in the order they first appeared; the visible order is only ever a transform. A keyed
+  // reorder would physically move an app's subtree, cancelling its running animations and restyling all of it.
+  const domOrder = domOrderRef.current;
+  for (const tab of visibleTabs) if (!domOrder.includes(tab.id)) domOrder.push(tab.id);
+  for (let i = domOrder.length - 1; i >= 0; i -= 1) if (!visibleTabs.some((tab) => tab.id === domOrder[i])) domOrder.splice(i, 1);
+  const slotOf = new Map(visibleTabs.map((tab, index) => [tab.id, index]));
+  const stableTabs = domOrder.map((id) => visibleTabs[slotOf.get(id)!]);
+
+  return <div ref={hostRef} className={cn("clyra-task-view", overview && "clyra-task-view--open", phase === "closing" && "clyra-task-view--closing")} data-task-view-phase={phase} data-task-view-selecting={selectingId ? "true" : "false"} data-switching={switchAnim ? "true" : "false"}>
+    {/* The backdrop, dismiss layer and close buttons are always in the tree. Inserting them on open would change the
+        windows' sibling positions (:last-child and friends), which restyles every element of every app. */}
     <div className="clyra-task-view__backdrop" aria-hidden />
-    {visibleTabs.map((tab, index) => {
+    <button type="button" aria-label="Close Task View" className="clyra-task-view__dismiss" onClick={closeToActive} tabIndex={-1} />
+    {!tabs.length ? <div className="clyra-task-view__empty">No open apps · Press ⌘K to open one</div> : null}
+    {stableTabs.map((tab) => {
+      const index = slotOf.get(tab.id)!;
       const isExiting = exitingTab?.tab.id === tab.id;
-      const fan = fans[index];
-      const fanScaleHere = mode === "3d" ? fan?.scale ?? fanBaseScale : 0;
-      const fanW = source.width * fanScaleHere;
-      const fanH = source.height * fanScaleHere;
-      const fanRectHere = {
-        left: fanCenterRect.left + (fanCenterRect.width - fanW) / 2,
-        top: fanCenterRect.top + (fanCenterRect.height - fanH) / 2,
-        width: fanW,
-        height: fanH,
-      };
-      const target = isExiting ? exitingTab.target : (mode === "3d" ? fanRectHere : cards[index] ?? source);
+      const target = isExiting ? exitingTab.target : cards[index] ?? source;
+      const cardScale = isExiting ? exitingTab.scale : scale;
       const isActive = tab.id === activeId;
-      const isSelected = selectingId === tab.id;
-      const isClosing = closingTabId === tab.id || isExiting;
-      const isDraggingThis = draggingId === tab.id;
-      // Two independent concerns that a single `isInteractive` flag used to
-      // conflate, applied to the whole window: whether the real mounted app
-      // (chat, browser, notes, ...) receives clicks, and whether the
-      // transparent "select this window" overlay does. Folding both into one
-      // flag driven by `overview` meant the ACTIVE window's own content went
-      // pointer-events:none for the entire normal "closed" phase — the app's
-      // default resting state — so no button or input in any workspace could
-      // be reached by a real mouse click; only synthetic/dispatched events
-      // (keyboard shortcuts, programmatic focus) still worked. Every
-      // workspace mounts through this component, so this affected all of
-      // them, not just one.
-      const contentInteractive = !isExiting && (overview ? false : isActive);
-      const hitAreaInteractive = !isExiting && overview && !selectingId && !closingTabId;
-      const tabCloseInteractive = !isExiting && phase === "open" && !selectingId && !closingTabId;
-      const scale = isExiting
-        ? exitingTab.scale
-        : mode === "3d" && !isClosing
-          ? fan?.scale ?? fanBaseScale
-          : Math.min(target.width / Math.max(1, source.width), target.height / Math.max(1, source.height));
-      // Forced to 0 for anything mid-close or already selected: the shared
-      // closing CSS rule only animates translate(x,y,0) scale(1), so a fan
-      // offset left non-zero here would freeze mid-rotation instead of
-      // diving straight ahead into fullscreen.
-      const fanActive = mode === "3d" && !isClosing && phase === "open";
-      const isCulled = fanActive && !isActive && !isDraggingThis && Math.abs(index - focusIndex) > FAN_CULL_DISTANCE;
-      const fanDistance = Math.abs(index - focusIndex);
-      const isHoveredFan = fanActive && hoveredId === tab.id && !isDraggingThis;
-      const fanTransform = mode === "3d" && fanActive
-        ? (() => {
-            const x = (fan?.fanX ?? 0) + (isDraggingThis ? dragDeltaX : 0);
-            const y = (fan?.fanY ?? 0) + (isHoveredFan ? -6 : 0);
-            const z = (fan?.fanZ ?? 0) + (isHoveredFan ? 40 : 0);
-            const rot = fan?.fanRot ?? 0;
-            const cx = fanW / 2;
-            const cy = fanH / 2;
-            return `translate3d(${x}px, ${y}px, ${z}px) translate(${cx}px, ${cy}px) rotateY(${rot}deg) translate(${-cx}px, ${-cy}px) scale(${fanScaleHere})`;
-          })()
-        : undefined;
+      const isFront = tab.id === frontId && !isExiting;
+      const isDragging = draggingId === tab.id;
+      const isLeaving = phase === "closed" && (leavingId === tab.id || switchAnim?.from === tab.id) && !isFront;
+      // Unseen windows stay fully rendered at opacity 0. Hiding them with visibility or content-visibility looks
+      // cheaper but costs far more when Task View reveals them (a full restyle of the app, measured at 0.1–1 s).
+      const drag = isDragging ? dragRef.current : null;
+      const openTransform = drag
+        ? placed({ ...drag.origin, left: drag.origin.left + drag.dx, top: drag.origin.top + drag.dy }, cardScale)
+        : placed(target, cardScale);
+      const contentInteractive = !isExiting && phase === "closed" && isFront;
+      const hitAreaInteractive = !isExiting && overview && !selectingId;
+
+      // The two-workspace slide. Both windows travel the full viewport width in
+      // opposite directions from one shared eased progress: outgoing goes to
+      // -dir×W, incoming arrives from +dir×W. Everything else stays recessed.
+      const width = Math.max(1, source.width);
+      const sliding = phase === "closed" && switchAnim != null;
+      let closedTransform: string;
+      let closedTransition: string | undefined;
+      let closedWillChange: string | undefined;
+      if (sliding && isFront) {
+        closedWillChange = "transform";
+        if (switchAnim.entering) {
+          closedTransform = FULL;
+        } else {
+          // First frame: park the incoming window off-screen with the
+          // transition disabled so it never animates from its old recessed pose.
+          closedTransform = `translate3d(${switchAnim.direction * width}px, 0, 0)`;
+          closedTransition = "none";
+        }
+      } else if (sliding && isLeaving) {
+        closedWillChange = "transform";
+        closedTransform = switchAnim.entering ? `translate3d(${-switchAnim.direction * width}px, 0, 0)` : FULL;
+      } else {
+        closedTransform = isFront || isLeaving ? FULL : recessed(target, cardScale);
+      }
       const style = {
-        left: target.left, top: target.top, width: source.width, height: source.height,
-        zIndex: isClosing || isSelected ? 5 : fanActive ? 6 - Math.min(Math.round(fanDistance), 5) : isActive ? 3 : 2,
-        visibility: isCulled ? "hidden" : undefined,
-        ...transformFor(source, target),
-        "--task-view-target-scale": String(scale),
-        "--task-view-order": String(Math.min(index, 6)),
-        "--task-view-fan-transform": fanTransform,
-        "--task-view-shadow": String(fanActive ? fan?.shadow ?? 1 : 1),
-        "--task-view-morph-delay": `${morphing ? Math.min(Math.round(Math.abs(index - focusIndex)), 4) * 28 : 0}ms`,
+        width: source.width,
+        height: source.height,
+        zIndex: isDragging ? 8 : selectingId === tab.id ? 6 : isFront ? 3 : isLeaving ? 2 : 1,
+        "--tv-t": openTransform,
+        "--tv-closed": closedTransform,
+        "--task-view-target-scale": String(cardScale),
+        transition: closedTransition,
+        willChange: closedWillChange,
+        // Both sliding windows stay fully opaque — a clean spatial pass with no
+        // cross-fade. The outgoing window is off-screen by the time it snaps to
+        // its recessed pose, so the later opacity drop is invisible.
+        opacity: isFront || overview || isLeaving ? undefined : 0,
       } as CSSProperties;
-      const cardOpacity = fanActive ? fan?.opacity ?? 1 : undefined;
-      return <Fragment key={tab.id}><div className={cn("clyra-task-view__window", isActive && "is-active", hoveredId === tab.id && "is-hovered", isSelected && "is-selected", isClosing && "is-closing-tab", isDraggingThis && "is-dragging")} style={{ ...style, opacity: cardOpacity }} onPointerEnter={() => !isExiting && setHoveredId(tab.id)} onPointerLeave={() => !isExiting && setHoveredId((current) => current === tab.id ? null : current)}>
-        <button type="button" aria-label={`Switch to ${tab.label}`} aria-current={isActive ? "true" : undefined} className="clyra-task-view__hit-area" style={{ pointerEvents: hitAreaInteractive ? "auto" : "none", cursor: mode === "3d" ? (isDraggingThis ? "grabbing" : "grab") : "pointer" }} tabIndex={hitAreaInteractive ? 0 : -1} onPointerDown={(event) => hitAreaInteractive && handleCardPointerDown(tab, index, event)} onClick={() => { if (navSuppressClickRef.current) return; if (dragRef.current?.moved && dragRef.current.id === tab.id) return; select(tab.id); }} />
-        <div className="clyra-task-view__surface" style={{ pointerEvents: contentInteractive ? "auto" : "none" }}><BloubPauseContext.Provider value={mode === "3d" && !isActive}>{tab.content}</BloubPauseContext.Provider></div>
-        <div className="clyra-task-view__label" aria-hidden style={mode === "3d" ? { opacity: fanActive ? Math.max(0.25, 1 - Math.min(Math.abs(index - focusIndex) * 0.25, 0.75)) : undefined } : undefined}>{tab.label}</div>
-      </div>{!isExiting ? <button type="button" className="clyra-task-view__tab-close" aria-label={`Close ${tab.label}`} title={`Close ${tab.label}`} style={{ left: target.left - 11, top: target.top - 11, opacity: isClosing ? 0 : undefined, visibility: isCulled || (fanActive && fanDistance >= 0.5) ? "hidden" : undefined }} tabIndex={isCulled || (fanActive && fanDistance >= 0.5) ? -1 : tabCloseInteractive ? 0 : -1} onPointerEnter={() => setHoveredId(tab.id)} onPointerLeave={() => setHoveredId((current) => current === tab.id ? null : current)} onClick={(event) => { event.preventDefault(); event.stopPropagation(); closeTab(tab.id); }}>
-        <X aria-hidden className="h-4 w-4" strokeWidth={2.15} />
-      </button> : null}</Fragment>;
+      return (
+        <div
+          key={tab.id}
+          ref={(el) => { if (el) windowEls.current.set(tab.id, el); else windowEls.current.delete(tab.id); }}
+          className={cn("clyra-task-view__window", isActive && "is-active", isFront && "is-front", isLeaving && "is-leaving", hoveredId === tab.id && "is-hovered", selectingId === tab.id && "is-selected", isExiting && "is-closing-tab", isDragging && "is-dragging")}
+          style={style}
+          onPointerEnter={overview && !isExiting ? () => setHoveredId(tab.id) : undefined}
+          onPointerLeave={overview && !isExiting ? () => setHoveredId((current) => (current === tab.id ? null : current)) : undefined}
+        >
+          <button
+            type="button"
+            aria-label={`Switch to ${tab.label}`}
+            aria-current={isActive ? "true" : undefined}
+            className="clyra-task-view__hit-area"
+            style={{ pointerEvents: hitAreaInteractive ? "auto" : "none" }}
+            tabIndex={hitAreaInteractive ? 0 : -1}
+            onPointerDown={(event) => hitAreaInteractive && startDrag(tab, index, event)}
+            onClick={() => { if (!suppressClickRef.current) select(tab.id); }}
+          />
+          {/* inert keeps keyboard focus out of apps you can't see. It follows the front app only (not the Task View
+              phase), so opening Task View never flips it — flipping it restyles the whole app. */}
+          <div className="clyra-task-view__surface" style={{ pointerEvents: contentInteractive ? "auto" : "none" }} inert={!isFront && !isLeaving ? true : undefined}>
+            <BloubPauseContext.Provider value={!isActive}>{tab.content}</BloubPauseContext.Provider>
+          </div>
+          <div className="clyra-task-view__label" aria-hidden>{tab.label}</div>
+        </div>
+      );
     })}
-    {transitioning ? <button type="button" aria-label="Close Task View" className="clyra-task-view__dismiss" onClick={closeToActive} tabIndex={-1} /> : null}
+    <div className="clyra-task-view__chrome">
+      {orderedTabs.map((tab, index) => {
+        const target = cards[index] ?? source;
+        const closeInteractive = phase === "open" && !selectingId && !exitingTab;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            className={cn("clyra-task-view__tab-close", hoveredId === tab.id && draggingId !== tab.id && "is-visible")}
+            aria-label={`Close ${tab.label}`}
+            title={`Close ${tab.label}`}
+            style={{ "--tv-close-t": `translate3d(${target.left - 9}px, ${target.top - 9}px, 0)` } as CSSProperties}
+            tabIndex={closeInteractive ? 0 : -1}
+            onPointerEnter={closeInteractive ? () => setHoveredId(tab.id) : undefined}
+            onPointerLeave={closeInteractive ? () => setHoveredId((current) => (current === tab.id ? null : current)) : undefined}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); closeTab(tab.id); }}
+          >
+            <X aria-hidden strokeWidth={2.4} />
+          </button>
+        );
+      })}
+    </div>
   </div>;
-});
+}));

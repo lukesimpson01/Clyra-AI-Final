@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertCircle, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { VibeProject } from "./api";
 
@@ -148,6 +148,26 @@ export function Sidebar({
 
   const isRunningThread = (chatId: string) => runningSessionId === chatId;
 
+  // Completion reveal: the running dot stays STATIC while the agent works (the
+  // old pulsing animation is kept, disabled, in harness.css under
+  // `.cc-running-dot` — see the comment there to bring it back). When the run
+  // ends, the finished task shows one gentle, one-shot check instead.
+  const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
+  const previousRunningRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousRunningRef.current;
+    previousRunningRef.current = runningSessionId ?? null;
+    if (!runningSessionId) {
+      if (previous) {
+        setJustCompletedId(previous);
+        const timer = window.setTimeout(() => setJustCompletedId(null), 2600);
+        return () => window.clearTimeout(timer);
+      }
+      return;
+    }
+    setJustCompletedId(null);
+  }, [runningSessionId]);
+
   const projectRank = (project: VibeProject) => (sort === "name" ? (project.name || project.id).toLocaleLowerCase() : "");
   const ordered = useMemo(() => {
     const visible = projects.filter((project) => !project.archivedAt);
@@ -270,15 +290,12 @@ export function Sidebar({
               className="min-w-0 flex-1 rounded-[4px] bg-white px-1 text-[12.5px] text-[#303136] outline-none ring-1 ring-[#3977F6]/35"
             />
           ) : (
-            <motion.span
+            <span
               key={displayName}
-              initial={reduceMotion ? false : { opacity: 0, y: 2 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              className="min-w-0 flex-1 truncate text-[14px] font-[430] leading-[21px] tracking-[-0.01em]"
+              className={cn("min-w-0 flex-1 truncate text-[14px] font-[430] leading-[21px] tracking-[-0.01em]", !reduceMotion && "cc-title-in")}
             >
               {highlight(displayName)}
-            </motion.span>
+            </span>
           )}
           {running ? <span className="cc-running-dot" role="img" aria-label="Agent working" title="Agent working" /> : null}
           {project.pinned ? <Pin className="h-[11px] w-[11px] shrink-0 text-[#A0A2A6] group-hover/project:hidden" strokeWidth={1.7} aria-hidden /> : null}
@@ -319,11 +336,11 @@ export function Sidebar({
                   const chatEditing = editing?.kind === "chat" && editing.projectId === project.id && editing.chatId === thread.id;
                   const threadTitle = thread.title || "New task";
                   return (
-                    <motion.div
+                    <div
                       key={thread.id}
-                      initial={reduceMotion ? false : { opacity: 0, x: -4 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.22, delay: reduceMotion ? 0 : Math.min(index, 8) * 0.03, ease: [0.22, 1, 0.36, 1] }}
+                      // CSS entrance (not a JS-driven one): it can never be left half-applied if the app is hidden mid-way.
+                      className={cn(rowBase, "h-[30px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !threadSelected && "hover:bg-[rgba(26,28,31,0.04)]", !reduceMotion && "cc-row-in")}
+                      style={reduceMotion ? undefined : { animationDelay: `${Math.min(index, 8) * 30}ms` }}
                       role="button"
                       tabIndex={0}
                       data-nav-row
@@ -331,7 +348,6 @@ export function Sidebar({
                       onClick={() => onSelectChat(project.id, thread.id)}
                       onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSelectChat(project.id, thread.id); } }}
                       onContextMenu={(event) => { event.preventDefault(); openMenu(event, { kind: "chat", projectId: project.id, chatId: thread.id }); }}
-                      className={cn(rowBase, "h-[30px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !threadSelected && "hover:bg-[rgba(26,28,31,0.04)]")}
                     >
                       {threadSelected ? selectionHighlight("sidebar-thread-selection") : null}
                       {chatEditing ? (
@@ -355,6 +371,8 @@ export function Sidebar({
                         <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-[#B8BABE]" role="img" aria-label="Waiting for your reply" title="Waiting for your reply" />
                       ) : isRunningThread(thread.id) ? (
                         <span className="cc-running-dot" role="img" aria-label="Working" title="Working" />
+                      ) : justCompletedId === thread.id ? (
+                        <span role="img" aria-label="Completed" title="Completed" className="shrink-0 leading-none"><Check className="cc-done-in h-[13px] w-[13px] text-[#1A7F37]" strokeWidth={2.2} /></span>
                       ) : null}
                       <button
                         type="button"
@@ -365,7 +383,7 @@ export function Sidebar({
                       >
                         <MoreHorizontal className="h-3 w-3" strokeWidth={1.8} />
                       </button>
-                    </motion.div>
+                    </div>
                   );
                 }) : (
                   <button
@@ -434,12 +452,34 @@ export function Sidebar({
       aria-label="Projects"
       aria-hidden={collapsed || undefined}
       initial={false}
-      animate={{ width: collapsed ? 0 : expandedWidth, opacity: collapsed ? 0 : 1 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      animate={
+        drawer
+          ? { width: collapsed ? 0 : expandedWidth, opacity: collapsed ? 0 : 1 }
+          : collapsed
+            ? { x: -expandedWidth }
+            : { x: 0 }
+      }
+      transition={reduceMotion ? { duration: 0 } : drawer ? { duration: 0.2, ease: [0.22, 1, 0.36, 1] } : { duration: 0.4, ease: [0.3, 0.8, 0.3, 1] }}
+      style={
+        drawer
+          ? undefined
+          : {
+              // The rail slides with a transform instead of animating its
+              // width: translate runs on the compositor (no layout per frame),
+              // so the slide is lighter and smoother while the agent codes.
+              // A negative margin keeps the collapsed rail out of the flex
+              // flow; the conversation pane re-sizes on the same 0.4s curve,
+              // so the reveal stays visually in sync. The z-index only
+              // matters while the rail overlaps the pane mid-slide.
+              width: expandedWidth,
+              marginLeft: collapsed ? -expandedWidth : 0,
+              zIndex: 30,
+            }
+      }
       className={cn(
         "relative flex h-full min-w-0 shrink-0 flex-col overflow-hidden border-r border-black/[0.06] bg-[#F9F9F8] font-[-apple-system,BlinkMacSystemFont,Inter,Segoe_UI,sans-serif]",
         drawer && "fixed inset-y-0 left-0 z-50 border-r-black/[0.08] shadow-[0_18px_40px_rgba(15,23,42,0.14)]",
-        collapsed && "pointer-events-none border-r-0",
+        collapsed && "pointer-events-none",
       )}
     >
       {/* Spacious product header with only controls that perform real actions. */}
@@ -640,7 +680,7 @@ function Menu({ x, y, items }: { x: number; y: number; items: Array<{ label: str
           onClick={item.action}
           className={cn("flex h-8 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[11.5px] font-medium outline-none transition-colors hover:bg-[#F2F3F2] focus-visible:bg-[#EDF4FF]", item.destructive ? "text-[#B64A4A] hover:bg-[#FCEEEE] focus-visible:bg-[#FCEEEE]" : "text-[#45484D]")}
         >
-          <span className={cn("flex h-5 w-5 items-center justify-center rounded-[5px]", item.destructive ? "bg-[#F9E5E5]" : "bg-[#F0F1F1]")}><Icon className="h-3 w-3" strokeWidth={1.9} /></span>
+          <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
           {item.label}
         </button>;
       })}

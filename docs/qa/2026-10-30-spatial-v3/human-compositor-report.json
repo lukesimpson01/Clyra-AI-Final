@@ -1,0 +1,33 @@
+{
+  "fixture": "Manual fixed-camera depth override with actual two-person SAM2 masks",
+  "results": [
+    {
+      "t": 0.1,
+      "behind": {
+        "green": 15808
+      },
+      "front": {
+        "green": 24153
+      }
+    },
+    {
+      "t": 0.333333,
+      "behind": {
+        "green": 16949
+      },
+      "front": {
+        "green": 24235
+      }
+    },
+    {
+      "t": 0.6,
+      "behind": {
+        "green": 16868
+      },
+      "front": {
+        "green": 24248
+      }
+    }
+  ],
+  "errors": []
+}

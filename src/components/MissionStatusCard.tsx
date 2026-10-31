@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronDown, CircleAlert, Clock3, Loader2, Pause, RotateCcw, ShieldCheck, Square } from "lucide-react";
+import { ActivitySteps, StatusLine, WorkSummary, type ActivityStep } from "./chat/assistant";
 
 export type MissionStatusStep = {
   id: string;
@@ -26,25 +26,51 @@ export type MissionStatus = {
   updatedAt?: number;
 };
 
-function presentation(state: string) {
-  if (state === "COMPLETED") return { label: "Verified complete", tone: "emerald" };
-  if (state === "WAITING_FOR_APPROVAL") return { label: "Waiting for approval", tone: "amber" };
-  if (state === "WAITING_FOR_USER") return { label: "Waiting for you", tone: "amber" };
-  if (state === "PAUSED") return { label: "Paused safely", tone: "slate" };
-  if (state === "FAILED") return { label: "Needs attention", tone: "rose" };
-  if (state === "CANCELLED") return { label: "Stopped", tone: "slate" };
-  return { label: "Working", tone: "blue" };
+const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+
+const HOME = /^\/Users\/[^/]+|^\/home\/[^/]+/;
+const COMMAND = /^(?:cat|ls|cd|npm|npx|pnpm|yarn|node|tsx|git|python3?|pip3?|curl|wget|grep|rg|echo|mkdir|rm|mv|cp|touch|head|tail|sed|awk|make|cargo|go|tsc|vite|bash|sh|zsh|brew|docker|open)\b/;
+
+/** Turns the runtime's raw step text into a readable row: paths become file rows, shell commands become command rows. */
+function describeStep(step: MissionStatusStep): Pick<ActivityStep, "label" | "detail" | "kind"> {
+  const text = step.description.trim();
+  if (/^(?:~|\.{0,2})?\/[^\s]+$/.test(text)) {
+    const clean = text.replace(/\/+$/, "");
+    const name = clean.split("/").pop() || clean;
+    const dir = clean.slice(0, clean.length - name.length).replace(/\/$/, "").replace(HOME, "~");
+    return { label: name, detail: dir && dir !== "~" ? dir : undefined, kind: "file" };
+  }
+  if (COMMAND.test(text)) {
+    return { label: step.status === "running" ? `Running ${text}` : `Ran ${text}`, kind: "coding" };
+  }
+  return { label: text };
 }
 
-function stepIcon(status: MissionStatusStep["status"]) {
-  if (status === "completed") return <Check className="h-3.5 w-3.5 text-emerald-600" strokeWidth={2.4} />;
-  if (status === "failed" || status === "cancelled") return <CircleAlert className="h-3.5 w-3.5 text-rose-500" />;
-  if (status === "running") return <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />;
-  return <span className="h-2 w-2 rounded-full border border-slate-300 bg-white" />;
+/** Consecutive identical operations (create then edit of one file) read as one row. */
+function collapseSteps(steps: ActivityStep[]): ActivityStep[] {
+  const out: Array<ActivityStep & { count: number }> = [];
+  for (const step of steps) {
+    const last = out[out.length - 1];
+    if (last && last.kind === "file" && last.label === step.label && last.detail === step.detail) {
+      last.count += 1;
+      last.state = step.state === "running" || last.state === "running" ? "running" : step.state === "failed" ? "failed" : step.state;
+      continue;
+    }
+    out.push({ ...step, count: 1 });
+  }
+  return out.map(({ count, ...step }) => (count > 1 ? { ...step, detail: [step.detail, `${count} changes`].filter(Boolean).join(" · ") } : step));
 }
 
-/** A compact, evidence-led task summary. It renders only persisted mission
- * state—there are no synthetic progress percentages or pretend controls. */
+function stepState(status: MissionStatusStep["status"]): ActivityStep["state"] {
+  if (status === "completed") return "done";
+  if (status === "failed" || status === "cancelled") return "failed";
+  if (status === "running") return "running";
+  return "queued";
+}
+
+/** Task progress in the assistant's own language: one shimmering status line while
+ * work runs, real steps underneath, quiet text controls, and a collapsed record
+ * once it ends. It renders only persisted mission state. */
 export function MissionStatusCard({
   mission,
   onResume,
@@ -58,169 +84,73 @@ export function MissionStatusCard({
   onStop?: (mission: MissionStatus) => Promise<void>;
   onApprove?: (mission: MissionStatus) => Promise<void>;
 }) {
-  const [control, setControl] = useState<"resume" | "pause" | "stop" | null>(null);
-  const [activityOpen, setActivityOpen] = useState(false);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const complete = mission.plan.steps.filter((step) => step.status === "completed").length;
-  const total = Math.max(1, mission.plan.steps.length);
-  const status = presentation(mission.state);
+  const [control, setControl] = useState<"resume" | "pause" | "stop" | "approve" | null>(null);
+  const steps: ActivityStep[] = collapseSteps(mission.plan.steps.map((step) => ({ id: step.id, ...describeStep(step), state: stepState(step.status) })));
+  const agents = mission.agents || [];
+  const terminal = TERMINAL.has(mission.state);
   const resumable = ["PAUSED", "RECOVERING", "READY", "EXECUTING", "OBSERVING", "VERIFYING", "REPLANNING"].includes(mission.state);
   const pausable = ["UNDERSTANDING", "PLANNING", "READY", "EXECUTING", "OBSERVING", "VERIFYING", "REPLANNING", "RECOVERING"].includes(mission.state);
-  const stoppable = !["COMPLETED", "FAILED", "CANCELLED"].includes(mission.state);
   const approval = mission.state === "WAITING_FOR_APPROVAL" && mission.approval;
-  const activity = (mission.traces || [])
-    .filter((trace) => trace.event && !/objective accepted|plan validated/i.test(trace.event))
-    .slice(-3)
-  const agents = mission.agents || [];
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || agents[0];
-  const tone = status.tone === "emerald"
-    ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
-    : status.tone === "amber"
-      ? "bg-amber-50 text-amber-700 ring-amber-100"
-      : status.tone === "rose"
-        ? "bg-rose-50 text-rose-700 ring-rose-100"
-        : status.tone === "blue"
-          ? "bg-blue-50 text-blue-700 ring-blue-100"
-          : "bg-slate-100 text-slate-600 ring-slate-200";
+  const waitingForUser = mission.state === "WAITING_FOR_USER";
+  const paused = mission.state === "PAUSED";
+
+  const run = (kind: NonNullable<typeof control>, action?: (mission: MissionStatus) => Promise<void>) => {
+    if (!action) return;
+    setControl(kind);
+    void action(mission).finally(() => setControl(null));
+  };
+
+  if (terminal) {
+    const done = steps.filter((step) => step.state === "done").length;
+    const label = mission.state === "COMPLETED"
+      ? `Completed ${done} of ${steps.length} step${steps.length === 1 ? "" : "s"}`
+      : mission.state === "CANCELLED" ? "Stopped" : "Needs attention";
+    return (
+      <div className="clyra-ai-mission" aria-label="Task activity">
+        <WorkSummary label={label} steps={steps} />
+        {mission.state === "FAILED" && mission.error?.message ? <p className="clyra-ai-note">{mission.error.message}</p> : null}
+      </div>
+    );
+  }
+
+  const running = mission.plan.steps.find((step) => step.status === "running");
+  const statusLabel = approval ? "Waiting for your approval"
+    : waitingForUser ? "Waiting for you"
+    : paused ? "Paused"
+    : running?.description || "Working";
+  const live = !approval && !waitingForUser && !paused;
 
   return (
-    <section className="mt-4 max-w-[620px] overflow-hidden rounded-[20px] border border-blue-100/80 bg-white shadow-[0_10px_30px_rgba(15,23,42,.055)]" aria-label="Mission workspace">
-      <div className="flex items-start gap-3 border-b border-slate-100 px-4 py-3.5">
-        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[linear-gradient(145deg,#eff6ff,#fdf4ff)] text-blue-600 shadow-[inset_0_1px_0_rgba(255,255,255,.9)]">
-          {mission.state === "COMPLETED" ? <ShieldCheck className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <p className="truncate text-[12px] font-semibold tracking-[-.01em] text-slate-800">Mission</p>
-            <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ring-1 ${tone}`}>{status.label}</span>
-          </div>
-          <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-500">{mission.plan.objective}</p>
-        </div>
-      </div>
-      <div className="px-4 pb-3 pt-3">
-        <div className="mb-2 flex items-center justify-between text-[10px] font-medium text-slate-500">
-          <span>{complete} of {total} verified</span>
-          <span>{Math.round((complete / total) * 100)}%</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
-          <div className={`h-full rounded-full transition-[width] duration-500 ${status.tone === "emerald" ? "bg-emerald-500" : status.tone === "rose" ? "bg-rose-400" : "bg-blue-500"}`} style={{ width: `${(complete / total) * 100}%` }} />
-        </div>
-        <div className="mt-3 space-y-2">
-          {mission.plan.steps.slice(0, activityOpen ? 12 : 3).map((step) => (
-            <div key={step.id} className="flex items-center gap-2 text-[11px] leading-4 text-slate-600">
-              <span className="grid h-4 w-4 shrink-0 place-items-center">{stepIcon(step.status)}</span>
-              <span className={step.status === "completed" ? "text-slate-500" : "font-medium text-slate-700"}>{step.description}</span>
-            </div>
-          ))}
-        </div>
-        {agents.length > 1 ? (
-          <div className="mt-3 border-t border-slate-100 pt-3" aria-label="Clyra agents">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[9px] font-semibold uppercase tracking-[.12em] text-slate-400">Agents</p>
-              <span className="text-[10px] font-medium text-slate-400">{agents.filter((agent) => agent.status === "completed").length}/{agents.length} complete</span>
-            </div>
-            <div className="-mx-1 flex gap-1 overflow-x-auto pb-1" role="tablist" aria-label="Active Clyra agents">
-              {agents.map((agent) => {
-                const selected = agent.id === selectedAgent?.id;
-                const done = agent.status === "completed";
-                const failed = agent.status === "failed";
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => setSelectedAgentId(agent.id)}
-                    className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[10px] font-semibold transition-colors ${selected ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${done ? "bg-emerald-400" : failed ? "bg-rose-400" : selected ? "animate-pulse bg-blue-300" : "bg-blue-500"}`} />
-                    {agent.label}
-                  </button>
-                );
-              })}
-            </div>
-            {selectedAgent ? <p className="mt-1.5 text-[10px] leading-4 text-slate-500" role="tabpanel">{selectedAgent.status === "working" ? "Working" : selectedAgent.status === "completed" ? "Completed" : "Needs attention"}{selectedAgent.app ? ` · ${selectedAgent.app}` : ""}</p> : null}
-          </div>
+    <div className="clyra-ai-mission clyra-ai-status" aria-label="Task activity">
+      <StatusLine label={statusLabel} shimmer={live} />
+      <ActivitySteps steps={steps} />
+      {agents.length > 1 ? (
+        <p className="clyra-ai-status__detail">
+          {agents.filter((agent) => agent.status === "completed").length} of {agents.length} agents finished
+        </p>
+      ) : null}
+      <div className="clyra-ai-controls">
+        {approval && onApprove ? (
+          <button type="button" className="clyra-ai-control clyra-ai-control--primary" disabled={control !== null} onClick={() => run("approve", onApprove)}>
+            Approve and continue
+          </button>
         ) : null}
-        {activity.length && activityOpen ? (
-          <div className="mt-3 border-t border-slate-100 pt-2.5" aria-label="Task activity">
-            <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-slate-400">Activity</p>
-            <div className="space-y-1.5">
-              {activity.map((trace, index) => (
-                <div key={`${trace.at}-${trace.event}-${index}`} className="flex items-start gap-2 text-[10px] leading-4 text-slate-500">
-                  <span className={`mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full ${index === activity.length - 1 && !["COMPLETED", "FAILED", "CANCELLED"].includes(mission.state) ? "bg-blue-500" : "bg-slate-300"}`} />
-                  <span>{trace.event}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        {!approval && (paused || resumable) && !live && onResume ? (
+          <button type="button" className="clyra-ai-control clyra-ai-control--primary" disabled={control !== null} onClick={() => run("resume", onResume)}>
+            Resume
+          </button>
         ) : null}
-        {mission.error?.message ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-4 text-rose-700">{mission.error.message}</p> : null}
-        {approval ? <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800">Approval is required for this exact action before Clyra continues.</p> : null}
-        {(activity.length || resumable || approval || pausable || stoppable) ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setActivityOpen((open) => !open)} className="inline-flex h-8 items-center gap-1 rounded-lg px-1.5 text-[11px] font-semibold text-blue-600 transition-colors hover:bg-blue-50">
-              {activityOpen ? "Hide activity" : "View activity"}<ChevronDown className={`h-3.5 w-3.5 transition-transform ${activityOpen ? "rotate-180" : ""}`} />
-            </button>
-            {approval && onApprove ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setControl("resume");
-                  void onApprove(mission).finally(() => setControl(null));
-                }}
-                disabled={control !== null}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {control === "resume" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                Approve & continue
-              </button>
-            ) : null}
-            {!approval && resumable && onResume ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setControl("resume");
-                  void onResume(mission).finally(() => setControl(null));
-                }}
-                disabled={control !== null}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {control === "resume" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                Resume task
-              </button>
-            ) : null}
-            {pausable && onPause ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setControl("pause");
-                  void onPause(mission).finally(() => setControl(null));
-                }}
-                disabled={control !== null}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {control === "pause" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
-                Pause
-              </button>
-            ) : null}
-            {stoppable && onStop ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setControl("stop");
-                  void onStop(mission).finally(() => setControl(null));
-                }}
-                disabled={control !== null}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {control === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5 fill-current" />}
-                Stop
-              </button>
-            ) : null}
-          </div>
+        {live && pausable && onPause ? (
+          <button type="button" className="clyra-ai-control" disabled={control !== null} onClick={() => run("pause", onPause)}>
+            Pause
+          </button>
+        ) : null}
+        {onStop ? (
+          <button type="button" className="clyra-ai-control" disabled={control !== null} onClick={() => run("stop", onStop)}>
+            Stop
+          </button>
         ) : null}
       </div>
-    </section>
+    </div>
   );
 }

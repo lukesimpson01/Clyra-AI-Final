@@ -1,0 +1,242 @@
+{
+  "id": "fe15b73ad9acbe87",
+  "w": 288,
+  "h": 512,
+  "fps": 18,
+  "from": 0,
+  "to": 6.2,
+  "track": "assets/track/fe15b73ad9acbe87.json",
+  "matte": "assets/mattes/fe15b73ad9acbe87/matte.json",
+  "quality": "Good",
+  "medianError": 0.682,
+  "inlierShare": 0.851,
+  "cuts": [],
+  "maskConfidence": 0.995,
+  "mode": "camera",
+  "segment": "auto",
+  "notes": [
+    "Planar solve: objects stay on the dominant surface (every frame, shake included). Near and far things moving differently are not rebuilt in 3D.",
+    "Automatic semantic foreground: recognised people and objects; relative depth is estimated from their ground contact, not measured 3D geometry.",
+    "21 semantic passes for 112 frames; empty scenes use a lower inference cadence, with immediate refresh on image changes."
+  ],
+  "image": false,
+  "content": {
+    "x": 0,
+    "y": 0,
+    "w": 1,
+    "h": 1
+  },
+  "scene": {
+    "summary": "Interior hallway with wood plank floor, cream walls, and a closed door at the far end; a framed picture hangs on the right wall and a small side table sits at the right foreground.",
+    "motion": "Camera moves forward down the hallway toward the end door, with the door growing larger and filling the frame by the final sample.",
+    "safePolygon": [
+      [
+        0,
+        1
+      ],
+      [
+        0.1,
+        0.62
+      ],
+      [
+        0.28,
+        0.18
+      ],
+      [
+        0.62,
+        0.18
+      ],
+      [
+        0.78,
+        1
+      ]
+    ],
+    "planes": [
+      {
+        "kind": "floor",
+        "name": "wood floor",
+        "quad": [
+          [
+            0.1,
+            0.62
+          ],
+          [
+            0.62,
+            0.62
+          ],
+          [
+            0.78,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "confidence": 0.95
+      },
+      {
+        "kind": "wall",
+        "name": "left inner wall",
+        "quad": [
+          [
+            0.1850473976608185,
+            0.08852631578947369
+          ],
+          [
+            0.28,
+            0.18
+          ],
+          [
+            0.28,
+            0.62
+          ],
+          [
+            0.20310897660818691,
+            0.8912631578947369
+          ]
+        ],
+        "confidence": 0.9,
+        "edgeVerified": true
+      },
+      {
+        "kind": "wall",
+        "name": "left foreground wall face",
+        "quad": [
+          [
+            0,
+            0.08852631578947369
+          ],
+          [
+            0.1850473976608185,
+            0.08852631578947369
+          ],
+          [
+            0.20310897660818691,
+            0.8912631578947369
+          ],
+          [
+            0,
+            0.8912631578947369
+          ]
+        ],
+        "confidence": 0.9,
+        "edgeVerified": true
+      },
+      {
+        "kind": "wall",
+        "name": "right inner wall",
+        "quad": [
+          [
+            0.62,
+            0.18
+          ],
+          [
+            0.7069441228070173,
+            0.049368421052631575
+          ],
+          [
+            0.7243449122807016,
+            0.8227368421052631
+          ],
+          [
+            0.62,
+            0.62
+          ]
+        ],
+        "confidence": 0.9,
+        "edgeVerified": true
+      },
+      {
+        "kind": "wall",
+        "name": "right foreground wall face",
+        "quad": [
+          [
+            0.7069441228070173,
+            0.049368421052631575
+          ],
+          [
+            1,
+            0.049368421052631575
+          ],
+          [
+            1,
+            0.8227368421052631
+          ],
+          [
+            0.7243449122807016,
+            0.8227368421052631
+          ]
+        ],
+        "confidence": 0.9,
+        "edgeVerified": true
+      },
+      {
+        "kind": "wall",
+        "name": "end wall with door",
+        "quad": [
+          [
+            0.28,
+            0.18
+          ],
+          [
+            0.62,
+            0.18
+          ],
+          [
+            0.62,
+            0.62
+          ],
+          [
+            0.28,
+            0.62
+          ]
+        ],
+        "confidence": 0.85
+      }
+    ],
+    "referenceTime": 0.04,
+    "model": "deepseek-v4-flash"
+  },
+  "surface": "auto",
+  "elapsedMs": 41037,
+  "frames": 112,
+  "planes": [
+    {
+      "name": "wood floor",
+      "track": "assets/track/fe15b73ad9acbe87-plane-0.json",
+      "quality": "Poor",
+      "lostShare": 0.13392857142857142
+    },
+    {
+      "name": "left inner wall",
+      "track": "assets/track/fe15b73ad9acbe87-plane-1.json",
+      "quality": "Good",
+      "lostShare": 0.09821428571428571
+    },
+    {
+      "name": "left foreground wall face",
+      "track": "assets/track/fe15b73ad9acbe87-plane-2.json",
+      "quality": "Poor",
+      "lostShare": 0.21428571428571427
+    },
+    {
+      "name": "right inner wall",
+      "track": "assets/track/fe15b73ad9acbe87-plane-3.json",
+      "quality": "Poor",
+      "lostShare": 0.29464285714285715
+    },
+    {
+      "name": "right foreground wall face",
+      "track": "assets/track/fe15b73ad9acbe87-plane-4.json",
+      "quality": "Poor",
+      "lostShare": 0.48214285714285715
+    },
+    {
+      "name": "end wall with door",
+      "track": "assets/track/fe15b73ad9acbe87-plane-5.json",
+      "quality": "Poor",
+      "lostShare": 0.21428571428571427
+    }
+  ]
+}

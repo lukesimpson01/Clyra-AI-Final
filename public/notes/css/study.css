@@ -1213,3 +1213,100 @@
 .as-get.is-busy .as-ring-fill { animation: as-ring-fill 900ms cubic-bezier(.4,0,.2,1) forwards; }
 @keyframes as-ring-fill { from { stroke-dashoffset: 72.3; } to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .as-card { animation: none; } .as-get.is-busy .as-ring-fill { animation-duration: 1ms; } }
+
+/* ------------------------------------------- AI chat composer · Chat's composer language */
+.chat-composer { padding: 8px 28px 22px; }
+.chat-bar {
+  flex-direction: column; align-items: stretch; gap: 4px; max-width: 720px; padding: 14px 12px 10px 18px;
+  border: 0; border-radius: 26px; background: #fff;
+  box-shadow: 0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.10), 0 30px 60px -28px rgba(16,18,24,0.20), inset 0 0 0 1px rgba(16,18,24,0.055);
+  transition: box-shadow .24s ease;
+  animation: chat-bar-in .6s cubic-bezier(.32,.72,0,1) .05s both;
+}
+@keyframes chat-bar-in { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+.chat-bar:focus-within { border-color: transparent; box-shadow: 0 1px 1px rgba(16,18,24,0.03), 0 10px 24px -8px rgba(16,18,24,0.13), 0 32px 64px -28px rgba(16,18,24,0.24), inset 0 0 0 1px rgba(16,18,24,0.09); }
+.chat-bar-field { display: flex; min-height: 26px; }
+.chat-bar .chat-input { padding: 2px 0; font-size: 15px; line-height: 1.55; letter-spacing: -0.01em; color: #15171c; }
+.chat-bar .chat-input::placeholder { color: #9a9ca3; }
+.chat-bar-controls { display: flex; align-items: center; gap: 6px; min-height: 34px; }
+.chat-bar-controls .chat-sources { margin: 0; max-width: none; flex-wrap: nowrap; overflow: hidden; }
+.chat-bar .chat-at { width: 30px; height: 30px; margin-left: -6px; border-radius: 999px; color: #5f636b; transition: background-color 120ms ease, color 120ms ease; }
+.chat-bar .chat-at:hover { background: #f1f2f4; color: #15171c; }
+.chat-bar-hint { font-size: 12px; color: #a3a6ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .2s ease; }
+.chat-bar-hint kbd { display: inline-grid; place-items: center; min-width: 16px; height: 16px; margin: 0 2px; padding: 0 4px; border-radius: 4px; background: #f3f4f6; color: #5f636b; font: 600 11px/1 inherit; }
+.chat-composer.has-text .chat-bar-hint, .chat-bar-controls .chat-sources:not(:empty) + .chat-bar-hint { opacity: 0; }
+.chat-bar-spacer { flex: 1; }
+.chat-bar .chat-send { width: 34px; height: 34px; background: #edeef1; color: #afb3bb; box-shadow: none; transition: background 240ms cubic-bezier(.2,.8,.3,1), color 240ms ease, box-shadow 240ms ease, transform 120ms ease; }
+.chat-bar .chat-send:not([disabled]) { background: #1e6fff; color: #fff; box-shadow: 0 2px 10px -2px rgba(30,111,255,0.55); }
+.chat-bar .chat-send:not([disabled]):hover { background: #1a63e6; }
+.chat-send-icon { display: grid; place-items: center; }
+.rail-chat .chat-bar { padding: 10px 10px 8px 14px; border-radius: 20px; }
+.rail-chat .chat-bar-hint { display: none; }
+@media (prefers-reduced-motion: reduce) { .chat-bar { animation: none; } }
+
+/* ---------------------------------------------- generation loader · art, shimmer, pacing */
+.check-loader { padding: 20px 20px 18px; animation: gen-in .42s cubic-bezier(.32, .72, 0, 1) both; }
+@keyframes gen-in { from { opacity: 0; transform: translateY(8px); } }
+.gen-leaving { opacity: 0 !important; transform: translateY(-4px); transition: opacity 140ms ease-in, transform 150ms ease-in; }
+.check-head { justify-content: space-between; margin: 14px 2px 12px; }
+.check-title { font-size: 16px; }
+.check-elapsed { font-size: 12.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.check-shine {
+  background: linear-gradient(110deg, #404040, 35%, #fff, 50%, #404040, 75%, #404040); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+  animation: check-shine 2s linear infinite;
+}
+@keyframes check-shine { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.check-step { transition: color .3s ease, background-color .3s ease, opacity .3s ease, transform .35s cubic-bezier(.32, .72, 0, 1); }
+.check-step[data-state="done"] .check-dot { background: #1e6fff; transform: none; }
+.check-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; animation: gen-in .3s cubic-bezier(.32, .72, 0, 1) both; }
+.check-loader.complete .check-note { color: var(--text-secondary); animation: gen-in .3s ease both; }
+
+/* The illustration: what is being made, gently at work. Transform and opacity only. */
+.gen-art { position: relative; height: 104px; margin: 2px 0 0; border-radius: 16px; overflow: hidden;
+  background: radial-gradient(120% 120% at 20% 0%, #eef3ff 0%, rgba(238, 243, 255, 0) 60%), radial-gradient(100% 100% at 100% 100%, #f3efff 0%, rgba(243, 239, 255, 0) 60%), #fafafa; }
+.gen-card { position: absolute; left: 50%; top: 50%; width: 92px; height: 60px; margin: -30px 0 0 -46px; border-radius: 10px; background: #fff;
+  box-shadow: 0 0 0 1px rgba(16, 18, 24, .06), 0 6px 16px -6px rgba(16, 18, 24, .18); display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 12px; }
+.gen-card i { display: block; height: 5px; border-radius: 3px; background: #e6e8ec; }
+.gen-card i:first-child { width: 70%; background: #cfd6e4; }
+.gen-card i:last-child { width: 45%; }
+.gen-card.c1 { transform: translate(-26px, 4px) rotate(-8deg); animation: gen-deal 2.8s cubic-bezier(.45, 0, .55, 1) infinite; }
+.gen-card.c2 { transform: translate(0, -2px); animation: gen-deal 2.8s cubic-bezier(.45, 0, .55, 1) .25s infinite; }
+.gen-card.c3 { transform: translate(26px, 4px) rotate(8deg); animation: gen-deal 2.8s cubic-bezier(.45, 0, .55, 1) .5s infinite; }
+.gen-card.c2 i:first-child { background: #9db8f5; }
+@keyframes gen-deal { 0%, 100% { translate: 0 0; } 40% { translate: 0 -6px; } }
+.gen-sheet { position: absolute; left: 50%; top: 14px; bottom: -10px; width: 150px; margin-left: -75px; border-radius: 10px 10px 0 0; background: #fff;
+  box-shadow: 0 0 0 1px rgba(16, 18, 24, .06), 0 6px 16px -6px rgba(16, 18, 24, .16); padding: 14px 14px 0; display: flex; flex-direction: column; gap: 9px; }
+.gen-q { display: flex; align-items: center; gap: 7px; opacity: .25; animation: gen-fill 3.2s ease-in-out infinite; }
+.gen-q b { flex: none; width: 9px; height: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px #b9c0cc; }
+.gen-q i { display: block; height: 5px; flex: 1; border-radius: 3px; background: #e2e5ea; }
+.gen-q.q1 { animation-delay: .4s; } .gen-q.q2 { animation-delay: .8s; } .gen-q.q3 { animation-delay: 1.2s; }
+.gen-q.q1 i { flex: .7; } .gen-q.q3 i { flex: .8; }
+@keyframes gen-fill { 0%, 10% { opacity: .25; } 30%, 80% { opacity: 1; } 100% { opacity: .25; } }
+.gen-q:nth-child(odd) b { background: #1e6fff; box-shadow: none; }
+.gen-h { display: block; height: 7px; width: 55%; border-radius: 4px; background: #cfd6e4; }
+.gen-l { display: block; height: 5px; border-radius: 3px; background: #e2e5ea; transform-origin: left; transform: scaleX(0); animation: gen-write 3.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+.gen-l.l1 { width: 86%; animation-delay: .35s; } .gen-l.l2 { width: 92%; animation-delay: .7s; } .gen-l.l3 { width: 64%; animation-delay: 1.05s; } .gen-l.l4 { width: 78%; animation-delay: 1.4s; }
+@keyframes gen-write { 0% { transform: scaleX(0); } 30%, 85% { transform: scaleX(1); } 100% { transform: scaleX(1); opacity: 0; } }
+.check-loader.complete .gen-art *, .check-loader.failed .gen-art * { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .gen-art *, .check-shine, .check-loader { animation: none !important; } .gen-l { transform: none; } .gen-q { opacity: 1; } }
+
+/* Lecture capture pill: controls on top, the latest transcribed phrase beneath (Chat's light, quiet surface). */
+.lecture-strip {
+  height: auto; min-height: 38px; max-width: min(560px, calc(100% - 32px)); flex-wrap: wrap; row-gap: 0;
+  padding: 6px 8px 6px 14px; border-radius: 20px; background: #fff;
+  box-shadow: 0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.12), 0 24px 48px -28px rgba(16,18,24,0.22), inset 0 0 0 1px rgba(16,18,24,0.06);
+  animation: lecture-in .5s cubic-bezier(.32,.72,0,1) both; transition: opacity .2s ease, translate .2s ease;
+}
+@keyframes lecture-in { from { opacity: 0; translate: 0 -6px; } }
+.lecture-strip.leaving { opacity: 0; translate: 0 -6px; }
+.lecture-label { font-weight: 500; color: #15171c; }
+.lecture-dot { animation: none; box-shadow: 0 0 0 0 rgba(209,36,47,.35); animation: lecture-rec 2s ease-out infinite; }
+@keyframes lecture-rec { 0% { box-shadow: 0 0 0 0 rgba(209,36,47,.35); } 70%, 100% { box-shadow: 0 0 0 6px rgba(209,36,47,0); } }
+.lecture-level { width: 56px; height: 4px; background: #eef0f3; }
+.lecture-level-fill { width: 100%; background: #1e6fff; transform-origin: left; transform: scaleX(0.06); transition: transform 90ms linear; }
+.lecture-caption { flex-basis: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left;
+  font-size: 12.5px; line-height: 18px; color: #5f636b; max-height: 0; opacity: 0; transition: max-height .3s cubic-bezier(.32,.72,0,1), opacity .2s ease, padding .3s ease; }
+.lecture-caption:not(:empty), .lecture-caption.busy { max-height: 22px; opacity: 1; padding: 2px 0 2px; }
+.lecture-caption.busy::after { content: " · transcribing"; color: #a3a6ad; }
+@media (prefers-reduced-motion: reduce) { .lecture-strip, .lecture-dot { animation: none; } }

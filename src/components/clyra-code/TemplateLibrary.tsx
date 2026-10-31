@@ -699,7 +699,15 @@ export function TemplateLibrary({
   const bigShelves = shelves.filter(([, list]) => list.length >= 3);
 
   return (
-    <div className="absolute inset-0 z-[90] flex overflow-hidden bg-white" role="dialog" aria-modal="true" aria-label="Clyra Library">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: reduce ? 0 : 0.3, ease: EASE }}
+      className="absolute inset-0 z-[90] flex overflow-hidden bg-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clyra Library"
+    >
       <aside className="hidden min-h-0 w-[232px] shrink-0 flex-col border-r border-black/[0.07] bg-[#F6F6F8]/95 px-2.5 pb-3 pt-3.5 backdrop-blur-xl md:flex">
         <div className="mb-3 px-1">{searchField}</div>
 
@@ -954,6 +962,6 @@ export function TemplateLibrary({
           ) : null}
         </AnimatePresence>
       </main>
-    </div>
+    </motion.div>
   );
 }

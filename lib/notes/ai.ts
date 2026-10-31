@@ -221,7 +221,18 @@ export async function generateLectureNotes(transcript: string, options: { title?
     action_items: string[]; revise: string[];
   }>(
     [
-      { role: "system", content: `${SYSTEM_GROUNDED}\n\nYou are turning a lecture transcript into notes. The transcript is imperfect speech-to-text: repair obvious mishearings only where the meaning is unambiguous, and never invent content that was not said. Return JSON: {"title":"","markdown":"","summary":"","key_concepts":[],"definitions":[{"term":"","meaning":""}],"examples":[],"questions_asked":[],"exam_topics":[],"action_items":[],"revise":[]}.` },
+      { role: "system", content: `${SYSTEM_GROUNDED}\n\nYou are turning a lecture transcript into beautifully organised study notes. The transcript is imperfect speech-to-text: tidy it up — remove filler words, false starts and repetition, repair obvious mishearings only where the meaning is unambiguous — and never invent content that was not said. Return JSON: {"title":"","markdown":"","summary":"","key_concepts":[],"definitions":[{"term":"","meaning":""}],"examples":[],"questions_asked":[],"exam_topics":[],"action_items":[],"revise":[]}.
+
+"markdown" is the page itself, laid out with the notes app's blocks (use exactly this syntax):
+- Start with a summary callout: "> [!SUMMARY] two or three sentences on what the lecture covered".
+- One "## " section per main topic, in the order taught, with "### " sub-headings where helpful. Use short bullet points ("- "), nested with two-space indents for detail, and **bold** for the key term in each point. Numbered steps ("1. ") for processes.
+- "## Key definitions" as a table: "| Term | Meaning |" then "|---|---|" then one row per term.
+- Examples given in the lecture under "## Examples" as bullets.
+- Anything the lecturer stressed or said would be examined as callouts: "> [!EXAM] ...". Important caveats as "> [!IMPORTANT] ...".
+- "## Questions from the lecture" as toggles: "▸ the question" followed by the answer indented two spaces on the next line(s).
+- "## To revise" as a checklist: "- [ ] item".
+- Callouts, tables and toggles always start their own line at the left margin — never inside a bullet.
+- Put "---" between the major sections. No preamble, no closing remarks, no raw transcript.` },
       { role: "user", content: `Lecture${options.course ? ` for ${options.course}` : ""}${options.title ? ` titled "${options.title}"` : ""}. Produce structured notes.\n\n<transcript>\n${transcript.slice(0, 40000)}\n</transcript>` },
     ],
     "notes-ai-lecture",

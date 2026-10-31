@@ -233,7 +233,7 @@ async function generateTest(app, sources) {
           questions: questions.questions,
         });
       },
-    }).catch((error) => { toast(error?.message || "Could not build the test", "error"); return null; });
+    }).catch((error) => { if (!error?.shown) toast(error?.message || "Could not build the test", "error"); return null; });
     entry.close("generated");
     if (!result) return;
     await loadWorkspace();
@@ -269,7 +269,7 @@ async function generateStudyGuide(app, sources) {
         loader.advance(3);
       }
     },
-  }).catch((error) => { toast(error?.message || "Could not build the study guide", "error"); return null; });
+  }).catch((error) => { if (!error?.shown) toast(error?.message || "Could not build the study guide", "error"); return null; });
   entry.close("done");
   if (!result?.page) return;
   await refreshPages();

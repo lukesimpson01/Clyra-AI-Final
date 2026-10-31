@@ -1,0 +1,18 @@
+{
+  "conditions": "Warm cached forward/reverse loop; paused editor; no reconstruction/export/route replay running; 20 seconds, headless Chromium on Intel Mac",
+  "profile": {
+    "frames": 619,
+    "medianMs": 33.29999999999927,
+    "p95Ms": 66.70000000000073,
+    "over33Share": 0.2827140549273021,
+    "canvas": [
+      188,
+      335
+    ],
+    "waves": "3",
+    "videoTime": 10.514862,
+    "mode": "forward-reverse",
+    "playback": {}
+  },
+  "errors": []
+}

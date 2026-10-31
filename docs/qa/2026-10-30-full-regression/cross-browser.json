@@ -1,0 +1,24 @@
+[
+  {
+    "engine": "firefox",
+    "proof": {
+      "typed": "Typed during refraction",
+      "count": "1",
+      "filter": "url(\"#refraction-959a076b-ec3e-450e-86fc-518be6e404a1\")",
+      "svg": true
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "engine": "webkit",
+    "proof": {
+      "typed": "Typed during refraction",
+      "count": "1",
+      "filter": "url(\"#refraction-c743243b-181f-4148-bee9-67e076af00bf\")",
+      "svg": true
+    },
+    "errors": [],
+    "passed": true
+  }
+]

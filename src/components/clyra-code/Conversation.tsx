@@ -3,11 +3,10 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowDown, FilePlus2, Sparkle, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
-import { ShiningText } from "../ShiningText";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
-import { ActivityGroup, ActivityRow } from "./CodexActivity";
-import { DisclosureRow, StateDot } from "./harness";
+import { ActivityGroup, ActivityRow, RunHeader, runLabel } from "./CodexActivity";
+import { DisclosureRow } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
 import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
@@ -17,7 +16,22 @@ import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
  * text is the row's summary while it streams (clipped, not ellipsized, so the
  * moving tail reads), the running sweep marks it live, and the full text is
  * the expanded body.  Extracted from deepseek-harness `ui-chat/ReasoningRow`.
+ * While live, three small dots breathe beside the label — a quiet "the agent
+ * is thinking" signal that never flashes the text itself.
  */
+function ThinkingLabel({ label = "Thinking" }: { label?: string }) {
+  return (
+    <span className="dsh-thinking-label">
+      {label}
+      <span className="dsh-thinking-dots" aria-hidden>
+        <i />
+        <i />
+        <i />
+      </span>
+    </span>
+  );
+}
+
 function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning" }> }) {
   const completed = Boolean(entry.endedAt);
   const [expanded, setExpanded] = useState(false);
@@ -37,7 +51,7 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
     <motion.div layout className="dsh-row-root" data-state={completed ? "ok" : "running"}>
       <DisclosureRow
         icon={<Sparkle />}
-        title={completed ? "Thought" : <ShiningText text="Thinking" play duration={2} />}
+        title={completed ? "Thought" : <ThinkingLabel />}
         open={expanded && text !== ""}
         expandable={text !== ""}
         expandOnRowClick
@@ -55,34 +69,6 @@ function ThinkingEvent({ entry }: { entry: Extract<LogEntry, { type: "reasoning"
       >
         <div className="dsh-think-body">{text}</div>
       </DisclosureRow>
-    </motion.div>
-  );
-}
-
-/**
- * The live line shown while a run is busy but no action row is moving yet
- * (right after send, or between tool calls). It keeps the elapsed time
- * ticking so a long silent phase still reads as progress.
- */
-function WorkingStatus({ since }: { since: number }) {
-  const reduced = useReducedMotion();
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, []);
-  const seconds = Math.max(0, Math.round((now - since) / 1000));
-  return (
-    <motion.div
-      role="status"
-      aria-live="polite"
-      {...(reduced ? {} : { initial: { opacity: 0, y: 4 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -2 } })}
-      transition={{ duration: 0.22, ease: AGENT_EASE }}
-      className="mt-3 flex h-6 items-center gap-2 text-[13px] text-[#73757A]"
-    >
-      <span className="cc-running-dot cc-running-dot--inline" aria-hidden />
-      <ShiningText text="Working…" play={!reduced} duration={2} className="text-[13px] font-normal text-[#73757A]" />
-      <span className="cc-counter text-[11.5px] text-[#A0A2A6]">{seconds}s</span>
     </motion.div>
   );
 }
@@ -387,7 +373,9 @@ export function Conversation({
   onOpenFile,
   onOpenChanges,
   onUndoCheckpoint,
+  onStop,
 }: {
+  onStop?: () => void;
   state: ClyraCodeState;
   running: boolean;
   onReplyPermission: (permissionId: string, response: "allow" | "always" | "deny") => void;
@@ -550,6 +538,34 @@ export function Conversation({
     }
     return out;
   }, [visibleItems, state.actions]);
+  // The run header sits directly under the latest prompt: the top of the response it describes.
+  const lastUserBlockIndex = useMemo(() => {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      const block = blocks[index];
+      if (block.type === "entry" && block.entry.type === "user") return index;
+    }
+    return -1;
+  }, [blocks]);
+  const runPhase = state.runState === "running" || state.runState === "starting"
+    ? "running" as const
+    : state.runState === "complete" || state.runState === "failed" || state.runState === "cancelled" ? state.runState : null;
+  const liveAction = primaryActiveActionId ? state.actions[primaryActiveActionId] : undefined;
+  const runSummary = useMemo(() => {
+    if (!state.diffs.length) return null;
+    const added = state.diffs.reduce((sum, diff) => sum + (diff.additions ?? 0), 0);
+    const removed = state.diffs.reduce((sum, diff) => sum + (diff.deletions ?? 0), 0);
+    return `${state.diffs.length} file${state.diffs.length === 1 ? "" : "s"} changed · +${added} −${removed}`;
+  }, [state.diffs]);
+  const runHeader = runPhase && (state.runStartedAt || lastPromptTs) ? (
+    <RunHeader
+      phase={runPhase}
+      label={runLabel(liveAction)}
+      since={state.runStartedAt ?? lastPromptTs ?? Date.now()}
+      until={state.runEndedAt}
+      summary={runSummary}
+      onStop={onStop}
+    />
+  ) : null;
   const lastGroupId = useMemo(() => {
     for (let index = blocks.length - 1; index >= 0; index -= 1) if (blocks[index].type === "group") return blocks[index].id;
     return null;
@@ -565,7 +581,7 @@ export function Conversation({
               const groupActions = block.actionIds.map((id) => state.actions[id]).filter(Boolean) as AgentAction[];
               if (!groupActions.length) return null;
               const fresh = !state.restored && Date.now() - (groupActions[0].startedAt || 0) < 10 * 60_000;
-              const spacing = prevBlock?.type === "group" ? "mt-1" : "mt-2.5";
+              const spacing = prevBlock?.type === "group" ? "mt-1.5" : "mt-3";
               if (groupActions.length === 1) {
                 return (
                   <div key={block.id} className={spacing}>
@@ -626,6 +642,7 @@ export function Conversation({
                       <span className="whitespace-pre-wrap">{entry.text}</span>
                     </div>
                   </motion.div>
+                  {index === lastUserBlockIndex ? runHeader : null}
                 </div>
               );
             }
@@ -635,7 +652,7 @@ export function Conversation({
                   key={entry.id}
                   className={cn(
                     "dsh-assistant-message",
-                    nextKindGap ? "mt-2.5" : "mt-1.5",
+                    nextKindGap ? "mt-3" : "mt-2",
                   )}
                 >
                   <MarkdownMessageContent content={entry.text} />
@@ -645,7 +662,7 @@ export function Conversation({
             const action = state.actions[entry.actionId];
             if (!action) return null;
             return (
-              <div key={entry.id} className={nextKindGap ? "mt-2" : "mt-1"}>
+              <div key={entry.id} className={nextKindGap ? "mt-2.5" : "mt-1.5"}>
                 <AgentActionRow
                   action={action}
                   onReplyPermission={onReplyPermission}
@@ -665,32 +682,11 @@ export function Conversation({
                 <motion.div key="thinking" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -2 }} transition={{ duration: 0.22, ease: AGENT_EASE }} className="mt-2">
                   <ThinkingEvent entry={openThought} />
                 </motion.div>
-              ) : (
-                <WorkingStatus key="working" since={lastPromptTs ?? Date.now()} />
-              )
+              ) : null
             ) : null}
           </AnimatePresence>
 
-          {state.runState === "failed" ? (
-            <div className="dsh-row-root mt-2" data-state="error" role="status" aria-label="Run failed">
-              <div className="dsh-row">
-                <span className="dsh-leading"><StateDot state="error" /></span>
-                <span className="dsh-title">Run failed</span>
-                <span className="dsh-sep" aria-hidden />
-                <span className="dsh-summary">Open the failed action for details</span>
-              </div>
-            </div>
-          ) : null}
-
-          {state.runState === "cancelled" ? (
-            <div className="mt-2 text-[11.5px] text-[#96989D]">
-              Cancelled by user
-            </div>
-          ) : null}
-
-          {state.runState === "complete" && state.runStartedAt && state.runEndedAt && state.runEndedAt - state.runStartedAt > 2000 ? (
-            <div className="cx-worked" role="separator">Worked for {(() => { const s = Math.round((state.runEndedAt - state.runStartedAt) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; })()}</div>
-          ) : null}
+          {/* Failure, cancellation and the elapsed time now live in the run header under the prompt. */}
           {showCompletion ? (
             <CompletionSummary
               diffs={state.diffs}

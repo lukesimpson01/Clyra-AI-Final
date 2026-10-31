@@ -53,3 +53,18 @@ vendor/open-silong/
 
 # Clyra Earth (vendored God's Eye View) runtime caches
 vendor/gods-eye-view/.gev-cache/
+
+# Clyra Editor (vendor/openfilm): ship the built UI so the editor works without a build step
+!vendor/openfilm/studio/ui/dist/
+
+# Clyra Editor runtime data (projects, exports, state)
+/openfilm/
+# Downloaded editor recordings belong to this machine, not the source distribution.
+/shorts-library/recordings/
+/shorts-library/recordings.json
+/shorts-library/music/*.mp3
+/shorts-library/sfx/*.mp3
+/shorts-library/recording-audit.json
+/shorts-library/music/Metro Boomin - Space Cadet.mp3
+# Advanced editor projects contain imported user media and generated analysis caches.
+/apps/shorts/app/frame-projects/

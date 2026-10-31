@@ -533,6 +533,38 @@ export class SpotifyManager {
         const body = await optional("/me/top/tracks?limit=10&time_range=medium_term", "spotify-top-tracks");
         return { tracks: compact(body?.items) };
       }
+      case "new-releases": {
+        const body = (await optional("/browse/new-releases?limit=20", "spotify-new-releases")) ?? (await optional(`/search?q=${encodeURIComponent(`tag:new year:${new Date().getFullYear()}`)}&type=album&limit=10`, "spotify-new-releases-search"));
+        return { albums: compact(body?.albums?.items) };
+      }
+      case "made-for-you": {
+        // Editorial "This Is …" mixes for the artists you play most (Spotify-owned playlists only).
+        const top = compact((await optional("/me/top/artists?limit=4&time_range=short_term", "spotify-mfy-artists"))?.items);
+        const found = await Promise.all(top.slice(0, 4).map((artist) => optional(`/search?q=${encodeURIComponent(`This Is ${artist.name}`)}&type=playlist&limit=3`, "spotify-mfy-search")));
+        const seen = new Set();
+        const playlists = found.flatMap((body) => compact(body?.playlists?.items)).filter((item) => item?.id && item.owner?.id === "spotify" && !seen.has(item.id) && seen.add(item.id));
+        return { playlists };
+      }
+      case "popular-playlists": {
+        const found = await Promise.all(["Today's Top Hits", "Top 50 Global", "Viral Hits", "Rock Classics", "Chill Hits"].map((name) => optional(`/search?q=${encodeURIComponent(name)}&type=playlist&limit=2`, "spotify-popular")));
+        const seen = new Set();
+        const playlists = found.flatMap((body) => compact(body?.playlists?.items)).filter((item) => item?.id && item.owner?.id === "spotify" && !seen.has(item.id) && seen.add(item.id));
+        return { playlists };
+      }
+      case "recommendations": {
+        const top = compact((await optional("/me/top/artists?limit=5&time_range=medium_term", "spotify-rec-artists"))?.items);
+        const seed = top[Math.floor(Math.random() * Math.min(3, top.length))] ?? top[0];
+        if (!seed) return { tracks: [], artists: [] };
+        const genre = (seed.genres || [])[0];
+        const [byGenre, related] = await Promise.all([
+          genre ? optional(`/search?q=${encodeURIComponent(`genre:"${genre}"`)}&type=track,artist&limit=10`, "spotify-rec-genre") : null,
+          optional(`/artists/${seed.id}/related-artists`, "spotify-rec-related"),
+        ]);
+        const known = new Set(top.map((artist) => artist.id));
+        const artists = [...compact(related?.artists), ...compact(byGenre?.artists?.items)].filter((artist) => artist?.id && !known.has(artist.id)).slice(0, 12);
+        const tracks = compact(byGenre?.tracks?.items).filter((track) => !(track.artists || []).some((artist) => artist.id === seed.id));
+        return { tracks, artists, seed: seed.name };
+      }
       case "is-following": {
         const ids = (Array.isArray(args.ids) ? args.ids : [id]).map((value) => String(value || "")).filter((value) => /^[A-Za-z0-9]{10,40}$/.test(value)).slice(0, 50);
         if (!ids.length) return { following: [] };

@@ -21,8 +21,10 @@ self.addEventListener("fetch", (event) => {
   if (!HOSTS.includes(url.hostname)) return;
   // Style and tilejson name a data version that changes, so those go network-first
   // (cache only as an offline fallback). Tiles, glyphs and sprites are immutable.
-  const volatile = url.pathname === "/planet";
-  const isStyle = url.pathname.startsWith("/styles/");
+  // The style and the tile index (/planet) name a data version that changes now and then: both are served from
+  // the cache at once and refreshed behind it (stale-while-revalidate), so opening Maps never waits on them.
+  const volatile = false;
+  const isStyle = url.pathname.startsWith("/styles/") || url.pathname === "/planet";
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);

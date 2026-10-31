@@ -1,0 +1,36 @@
+{
+  "baseline": {
+    "frames": 600,
+    "p50": 16.699999999999818,
+    "p95": 16.700000000000728,
+    "over100": 0,
+    "decoded": 302,
+    "dropped": 2,
+    "canvas": null,
+    "reduced": null
+  },
+  "active": {
+    "frames": 1947,
+    "p50": 16.69999999999709,
+    "p95": 33.400000000001455,
+    "over100": 19,
+    "decoded": 1208,
+    "dropped": 117,
+    "canvas": {
+      "width": 171,
+      "height": 304,
+      "display": "none",
+      "waves": "3",
+      "css": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0
+      }
+    },
+    "reduced": "reduced"
+  },
+  "reducedMotion": true,
+  "cleaned": true,
+  "errors": []
+}

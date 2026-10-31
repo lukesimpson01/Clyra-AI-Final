@@ -150,6 +150,66 @@ function overpassElementToPlace(el: {
   };
 }
 
+const NOMINATIM_TERMS: Record<string, string> = {
+  food: "restaurant", coffee: "cafe", petrol: "fuel", parking: "parking", groceries: "supermarket", hotels: "hotel",
+  attractions: "attraction", pharmacy: "pharmacy", hospitals: "hospital", "ev-charging": "charging station",
+  transport: "station", atm: "atm", bank: "bank", park: "park", toilets: "toilets", school: "school",
+};
+
+/** Resolves with the first source that returns places; empty only if every source comes back empty. */
+async function firstNonEmpty(sources: Array<Promise<ClyraPlace[]>>): Promise<ClyraPlace[]> {
+  return new Promise((resolve) => {
+    let pending = sources.length;
+    for (const source of sources) {
+      source.then((places) => {
+        if (places.length) resolve(places);
+        else if (--pending === 0) resolve([]);
+      }, () => { if (--pending === 0) resolve([]); });
+    }
+  });
+}
+
+/** Category search inside a bounding box around the centre, via OpenStreetMap's Nominatim. */
+async function nominatimNearby(center: Coordinate, category: string, radius: number, limit: number): Promise<ClyraPlace[]> {
+  const [lon, lat] = center;
+  const dLat = radius / 111_320;
+  const dLon = radius / (111_320 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const term = NOMINATIM_TERMS[category] || category.replace(/[-_]/g, " ");
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&extratags=1&addressdetails=1&bounded=1&limit=${Math.min(limit * 2, 40)}`
+    + `&q=${encodeURIComponent(term)}&viewbox=${lon - dLon},${lat + dLat},${lon + dLon},${lat - dLat}`;
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "ClyraMaps/1.0 (desktop app)", Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return [];
+    const rows = (await res.json()) as Array<{ osm_type?: string; osm_id?: number; lat: string; lon: string; name?: string; display_name?: string; category?: string; type?: string; address?: Record<string, string>; extratags?: Record<string, string> }>;
+    return rows
+      .map((row): ClyraPlace | null => {
+        const coordinate: Coordinate = [Number(row.lon), Number(row.lat)];
+        if (!Number.isFinite(coordinate[0]) || !Number.isFinite(coordinate[1])) return null;
+        const tags = row.extratags || {};
+        const address = row.address || {};
+        return {
+          id: `osm-${row.osm_type?.[0] ?? "n"}${row.osm_id ?? `${row.lat},${row.lon}`}`,
+          name: row.name || row.display_name?.split(",")[0] || "Unnamed place",
+          coordinates: coordinate,
+          address: [address.house_number, address.road].filter(Boolean).join(" ") || undefined,
+          locality: address.suburb || address.city || address.town || address.village,
+          categories: [row.type, row.category].filter(Boolean) as string[],
+          phone: tags.phone || tags["contact:phone"],
+          website: tags.website || tags["contact:website"],
+          openingHours: tags.opening_hours ? { raw: tags.opening_hours } : undefined,
+          distanceMeters: haversineMeters(center, coordinate),
+          sourceLinks: [{ provider: "OpenStreetMap" }],
+        };
+      })
+      // Towns, suburbs and boundaries match category words too ("Sydney" for "park"); keep only real places.
+      .filter((p): p is ClyraPlace => p !== null && (p.distanceMeters ?? 0) <= radius * 1.5 && !p.categories.some((c) => c === "boundary" || c === "place" || c === "administrative"))
+      .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 /** Nearby POIs within a viewport/radius, filtered by category. Uses the public
  * Overpass API — bounded by radius + result limit so we never query the world. */
 const nearbyCache = new Map<string, { at: number; places: ClyraPlace[] }>();
@@ -173,12 +233,16 @@ export async function searchNearby(
   const hit = nearbyCache.get(cacheKey);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.places;
   const query = `[out:json][timeout:15];(${clauses});out center ${limit};`;
-  const data = await overpassQuery<{ elements?: Array<Parameters<typeof overpassElementToPlace>[0]> }>(query, 14000);
-  const places = (data?.elements || [])
-    .map((el) => overpassElementToPlace(el, center))
-    .filter((p): p is ClyraPlace => p !== null)
-    .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
-    .slice(0, limit);
+  /* Overpass has the richest tags but its public mirrors are often all overloaded at once, so the same question
+     goes to Nominatim in parallel; the first source with real results answers. */
+  const fromOverpass = overpassQuery<{ elements?: Array<Parameters<typeof overpassElementToPlace>[0]> }>(query, 9000).then((data) =>
+    (data?.elements || [])
+      .map((el) => overpassElementToPlace(el, center))
+      .filter((p): p is ClyraPlace => p !== null)
+      .sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0))
+      .slice(0, limit));
+  const fromNominatim = nominatimNearby(center, category, radius, limit);
+  const places = await firstNonEmpty([fromOverpass, fromNominatim]);
   // Only remember real answers; an empty list may just be an overloaded mirror.
   if (places.length) nearbyCache.set(cacheKey, { at: Date.now(), places });
   return places;

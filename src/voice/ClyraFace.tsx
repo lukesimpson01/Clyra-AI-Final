@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { capsulePath } from "./bloub/shape";
 import { loopNoise, clamp } from "./bloub/math";
 import type { VoiceCallState } from "./state/voiceSession";
+import type { HomeFaceHandle } from "./homeFace";
 
 type Mood = "rest" | "muted" | "thinking" | "responding" | "acting" | "paused" | "takeover" | "typing";
 
@@ -22,7 +23,7 @@ interface EyeTarget {
  * via `loopNoise` rather than baked into these targets.
  */
 const MOODS: Record<Mood, EyeTarget> = {
-  rest: { w: 29, h: 60, y: -3, rotate: 0 },
+  rest: { w: 22, h: 50, y: -3, rotate: 0 },
   muted: { w: 27, h: 10, y: 8, rotate: 0 },
   thinking: { w: 17, h: 17, y: -11, rotate: 0 },
   responding: { w: 26, h: 27, y: -14, rotate: 0 },
@@ -30,9 +31,9 @@ const MOODS: Record<Mood, EyeTarget> = {
   paused: { w: 29, h: 25, y: 14, rotate: 0 },
   takeover: { w: 24, h: 24, y: -5, rotate: 0 },
   // The reference only shows this while the composer is open AND the user
-  // typed within the last 2s (`now - lastTypeAt < 2000`); we approximate
-  // with "composer is open" since lastTypeAt isn't plumbed this far yet.
-  typing: { w: 20, h: 20, y: -7, rotate: 0 }
+  // typed within the last 2s (`now - lastTypeAt < 2000`); the gaze drops
+  // toward the keyboard exactly like the reference's typing pose.
+  typing: { w: 20, h: 20, y: 14, rotate: 0 }
 };
 
 const BALL_FILTER: Partial<Record<Mood, string>> = {
@@ -43,6 +44,11 @@ const BALL_FILTER: Partial<Record<Mood, string>> = {
 
 const EYE_GAP = 30;
 const BLINK_DURATION_MS = 200;
+
+/** Gaze travel, in the same -100..100 viewBox units as the eyes. */
+const GAZE_RANGE_X = 22;
+const GAZE_RANGE_Y = 16;
+const GAZE_DOWN = 18;
 
 function moodFor(state: VoiceCallState, muted: boolean, resting: boolean, typing: boolean): Mood {
   if (typing) return "typing";
@@ -77,7 +83,10 @@ type Props = {
  * (non-bloub) implementation rather than bloub's full sphere-projected
  * engine, which the mockup doesn't actually use. See bloub/NOTICE.md.
  */
-export function ClyraFace({ state, muted, resting = false, typing = false, lowPower = false }: Props) {
+export const ClyraFace = forwardRef<HomeFaceHandle, Props>(function ClyraFace(
+  { state, muted, resting = false, typing = false, lowPower = false },
+  ref,
+) {
   const ballRef = useRef<HTMLDivElement | null>(null);
   const eyeARef = useRef<SVGPathElement | null>(null);
   const eyeBRef = useRef<SVGPathElement | null>(null);
@@ -85,6 +94,23 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
   const dotRefs = useRef<(SVGCircleElement | null)[]>([]);
   const inputRef = useRef({ state, muted, resting, typing, lowPower });
   inputRef.current = { state, muted, resting, typing, lowPower };
+
+  // Cursor-follow / look-down override, driven from outside through the ref.
+  const gazeRef = useRef<{ mode: "forward" | "down" | "track"; nx: number; ny: number }>({
+    mode: "forward",
+    nx: 0,
+    ny: 0,
+  });
+  const gazeCurRef = useRef({ x: 0, y: 0 });
+
+  useImperativeHandle(ref, () => ({
+    track: (nx, ny) => {
+      gazeRef.current = { mode: "track", nx: clamp(nx, -1, 1), ny: clamp(ny, -1, 1) };
+    },
+    setLook: (mode) => {
+      gazeRef.current = { mode, nx: 0, ny: 0 };
+    },
+  }), []);
 
   useEffect(() => {
     let raf = 0;
@@ -110,6 +136,21 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
       cur.y += (target.y - cur.y) * rate;
       cur.rotate += (target.rotate - cur.rotate) * rate;
 
+      // External gaze: track the cursor or cast the eyes down, eased toward
+      // the target so the motion reads as a glance rather than a jump.
+      const gaze = gazeRef.current;
+      let targetGx = 0;
+      let targetGy = 0;
+      if (gaze.mode === "track") {
+        targetGx = gaze.nx * GAZE_RANGE_X;
+        targetGy = gaze.ny * GAZE_RANGE_Y;
+      } else if (gaze.mode === "down") {
+        targetGy = GAZE_DOWN;
+      }
+      const gazeRate = clamp((reducedMotion ? 1 : dt / 16.667) * 0.22);
+      gazeCurRef.current.x += (targetGx - gazeCurRef.current.x) * gazeRate;
+      gazeCurRef.current.y += (targetGy - gazeCurRef.current.y) * gazeRate;
+
       const thinking = mood === "thinking";
       const blinkEligible = !reducedMotion && !thinking && mood !== "muted" && mood !== "paused";
       if (blinkEligible && now >= nextBlinkAt) {
@@ -127,13 +168,15 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
       const h = Math.max(0.6, cur.h * blinkScale);
       const d = capsulePath(cur.w, h);
       const eyeOpacity = thinking ? 0 : 1;
+      const gx = driftX + gazeCurRef.current.x;
+      const gy = driftY + gazeCurRef.current.y;
 
       if (eyeARef.current) {
         eyeARef.current.setAttribute("d", d);
         eyeARef.current.setAttribute("opacity", String(eyeOpacity));
         eyeARef.current.setAttribute(
           "transform",
-          `translate(${(-EYE_GAP + driftX).toFixed(2)} ${(cur.y + driftY).toFixed(2)}) rotate(${cur.rotate.toFixed(2)})`
+          `translate(${(-EYE_GAP + gx).toFixed(2)} ${(cur.y + gy).toFixed(2)}) rotate(${cur.rotate.toFixed(2)})`
         );
       }
       if (eyeBRef.current) {
@@ -141,7 +184,7 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
         eyeBRef.current.setAttribute("opacity", String(eyeOpacity));
         eyeBRef.current.setAttribute(
           "transform",
-          `translate(${(EYE_GAP + driftX).toFixed(2)} ${(cur.y + driftY).toFixed(2)}) rotate(${(-cur.rotate).toFixed(2)})`
+          `translate(${(EYE_GAP + gx).toFixed(2)} ${(cur.y + gy).toFixed(2)}) rotate(${(-cur.rotate).toFixed(2)})`
         );
       }
 
@@ -183,8 +226,8 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
       <div className="clyra-face-highlight" />
       <div className="clyra-face-shade" />
       <svg className="clyra-face-eyes" viewBox="-100 -100 200 200">
-        <path ref={eyeARef} fill="#fff" d={capsulePath(29, 60)} />
-        <path ref={eyeBRef} fill="#fff" d={capsulePath(29, 60)} />
+        <path ref={eyeARef} fill="#fff" d={capsulePath(22, 50)} />
+        <path ref={eyeBRef} fill="#fff" d={capsulePath(22, 50)} />
         <g ref={dotsRef} opacity="0">
           {[0, 1, 2].map((i) => (
             <circle
@@ -202,4 +245,6 @@ export function ClyraFace({ state, muted, resting = false, typing = false, lowPo
       </svg>
     </div>
   );
-}
+});
+
+ClyraFace.displayName = "ClyraFace";

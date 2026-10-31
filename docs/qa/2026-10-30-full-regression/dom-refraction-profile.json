@@ -1,0 +1,14 @@
+{
+  "frames": 1704,
+  "p50": 50,
+  "p95": 200,
+  "slowOver100": 276,
+  "filterActive": "url(\"#refraction-eiyeo4mln1\")",
+  "typed": "Interaction stays intact",
+  "clicked": "1",
+  "scroll": 80,
+  "cleaned": true,
+  "reducedMotion": true,
+  "errors": [],
+  "recording": "/tmp/clyra-refraction-qa/page@2d1521b04589af1b5f77c7b87f23cd2f.webm"
+}

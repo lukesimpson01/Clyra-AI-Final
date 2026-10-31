@@ -57,18 +57,13 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
   care: {
     scan: () => ipcRenderer.invoke("care:scan"),
   },
-  agents: {
-    status: () => ipcRenderer.invoke("agents:status"),
-    start: () => ipcRenderer.invoke("agents:start"),
-    onState: (callback) => subscribe("agents:state", callback),
-  },
   location: {
     get: (options) => ipcRenderer.invoke("location:get", options || {}),
   },
-  eye: {
-    status: () => ipcRenderer.invoke("eye:status"),
-    setSurface: (payload) => ipcRenderer.invoke("eye:set-surface", payload),
-    setLocation: (location) => ipcRenderer.invoke("eye:set-location", location),
+  speech: {
+    status: () => ipcRenderer.invoke("speech:status"),
+    warm: () => ipcRenderer.invoke("speech:warm"),
+    transcribe: (pcm, sampleRate) => ipcRenderer.invoke("speech:transcribe", { pcm, sampleRate }),
   },
   dictation: {
     toggle: (options) => ipcRenderer.invoke("dictation:toggle", options),

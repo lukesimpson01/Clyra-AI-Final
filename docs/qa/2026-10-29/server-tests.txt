@@ -1,0 +1,30 @@
+✔ an ffmpeg that arrives after Studio started is found: having none is not remembered (277.738039ms)
+✔ FRAME layer pages are written in place, again and again (25.805332ms)
+✔ only frame/ pages and scripts can be written that way (5.750225ms)
+✔ @font-face rules: family, weight range, style, sources resolved from the file (9.96417ms)
+✔ weights and addresses (0.572059ms)
+✔ the families CSS names: font-family and the font shorthand, no generics or worked-out names (1.660316ms)
+✔ the stylesheets a page loads (0.918234ms)
+✔ families from faces: weights in a range, italics, a family whose files are gone (45.220051ms)
+✔ a project's fonts are read again only for files that changed (36.52939ms)
+✔ the two lines that started it: a clause per subtitle, its comma gone (94.431424ms)
+✔ a clause mark makes no orphan: both sides need 4 CJK characters or 2 words (13.38098ms)
+✔ a long clause with no punctuation is cut where it costs least: before a conjunction, never inside a word (3.259276ms)
+✔ mixed CJK and English: an English word or name is never cut, and a term like "MIT 协议" stays together (1.872936ms)
+✔ English: sentences end at full stops, not at abbreviations, initials or decimals; commas start clauses and stay (2.590538ms)
+✔ a number keeps its unit, however tight the line (1.20327ms)
+✔ very short lines stay whole; a piece too short to read joins its neighbor (1.074179ms)
+✔ a pause of half a second ends a subtitle; a short breath does not (1.053219ms)
+✔ times: a subtitle holds 200 ms after its last word, never into the next; small gaps close; at most 7 s (5.399582ms)
+✔ the end of a subtitle: Chinese drops ，。、；：, keeps ？！… and quotes; Latin keeps its punctuation (0.358332ms)
+✔ a translation is cut to follow the original's pieces, at its own clause marks, or spans them when it cannot be (2.396986ms)
+✔ a correction of one piece goes into its words in the line; the other pieces keep their times (3.240969ms)
+✔ the rules are one table (1.626198ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2013.439227

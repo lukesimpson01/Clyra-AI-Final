@@ -11,10 +11,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { SpotifyPlaybackHook } from "../chat/SpotifyNotch";
+import { useSpotifyProgress, type SpotifyPlaybackHook } from "../chat/SpotifyNotch";
 import type { SpotifyAlbum, SpotifyArtist, SpotifyPlaylist, SpotifyTrack } from "../../lib/electron-runtime";
 import { NewPlaylistDialog, SpProvider, useLikedCache, useMenuHost, useSp, useToastHost, viewKey, type MenuItem, type SpContext, type ViewEntry } from "./ctx";
-import { AlbumPage, ArtistPage, HomeView, LibraryView, LikedPage, LyricsView, PageWash, PlaylistPage, SearchView, activeLyricIndexFor, centerLyric, copyLink, useArtworkTint, useTrackLyrics, type HomeFilter, type SearchTab } from "./views";
+import { AlbumPage, ArtistPage, HomeView, LibraryView, LikedPage, LyricsView, PageWash, PlaylistPage, SearchView, centerLyric, useActiveLyric, copyLink, useArtworkTint, useTrackLyrics, type HomeFilter, type SearchTab } from "./views";
 import { mergeContextRecency, playlistIdFromUri, readPlaylistRecency, sortPlaylistsByRecency, writePlaylistRecency } from "./music-state";
 import { Artwork, Icon, IconBtn, LikedArt, MusicMark, PlayBtn, activateOnKey, bigImage, fmt, initials, midImage, type IconName } from "./ui";
 import "./spotify.css";
@@ -117,7 +117,8 @@ function ArtistLinks({ track }: { track: SpotifyTrack }) {
 
 function PlayerBar({ rightPanel, onRight, onExpand, lyricsOpen, onLyrics }: { rightPanel: Prefs["right"]; onRight: (mode: "now" | "queue") => void; onExpand: () => void; lyricsOpen: boolean; onLyrics: () => void }) {
   const { playback, openAlbum, isLiked, toggleLike, toast } = useSp();
-  const { track, isPlaying, progressMs, volume, device, devices, onPrev, onNext, seekTo, setVolumePercent, refreshDevices, transferToDevice, shuffleOn, toggleShuffle, repeatMode, cycleRepeat, error, startingDevice } = playback;
+  const { track, isPlaying, volume, device, devices, onPrev, onNext, seekTo, setVolumePercent, refreshDevices, transferToDevice, shuffleOn, toggleShuffle, repeatMode, cycleRepeat, error, startingDevice } = playback;
+  const progressMs = useSpotifyProgress(playback);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [restore, setRestore] = useState<number | null>(null);
   const [scrub, setScrub] = useState<number | null>(null);
@@ -219,14 +220,14 @@ const artistCache = new Map<string, SpotifyArtist>();
 
 function NowPlayingPanel({ mode, onMode, onClose, onExpand, onLyrics }: { mode: "now" | "queue"; onMode: (mode: "now" | "queue") => void; onClose: () => void; onExpand: () => void; onLyrics: () => void }) {
   const { playback, openAlbum, openArtist, isLiked, toggleLike, toast, trackMenu, openMenu } = useSp();
-  const { track, queue, recentTracks, playTrackUri, lyricsForTrack, progressMs, browse } = playback;
+  const { track, queue, recentTracks, playTrackUri, lyricsForTrack, browse } = playback;
   const [queueTab, setQueueTab] = useState<"queue" | "recent">("queue");
   const [about, setAbout] = useState<SpotifyArtist | null>(null);
   const [following, setFollowing] = useState(false);
   const artistId = track?.artists[0]?.id;
   const { lyrics } = useTrackLyrics(mode === "now" ? track : null, lyricsForTrack);
   const tint = useArtworkTint(bigImage(track?.album?.images));
-  const active = activeLyricIndexFor(lyrics, progressMs);
+  const active = useActiveLyric(playback, lyrics);
   const liked = track ? isLiked(track) : false;
 
   useEffect(() => {
@@ -481,11 +482,12 @@ function LibrarySidebar({ prefs, setPrefs, items, onCreate }: { prefs: Prefs; se
 
 function FullscreenPlayer({ onClose }: { onClose: () => void }) {
   const { playback, isLiked, toggleLike, toast } = useSp();
-  const { track, isPlaying, progressMs, volume, seekTo, setVolumePercent, onToggle, onPrev, onNext, lyricsForTrack, shuffleOn, toggleShuffle, repeatMode, cycleRepeat } = playback;
+  const { track, isPlaying, volume, seekTo, setVolumePercent, onToggle, onPrev, onNext, lyricsForTrack, shuffleOn, toggleShuffle, repeatMode, cycleRepeat } = playback;
+  const progressMs = useSpotifyProgress(playback);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const { lyrics, loading, error } = useTrackLyrics(track, lyricsForTrack);
-  const active = useMemo(() => activeLyricIndexFor(lyrics, progressMs), [lyrics, progressMs]);
+  const active = useActiveLyric(playback, lyrics);
   const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => {
@@ -543,8 +545,8 @@ function FullscreenPlayer({ onClose }: { onClose: () => void }) {
           {!loading && lyrics && lyrics.lines.length > 0 ? (
             <div ref={viewportRef} className="sp-full__lyrics-body" tabIndex={0} aria-label="Song lyrics">
               {lyrics.lines.map((line, index) => {
-                const on = index === active;
-                return <p key={`${line.timeMs ?? "plain"}-${index}`} data-lyric-index={index} style={{ color: on || !lyrics.synced ? "#0b1020" : "#8993a6", fontSize: lyrics.synced ? 22 : 17, transform: on && !reduce ? "translateX(4px)" : "none" }}>{line.text}</p>;
+                const st = !lyrics.synced ? "plain" : index === active ? "active" : index < active ? "past" : "future";
+                return <p key={`${line.timeMs ?? "plain"}-${index}`} data-lyric-index={index} className={`sp-flyr is-${st}`}>{line.text}</p>;
               })}
             </div>
           ) : null}
@@ -794,7 +796,23 @@ function ConnectedWorkspace({ playback }: { playback: SpotifyPlaybackHook }) {
     playingTrackId: track?.id ?? null, isPlaying,
   };
 
-  const toggleRight = (mode: "now" | "queue") => setPrefs({ right: prefs.right === mode ? null : mode });
+  const toggleRight = (mode: "now" | "queue") => { if (prefs.right === mode) userClosedRight.current = true; setPrefs({ right: prefs.right === mode ? null : mode }); };
+
+  // Open the Now Playing sidebar when a song starts, unless the user closed it. Keep it mounted while it slides shut.
+  const userClosedRight = useRef(false);
+  const autoOpenedFor = useRef<string | null>(null);
+  const [panelMode, setPanelMode] = useState<"now" | "queue" | null>(prefs.right);
+  const playingId = playback.track?.id ?? null;
+  useEffect(() => {
+    if (!playingId || !playback.isPlaying || autoOpenedFor.current === playingId) return;
+    autoOpenedFor.current = playingId;
+    if (!userClosedRight.current && !prefs.right) setPrefs({ right: "now" });
+  }, [playingId, playback.isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (prefs.right) { setPanelMode(prefs.right); return; }
+    const id = window.setTimeout(() => setPanelMode(null), 240);
+    return () => window.clearTimeout(id);
+  }, [prefs.right]);
   const toggleLyrics = () => { if (view.type === "lyrics") { if (canBack) goBack(); else goTo({ type: "home" }); } else goTo({ type: "lyrics" }); };
 
   const headerTitle = view.type === "playlist" ? view.playlist.name : view.type === "album" ? view.album.name : view.type === "artist" ? view.artist.name : view.type === "liked" ? "Liked Songs" : "";
@@ -901,7 +919,9 @@ function ConnectedWorkspace({ playback }: { playback: SpotifyPlaybackHook }) {
             </div>
           </main>
 
-          {prefs.right ? <NowPlayingPanel mode={prefs.right} onMode={(mode) => setPrefs({ right: mode })} onClose={() => setPrefs({ right: null })} onExpand={() => setFullscreen(true)} onLyrics={() => goTo({ type: "lyrics" })} /> : null}
+          <div className={`sp-rightwrap ${prefs.right ? "is-open" : ""}`} aria-hidden={!prefs.right}>
+            {panelMode ? <NowPlayingPanel mode={panelMode} onMode={(mode) => setPrefs({ right: mode })} onClose={() => { userClosedRight.current = true; setPrefs({ right: null }); }} onExpand={() => setFullscreen(true)} onLyrics={() => goTo({ type: "lyrics" })} /> : null}
+          </div>
         </div>
 
         <PlayerBar rightPanel={prefs.right} onRight={toggleRight} onExpand={() => setFullscreen(true)} lyricsOpen={view.type === "lyrics"} onLyrics={toggleLyrics} />

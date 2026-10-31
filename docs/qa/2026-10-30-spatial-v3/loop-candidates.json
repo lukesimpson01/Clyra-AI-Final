@@ -1,0 +1,8 @@
+{
+  "fixture": "Real corridor images, held-out pair matches removed in a copied QA database",
+  "proposedPairs": 10,
+  "verifiedPairs": 10,
+  "budget": 10,
+  "elapsedMs": 521,
+  "verification": "serial calibrated two-view estimation"
+}

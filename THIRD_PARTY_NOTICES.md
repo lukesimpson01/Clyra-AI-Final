@@ -181,3 +181,49 @@ Clyra Agents runs Rakazo (https://github.com/elie222/rakazo) locally from its pu
 (https://www.apache.org/licenses/LICENSE-2.0). `electron/agents/docker-compose.yml` is derived from Rakazo's
 `infra/compose/docker-compose.images.yml`; Clyra's changes are noted at the top of that file. Clyra layers its own
 theme over Rakazo's web UI at runtime and does not modify Rakazo's source.
+
+## OpenFilm (Clyra Editor)
+
+`vendor/openfilm` contains a modified copy of OpenFilm Studio, Copyright (c) 2026 OpenFilm contributors, MIT License.
+See `vendor/openfilm/LICENSE` and `vendor/openfilm/CLYRA.md`.
+# Editor font library
+
+The advanced editor bundles 24 font families from the official [Google Fonts repository](https://github.com/google/fonts). Each font's SIL Open Font License is included alongside the TTF in `apps/shorts/openfilm/packages/openfilm/studio/ui/public/assets/fonts/`. These are open font alternatives, including original tactical title treatments; no proprietary game font is distributed.
+
+# Universal visual tracking additions
+
+Mediabunny (MPL-2.0), used as an independently imported decoder/demuxer for
+source-timestamped video samples. Its source is available at
+https://github.com/Vanilagy/mediabunny. No Mediabunny source files were modified.
+
+Optional Face/Hand/Pose Landmarker task bundles come from Google's MediaPipe
+Models distribution (float16, version 1) at https://storage.googleapis.com/mediapipe-models/.
+MediaPipe's documentation and model cards are at https://ai.google.dev/edge/mediapipe/solutions/vision.
+They load only for the selected semantic recovery preset. Core point/region/cursor
+tracking uses the existing classical optical flow and original patch-matching code.
+No PolyForm Noncommercial cursor-tracker code, datasets or model weights are included.
+The official model cards identify Apache-2.0 licensing: [Face Mesh V2](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf),
+[face blendshapes](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf),
+[BlazePose GHUM](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf),
+and [hand tracking](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20%28Lite_Full%29%20with%20Fairness%20Oct%202021.pdf).
+
+Downloaded music and MyInstants effects are local source recordings with provenance
+and hashes in `shorts-library/recordings.json`. Downloading a recording does not
+change its original copyright or distribution terms. Generated legacy sounds are
+not presented as those named recordings.
+
+## Optional native spatial runtime
+
+The optional installer provisions dependencies outside the Electron application bundle. Their original notices remain in the installed packages and upstream source checkouts. Native processes are launched only for explicit analysis jobs; playback/export read cached transforms.
+
+- OpenCV 4.10.0.84: Apache-2.0, [official project](https://github.com/opencv/opencv).
+- PyCOLMAP 3.11.1 / COLMAP: BSD-3-Clause, [official project](https://github.com/colmap/colmap).
+- PyAV 16.0.1: BSD-3-Clause, [official project](https://github.com/PyAV-Org/PyAV). Its codec dependencies retain their own distribution terms.
+- LightGlue, revision `5a650c444718caffc2669dc0094cde908f42dd73`: Apache-2.0, [official project](https://github.com/cvg/LightGlue). The installer modifies the package initializer to include ALIKED, LightGlue and utilities only; the filtered runtime contains its licence and modification notice. SuperPoint implementation and weights are excluded.
+- ALIKED implementation and `aliked-n16` weights: BSD-3-Clause, [official project](https://github.com/Shiaoming/ALIKED). The notice is retained in the filtered extractor source.
+- SAM 2, revision `2b90b9f5ceec907a1c18123530e92e794ad901a4`, and SAM 2.1 Tiny checkpoint: Apache-2.0, [official project](https://github.com/facebookresearch/sam2).
+- Video Depth Anything, revision `4f5ae23172ba60fd7bc11ef671cca678842c7072`: Apache-2.0 source; only the Apache-2.0 **Small** checkpoint is installed. [Official project and model licence distinctions](https://github.com/DepthAnything/Video-Depth-Anything).
+- PyTorch / Torchvision: BSD-3-Clause, [official project](https://github.com/pytorch/pytorch). Intel macOS uses the compatible 2.2.2/0.17.2 CPU pair; other supported platforms use 2.5.1/0.20.1.
+- NumPy, SciPy, psutil and Kornia retain their package licences. The installer avoids a duplicate OpenCV package in the matching path.
+
+The setup script pins upstream revisions and verifies checkpoint SHA-256 values before enabling optional features. VGGT was inspected as research only and is not distributed or installed. Its original research weights are not substituted for its separately gated commercial checkpoint. Polychase's GPL implementation and noncommercial cursor-tracker sources/weights were not incorporated.

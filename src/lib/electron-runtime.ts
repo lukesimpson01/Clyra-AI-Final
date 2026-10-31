@@ -18,6 +18,7 @@ export type CareSnapshot = {
 
 export type SpotifyProfile = { id: string; displayName: string; email?: string; image?: string; product?: string };
 export type SpotifyPlaylist = {
+  description?: string | null;
   id: string;
   name: string;
   uri: string;
@@ -59,7 +60,7 @@ export type SpotifyAlbum = {
 };
 export type SpotifyBrowseKind =
   | "artist" | "artist-top-tracks" | "artist-albums" | "album" | "search-all"
-  | "followed-artists" | "saved-albums" | "top-artists" | "top-tracks" | "is-following"
+  | "followed-artists" | "saved-albums" | "top-artists" | "top-tracks" | "new-releases" | "made-for-you" | "popular-playlists" | "recommendations" | "is-following"
   | "follow-artist" | "unfollow-artist" | "create-playlist" | "add-to-playlist";
 export type SpotifyBrowseResult = {
   ok: boolean;
@@ -73,6 +74,7 @@ export type SpotifyBrowseResult = {
   playlists?: SpotifyPlaylist[];
   playlist?: SpotifyPlaylist;
   following?: boolean[];
+  seed?: string;
 };
 export type SpotifyPlaybackState = {
   is_playing: boolean;

@@ -1,0 +1,556 @@
+{
+  "project": "DBEY7hu_P0t7",
+  "result": {
+    "results": [
+      {
+        "action": {
+          "tool": "add_text",
+          "text": "WORKFLOW TEST",
+          "at": 0,
+          "duration": 2
+        },
+        "result": {
+          "ok": true,
+          "message": "Added text \"WORKFLOW TEST\" (layer-mvukgthi0).",
+          "clipIds": [
+            "layer-mvukgthi0"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "animate",
+          "clip": "layer-mvukgthi0",
+          "property": "y",
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 70
+            },
+            {
+              "time": 1,
+              "value": 40
+            }
+          ]
+        },
+        "result": {
+          "ok": true,
+          "message": "2 keyframes on y of Text.",
+          "clipIds": [
+            "layer-mvukgthi0"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "add_subtitles",
+          "cues": [
+            {
+              "start": 0,
+              "end": 2,
+              "text": "One two three"
+            }
+          ],
+          "mode": "Lines",
+          "animation": "Slide up",
+          "replace": true
+        },
+        "result": {
+          "ok": true,
+          "message": "Added subtitles: 1 line (layer-sub-mvukgvq1), 2s.",
+          "clipIds": [
+            "layer-sub-mvukgvq1"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "add_device",
+          "preset": "floatingReveal",
+          "device": "laptop",
+          "at": 3,
+          "length": 1.6
+        },
+        "result": {
+          "ok": true,
+          "message": "Added 3D MacBook Showcase (layer-3d-mvukgwh91z2) at 3s for 1.6s (screen: none yet — set screen to a project video).",
+          "clipIds": [
+            "layer-3d-mvukgwh91z2"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "append_device_action",
+          "clip": "layer-3d-mvukgwh91z2",
+          "action": "openLid",
+          "duration": 0.4
+        },
+        "result": {
+          "ok": true,
+          "message": "Appended openLid from 1.6s as a new block on the same device track.",
+          "clipIds": [
+            "layer-3d-mvukgwh91z2-action-mvukgx3f"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "append_device_action",
+          "clip": "layer-3d-mvukgwh91z2",
+          "action": "screenOn",
+          "screen": "assets/corridor.MOV",
+          "duration": 0.4
+        },
+        "result": {
+          "ok": true,
+          "message": "Appended screenOn from 2s as a new block on the same device track.",
+          "clipIds": [
+            "layer-3d-mvukgwh91z2-action-mvukgxw4"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "append_device_action",
+          "clip": "layer-3d-mvukgwh91z2",
+          "action": "closeLid",
+          "duration": 0.4
+        },
+        "result": {
+          "ok": true,
+          "message": "Appended closeLid from 2.4s as a new block on the same device track.",
+          "clipIds": [
+            "layer-3d-mvukgwh91z2-action-mvukgyug"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "add_model",
+          "path": "assets/panel.gltf",
+          "at": 8,
+          "duration": 0.8,
+          "animation": false
+        },
+        "result": {
+          "ok": true,
+          "message": "Added model scene layer-3d-mvukh0wb5hf, object index 0.",
+          "clipIds": [
+            "layer-3d-mvukh0wb5hf"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "append_model_animation",
+          "clip": "layer-3d-mvukh0wb5hf",
+          "animation": 0,
+          "duration": 0.4
+        },
+        "result": {
+          "ok": true,
+          "message": "Appended the animation to the same character.",
+          "clipIds": [
+            "layer-3d-mvukh0wb5hf"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "append_model_animation",
+          "clip": "layer-3d-mvukh0wb5hf",
+          "animation": 0,
+          "duration": 0.4
+        },
+        "result": {
+          "ok": true,
+          "message": "Appended the animation to the same character.",
+          "clipIds": [
+            "layer-3d-mvukh0wb5hf"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "add_camera",
+          "mode": "3d",
+          "preset": "manual",
+          "at": 3,
+          "length": 2.8
+        },
+        "result": {
+          "ok": true,
+          "message": "Added 3D Camera · No preset · custom path (layer-cam-mvukh52m6ip) at 3s for 2.8s, on a line above the Video line.",
+          "clipIds": [
+            "layer-cam-mvukh52m6ip"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "set_3d_keyframe",
+          "clip": "layer-cam-mvukh52m6ip",
+          "time": 1,
+          "position": [
+            1,
+            1,
+            5
+          ],
+          "target": [
+            0,
+            0,
+            0
+          ]
+        },
+        "result": {
+          "ok": true,
+          "message": "Saved the 3D timeline diamond at 1s.",
+          "clipIds": [
+            "layer-cam-mvukh52m6ip"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "add_story",
+          "kind": "wyr",
+          "at": 12,
+          "questions": [
+            {
+              "a": "Choice A",
+              "b": "Choice B",
+              "percent": 60
+            }
+          ]
+        },
+        "result": {
+          "ok": true,
+          "message": "Added a Would you rather (layer-story-wyr-mvukh6ld), 8.4s.",
+          "clipIds": [
+            "layer-story-wyr-mvukh6ld"
+          ]
+        }
+      },
+      {
+        "action": {
+          "tool": "review_project"
+        },
+        "result": {
+          "ok": true,
+          "message": "{\"verified\":[\"layer-cam-mvukh52m6ip\",\"layer-3d-mvukh0wb5hf\",\"layer-3d-mvukgwh91z2\",\"layer-3d-mvukgwh91z2-action-mvukgx3f\",\"layer-3d-mvukgwh91z2-action-mvukgxw4\",\"layer-3d-mvukgwh91z2-action-mvukgyug\",\"layer-sub-mvukgvq1\",\"layer-mvukgthi0\",\"layer-story-wyr-mvukh6ld\"],\"issues\":[],\"scope\":\"Saved settings and timeline verified. This check does not claim visual quality or measured 3D geometry.\"}"
+        }
+      }
+    ],
+    "device": {
+      "id": "layer-3d-mvukgwh91z2",
+      "kind": "scene3d",
+      "name": "3D MacBook Showcase",
+      "duration": 2.8,
+      "keyframes": {},
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "shapeType": "rect",
+      "color": "#4568ee",
+      "width": 40,
+      "height": 22,
+      "cornerRadius": 12,
+      "objects": [
+        {
+          "type": "laptop",
+          "finish": "silver",
+          "motion": {
+            "keys": [
+              {
+                "t": 0,
+                "p": [
+                  -1.5,
+                  -1.45,
+                  -1.6
+                ],
+                "r": [
+                  -16,
+                  52,
+                  -12
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 0.8989999999999999,
+                "p": [
+                  -0.5700000000000001,
+                  -0.33099999999999996,
+                  -0.20800000000000007
+                ],
+                "r": [
+                  -4.8,
+                  11.44,
+                  -3
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 1.55,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 1,
+                "lid": 110
+              },
+              {
+                "t": 1.6,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2.4,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 110
+              },
+              {
+                "t": 2.8,
+                "p": [
+                  0,
+                  0,
+                  0
+                ],
+                "r": [
+                  12,
+                  0,
+                  0
+                ],
+                "s": 0.9999999999999999,
+                "o": 1,
+                "lid": 0
+              }
+            ],
+            "curved": true,
+            "arcLength": true,
+            "smoothStart": true,
+            "smoothStop": true,
+            "faceCamera": false,
+            "faceShare": 0.35,
+            "introMotion": {
+              "keys": [
+                {
+                  "t": 0,
+                  "p": [
+                    -1.5,
+                    -1.45,
+                    -1.6
+                  ],
+                  "r": [
+                    -16,
+                    52,
+                    -12
+                  ],
+                  "s": 1,
+                  "lid": 110
+                },
+                {
+                  "t": 0.8989999999999999,
+                  "p": [
+                    -0.5700000000000001,
+                    -0.33099999999999996,
+                    -0.20800000000000007
+                  ],
+                  "r": [
+                    -4.8,
+                    11.44,
+                    -3
+                  ],
+                  "s": 1,
+                  "lid": 110
+                },
+                {
+                  "t": 1.55,
+                  "p": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "r": [
+                    12,
+                    0,
+                    0
+                  ],
+                  "s": 1,
+                  "lid": 110
+                }
+              ],
+              "curved": true,
+              "arcLength": true,
+              "smoothStart": true,
+              "smoothStop": true,
+              "faceCamera": true,
+              "faceShare": 0.35
+            },
+            "introLength": 1.6,
+            "continueFrom": 1.6,
+            "segmentEase": true,
+            "enabled": true,
+            "returnBack": false,
+            "reverse": false,
+            "loop": "none"
+          },
+          "notch": true,
+          "quick": {
+            "device": "laptop",
+            "entrance": "float",
+            "startFrom": "bottomLeft",
+            "finishAt": "centre",
+            "duration": 2.5,
+            "rotation": "cinematic",
+            "smooth": true,
+            "holdAtEnd": true,
+            "returnMotion": false,
+            "exit": "none",
+            "exitDuration": 0.8,
+            "length": 1.6
+          },
+          "screen": {
+            "events": [
+              {
+                "t": 0,
+                "on": false
+              },
+              {
+                "t": 2,
+                "on": true
+              }
+            ],
+            "startMode": "action",
+            "onAt": 2,
+            "playAt": 2,
+            "src": "assets/corridor.MOV"
+          },
+          "actions": [
+            {
+              "type": "openLid",
+              "at": 1.6,
+              "duration": 0.3999999999999999
+            },
+            {
+              "type": "screenOn",
+              "at": 2,
+              "duration": 0.3999999999999999
+            },
+            {
+              "type": "closeLid",
+              "at": 2.4,
+              "duration": 0.3999999999999999
+            }
+          ],
+          "sequenceEnd": 2.8
+        }
+      ],
+      "preset": "floatingReveal",
+      "motionBlur": 0,
+      "softShadow": true
+    },
+    "ids": {
+      "text": "layer-mvukgthi0",
+      "device": "layer-3d-mvukgwh91z2",
+      "camera": "layer-cam-mvukh52m6ip",
+      "model": "layer-3d-mvukh0wb5hf",
+      "story": "layer-story-wyr-mvukh6ld"
+    },
+    "agent": {
+      "error": "[object Object]"
+    },
+    "agentEvents": [
+      {
+        "phase": "Planning the edit"
+      }
+    ],
+    "savedText": {
+      "id": "layer-mvukgthi0",
+      "kind": "text",
+      "name": "Text",
+      "duration": 2,
+      "keyframes": {
+        "y": [
+          {
+            "id": "kf_mvukgv980rs0o",
+            "time": 0,
+            "value": 70,
+            "ease": "Linear"
+          },
+          {
+            "id": "kf_mvukgv981pj3o",
+            "time": 1,
+            "value": 40,
+            "ease": "Linear"
+          }
+        ]
+      },
+      "x": 50,
+      "y": 50,
+      "scale": 100,
+      "rotation": 0,
+      "opacity": 100,
+      "text": "WORKFLOW TEST",
+      "fontSize": 90,
+      "color": "#ffffff",
+      "weight": 800,
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "width": 80,
+      "height": 20
+    },
+    "clipsBefore": 10,
+    "clipsAfter": 10,
+    "phases": []
+  },
+  "errors": []
+}

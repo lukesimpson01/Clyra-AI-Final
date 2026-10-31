@@ -333,3 +333,11 @@
 .wb-panel.native .wb-native { display: block; position: absolute; inset: 0; }
 .wb-panel.native .wb-frame,
 .wb-panel.native .wb-start { display: none; }
+
+/* Page loading: a hairline that eases across the top of the page, not a status message. */
+.wb-load { position: absolute; z-index: 3; top: 0; left: 0; right: 0; height: 2px; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 200ms ease; }
+.wb-load::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; background: linear-gradient(90deg, transparent, #3977f6, transparent); transform: translateX(-100%); }
+.wb-load.on { opacity: 1; }
+.wb-load.on::after { animation: wb-load 1.1s cubic-bezier(.45, 0, .55, 1) infinite; }
+@keyframes wb-load { to { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .wb-load.on::after { animation: none; width: 100%; transform: none; opacity: .5; } }

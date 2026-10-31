@@ -1,0 +1,43 @@
+{
+  "fixture": "Real two-person SAM2 frame",
+  "first": {
+    "w": 320,
+    "h": 180,
+    "edge": 660,
+    "fill": 4817,
+    "rect": {
+      "x": 70,
+      "y": 100,
+      "w": 960,
+      "h": 540
+    },
+    "stamp": "0.333333"
+  },
+  "next": 732,
+  "playback": {
+    "count": 46,
+    "visible": 46,
+    "valid": 46
+  },
+  "stale": false,
+  "selection": {
+    "valid": {
+      "url": "/p/data/b.png",
+      "x": 0,
+      "y": 0,
+      "timestamp": 0.1
+    },
+    "bad": null,
+    "missing": null,
+    "matte": {
+      "url": "/p/atlas.png",
+      "x": 0,
+      "y": 0,
+      "w": 2,
+      "h": 2,
+      "timestamp": 0
+    },
+    "empty": null
+  },
+  "errors": []
+}

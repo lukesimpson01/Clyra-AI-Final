@@ -1,0 +1,68 @@
+[
+  {
+    "id": "fcc8b45a896a",
+    "project": "hfuUCaSKMkwU",
+    "name": "Native foreground compositor QA 29 Oct",
+    "label": "",
+    "kind": "video",
+    "ask": {
+      "kind": "video",
+      "name": "Clyra-V3-foreground-verified",
+      "shortEdge": 1080,
+      "fps": 30,
+      "audio": false,
+      "hardware": true,
+      "folder": "/Users/lukesimpson/Downloads"
+    },
+    "status": "done",
+    "progress": 1,
+    "phase": null,
+    "framesDone": 24,
+    "framesTotal": 24,
+    "rate": 4.130747126436782,
+    "etaMs": null,
+    "encoder": "h264_videotoolbox",
+    "outputs": [
+      "/Users/lukesimpson/Downloads/Clyra-V3-foreground-verified.mp4"
+    ],
+    "bytes": 1079130,
+    "alpha": null,
+    "at": 1793338167367,
+    "startedAt": 1793338167370,
+    "finishedAt": 1793338181527,
+    "out": "/Users/lukesimpson/Downloads/Clyra-V3-foreground-verified.mp4"
+  },
+  {
+    "id": "95c0289f278c",
+    "project": "pwvJhmgzQ6qC",
+    "name": "Surface stability QA 29 Oct",
+    "label": "",
+    "kind": "video",
+    "ask": {
+      "kind": "video",
+      "name": "Clyra-V3-corridor-verified",
+      "shortEdge": 1080,
+      "fps": 30,
+      "audio": false,
+      "hardware": true,
+      "folder": "/Users/lukesimpson/Downloads"
+    },
+    "status": "done",
+    "progress": 1,
+    "phase": null,
+    "framesDone": 186,
+    "framesTotal": 186,
+    "rate": 3.361375074949579,
+    "etaMs": null,
+    "encoder": "h264_videotoolbox",
+    "outputs": [
+      "/Users/lukesimpson/Downloads/Clyra-V3-corridor-verified.mp4"
+    ],
+    "bytes": 7963635,
+    "alpha": null,
+    "at": 1793338181908,
+    "startedAt": 1793338181910,
+    "finishedAt": 1793338263107,
+    "out": "/Users/lukesimpson/Downloads/Clyra-V3-corridor-verified.mp4"
+  }
+]

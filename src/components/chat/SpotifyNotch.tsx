@@ -16,7 +16,7 @@
  * lives there, so this file only exports the headless playback state and the
  * absolutely-positioned content layers that get dropped into that shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getElectronDesktop } from "../../lib/electron-runtime";
 import type { SpotifyBrowseKind, SpotifyBrowseResult, SpotifyDevice, SpotifyLyrics, SpotifyPlayContext, SpotifyPlaylist, SpotifyPlaylistItem, SpotifyProfile, SpotifyTrack } from "../../lib/electron-runtime";
 import { mergeHistory, readLocalHistory, writeLocalHistory } from "../spotify/music-state";
@@ -30,12 +30,12 @@ const POLL_MS = 4000;
 // (used by both this file's own pill/panel reveal and App.tsx's tabs layer +
 // shell, so the "hide elements -> resize the shell -> reveal new content"
 // sequence stays in lockstep everywhere it happens).
-export const MORPH_EASE = "cubic-bezier(.2,.86,.25,1)";
+export const MORPH_EASE = "cubic-bezier(.32,.72,0,1)";
 export const MORPH_HIDE_MS = 120;
-export const MORPH_REVEAL_MS = 220;
-export const MORPH_REVEAL_DELAY_MS = 120;
-export const MORPH_SHELL_MS = 360;
-export const MORPH_SHELL_DELAY_MS = 35;
+export const MORPH_REVEAL_MS = 260;
+export const MORPH_REVEAL_DELAY_MS = 150;
+export const MORPH_SHELL_MS = 520;
+export const MORPH_SHELL_DELAY_MS = 0;
 
 function fmt(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -44,7 +44,55 @@ function fmt(ms: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Live playback position, ticking between polls without re-rendering whoever owns the playback hook. */
+export type SpotifyProgressStore = { get: () => number; subscribe: (listener: () => void) => () => void };
+
+const noProgressSubscription = () => () => {};
+/** The live position for components that show it (time labels, the scrubber, synced lyrics). Only they re-render. */
+export function useSpotifyProgress(playback: Pick<SpotifyPlaybackHook, "progressMs"> & { progress?: SpotifyProgressStore }) {
+  const store = playback.progress;
+  return useSyncExternalStore(store ? store.subscribe : noProgressSubscription, store ? store.get : () => playback.progressMs);
+}
+
+/**
+ * Keeps a hook's returned object identical between renders unless one of its data fields changed. Functions are
+ * replaced by stable wrappers that always call the latest version, so consumers memoised on the object (the
+ * Clyra Music workspace) skip the re-renders their owner goes through.
+ */
+function useStableObject<T extends Record<string, unknown>>(raw: T, volatile: readonly string[] = []): T {
+  const latest = useRef(raw);
+  latest.current = raw;
+  const wrappers = useRef(new Map<string, (...args: unknown[]) => unknown>());
+  const previous = useRef<{ raw: T; out: T } | null>(null);
+  const prev = previous.current;
+  if (prev) {
+    let same = true;
+    for (const key of Object.keys(raw)) {
+      const value = raw[key];
+      if (typeof value === "function" || volatile.includes(key)) continue;
+      if (!Object.is(value, prev.raw[key])) { same = false; break; }
+    }
+    if (same) return prev.out;
+  }
+  const out = {} as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    const value = raw[key];
+    if (typeof value === "function") {
+      let wrapper = wrappers.current.get(key);
+      if (!wrapper) {
+        wrapper = (...args: unknown[]) => (latest.current[key] as (...a: unknown[]) => unknown)(...args);
+        wrappers.current.set(key, wrapper);
+      }
+      out[key] = wrapper;
+    } else out[key] = value;
+  }
+  previous.current = { raw, out: out as T };
+  return out as T;
+}
+
 export type SpotifyPlaybackHook = {
+  /** Subscribe with useSpotifyProgress for a live position; progressMs/pct only change when playback is polled. */
+  progress?: SpotifyProgressStore;
   /** The Electron desktop bridge (and therefore Spotify) is present. */
   available: boolean;
   connected: boolean;
@@ -154,6 +202,9 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
   // Progress is extrapolated from the last authoritative reading so the bar
   // and synced lyrics move smoothly between the 4 s Spotify polls.
   const progressAnchorRef = useRef({ ms: 0, at: 0 });
+  // After Next/Previous, Spotify can keep answering with the old song for a moment. Polls that still describe it
+  // (same song, far ahead of where we know we are) are dropped so the clock never snaps back to the old position.
+  const skipGuardRef = useRef<{ uri: string; at: number } | null>(null);
 
   // Keep the fader's value as the user's immediate target.  In particular,
   // don't feed a smoothed display value back into a native range input: it
@@ -190,6 +241,7 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
 
   const refreshPlayback = useCallback(async () => {
     if (!spotify || !connected) return;
+    const requestedAt = Date.now();
     const res = await spotify.playbackState().catch(() => null);
     if (!res?.ok) {
       if (res?.code === "SPOTIFY_SIGN_IN_REQUIRED") {
@@ -208,18 +260,33 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
     }
     setError(null);
     const state = res.state;
+    const guard = skipGuardRef.current;
+    if (guard) {
+      const sinceSkip = Date.now() - guard.at;
+      if (sinceSkip > 3000) skipGuardRef.current = null;
+      else if (state?.item?.uri === guard.uri && Number(state.progress_ms || 0) > sinceSkip + 1500) return;
+      else if (state?.item?.uri !== guard.uri) skipGuardRef.current = null;
+    }
     if (!state) {
       setTrack(null);
       setIsPlaying(false);
       setDevice(null);
       return;
     }
-    setTrack(state.item ?? null);
+    // Polls return fresh objects; keep the previous ones when nothing changed so consumers don't re-render.
+    setTrack((previous) => {
+      const item = state.item ?? null;
+      return previous && item && previous.uri === item.uri && previous.duration_ms === item.duration_ms ? previous : item;
+    });
     setIsPlaying(Boolean(state.is_playing));
-    progressAnchorRef.current = { ms: Number(state.progress_ms || 0), at: Date.now() };
+    // The reading is about half a round trip old by the time it arrives.
+    progressAnchorRef.current = { ms: Number(state.progress_ms || 0), at: Math.round((requestedAt + Date.now()) / 2) };
     setProgressMs(Number(state.progress_ms || 0));
     setContextUri(state.context?.uri ?? null);
-    setDevice(state.device ?? null);
+    setDevice((previous) => {
+      const next = state.device ?? null;
+      return previous && next && previous.id === next.id && previous.volume_percent === next.volume_percent && previous.is_active === next.is_active && previous.name === next.name ? previous : next;
+    });
     setShuffleOn(Boolean(state.shuffle_state));
     if (state.repeat_state === "track" || state.repeat_state === "context" || state.repeat_state === "off") {
       setRepeatMode(state.repeat_state);
@@ -254,16 +321,34 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
     return () => window.clearInterval(id);
   }, [active, connected, refreshPlayback]);
 
-  // Smoothly advance progress between polls so it doesn't sit frozen for 4s.
+  // Smoothly advance progress between polls so it doesn't sit frozen for 4s. The tick goes to a tiny external store
+  // (read with useSpotifyProgress), never to React state here: this hook lives in App, and a 250 ms state tick
+  // re-rendered the entire app four times a second while music played.
+  const progressValueRef = useRef(0);
+  const progressListenersRef = useRef(new Set<() => void>());
+  const progressStore = useMemo<SpotifyProgressStore>(() => ({
+    get: () => progressValueRef.current,
+    subscribe: (listener) => {
+      progressListenersRef.current.add(listener);
+      return () => { progressListenersRef.current.delete(listener); };
+    },
+  }), []);
+  const publishProgress = useCallback((ms: number) => {
+    if (ms === progressValueRef.current) return;
+    progressValueRef.current = ms;
+    progressListenersRef.current.forEach((listener) => listener());
+  }, []);
+  useEffect(() => { publishProgress(progressMs); }, [progressMs, publishProgress]);
   useEffect(() => {
     if (!active || !isPlaying || !track) return;
     progressAnchorRef.current = { ms: progressAnchorRef.current.ms, at: progressAnchorRef.current.at || Date.now() };
     const id = window.setInterval(() => {
+      if (!progressListenersRef.current.size) return;
       const anchor = progressAnchorRef.current;
-      setProgressMs(Math.min(track.duration_ms, anchor.ms + (Date.now() - anchor.at)));
-    }, 250);
+      publishProgress(Math.min(track.duration_ms, anchor.ms + (Date.now() - anchor.at)));
+    }, 120);
     return () => window.clearInterval(id);
-  }, [active, isPlaying, track]);
+  }, [active, isPlaying, track, publishProgress]);
 
   // Pausing freezes the extrapolation at the position shown right now.
   useEffect(() => {
@@ -374,12 +459,20 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
   const onPrev = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!spotify) return;
-    void spotify.control({ action: "previous" }).then(() => window.setTimeout(refreshPlayback, 400)).catch(() => undefined);
+    progressAnchorRef.current = { ms: 0, at: Date.now() };
+    if (track?.uri) skipGuardRef.current = { uri: track.uri, at: Date.now() };
+    setProgressMs(0);
+    publishProgress(0);
+    void spotify.control({ action: "previous" }).then(() => { window.setTimeout(refreshPlayback, 400); window.setTimeout(refreshPlayback, 1100); }).catch(() => undefined);
   };
   const onNext = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!spotify) return;
-    void spotify.control({ action: "next" }).then(() => window.setTimeout(refreshPlayback, 400)).catch(() => undefined);
+    progressAnchorRef.current = { ms: 0, at: Date.now() };
+    if (track?.uri) skipGuardRef.current = { uri: track.uri, at: Date.now() };
+    setProgressMs(0);
+    publishProgress(0);
+    void spotify.control({ action: "next" }).then(() => { window.setTimeout(refreshPlayback, 400); window.setTimeout(refreshPlayback, 1100); }).catch(() => undefined);
   };
 
   const ensurePlaybackDevice = useCallback(async () => {
@@ -816,7 +909,8 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
 
   const pct = track ? (progressMs / track.duration_ms) * 100 : 0;
 
-  return {
+  return useStableObject({
+    progress: progressStore,
     available,
     connected,
     connecting,
@@ -877,7 +971,9 @@ export function useSpotifyPlayback(active: boolean, loadLibrary = active): Spoti
     likeUris,
     checkLiked,
     playlistsChanged: refreshPlaylists,
-  };
+  // The position moves on every poll; it reaches the screen through the progress store, so on its own it is not a
+  // reason to hand every consumer a new object (and re-render all of Clyra Music).
+  }, ["progressMs", "pct"]);
 }
 
 const PILL_BARS = [
@@ -1102,8 +1198,33 @@ export function SpotifyNotchPanel({
   /** Hides the music notch until the user starts music again. */
   onDismiss?: () => void;
 }) {
-  const { connected, track, isPlaying, progressMs, volume, pct, onSeek, onPrev, onNext, onToggle, onVolumeDown, onVolumeWheel } = playback;
+  const { connected, track, isPlaying, volume, onSeek, onPrev, onNext, onToggle, onVolumeDown, onVolumeWheel } = playback;
+  const progressMs = useSpotifyProgress(playback);
+  const pct = track ? (progressMs / track.duration_ms) * 100 : 0;
+  // While the pointer is on the scrubber, the fill follows the pointer; the
+  // real position is committed on release (see the pointer handlers below).
+  const [scrubPct, setScrubPct] = useState<number | null>(null);
+  const shownPct = scrubPct ?? pct;
+  const shownMs = track ? (shownPct / 100) * track.duration_ms : 0;
+  // Only glide on normal forward ticks. Track changes, restarts and seeks jump instantly instead of dragging back.
+  const lastScrub = useRef({ uri: track?.uri ?? null, ms: progressMs });
+  const glide = lastScrub.current.uri === (track?.uri ?? null) && progressMs >= lastScrub.current.ms && progressMs - lastScrub.current.ms < 1500;
+  lastScrub.current = { uri: track?.uri ?? null, ms: progressMs };
+  const scrubTransition = scrubPct !== null ? "none" : glide ? "width 0.3s linear" : "none";
+  const scrubFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!track) return null;
+    const r = e.currentTarget.getBoundingClientRect();
+    return Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100));
+  };
   const showPlayer = connected && track;
+  // Content lands in three soft beats after the shell has mostly grown.
+  const stagger = (i: number): React.CSSProperties => ({
+    opacity: visible ? 1 : 0,
+    transform: visible ? "translateY(0)" : "translateY(6px)",
+    transition: visible
+      ? `opacity 300ms ease ${MORPH_REVEAL_DELAY_MS + i * 45}ms, transform 420ms ${MORPH_EASE} ${MORPH_REVEAL_DELAY_MS + i * 45}ms`
+      : `opacity ${MORPH_HIDE_MS}ms ease, transform ${MORPH_HIDE_MS}ms ease`,
+  });
   return (
     <div
       style={{
@@ -1111,20 +1232,18 @@ export function SpotifyNotchPanel({
         left: "50%",
         top: 0,
         width: 424,
-        padding: "20px 22px 18px",
+        padding: "18px 22px 12px",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 15,
+        gap: 10,
         justifyContent: showPlayer ? "flex-start" : "center",
         minHeight: showPlayer ? undefined : 196,
         transition: visible
-          ? `opacity ${MORPH_REVEAL_MS}ms ease ${MORPH_REVEAL_DELAY_MS}ms, transform ${MORPH_REVEAL_MS}ms ${MORPH_EASE} ${MORPH_REVEAL_DELAY_MS}ms`
-          : `opacity ${MORPH_HIDE_MS}ms ease, transform ${MORPH_HIDE_MS}ms ${MORPH_EASE}`,
+          ? `opacity ${MORPH_REVEAL_MS}ms ease ${MORPH_REVEAL_DELAY_MS}ms`
+          : `opacity ${MORPH_HIDE_MS}ms ease`,
         opacity: visible ? 1 : 0,
-        transform: visible
-          ? "translateX(-50%) translateY(0) scale(1)"
-          : "translateX(-50%) translateY(-10px) scale(0.93)",
+        transform: "translateX(-50%)",
         pointerEvents: visible ? "auto" : "none",
       }}
     >
@@ -1137,53 +1256,10 @@ export function SpotifyNotchPanel({
           }}
           title="Hide music"
           aria-label="Hide music"
-          style={{
-            position: "absolute",
-            top: 14,
-            left: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 26,
-            height: 26,
-            borderRadius: "50%",
-            border: "none",
-            background: "oklch(0.95 0.008 258)",
-            color: "oklch(0.42 0.02 260)",
-            cursor: "pointer",
-          }}
+          style={{ ...cornerButton, top: 12, right: 14 }}
         >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
-      ) : null}
-      {onExpand && connected ? (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onExpand();
-          }}
-          title="Open Clyra Music"
-          style={{
-            position: "absolute",
-            top: 14,
-            right: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 26,
-            height: 26,
-            borderRadius: "50%",
-            border: "none",
-            background: "oklch(0.95 0.008 258)",
-            color: "oklch(0.42 0.02 260)",
-            cursor: "pointer",
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7" />
           </svg>
         </button>
       ) : null}
@@ -1191,71 +1267,60 @@ export function SpotifyNotchPanel({
         <ConnectPrompt playback={playback} />
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, ...stagger(0) }}>
             <div
               style={{
                 position: "relative",
-                width: 66,
-                height: 66,
+                width: 78,
+                height: 78,
                 borderRadius: 16,
                 flex: "0 0 auto",
                 overflow: "hidden",
-                background: "linear-gradient(145deg,oklch(0.91 0.05 250),oklch(0.8 0.1 260))",
-                boxShadow: "0 10px 22px -12px oklch(0.45 0.1 258 / 0.7),inset 0 0 0 1px oklch(1 0 0 / 0.35)",
+                background: "linear-gradient(145deg,oklch(0.93 0.01 258),oklch(0.86 0.015 258))",
+                boxShadow: "0 8px 18px -10px oklch(0.3 0.02 260 / 0.55)",
               }}
             >
               {track.album?.images?.[0]?.url ? (
                 <img src={track.album.images[0].url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               ) : null}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0, flex: "1 1 auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <img src="/icons/clyra-music.svg" alt="" style={{ width: 15, height: 15, borderRadius: 4, display: "block", flexShrink: 0 }} />
-                <div
-                  style={{
-                    fontFamily: "ui-monospace,'SF Mono',Menlo,monospace",
-                    fontSize: 9,
-                    letterSpacing: "0.14em",
-                    textTransform: "uppercase",
-                    color: "oklch(0.62 0.02 260)",
-                  }}
-                >
-                  Clyra Music
-                </div>
-              </div>
-              <div
-                style={{
-                  fontSize: 17,
-                  fontWeight: 600,
-                  letterSpacing: "-0.015em",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: "1 1 auto", paddingRight: 22 }}>
+              <div style={{ fontSize: 20, fontWeight: 650, letterSpacing: "-0.02em", color: "oklch(0.18 0.005 260)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {track.name}
               </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "oklch(0.55 0.02 260)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
+              <div style={{ fontSize: 16, color: "oklch(0.52 0.005 260)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {track.artists.map((a) => a.name).join(", ")}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 34, flex: "0 0 auto", paddingBottom: 2 }}>
-              <Waveform bars={PANEL_BARS} playing={isPlaying} size={{ w: 3, h: 34, gap: 3 }} />
-            </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontVariantNumeric: "tabular-nums", color: "oklch(0.52 0.005 260)", ...stagger(1) }}>
+            <div style={{ minWidth: 32 }}>{fmt(shownMs)}</div>
             <div
               onClick={onSeek}
-              style={{ position: "relative", height: 6, borderRadius: 4, background: "oklch(0.935 0.008 258)", cursor: "pointer" }}
+              onPointerDown={(e) => {
+                if (!track) return;
+                e.stopPropagation();
+                try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* synthetic/odd pointers */ }
+                const next = scrubFromEvent(e);
+                if (next !== null) setScrubPct(next);
+              }}
+              onPointerMove={(e) => {
+                if (scrubPct === null) return;
+                e.stopPropagation();
+                const next = scrubFromEvent(e);
+                if (next !== null) setScrubPct(next);
+              }}
+              onPointerUp={(e) => {
+                if (scrubPct === null) return;
+                e.stopPropagation();
+                setScrubPct(null);
+                // React's PointerEvent is a MouseEvent subtype; onSeek only
+                // reads clientX and the bar's rect, so it commits the seek.
+                if (track) onSeek(e);
+              }}
+              onPointerCancel={() => setScrubPct(null)}
+              style={{ position: "relative", flex: 1, height: 9, borderRadius: 999, overflow: "hidden", background: "oklch(0.925 0.002 258)", cursor: "pointer", touchAction: "none" }}
             >
               <div
                 style={{
@@ -1263,116 +1328,70 @@ export function SpotifyNotchPanel({
                   left: 0,
                   top: 0,
                   height: "100%",
-                  borderRadius: 4,
-                  background: "linear-gradient(90deg,oklch(0.68 0.14 248),oklch(0.58 0.18 258))",
-                  transition: "width 0.9s linear",
-                  width: `${pct.toFixed(2)}%`,
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  top: "50%",
-                  width: 11,
-                  height: 11,
-                  marginLeft: -5.5,
-                  marginTop: -5.5,
-                  borderRadius: "50%",
-                  background: "#fff",
-                  boxShadow: "0 2px 6px oklch(0.45 0.05 258 / 0.35),inset 0 0 0 1px oklch(0.9 0.02 258)",
-                  transition: "left 0.9s linear",
-                  left: `${pct.toFixed(2)}%`,
+                  background: "oklch(0.62 0.004 258)",
+                  transition: scrubTransition,
+                  width: `${shownPct.toFixed(2)}%`,
                 }}
               />
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, letterSpacing: "0.01em", color: "oklch(0.55 0.02 260)" }}>
-              <div>{fmt(progressMs)}</div>
-              <div>-{fmt(Math.max(0, track.duration_ms - progressMs))}</div>
-            </div>
+            <div style={{ minWidth: 32, textAlign: "right" }}>-{fmt(Math.max(0, track.duration_ms - shownMs))}</div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center" }}>
-            <div />
-            <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
-              <div onClick={onPrev} style={{ display: "flex", alignItems: "center", gap: 2, cursor: "pointer", padding: 6 }}>
-                <div style={{ width: 2, height: 13, borderRadius: 1, background: "oklch(0.4 0.02 260)" }} />
-                <div style={{ width: 0, height: 0, borderStyle: "solid", borderWidth: "6.5px 10px 6.5px 0", borderColor: "transparent oklch(0.4 0.02 260) transparent transparent" }} />
-              </div>
-              <div
-                onClick={onToggle}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  background: "linear-gradient(160deg,oklch(0.65 0.16 250),oklch(0.56 0.19 260))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  position: "relative",
-                  boxShadow: "0 10px 20px -8px oklch(0.58 0.18 258 / 0.9)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 4.5, opacity: isPlaying ? 1 : 0, transition: "opacity 0.18s ease" }}>
-                  <div style={{ width: 4, height: 15, borderRadius: 2, background: "#fff" }} />
-                  <div style={{ width: 4, height: 15, borderRadius: 2, background: "#fff" }} />
-                </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 17,
-                    top: 14,
-                    width: 0,
-                    height: 0,
-                    borderStyle: "solid",
-                    borderWidth: "8px 0 8px 13px",
-                    borderColor: "transparent transparent transparent #fff",
-                    opacity: isPlaying ? 0 : 1,
-                    transition: "opacity 0.18s ease",
-                  }}
-                />
-              </div>
-              <div onClick={onNext} style={{ display: "flex", alignItems: "center", gap: 2, cursor: "pointer", padding: 6 }}>
-                <div style={{ width: 0, height: 0, borderStyle: "solid", borderWidth: "6.5px 0 6.5px 10px", borderColor: "transparent transparent transparent oklch(0.4 0.02 260)" }} />
-                <div style={{ width: 2, height: 13, borderRadius: 1, background: "oklch(0.4 0.02 260)" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", ...stagger(2) }}>
+            <div
+              onMouseDown={onVolumeDown}
+              onWheel={onVolumeWheel}
+              title={`Volume ${volume}%`}
+              style={{ display: "flex", alignItems: "center", gap: 6, width: 74, cursor: "pointer", padding: "8px 0", color: "oklch(0.52 0.005 260)" }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+                <path d="M3 9v6h4l5 4V5L7 9H3z" />
+              </svg>
+              <div style={{ position: "relative", flex: 1, height: 4, borderRadius: 999, overflow: "hidden", background: "oklch(0.925 0.002 258)" }}>
+                <div style={{ position: "absolute", left: 0, top: 0, height: "100%", background: "oklch(0.62 0.004 258)", width: `${volume}%` }} />
               </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "oklch(0.68 0.015 260)" }}>Volume</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "oklch(0.45 0.02 260)", minWidth: 26, textAlign: "right" }}>{volume}%</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 34 }}>
+              <div onClick={onPrev} style={transportButton} aria-label="Previous">
+                <svg width="36" height="26" viewBox="0 0 30 22" fill="oklch(0.2 0.005 260)">
+                  <path d="M14 3.2v15.6a1.4 1.4 0 0 1-2.2 1.1L1.3 12.1a1.4 1.4 0 0 1 0-2.2L11.8 2.1A1.4 1.4 0 0 1 14 3.2zM28 3.2v15.6a1.4 1.4 0 0 1-2.2 1.1L15.3 12.1a1.4 1.4 0 0 1 0-2.2L25.8 2.1A1.4 1.4 0 0 1 28 3.2z" />
+                </svg>
               </div>
-              <div
-                onMouseDown={onVolumeDown}
-                onWheel={onVolumeWheel}
-                style={{ position: "relative", width: 78, height: 5, borderRadius: 4, background: "oklch(0.925 0.01 258)", cursor: "pointer" }}
-              >
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    height: "100%",
-                    borderRadius: 4,
-                    background: "linear-gradient(90deg,oklch(0.7 0.13 248),oklch(0.59 0.18 258))",
-                    width: `${volume}%`,
-                  }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "50%",
-                    width: 10,
-                    height: 10,
-                    marginLeft: -5,
-                    marginTop: -5,
-                    borderRadius: "50%",
-                    background: "#fff",
-                    boxShadow: "0 2px 5px oklch(0.45 0.05 258 / 0.35),inset 0 0 0 1px oklch(0.9 0.02 258)",
-                    left: `${volume}%`,
-                  }}
-                />
+              <div onClick={onToggle} style={{ ...transportButton, width: 44, height: 44 }} aria-label={isPlaying ? "Pause" : "Play"}>
+                <svg width="30" height="32" viewBox="0 0 26 28" fill="oklch(0.2 0.005 260)">
+                  <g style={{ opacity: isPlaying ? 1 : 0, transition: "opacity 0.18s ease" }}>
+                    <rect x="3" y="2" width="8" height="24" rx="2.6" />
+                    <rect x="15" y="2" width="8" height="24" rx="2.6" />
+                  </g>
+                  <path
+                    d="M6 3.6v20.8a1.5 1.5 0 0 0 2.3 1.3l16-10.4a1.5 1.5 0 0 0 0-2.5L8.3 2.3A1.5 1.5 0 0 0 6 3.6z"
+                    style={{ opacity: isPlaying ? 0 : 1, transition: "opacity 0.18s ease" }}
+                  />
+                </svg>
               </div>
+              <div onClick={onNext} style={transportButton} aria-label="Next">
+                <svg width="36" height="26" viewBox="0 0 30 22" fill="oklch(0.2 0.005 260)">
+                  <path d="M16 3.2v15.6a1.4 1.4 0 0 0 2.2 1.1l10.5-7.8a1.4 1.4 0 0 0 0-2.2L18.2 2.1A1.4 1.4 0 0 0 16 3.2zM2 3.2v15.6a1.4 1.4 0 0 0 2.2 1.1l10.5-7.8a1.4 1.4 0 0 0 0-2.2L4.2 2.1A1.4 1.4 0 0 0 2 3.2z" />
+                </svg>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {onExpand && connected ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExpand();
+                  }}
+                  title="Open Clyra Music"
+                  aria-label="Open Clyra Music"
+                  style={{ ...cornerButton, position: "static", width: 28, height: 28, background: "transparent" }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7" />
+                  </svg>
+                </button>
+              ) : null}
             </div>
           </div>
         </>
@@ -1380,3 +1399,28 @@ export function SpotifyNotchPanel({
     </div>
   );
 }
+
+const cornerButton: React.CSSProperties = {
+  position: "absolute",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 24,
+  height: 24,
+  borderRadius: "50%",
+  border: "none",
+  background: "oklch(0.955 0.002 258)",
+  color: "oklch(0.45 0.005 260)",
+  cursor: "pointer",
+  zIndex: 1,
+};
+
+const transportButton: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 40,
+  height: 40,
+  cursor: "pointer",
+  userSelect: "none",
+};

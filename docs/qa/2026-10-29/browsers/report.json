@@ -1,0 +1,32 @@
+[
+  {
+    "engine": "firefox",
+    "editor": {
+      "title": "Shorts Editor",
+      "viewer": 1
+    },
+    "interaction": {
+      "typed": "Typed during refraction",
+      "clicked": "1",
+      "filter": "url(\"#refraction-f3260d7c-781f-40ac-bdba-c746cca4f50f\")",
+      "svg": true
+    },
+    "reducedMotion": true,
+    "errors": []
+  },
+  {
+    "engine": "webkit",
+    "editor": {
+      "title": "Shorts Editor",
+      "viewer": 1
+    },
+    "interaction": {
+      "typed": "Typed during refraction",
+      "clicked": "1",
+      "filter": "url(\"#refraction-0a986fcd-93c8-412c-8531-dc5ce964ac26\")",
+      "svg": true
+    },
+    "reducedMotion": true,
+    "errors": []
+  }
+]

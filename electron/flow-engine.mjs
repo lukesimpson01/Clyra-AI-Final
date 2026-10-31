@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { cpus, tmpdir } from "node:os";
+import { cpus, tmpdir, constants as osConstants, setPriority } from "node:os";
 import path from "node:path";
 
 /**
@@ -65,9 +65,11 @@ export class FlowEngine {
   async #spawn() {
     const runtime = resolveSpeechRuntime(this.projectRoot);
     if (!runtime) throw new Error("Clyra's speech engine isn't installed. Run npm run setup:speech once.");
-    const threads = Math.max(2, Math.min(6, Math.floor(cpus().length / 2)));
+    // Few threads + low priority: decoding must never starve the pill's animation or the microphone while you talk.
+    const threads = Math.max(2, Math.min(4, Math.floor((cpus().length * 3) / 8)));
     const child = spawn(runtime.daemon, ["-m", runtime.model, "-t", String(threads)], { stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
+    try { if (child.pid) setPriority(child.pid, osConstants.priority.PRIORITY_BELOW_NORMAL); } catch { /* best effort */ }
     this.buffer = "";
     child.stderr.resume();
     child.stdout.setEncoding("utf8");
@@ -108,7 +110,10 @@ export class FlowEngine {
     const directory = await mkdtemp(path.join(tmpdir(), "clyra-flow-"));
     const wav = path.join(directory, "utterance.wav");
     try {
-      await writeFile(wav, pcmToWav(pcm, sampleRate));
+      // Speech models clip or mishear a word that starts at sample 0 ("Hi" -> "Aye"): give every clip a little silence
+      // on both sides, which is exactly what a phrase cut out of a longer recording lacks.
+      const pad = (seconds) => Buffer.alloc(Math.round(sampleRate * seconds) * 2);
+      await writeFile(wav, pcmToWav(Buffer.concat([pad(0.4), pcm, pad(0.3)]), sampleRate));
       const id = String(++this.nextId);
       const result = new Promise((resolve, reject) => {
         const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Transcription timed out.")); this.stop(); }, REQUEST_TIMEOUT_MS);

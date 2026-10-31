@@ -1,0 +1,66 @@
+{
+  "fixture": "Exact calibrated camera and plane, rendered by production compositor",
+  "result": {
+    "center": {
+      "green": 61600,
+      "red": 0,
+      "bounds": [
+        305,
+        182,
+        654,
+        357
+      ]
+    },
+    "centerOutside": {
+      "green": 22880,
+      "red": 0,
+      "bounds": [
+        830,
+        182,
+        959,
+        357
+      ]
+    },
+    "nearPlane": {
+      "green": 289440,
+      "red": 0,
+      "bounds": [
+        0,
+        0,
+        535,
+        539
+      ]
+    },
+    "backDecal": {
+      "green": 0,
+      "red": 0,
+      "bounds": [
+        960,
+        540,
+        0,
+        0
+      ]
+    },
+    "backDouble": {
+      "green": 61600,
+      "red": 0,
+      "bounds": [
+        305,
+        182,
+        654,
+        357
+      ]
+    },
+    "depthBuffer": {
+      "green": 0,
+      "red": 109044,
+      "bounds": [
+        960,
+        540,
+        0,
+        0
+      ]
+    }
+  },
+  "errors": []
+}

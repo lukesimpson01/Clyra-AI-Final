@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld("flowCapture", {
   chunk: (buffer) => ipcRenderer.send("flow:chunk", buffer),
   onStart: (callback) => ipcRenderer.on("flow:start", () => callback()),
   onStop: (callback) => ipcRenderer.on("flow:stop", () => callback()),
+  onWarm: (callback) => ipcRenderer.on("flow:warm", () => callback()),
+  onCool: (callback) => ipcRenderer.on("flow:cool", () => callback()),
 });

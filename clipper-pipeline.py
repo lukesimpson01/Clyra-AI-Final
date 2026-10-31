@@ -1681,7 +1681,9 @@ def download_public_source_master_cli(command, url, job_dir, max_height=1080):
         "--fragment-retries", "4",
         "--extractor-retries", "3",
         "--merge-output-format", "mp4",
-        "--extractor-args", "youtube:player_client=android_vr,ios,android,web,tv",
+        # web_embedded currently serves the 1080p H.264 + M4A streams without a proof-of-origin token, where the
+        # android_vr/tv URLs answer 403 mid-download; the others stay as fallbacks.
+        "--extractor-args", "youtube:player_client=web_embedded,android_vr,ios,android,web,tv",
         "-f", format_selector,
         "-o", template,
     ]
@@ -1753,7 +1755,7 @@ def _download_public_source_master_module(url, job_dir, max_height=1080):
     # videos where the ordinary web/android clients return only format 18
     # (640x360). It remains a public, unauthenticated YouTube client; private
     # content still requires the explicit consented cookie file above.
-    youtube_args = {"player_client": ["android_vr", "ios", "android", "web", "tv"]}
+    youtube_args = {"player_client": ["web_embedded", "android_vr", "ios", "android", "web", "tv"]}
     po_token = str(os.environ.get("CLYRA_YTDLP_PO_TOKEN", "")).strip()
     if po_token:
         youtube_args["po_token"] = [po_token]

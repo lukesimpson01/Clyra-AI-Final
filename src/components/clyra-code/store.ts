@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type VibeProject } from "./api";
+import { publishActivity, dismissActivity } from "../../lib/clyraHome";
 import { isInternalPrompt } from "../../../lib/vibe-agent-v3/internal-prompt";
 
 export type ActionKind =
@@ -359,6 +360,19 @@ export function useClyraCode() {
   useEffect(() => {
     runStateRef.current = state.runState;
   }, [state.runState]);
+
+  // Tell the home screen what Vibe Coder is doing, so a finished task shows up there.
+  useEffect(() => {
+    if (!state.sessionId) return;
+    const project = state.projects.find((p) => p.id === state.activeProjectId);
+    const title = (state.sessionTitle || "Vibe Coder task").slice(0, 80);
+    const detail = project?.name ? `in ${project.name}` : undefined;
+    const key = `vibe:${state.sessionId}`;
+    if (state.runState === "running" || state.runState === "starting") publishActivity({ key, app: "vibe", title, detail, status: "running" });
+    else if (state.runState === "complete") publishActivity({ key, app: "vibe", title, detail: detail ? `Finished ${detail}` : "Finished", status: "done" });
+    else if (state.runState === "failed") publishActivity({ key, app: "vibe", title, detail: state.error || "The task failed", status: "failed" });
+    else if (state.runState === "cancelled") dismissActivity(key);
+  }, [state.runState, state.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const closeStream = useCallback(() => {
     if (eventSourceRef.current) {
@@ -1094,22 +1108,6 @@ export function useClyraCode() {
     [restoreSession, selectProject],
   );
 
-  /** A new chat is a new OpenCode session, never a new project directory. */
-  const newChat = useCallback(
-    async (projectId: string) => {
-      await api.startRuntime(projectId);
-      const session = await api.createSession(projectId, "New chat");
-      selectProject(projectId);
-      activeSessionRef.current = session.id;
-      setState((prev) => ({ ...prev, sessionId: session.id, sessionTitle: session.title ?? "New chat" }));
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectId, sessionId: session.id }));
-      } catch { /* storage unavailable */ }
-      return session;
-    },
-    [selectProject],
-  );
-
   const boot = useCallback(async () => {
     const [, status] = await Promise.all([
       loadProjects(),
@@ -1180,7 +1178,15 @@ export function useClyraCode() {
     // The plan is whichever todo action reported last — todowrite replaces the
     // whole list on every call, so the newest one is the session's real plan.
     const todoActions = actionList.filter((a) => a.kind === "todo" && a.todos?.length);
-    const plan = todoActions.length ? todoActions[todoActions.length - 1].todos ?? null : null;
+    const lastPlan = todoActions.length ? todoActions[todoActions.length - 1].todos ?? null : null;
+    // A finished run has nothing left "in progress". Reconcile any rows the
+    // agent never marked done (a reopened completed task, or a run that ended
+    // between two todowrite calls) so a finished checklist reads finished
+    // instead of leaving a spinner turning forever.
+    const plan =
+      lastPlan && state.runState === "complete"
+        ? lastPlan.map((row) => (row.status === "completed" ? row : { ...row, status: "completed" }))
+        : lastPlan;
     return { actionList, running, fileActions, commandActions, pendingPermissions, effectiveDiffs, plan };
   }, [state.log, state.actions, state.runState, state.diffs]);
 
@@ -1190,7 +1196,6 @@ export function useClyraCode() {
     loadProjects,
     selectProject,
     selectThread,
-    newChat,
     startRun,
     beginOptimisticPrompt,
     failOptimisticPrompt,

@@ -57,7 +57,7 @@ export function browserPanel(app) {
   const persist = () => {
     try {
       localStorage.setItem(TABS_KEY, JSON.stringify(tabs.map((tab) => ({
-        id: tab.id, url: tab.url, history: tab.history.slice(-20), future: tab.future.slice(-20),
+        id: tab.id, url: tab.url, title: tab.title || "", history: tab.history.slice(-20), future: tab.future.slice(-20),
       }))));
     } catch { /* storage may be unavailable */ }
   };
@@ -83,7 +83,7 @@ export function browserPanel(app) {
         onclick: () => { activeId = tab.id; paint(); },
       },
         el("span", { class: "wb-tab-icon" }, icon(tab.url ? "embed" : "plus", 12)),
-        el("span", { class: "wb-tab-label", text: tab.url ? hostOf(tab.url) : "New tab" }),
+        el("span", { class: "wb-tab-label", text: tab.url ? (tab.title || hostOf(tab.url)) : "New tab" }),
         tabs.length > 1
           ? el("button", {
               class: "wb-tab-close", type: "button", "aria-label": "Close tab",
@@ -156,10 +156,13 @@ export function browserPanel(app) {
     /* With the real Chromium view hosted in the panel, everything — searches
        included — goes there, because it can actually render Google. */
     if (window.clyraDesktop?.browser?.setSurface) {
-      if (record && tab.url) { tab.history.push(tab.url); tab.future.length = 0; }
       tab.url = url;
+      address.value = url;
+      address.blur();
       persist();
-      paint();
+      paintStrip();
+      showPage();
+      setLoading(true);
       window.clyraDesktop.browser.navigate(url);
       return;
     }
@@ -179,6 +182,7 @@ export function browserPanel(app) {
   };
 
   const back = () => {
+    if (useNative()) { desktopBrowser().action({ type: "back" }); return; }
     const tab = active();
     if (!tab.history.length) return;
     tab.future.push(tab.url);
@@ -188,6 +192,7 @@ export function browserPanel(app) {
   };
 
   const forward = () => {
+    if (useNative()) { desktopBrowser().action({ type: "forward" }); return; }
     const tab = active();
     if (!tab.future.length) return;
     tab.history.push(tab.url);
@@ -199,7 +204,7 @@ export function browserPanel(app) {
   const bar = el("div", { class: "wb-bar" },
     iconButton("arrow_left", "Back", back, { size: 14, className: "wb-nav" }),
     iconButton("arrow_right", "Forward", forward, { size: 14, className: "wb-nav" }),
-    iconButton("history", "Reload", () => paint(), { size: 14, className: "wb-nav" }),
+    iconButton("history", "Reload", () => { if (useNative()) { setLoading(true); desktopBrowser().action({ type: "reload" }); } else paint(); }, { size: 14, className: "wb-nav" }),
     address,
     iconButton("share", "Open in the full browser", () => {
       const tab = active();
@@ -218,14 +223,39 @@ export function browserPanel(app) {
     }, { size: 14, className: "wb-nav" }),
   );
 
+  /* Only text the user is typing holds the address back from following the page. */
+  let addressDirty = false;
+  address.addEventListener("input", () => { addressDirty = true; });
+  address.addEventListener("blur", () => { if (addressDirty && !address.value.trim()) addressDirty = false; });
   address.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") { event.preventDefault(); go(address.value); }
+    if (event.key === "Enter") { event.preventDefault(); addressDirty = false; go(address.value); }
+    if (event.key === "Escape") { addressDirty = false; address.value = active().url; address.blur(); }
   });
 
+  /* The real Chromium view's own history drives Back/Forward in the desktop app. */
+  let nativeNav = { canGoBack: false, canGoForward: false };
   const syncNav = () => {
     const tab = active();
-    bar.querySelectorAll(".wb-nav")[0].disabled = !tab.history.length;
-    bar.querySelectorAll(".wb-nav")[1].disabled = !tab.future.length;
+    const native = useNative();
+    bar.querySelectorAll(".wb-nav")[0].disabled = native ? !nativeNav.canGoBack : !tab.history.length;
+    bar.querySelectorAll(".wb-nav")[1].disabled = native ? !nativeNav.canGoForward : !tab.future.length;
+  };
+
+  /* A hairline that eases across the top of the page while it loads, instead of a status message. */
+  const loadLine = el("div", { class: "wb-load", "aria-hidden": "true" });
+  const setLoading = (loading) => { loadLine.classList.toggle("on", Boolean(loading)); };
+
+  const showPage = () => {
+    const tab = active();
+    start.hidden = Boolean(tab.url);
+    if (useNative()) {
+      frame.hidden = true;
+      if (tab.url) {
+        showNative();
+        /* Seed Back/Forward and the address from the view itself; events only arrive when it changes. */
+        desktopBrowser().getState?.().then((result) => applyNativeState(result)).catch(() => {});
+      } else { hideNative(); paintStart(); }
+    }
   };
 
   const paint = () => {
@@ -233,10 +263,18 @@ export function browserPanel(app) {
     paintStrip();
     address.value = tab.url;
     syncNav();
-    frame.hidden = !tab.url;
     start.hidden = Boolean(tab.url);
+    if (useNative()) {
+      /* Desktop: the page lives in the real browser view; the reading proxy is never loaded as well. */
+      frame.hidden = true;
+      setStatus("");
+      showPage();
+      if (tab.url && tab.url !== lastNativeUrl) { setLoading(true); desktopBrowser().navigate(tab.url); }
+      return;
+    }
+    frame.hidden = !tab.url;
     if (!tab.url) { setStatus(""); paintStart(); return; }
-    setStatus("Loading…", "loading");
+    setLoading(true);
     frame.src = proxied(tab.url);
   };
 
@@ -248,6 +286,7 @@ export function browserPanel(app) {
     const tab = active();
     if (!tab.url) return;
     setStatus("");
+    setLoading(false);
     let landed = null;
     try {
       const here = new URL(frame.contentWindow.location.href);
@@ -264,7 +303,7 @@ export function browserPanel(app) {
     syncNav();
     syncing = false;
   });
-  frame.addEventListener("error", () => setStatus("That page could not be opened here.", "error"));
+  frame.addEventListener("error", () => { setLoading(false); setStatus("That page could not be opened here.", "error"); });
 
   /* ------------------------------------------------- native surface */
 
@@ -332,8 +371,30 @@ export function browserPanel(app) {
      native browser layer painted over whatever comes next. */
   window.addEventListener("pagehide", hideNative);
 
+  /* Follow the real view: clicking links inside the page updates the address, the tab's title and Back/Forward. */
+  let lastNativeUrl = "";
+  const applyNativeState = (payload) => {
+    const state = payload?.state || payload;
+    if (!state || !nativeShown) return;
+    nativeNav = { canGoBack: Boolean(state.canGoBack), canGoForward: Boolean(state.canGoForward) };
+    setLoading(Boolean(state.loading));
+    if (state.url && /^https?:/i.test(state.url)) {
+      lastNativeUrl = state.url;
+      const tab = active();
+      if (tab.url !== state.url || tab.title !== state.title) {
+        tab.url = state.url;
+        tab.title = state.title || "";
+        if (!addressDirty) address.value = state.url;
+        persist();
+        paintStrip();
+      }
+    }
+    syncNav();
+  };
+  const offState = desktopBrowser()?.onState?.(applyNativeState);
+
   const node = el("div", { class: "wb-panel" }, strip, bar,
-    el("div", { class: "wb-body" }, frame, start, nativeHost), status);
+    el("div", { class: "wb-body" }, loadLine, frame, start, nativeHost), status);
   paint();
 
   return {
@@ -341,7 +402,7 @@ export function browserPanel(app) {
     focus: () => address.focus(),
     open: (url) => go(url),
     /* Called by the rail when this panel becomes the visible one. */
-    show: () => { if (useNative()) showNative(); },
+    show: () => { if (useNative()) { showPage(); paint(); } },
     /* Called by the rail on panel switch, on close, and on teardown. */
     hide: hideNative,
     destroy() {
@@ -350,6 +411,7 @@ export function browserPanel(app) {
       observer?.disconnect();
       window.removeEventListener("resize", queueBounds);
       window.removeEventListener("pagehide", hideNative);
+      offState?.();
     },
     usesNative: useNative,
   };

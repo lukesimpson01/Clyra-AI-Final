@@ -1,26 +1,33 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  Bot,
+  ArrowLeft,
+  AudioLines,
+  BrainCircuit,
   ChartNoAxesCombined,
-  ChevronRight,
+  Check,
   Code2,
+  Cpu,
   Download,
   Grid3X3,
   Headphones,
   MessageCircle,
-  Monitor,
   Palette,
+  PanelLeft,
+  PanelLeftClose,
   Play,
   RotateCcw,
   RefreshCw,
+  Search,
   Shield,
   Trash2,
-  Type,
+  UserRound,
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { OrbColorTheme } from "./AiOrb";
+import { MemorySettingsPanel } from "./memory/MemorySettingsPanel";
+import { WorkspaceDockCustomizer } from "./WorkspaceDockCustomizer";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -59,20 +66,42 @@ type SettingsModalProps = {
   voiceTestMode: boolean;
   setVoiceTestMode: (value: boolean) => void;
   chats: unknown[];
-  onCustomizeWorkspaceSwitcher?: () => void;
+  /** The workspace dock's live app order (incl. the pinned "chat" at index 0). */
+  workspaceRailTabs: string[];
+  setWorkspaceRailTabs: (value: string[]) => void;
+  /** Fires a real quick action from the dock customiser (new chat / search / voice). */
+  onWorkspaceQuickAction: (id: string) => void;
+  /** Section to show when the sheet opens (e.g. "account" from the profile button). */
+  initialSection?: string;
+  profileName?: string;
+  setProfileName?: (value: string) => void;
+  accountEmail?: string | null;
+  /** Erases every local chat, setting and preference, then restarts the app fresh. */
+  deleteAccount?: () => void;
 };
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as [number, number, number, number];
 
+export type SettingsSheetProps = Omit<SettingsModalProps, "isOpen"> & {
+  onClose: () => void;
+  embedded?: boolean;
+};
+
 const sections = [
-  { id: "workspace", label: "Workspace", detail: "Make the controls around Chat feel like your own.", icon: Grid3X3 },
-  { id: "look", label: "Appearance", detail: "Adjust the reading environment without changing the work.", icon: Palette },
-  { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle },
-  { id: "voice", label: "Voice", detail: "Tune the sound and pace of spoken conversations.", icon: Bot },
-  { id: "advanced", label: "Model", detail: "Set the response character for your everyday chat.", icon: Monitor },
-  { id: "usage", label: "Usage", detail: "See the current status of your connected Clyra services.", icon: ChartNoAxesCombined },
-  { id: "data", label: "Privacy", detail: "Control the information Clyra keeps on this device.", icon: Shield },
+  { id: "account", label: "Account", detail: "Your profile, your data, and everything tied to this device.", icon: UserRound, category: "Account" },
+  { id: "workspace", label: "Workspace", detail: "Make the controls around Chat feel like your own.", icon: Grid3X3, category: "Account" },
+  { id: "look", label: "Appearance", detail: "Adjust how Clyra looks and feels.", icon: Palette, category: "Preferences" },
+  { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle, category: "Preferences" },
+  { id: "memory", label: "Memory", detail: "Clyra’s identity, what it knows about you, what it has learned, and its skills.", icon: BrainCircuit, category: "Preferences" },
+  { id: "voice", label: "Voice", detail: "Tune the sound and pace of spoken conversations.", icon: AudioLines, category: "Preferences" },
+  { id: "advanced", label: "Model", detail: "Set the response character for your everyday chat.", icon: Cpu, category: "Preferences" },
+  { id: "usage", label: "Usage", detail: "See the current status of your connected Clyra services.", icon: ChartNoAxesCombined, category: "Data & Privacy" },
+  { id: "data", label: "Privacy", detail: "Control the information Clyra keeps on this device.", icon: Shield, category: "Data & Privacy" },
 ] as const;
+
+type Section = (typeof sections)[number];
+
+const navCategories = ["Account", "Preferences", "Data & Privacy"] as const;
 
 const bubbleColors = [
   { label: "Mist", value: "#F4F4F4" },
@@ -119,19 +148,12 @@ function Toggle({
       onClick={() => onChange(!checked)}
       aria-label={label}
       aria-pressed={checked}
-      className={cn(
-        "relative h-6 w-11 rounded-full p-0.5 transition-colors duration-200",
-        checked ? "bg-blue-600" : "bg-slate-200 hover:bg-slate-300",
-      )}
+      role="switch"
+      aria-checked={checked}
+      data-on={checked}
+      className="clys-toggle"
     >
-      <motion.span
-        layout
-        transition={{ type: "spring", stiffness: 600, damping: 40 }}
-        className={cn(
-          "block h-5 w-5 rounded-full bg-white shadow-sm",
-          checked && "ml-5",
-        )}
-      />
+      <span className="clys-toggle__knob" aria-hidden />
     </button>
   );
 }
@@ -146,12 +168,12 @@ function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className="clyra-settings-row flex items-center justify-between gap-6 py-4">
+    <div className="clys-row">
       <div className="min-w-0">
-        <p className="text-[14px] font-medium text-slate-800">{title}</p>
-        {detail ? <p className="mt-0.5 text-[12px] leading-snug text-slate-500">{detail}</p> : null}
+        <p className="clys-row__label">{title}</p>
+        {detail ? <p className="clys-row__detail">{detail}</p> : null}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="clys-row__control">{children}</div>
     </div>
   );
 }
@@ -166,18 +188,18 @@ function Segmented<T extends string | number>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="inline-flex rounded-xl border border-slate-200/80 bg-slate-50 p-0.5">
+    <div className="clys-segmented" role="radiogroup">
       {options.map((option) => {
         const active = option.value === value;
         return (
           <button
             key={String(option.value)}
             type="button"
+            role="radio"
+            aria-checked={active}
+            data-active={active}
             onClick={() => onChange(option.value)}
-            className={cn(
-              "relative min-w-[4.5rem] rounded-[10px] px-3 py-1.5 text-[13px] font-medium transition-all duration-150",
-              active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700",
-            )}
+            className="clys-segmented__option"
           >
             {option.label}
           </button>
@@ -206,10 +228,10 @@ function RangeControl({
 }) {
   const percent = ((value - min) / (max - min)) * 100;
   return (
-    <div className="py-4">
-      <div className="mb-3 flex items-end justify-between gap-4">
-        <p className="text-[14px] font-medium text-slate-800">{label}</p>
-        <p className="text-[12px] text-slate-500">{valueLabel}</p>
+    <div className="clys-range-row">
+      <div className="clys-range-row__top">
+        <p className="clys-row__label">{label}</p>
+        <p className="clys-range-row__value">{valueLabel}</p>
       </div>
       <input
         type="range"
@@ -218,19 +240,154 @@ function RangeControl({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none"
-        style={{
-          background: `linear-gradient(90deg, #2563eb ${percent}%, #e2e8f0 ${percent}%)`,
-          accentColor: "#2563eb",
-        }}
+        aria-label={label}
+        className="clys-range"
+        style={{ background: `linear-gradient(90deg, #0066FF ${percent}%, #E2E5EA ${percent}%)` }}
       />
     </div>
   );
 }
 
-export function SettingsModal({
-  isOpen,
+/** Circular swatches with the precise double-ring selection treatment. */
+function SwatchRow({
+  colors,
+  value,
+  onChange,
+  customLabel,
+  showHex = false,
+}: {
+  colors: Array<{ label: string; value: string }>;
+  value: string;
+  onChange: (value: string) => void;
+  customLabel: string;
+  showHex?: boolean;
+}) {
+  const isCustom = !colors.some((c) => c.value.toLowerCase() === value.toLowerCase());
+  return (
+    <div className="clys-swatches">
+      {colors.map((color) => {
+        const selected = value.toLowerCase() === color.value.toLowerCase();
+        return (
+          <button
+            key={color.value}
+            type="button"
+            onClick={() => onChange(color.value)}
+            title={color.label}
+            aria-label={`${color.label}${selected ? ", selected" : ""}`}
+            aria-pressed={selected}
+            data-selected={selected}
+            className="clys-swatch"
+            style={{ backgroundColor: color.value }}
+          />
+        );
+      })}
+      <label
+        title={customLabel}
+        aria-label={`${customLabel}${isCustom ? ", selected" : ""}`}
+        data-selected={isCustom}
+        className="clys-swatch clys-swatch--custom"
+      >
+        <span className="clys-swatch__rainbow" />
+        <input
+          type="color"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="clys-swatch__input"
+        />
+      </label>
+      {showHex ? <span className="clys-hex">{value.toUpperCase()}</span> : null}
+    </div>
+  );
+}
+
+/** A group of settings rendered inside a white card with hairline row dividers. */
+function SettingsCard({
+  title,
+  description,
+  children,
+  className,
+}: {
+  title?: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("clys-settings-card", className)}>
+      {title || description ? (
+        <div className="clys-settings-card__head">
+          {title ? <h2 className="clys-subtitle">{title}</h2> : null}
+          {description ? <p className="clys-subdetail">{description}</p> : null}
+        </div>
+      ) : null}
+      <div className="clys-card clys-settings-card__body">{children}</div>
+    </section>
+  );
+}
+
+/** Theme / mode selector as visual preview cards with an accent selection ring. */
+function ThemeCards({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const themes = [
+    { label: "Light", value: "Light" },
+    { label: "Dark", value: "Dark" },
+  ] as const;
+  return (
+    <div className="clys-theme-cards" role="radiogroup" aria-label="Theme">
+      {themes.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            data-active={active}
+            onClick={() => onChange(option.value)}
+            className="clys-theme-card"
+          >
+            <span className={cn("clys-theme-thumb", option.value === "Dark" && "clys-theme-thumb--dark")} aria-hidden>
+              <span className="clys-theme-thumb__bar clys-theme-thumb__bar--wide" />
+              <span className="clys-theme-thumb__bar" />
+              <span className="clys-theme-thumb__bar clys-theme-thumb__bar--short" />
+            </span>
+            <span className="clys-theme-card__label">{option.label}</span>
+            {active ? <Check className="clys-theme-card__check" aria-hidden /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Sidebar navigation item: monoline icon, label, quiet hover, pill active state. */
+function NavItem({
+  section,
+  active,
+  onSelect,
+}: {
+  section: Section;
+  active: boolean;
+  onSelect: (id: Section["id"]) => void;
+}) {
+  const Icon = section.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(section.id)}
+      data-active={active}
+      aria-current={active ? "page" : undefined}
+      className="clys-nav-item"
+      title={section.label}
+    >
+      <Icon aria-hidden />
+      <span>{section.label}</span>
+    </button>
+  );
+}
+
+export function SettingsSheet({
   onClose,
+  embedded = false,
   theme,
   setTheme,
   sendOnEnter,
@@ -263,9 +420,30 @@ export function SettingsModal({
   voiceTestMode,
   setVoiceTestMode,
   chats,
-  onCustomizeWorkspaceSwitcher,
-}: SettingsModalProps) {
+  workspaceRailTabs,
+  setWorkspaceRailTabs,
+  onWorkspaceQuickAction,
+  initialSection,
+  profileName = "Luke",
+  setProfileName,
+  accountEmail,
+  deleteAccount,
+}: SettingsSheetProps) {
   const [activeSection, setActiveSection] = useState<(typeof sections)[number]["id"]>("look");
+  const [navQuery, setNavQuery] = useState("");
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [nameDraft, setNameDraft] = useState(profileName);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  useEffect(() => {
+    const match = sections.find((section) => section.id === initialSection);
+    setActiveSection(match ? match.id : "look");
+    setNameDraft(profileName);
+    setConfirmingDelete(false);
+    setDeleteText("");
+    // Runs once on mount — the sheet is unmounted when closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [voicePreviewState, setVoicePreviewState] = useState<"idle" | "loading" | "error">("idle");
   const [whisperProfile, setWhisperProfile] = useState<"auto" | "tiny" | "base" | "small">(() => {
     try { const value = localStorage.getItem("clyra-whisper-profile"); return value === "tiny" || value === "base" || value === "small" ? value : "auto"; } catch { return "auto"; }
@@ -280,6 +458,20 @@ export function SettingsModal({
     () => sections.find((section) => section.id === activeSection) ?? sections[0],
     [activeSection],
   );
+
+  const query = navQuery.trim().toLowerCase();
+  const filteredSections = useMemo(
+    () => (query ? sections.filter((section) => section.label.toLowerCase().includes(query)) : sections),
+    [query],
+  );
+  const navGroups = useMemo(() => {
+    const groups: Array<{ label: string; items: Section[] }> = [];
+    for (const category of navCategories) {
+      const items = filteredSections.filter((section) => section.category === category);
+      if (items.length) groups.push({ label: category, items });
+    }
+    return groups;
+  }, [filteredSections]);
 
   const closeSettings = (event?: MouseEvent<HTMLElement>) => {
     event?.preventDefault();
@@ -307,11 +499,11 @@ export function SettingsModal({
   };
 
   useEffect(() => {
-    if (!isOpen || activeSection !== "usage") return;
+    if (activeSection !== "usage") return;
     void refreshUsage();
     const interval = window.setInterval(() => void refreshUsage(), 5_000);
     return () => window.clearInterval(interval);
-  }, [isOpen, activeSection]);
+  }, [activeSection]);
 
   useEffect(() => () => {
     voicePreviewRef.current?.audio.pause();
@@ -363,380 +555,456 @@ export function SettingsModal({
   };
 
   return (
-    <AnimatePresence>
-      {isOpen ? (
-        <motion.div
-          className="fixed inset-0 z-[100] grid place-items-center p-4 sm:p-6"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          <motion.button
-            type="button"
-            aria-label="Close settings"
-            className="clyra-settings-backdrop absolute inset-0 bg-black/30 backdrop-blur-xl"
-            onClick={closeSettings}
-            tabIndex={-1}
-          />
-          <motion.section
-            role="dialog"
-            aria-modal="true"
-            aria-label="Settings"
-            initial={{ opacity: 0, y: 16, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.3, ease: EASE_OUT }}
-            className="clyra-settings-panel relative grid h-[min(740px,90vh)] w-full max-w-[1012px] overflow-hidden rounded-[22px] border border-slate-200/80 bg-white shadow-[0_2px_24px_rgba(0,0,0,.08)] sm:grid-cols-[228px_1fr]"
-          >
-            <aside className="clyra-settings-sidebar hidden border-r border-slate-100 bg-slate-50/60 p-3 sm:flex sm:flex-col">
-              <div className="px-3 pb-7 pt-5">
-                <span className="text-[10px] font-bold uppercase tracking-[.13em] text-blue-600">Clyra</span>
-                <p className="mt-1 text-[20px] font-semibold tracking-[-0.035em] text-slate-900">Preferences</p>
-                <p className="mt-1 text-[11.5px] leading-snug text-slate-500">Tune your private workspace.</p>
+    <section
+      role="dialog"
+      aria-modal={embedded ? undefined : "true"}
+      aria-label="Settings"
+      className={cn(
+        "clys-window",
+        embedded && "clys-sheet--embedded",
+        navCollapsed && "clys-window--collapsed",
+      )}
+    >
+            <aside className="clys-sidebar" data-collapsed={navCollapsed || undefined}>
+              <div className="clys-sidebar__top">
+                <div className="clys-sidebar__brand">
+                  <span className="clys-brand__mark">Clyra</span>
+                  <button
+                    type="button"
+                    onClick={() => setNavCollapsed((value) => !value)}
+                    className="clys-icon-btn clys-sidebar__collapse"
+                    aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  >
+                    {navCollapsed ? <PanelLeft aria-hidden /> : <PanelLeftClose aria-hidden />}
+                  </button>
+                </div>
+                <button type="button" onClick={closeSettings} className="clys-back">
+                  <ArrowLeft aria-hidden />
+                  <span>Back to application</span>
+                </button>
+                <label className="clys-search">
+                  <Search className="clys-search__icon" aria-hidden />
+                  <input
+                    type="search"
+                    value={navQuery}
+                    onChange={(event) => setNavQuery(event.target.value)}
+                    placeholder="Search settings"
+                    aria-label="Search settings"
+                  />
+                </label>
               </div>
-              <nav className="space-y-0.5" aria-label="Settings sections">
-                {sections.map((section) => {
-                  const Icon = section.icon;
-                  const active = section.id === activeSection;
-                  return (
-                    <button
-                      key={section.id}
-                      type="button"
-                      onClick={() => setActiveSection(section.id)}
-                      className={cn(
-                        "clyra-settings-nav-item group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-all duration-150",
-                        active
-                          ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
-                          : "text-slate-500 hover:bg-white/80 hover:text-slate-800",
-                      )}
-                    >
-                      <Icon className={cn("h-4 w-4 transition-colors", active ? "text-slate-700" : "text-slate-400 group-hover:text-slate-500")} />
-                      <span className="flex-1">{section.label}</span>
-                      {active ? <ChevronRight className="h-3.5 w-3.5 text-slate-400" /> : null}
-                    </button>
-                  );
-                })}
+              <nav className="clys-nav" aria-label="Settings sections">
+                {navGroups.map((group) => (
+                  <div key={group.label} className="clys-nav-group">
+                    <p className="clys-nav-group__label">{group.label}</p>
+                    {group.items.map((section) => (
+                      <NavItem
+                        key={section.id}
+                        section={section}
+                        active={section.id === activeSection}
+                        onSelect={setActiveSection}
+                      />
+                    ))}
+                  </div>
+                ))}
+                {navGroups.length === 0 ? (
+                  <p className="clys-nav-empty">No results for “{navQuery.trim()}”.</p>
+                ) : null}
               </nav>
             </aside>
 
-            <div className="flex min-h-0 flex-col bg-white">
-              <header className="clyra-settings-header flex h-[68px] shrink-0 items-center justify-between border-b border-slate-100 px-7">
-                <div><span className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Clyra Chat</span><h2 className="mt-0.5 text-[17px] font-semibold tracking-[-0.025em] text-slate-900">Settings</h2></div>
+            <div className="clys-main">
+              <header className="clys-header">
+                <h2 className="clys-header__title">Settings</h2>
                 <button
                   type="button"
                   onClick={closeSettings}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  className="clys-header__close"
                   aria-label="Close settings"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-[17px] w-[17px]" strokeWidth={1.9} />
                 </button>
               </header>
 
-              <div className="flex gap-1 overflow-x-auto border-b border-slate-100 px-4 py-2 sm:hidden">
-                {sections.map((section) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    onClick={() => setActiveSection(section.id)}
-                    className={cn(
-                      "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors",
-                      section.id === activeSection
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-500 hover:text-slate-900",
-                    )}
-                  >
-                    {section.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="clyra-settings-content min-h-0 flex-1 overflow-y-auto px-6 py-3 sm:px-8">
+              <div className="clys-content">
                 <motion.div
                   key={activeSection}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2, ease: EASE_OUT }}
-                  className="mx-auto max-w-[480px] pb-8"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className={cn("clys-content__inner", activeSection === "memory" && "max-w-[760px]")}
                 >
-                  <div className="clyra-settings-section-lead">
-                    <p>{activeMeta.label}</p>
-                    <span>{activeMeta.detail}</span>
-                  </div>
-                  {activeSection === "look" ? (
+                  <h1 className="clys-section-title">{activeMeta.label}</h1>
+                  <p className="clys-section-detail">{activeMeta.detail}</p>
+                  <div className="clys-lead-gap" aria-hidden />
+
+                  {activeSection === "account" ? (
                     <>
-                      <SettingRow title="Theme">
-                        <Segmented
-                          value={theme}
-                          onChange={setTheme}
-                          options={[
-                            { label: "Light", value: "Light" },
-                            { label: "Dark", value: "Dark" },
-                          ]}
-                        />
-                      </SettingRow>
-                      <div className="py-4">
-                        <p className="text-[14px] font-medium text-slate-800">Accent color</p>
-                        <p className="mt-0.5 text-[12px] text-slate-500">Colors the Bloub avatar and every accent element across the app.</p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2.5">
-                          {accentColors.map((color) => (
-                            <button
-                              key={color.value}
-                              type="button"
-                              onClick={() => setAccentColor(color.value)}
-                              title={color.label}
-                              className={cn(
-                                "h-8 w-8 rounded-full border border-slate-200/80 transition-all duration-150 hover:scale-110",
-                                accentColor.toLowerCase() === color.value.toLowerCase() && "ring-2 ring-blue-600 ring-offset-2",
-                              )}
-                              style={{ backgroundColor: color.value }}
-                            />
-                          ))}
-                          <label
-                            className={cn(
-                              "relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full border border-slate-200/80 transition-all hover:scale-110",
-                              !accentColors.some((c) => c.value.toLowerCase() === accentColor.toLowerCase()) && "ring-2 ring-blue-600 ring-offset-2",
-                            )}
-                            title="Custom color"
+                      <SettingsCard>
+                        <div className="clys-profile">
+                          <span
+                            className="clys-profile__avatar"
+                            style={{ background: `linear-gradient(145deg, ${accentColor}, #15171C)` }}
+                            aria-hidden
                           >
-                            <span className="absolute inset-0 bg-[conic-gradient(#ef4444,#f59e0b,#22c55e,#06b6d4,#6366f1,#ef4444)]" />
-                            <input
-                              type="color"
-                              value={accentColor}
-                              onChange={(event) => setAccentColor(event.target.value)}
-                              className="absolute inset-[-10px] h-14 w-14 cursor-pointer opacity-0"
-                            />
-                          </label>
+                            {(profileName.trim().charAt(0) || "C").toUpperCase()}
+                          </span>
+                          <div className="clys-profile__meta">
+                            <p className="clys-profile__name">{profileName}</p>
+                            <p className="clys-profile__email">{accountEmail ?? "Stored privately on this device"}</p>
+                            <p className="clys-profile__count">{chatCount} saved {chatCount === 1 ? "chat" : "chats"}</p>
+                          </div>
                         </div>
-                      </div>
-                      <SettingRow title="Text size" detail="Adjust chat reading size.">
-                        <Segmented
-                          value={fontSize}
-                          onChange={setFontSize}
-                          options={[
-                            { label: "Small", value: "Small" },
-                            { label: "Medium", value: "Medium" },
-                            { label: "Large", value: "Large" },
-                          ]}
-                        />
-                      </SettingRow>
-                      <div className="py-4">
-                        <p className="text-[14px] font-medium text-slate-800">Bubble color</p>
-                        <p className="mt-0.5 text-[12px] text-slate-500">Color for your chat messages.</p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2.5">
-                          {bubbleColors.map((color) => (
-                            <button
-                              key={color.value}
-                              type="button"
-                              onClick={() => setUserBubbleColor(color.value)}
-                              title={color.label}
-                              className={cn(
-                                "h-8 w-8 rounded-full border border-slate-200/80 transition-all duration-150 hover:scale-110",
-                                userBubbleColor === color.value && "ring-2 ring-blue-600 ring-offset-2",
-                              )}
-                              style={{ backgroundColor: color.value }}
-                            />
-                          ))}
-                          <label
-                            className={cn(
-                              "relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full border border-slate-200/80 transition-all hover:scale-110",
-                              !bubbleColors.some((c) => c.value === userBubbleColor) && "ring-2 ring-blue-600 ring-offset-2",
-                            )}
-                            title="Custom color"
+                      </SettingsCard>
+                      <SettingsCard title="Profile" description="How you appear across Clyra.">
+                        <SettingRow title="Display name" detail="Shown in your greeting and profile.">
+                          <form
+                            className="flex items-center gap-2"
+                            onSubmit={(event) => { event.preventDefault(); setProfileName?.(nameDraft); }}
                           >
-                            <span className="absolute inset-0 bg-[conic-gradient(#ef4444,#f59e0b,#22c55e,#06b6d4,#6366f1,#ef4444)]" />
                             <input
-                              type="color"
-                              value={userBubbleColor}
-                              onChange={(event) => setUserBubbleColor(event.target.value)}
-                              className="absolute inset-[-10px] h-14 w-14 cursor-pointer opacity-0"
+                              value={nameDraft}
+                              onChange={(event) => setNameDraft(event.target.value)}
+                              maxLength={32}
+                              aria-label="Display name"
+                              className="clys-input w-40"
                             />
-                          </label>
+                            <button
+                              type="submit"
+                              disabled={!nameDraft.trim() || nameDraft.trim() === profileName}
+                              className="clys-btn clys-btn--primary disabled:cursor-default disabled:opacity-35"
+                            >
+                              Save
+                            </button>
+                          </form>
+                        </SettingRow>
+                        <SettingRow title="Export my data" detail="Download every saved chat as JSON.">
+                          <button type="button" onClick={exportChats} className="clys-btn">
+                            <Download aria-hidden />
+                            Export
+                          </button>
+                        </SettingRow>
+                      </SettingsCard>
+                      <div className="clys-danger-zone">
+                        <div>
+                          <p className="clys-danger-zone__title">Delete account</p>
+                          <p className="clys-danger-zone__detail">
+                            Permanently erases your chats, preferences and profile from this device. This can’t be undone.
+                          </p>
                         </div>
+                        <AnimatePresence initial={false} mode="wait">
+                          {confirmingDelete ? (
+                            <motion.div
+                              key="confirm"
+                              initial={{ opacity: 0, y: 6 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -4 }}
+                              transition={{ duration: 0.22, ease: EASE_OUT }}
+                              className="mt-4 flex flex-wrap items-center gap-2"
+                            >
+                              <input
+                                autoFocus
+                                value={deleteText}
+                                onChange={(event) => setDeleteText(event.target.value)}
+                                placeholder="Type DELETE to confirm"
+                                aria-label="Type DELETE to confirm"
+                                className="clys-input w-52"
+                              />
+                              <button
+                                type="button"
+                                disabled={deleteText.trim() !== "DELETE"}
+                                onClick={() => deleteAccount?.()}
+                                className="clys-btn clys-btn--solid-danger disabled:cursor-default disabled:opacity-35"
+                              >
+                                <Trash2 aria-hidden />
+                                Delete everything
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setConfirmingDelete(false); setDeleteText(""); }}
+                                className="clys-btn"
+                              >
+                                Cancel
+                              </button>
+                            </motion.div>
+                          ) : (
+                            <motion.button
+                              key="start"
+                              type="button"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.15 }}
+                              onClick={() => setConfirmingDelete(true)}
+                              className="clys-btn clys-btn--danger mt-4"
+                            >
+                              <Trash2 aria-hidden />
+                              Delete account…
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
                       </div>
                     </>
                   ) : null}
 
-                  {activeSection === "workspace" ? (
-                    <div className="clyra-settings-workspace py-5">
-                      <div className="clyra-settings-switcher-entry">
-                        <div>
-                          <p className="text-[15px] font-semibold tracking-[-.02em] text-slate-900">Workspace switcher</p>
-                          <p className="mt-1 max-w-[440px] text-[12.5px] leading-relaxed text-slate-500">Personalize the real switcher on Chat home. Drag an app into the strip, rearrange it, or pull it away to remove it.</p>
+                  {activeSection === "look" ? (
+                    <>
+                      <SettingsCard title="Appearance" description="Choose how Clyra looks on this device.">
+                        <div className="clys-block">
+                          <p className="clys-row__label">Theme</p>
+                          <p className="clys-row__detail">Choose the look that's comfortable for you.</p>
+                          <div className="clys-theme-cards-wrap">
+                            <ThemeCards value={theme} onChange={setTheme} />
+                          </div>
                         </div>
-                        <button type="button" className="clyra-settings-switcher-entry__action" onClick={onCustomizeWorkspaceSwitcher}>
-                          Edit switcher
-                          <ChevronRight className="h-4 w-4" aria-hidden />
-                        </button>
-                      </div>
-                      <div className="clyra-settings-callout" role="note">
-                        <span className="clyra-settings-callout__dot" aria-hidden />
-                        <p><strong>Chat stays put.</strong> Choose up to two companion apps, then drag them directly in the live control strip.</p>
-                      </div>
-                    </div>
+                        <SettingRow title="Accent color" detail="Used for highlights and interactive elements.">
+                          <SwatchRow
+                            colors={accentColors}
+                            value={accentColor}
+                            onChange={setAccentColor}
+                            customLabel="Custom color"
+                            showHex
+                          />
+                        </SettingRow>
+                        <SettingRow title="Text size" detail="Adjust the reading size across your conversations.">
+                          <Segmented
+                            value={fontSize}
+                            onChange={setFontSize}
+                            options={[
+                              { label: "Small", value: "Small" },
+                              { label: "Medium", value: "Medium" },
+                              { label: "Large", value: "Large" },
+                            ]}
+                          />
+                        </SettingRow>
+                        <SettingRow title="Message color" detail="Choose a color for your chat messages.">
+                        <SwatchRow
+                          colors={bubbleColors}
+                          value={userBubbleColor}
+                          onChange={setUserBubbleColor}
+                          customLabel="Custom color"
+                          showHex
+                        />
+                      </SettingRow>
+                      </SettingsCard>
+                    </>
+                  ) : null}
+
+                  {activeSection === "workspace" ? (
+                    <>
+                      <div className="clys-lead-gap" aria-hidden />
+                      <WorkspaceDockCustomizer
+                        railTabs={workspaceRailTabs}
+                        onChange={setWorkspaceRailTabs}
+                        onQuickAction={onWorkspaceQuickAction}
+                        onDone={closeSettings}
+                      />
+                    </>
                   ) : null}
 
                   {activeSection === "chat" ? (
-                    <div className="divide-y divide-slate-100">
-                      <SettingRow title="Send on Enter" detail="Shift + Enter for a new line.">
-                        <Toggle checked={sendOnEnter} onChange={setSendOnEnter} label="Toggle send on Enter" />
-                      </SettingRow>
-                      <SettingRow title="Auto-scroll" detail="Keep latest response in view.">
-                        <Toggle checked={autoScroll} onChange={setAutoScroll} label="Toggle auto-scroll" />
-                      </SettingRow>
-                      <SettingRow title="Markdown" detail="Render headings, lists, and links.">
-                        <Toggle checked={markdownSupport} onChange={setMarkdownSupport} label="Toggle markdown" />
-                      </SettingRow>
-                      <SettingRow title="Code highlighting" detail="Colorize code blocks.">
-                        <Toggle checked={codeHighlighting} onChange={setCodeHighlighting} label="Toggle highlighting" />
-                      </SettingRow>
-                    </div>
+                    <>
+                      <SettingsCard title="Composer" description="Control how messages are sent and rendered.">
+                        <SettingRow title="Send on Enter" detail="Shift + Enter for a new line.">
+                          <Toggle checked={sendOnEnter} onChange={setSendOnEnter} label="Toggle send on Enter" />
+                        </SettingRow>
+                        <SettingRow title="Auto-scroll" detail="Keep the latest response in view.">
+                          <Toggle checked={autoScroll} onChange={setAutoScroll} label="Toggle auto-scroll" />
+                        </SettingRow>
+                        <SettingRow title="Markdown" detail="Render headings, lists, and links.">
+                          <Toggle checked={markdownSupport} onChange={setMarkdownSupport} label="Toggle markdown" />
+                        </SettingRow>
+                        <SettingRow title="Code highlighting" detail="Colorize code blocks.">
+                          <Toggle checked={codeHighlighting} onChange={setCodeHighlighting} label="Toggle highlighting" />
+                        </SettingRow>
+                      </SettingsCard>
+                    </>
+                  ) : null}
+
+                  {activeSection === "memory" ? (
+                    <MemorySettingsPanel
+                      profileName={profileName ?? "Luke"}
+                      setProfileName={setProfileName}
+                      accentColor={accentColor}
+                      setAccentColor={setAccentColor}
+                      theme={theme}
+                      setTheme={setTheme}
+                    />
                   ) : null}
 
                   {activeSection === "voice" ? (
                     <>
-                      <div className="grid gap-2 py-4 sm:grid-cols-3">
-                        {voicePresets.map((preset) => {
-                          const active =
-                            Math.abs(voiceRate - preset.rate) < 0.01 &&
-                            Math.abs(voicePitch - preset.pitch) < 0.01 &&
-                            Math.abs(voiceVolume - preset.volume) < 0.02;
-                          return (
-                            <button
-                              key={preset.id}
-                              type="button"
-                              onClick={() => applyVoicePreset(preset)}
-                              className={cn(
-                                "rounded-xl border p-3 text-left transition-all duration-150",
-                                active
-                                  ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
-                                  : "border-slate-200/80 hover:border-slate-300 hover:bg-slate-50",
-                              )}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <Headphones className={cn("h-4 w-4", active ? "text-blue-600" : "text-slate-400")} />
-                                <span
-                                  role="button"
-                                  tabIndex={0}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void previewVoicePreset(preset);
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      void previewVoicePreset(preset);
-                                    }
-                                  }}
-                                  className={cn(
-                                    "grid h-7 w-7 place-items-center rounded-lg transition-colors",
-                                    active ? "bg-blue-600/10 text-blue-600" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
-                                  )}
+                      <SettingsCard title="Voice presets" description="Pick a starting point, then fine-tune the result below.">
+                        <div className="clys-block">
+                          <div className="clys-option-grid">
+                            {voicePresets.map((preset) => {
+                              const active =
+                                Math.abs(voiceRate - preset.rate) < 0.01 &&
+                                Math.abs(voicePitch - preset.pitch) < 0.01 &&
+                                Math.abs(voiceVolume - preset.volume) < 0.02;
+                              return (
+                                <button
+                                  key={preset.id}
+                                  type="button"
+                                  onClick={() => applyVoicePreset(preset)}
+                                  data-active={active}
+                                  className="clys-option-card"
                                 >
-                                  <Play className="h-3.5 w-3.5" />
-                                </span>
-                              </div>
-                              <p className={cn("mt-2 text-[13px] font-semibold", active ? "text-blue-800" : "text-slate-800")}>{preset.label}</p>
-                              <p className="mt-0.5 text-[11px] text-slate-500">{preset.detail}</p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {voicePreviewState !== "idle" ? (
-                        <p className={cn("text-[12px] font-medium", voicePreviewState === "error" ? "text-rose-500" : "text-slate-500")}>
-                          {voicePreviewState === "loading" ? "Preparing voice preview…" : "Async Voice preview is unavailable."}
-                        </p>
-                      ) : null}
-                      <RangeControl label="Pace" value={voiceRate} min={0.82} max={1.08} step={0.01} onChange={setVoiceRate} valueLabel={voiceRate < 0.91 ? "Calmer" : voiceRate > 1 ? "Quicker" : "Balanced"} />
-                      <RangeControl label="Warmth" value={voicePitch} min={0.9} max={1.16} step={0.01} onChange={setVoicePitch} valueLabel={voicePitch < 0.99 ? "Lower" : voicePitch > 1.08 ? "Brighter" : "Natural"} />
-                      <RangeControl label="Volume" value={voiceVolume} min={0.5} max={1} step={0.01} onChange={setVoiceVolume} valueLabel={`${Math.round(voiceVolume * 100)}%`} />
-                      <SettingRow title="Test Mode" detail="Voice call repeats back what you say instead of using DeepSeek. Use this to check the mic, connection, and Fish Audio voice without spending chat credits.">
-                        <Toggle checked={voiceTestMode} onChange={setVoiceTestMode} label="Toggle voice call test mode" />
-                      </SettingRow>
+                                  <div className="clys-option-card__top">
+                                    <Headphones className="clys-option-card__icon" aria-hidden />
+                                    <span
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void previewVoicePreset(preset);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter" || event.key === " ") {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          void previewVoicePreset(preset);
+                                        }
+                                      }}
+                                      className="clys-option-card__preview"
+                                      aria-label={`Preview ${preset.label} voice`}
+                                    >
+                                      <Play className="h-3.5 w-3.5" />
+                                    </span>
+                                  </div>
+                                  <p className="clys-option-card__label">{preset.label}</p>
+                                  <p className="clys-option-card__detail">{preset.detail}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {voicePreviewState !== "idle" ? (
+                            <p className={cn("clys-option-status", voicePreviewState === "error" && "clys-option-status--error")}>
+                              {voicePreviewState === "loading" ? "Preparing voice preview…" : "Async Voice preview is unavailable."}
+                            </p>
+                          ) : null}
+                        </div>
+                      </SettingsCard>
+                      <SettingsCard title="Adjust" description="Fine-tune the voice you heard.">
+                        <RangeControl label="Pace" value={voiceRate} min={0.82} max={1.08} step={0.01} onChange={setVoiceRate} valueLabel={voiceRate < 0.91 ? "Calmer" : voiceRate > 1 ? "Quicker" : "Balanced"} />
+                        <RangeControl label="Warmth" value={voicePitch} min={0.9} max={1.16} step={0.01} onChange={setVoicePitch} valueLabel={voicePitch < 0.99 ? "Lower" : voicePitch > 1.08 ? "Brighter" : "Natural"} />
+                        <RangeControl label="Volume" value={voiceVolume} min={0.5} max={1} step={0.01} onChange={setVoiceVolume} valueLabel={`${Math.round(voiceVolume * 100)}%`} />
+                        <SettingRow title="Test Mode" detail="Voice call repeats back what you say instead of using DeepSeek. Use this to check the mic, connection, and Fish Audio voice without spending chat credits.">
+                          <Toggle checked={voiceTestMode} onChange={setVoiceTestMode} label="Toggle voice call test mode" />
+                        </SettingRow>
+                      </SettingsCard>
                     </>
                   ) : null}
 
                   {activeSection === "advanced" ? (
                     <>
-                      <SettingRow title="Local transcription model" detail="Auto keeps Clyra light. Choose a model only when you need a fixed performance/accuracy trade-off.">
-                        <select aria-label="Local transcription model" value={whisperProfile} onChange={(event) => { const value = event.target.value as typeof whisperProfile; setWhisperProfile(value); try { if (value === "auto") localStorage.removeItem("clyra-whisper-profile"); else localStorage.setItem("clyra-whisper-profile", value); } catch {} }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-blue-400">
-                          <option value="auto">Automatic</option><option value="tiny">Tiny · fastest</option><option value="base">Base · balanced</option><option value="small">Small · best quality</option>
-                        </select>
-                      </SettingRow>
-                      <div className="grid gap-2 py-4 sm:grid-cols-3">
-                        {modelPresets.map((preset) => {
-                          const active = Math.abs(temperature - preset.temperature) < 0.01;
-                          return (
+                      <SettingsCard title="Transcription" description="Choose a local model only when you need a fixed performance/accuracy trade-off.">
+                        <SettingRow title="Local model" detail="Auto keeps Clyra light.">
+                          <div className="clys-control-group">
+                            <select aria-label="Local transcription model" value={whisperProfile} onChange={(event) => { const value = event.target.value as typeof whisperProfile; setWhisperProfile(value); try { if (value === "auto") localStorage.removeItem("clyra-whisper-profile"); else localStorage.setItem("clyra-whisper-profile", value); } catch {} }} className="clys-select">
+                              <option value="auto">Automatic</option><option value="tiny">Tiny · fastest</option><option value="base">Base · balanced</option><option value="small">Small · best quality</option>
+                            </select>
                             <button
-                              key={preset.label}
                               type="button"
-                              onClick={() => setTemperature(preset.temperature)}
-                              className={cn(
-                                "rounded-xl border p-3 text-left transition-all duration-150",
-                                active
-                                  ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
-                                  : "border-slate-200/80 hover:border-slate-300 hover:bg-slate-50",
-                              )}
+                              onClick={() => { setWhisperProfile("auto"); try { localStorage.removeItem("clyra-whisper-profile"); } catch {} }}
+                              className="clys-icon-btn"
+                              aria-label="Reset transcription model"
+                              title="Reset to automatic"
                             >
-                              <p className={cn("text-[13px] font-semibold", active ? "text-blue-800" : "text-slate-800")}>{preset.label}</p>
-                              <p className="mt-0.5 text-[12px] text-slate-500">{preset.detail}</p>
+                              <RotateCcw aria-hidden />
                             </button>
-                          );
-                        })}
-                      </div>
-                      <div className="py-4">
-                        <div className="mb-3 flex items-center gap-2">
-                          <Type className="h-4 w-4 text-slate-400" />
-                          <p className="text-[14px] font-medium text-slate-800">System prompt</p>
+                          </div>
+                        </SettingRow>
+                      </SettingsCard>
+                      <SettingsCard title="Response character" description="How exploratory or direct everyday answers should feel.">
+                        <div className="clys-block">
+                          <div className="clys-option-grid">
+                            {modelPresets.map((preset) => {
+                              const active = Math.abs(temperature - preset.temperature) < 0.01;
+                              return (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => setTemperature(preset.temperature)}
+                                  data-active={active}
+                                  className="clys-option-card"
+                                >
+                                  <p className="clys-option-card__label">{preset.label}</p>
+                                  <p className="clys-option-card__detail">{preset.detail}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <textarea
-                          value={systemPrompt}
-                          onChange={(event) => setSystemPrompt(event.target.value)}
-                          placeholder="Add persistent instructions for Clyra..."
-                          spellCheck={false}
-                          className="h-28 w-full resize-none rounded-xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-[13px] leading-relaxed text-slate-800 outline-none transition-all placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
-                        />
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {["Be concise and practical.", "Ask one clarifying question.", "Prefer polished UI details."].map((prompt) => (
-                          <button
-                            key={prompt}
-                            type="button"
-                            onClick={() => setSystemPrompt(prompt)}
-                            className="rounded-full border border-slate-200/80 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition-all hover:bg-slate-50 hover:text-slate-900"
-                          >
-                            {prompt}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50 p-3.5 text-[12px] leading-relaxed text-slate-500">
-                        <Code2 className="mb-2 h-4 w-4 text-slate-400" />
-                        Model routing stays automatic so the app preserves existing OpenAI-compatible API behavior.
-                      </div>
+                      </SettingsCard>
+                      <SettingsCard title="System prompt" description="Persistent instructions for Clyra on every reply.">
+                        <div className="clys-block">
+                          <textarea
+                            value={systemPrompt}
+                            onChange={(event) => setSystemPrompt(event.target.value)}
+                            placeholder="Add persistent instructions for Clyra..."
+                            spellCheck={false}
+                            className="clys-textarea"
+                          />
+                          <div className="clys-chip-row">
+                            {["Be concise and practical.", "Ask one clarifying question.", "Prefer polished UI details."].map((prompt) => (
+                              <button
+                                key={prompt}
+                                type="button"
+                                onClick={() => setSystemPrompt(prompt)}
+                                className="clys-btn h-8 px-3 text-[12px]"
+                              >
+                                {prompt}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="clys-note">
+                            <Code2 className="clys-note__icon" aria-hidden />
+                            Model routing stays automatic so the app preserves existing OpenAI-compatible API behavior.
+                          </p>
+                        </div>
+                      </SettingsCard>
                     </>
                   ) : null}
 
                   {activeSection === "usage" ? (
-                    <div className="py-4">
+                    <>
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <p className="text-[15px] font-semibold tracking-[-.01em] text-slate-900">API usage</p>
-                          <p className="mt-1 max-w-[410px] text-[12px] leading-relaxed text-slate-500">Live token and unit metering from completed provider calls. Totals refresh automatically after each use.</p>
+                          <p className="clys-group__title">API usage</p>
+                          <p className="clys-group__detail mt-1">
+                            Live token and unit metering from completed provider calls. Totals refresh automatically after each use.
+                          </p>
                         </div>
-                        <button type="button" onClick={() => void refreshUsage()} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" aria-label="Refresh API usage">
+                        <button type="button" onClick={() => void refreshUsage()} className="clys-header__close shrink-0" aria-label="Refresh API usage">
                           <RefreshCw className={cn("h-4 w-4", usageState === "loading" && "animate-spin")} />
                         </button>
                       </div>
-                      {usageState === "error" ? <p className="mt-6 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">Usage data is temporarily unavailable. Your API calls continue normally.</p> : null}
-                      <div className="mt-5 grid grid-cols-2 gap-2.5">
-                        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5"><p className="text-[11px] font-medium text-slate-500">Total cost</p><p className="mt-1 text-[20px] font-semibold tracking-[-.03em] text-slate-900">${Number(usage?.total?.costUsd || 0).toFixed(4)}</p><p className="mt-1 text-[10.5px] text-slate-400">{Number(usage?.total?.unpricedRequests || 0) > 0 ? `USD · ${Number(usage.total.unpricedRequests).toLocaleString()} request${Number(usage.total.unpricedRequests) === 1 ? "" : "s"} not yet priced` : "USD · verified rates"}</p></div>
-                        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5"><p className="text-[11px] font-medium text-slate-500">Today</p><p className="mt-1 text-[20px] font-semibold tracking-[-.03em] text-slate-900">{Number(usage?.today?.tokens || 0).toLocaleString()}</p><p className="mt-1 text-[10.5px] text-slate-400">provider tokens</p></div>
+                      {usageState === "error" ? (
+                        <p className="mt-5 rounded-[10px] bg-[#FFF7F7] px-3.5 py-2.5 text-[12px] text-[#B3382F]">
+                          Usage data is temporarily unavailable. Your API calls continue normally.
+                        </p>
+                      ) : null}
+                      <div className="mt-6 grid grid-cols-2 gap-3">
+                        <div className="clys-card clys-card--muted p-4">
+                          <p className="text-[11.5px] font-medium text-[#9599A1]">Total cost</p>
+                          <p className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-[#191919]">${Number(usage?.total?.costUsd || 0).toFixed(4)}</p>
+                          <p className="mt-1 text-[11px] text-[#9599A1]">
+                            {Number(usage?.total?.unpricedRequests || 0) > 0
+                              ? `USD · ${Number(usage.total.unpricedRequests).toLocaleString()} request${Number(usage.total.unpricedRequests) === 1 ? "" : "s"} not yet priced`
+                              : "USD · verified rates"}
+                          </p>
+                        </div>
+                        <div className="clys-card clys-card--muted p-4">
+                          <p className="text-[11.5px] font-medium text-[#9599A1]">Today</p>
+                          <p className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-[#191919]">{Number(usage?.today?.tokens || 0).toLocaleString()}</p>
+                          <p className="mt-1 text-[11px] text-[#9599A1]">provider tokens</p>
+                        </div>
                       </div>
                       {Array.isArray(usage?.daily) && usage.daily.length ? (
-                        <div className="mt-5">
-                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[.08em] text-slate-400">Last {usage.daily.length} days</p>
-                          <div className="rounded-xl border border-slate-200/80 bg-white p-3.5">
+                        <div className="mt-6">
+                          <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9599A1]">Last {usage.daily.length} days</p>
+                          <div className="clys-card p-4">
                             {(() => {
                               const maxTokens = Math.max(1, ...usage.daily.map((day: any) => Number(day.tokens || 0)));
                               return (
@@ -753,7 +1021,7 @@ export function SettingsModal({
                                         <div
                                           className={cn(
                                             "w-full rounded-[3px] transition-colors",
-                                            day.requests ? "bg-blue-200 group-hover:bg-blue-400" : "bg-slate-100",
+                                            day.requests ? "bg-[#9DB8F5] group-hover:bg-[#2864F5]" : "bg-[#EDEFF2]",
                                           )}
                                           style={{ height: `${heightPct}%` }}
                                         />
@@ -763,80 +1031,132 @@ export function SettingsModal({
                                 </div>
                               );
                             })()}
-                            <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
+                            <div className="mt-2 flex items-center justify-between text-[10.5px] text-[#9599A1]">
                               <span>{new Date(`${usage.daily[0].date}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
                               <span>{new Date(`${usage.daily[usage.daily.length - 1].date}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
                             </div>
                           </div>
                         </div>
                       ) : null}
-                      <div className="mt-5">
-                        <div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-medium uppercase tracking-[.08em] text-slate-400">By provider & model</p><p className="text-[10.5px] text-slate-400">{usage?.total?.requests || 0} requests</p></div>
-                        <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white">
-                          {(usage?.byModel || []).length ? usage.byModel.slice(0, 6).map((item: any) => <div key={`${item.provider}-${item.model}`} className="flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-3 last:border-0"><div className="min-w-0"><p className="truncate text-[12.5px] font-medium text-slate-800">{item.model}</p><p className="mt-0.5 text-[10.5px] text-slate-400">{item.provider} · {Number(item.tokens || 0).toLocaleString()} tokens · {item.requests} requests</p></div><p className={cn("shrink-0 text-[11.5px] font-medium", item.unpricedRequests ? "text-amber-600" : "text-slate-700")}>{item.unpricedRequests ? "Unpriced" : `$${Number(item.costUsd || 0).toFixed(4)}`}</p></div>) : <div className="px-3.5 py-7 text-center text-[12px] text-slate-400">No provider calls recorded yet.</div>}
+                      <div className="mt-6">
+                        <div className="mb-2.5 flex items-center justify-between">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9599A1]">By provider & model</p>
+                          <p className="text-[11px] text-[#9599A1]">{usage?.total?.requests || 0} requests</p>
+                        </div>
+                        <div className="clys-card overflow-hidden">
+                          {(usage?.byModel || []).length
+                            ? usage.byModel.slice(0, 6).map((item: any) => (
+                                <div key={`${item.provider}-${item.model}`} className="flex items-center justify-between gap-3 border-b border-[#ECEEF1] px-4 py-3 last:border-0">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[12.5px] font-medium text-[#191919]">{item.model}</p>
+                                    <p className="mt-0.5 text-[10.5px] text-[#9599A1]">{item.provider} · {Number(item.tokens || 0).toLocaleString()} tokens · {item.requests} requests</p>
+                                  </div>
+                                  <p className={cn("shrink-0 text-[11.5px] font-medium", item.unpricedRequests ? "text-[#B45309]" : "text-[#3A3E46]")}>
+                                    {item.unpricedRequests ? "Unpriced" : `$${Number(item.costUsd || 0).toFixed(4)}`}
+                                  </p>
+                                </div>
+                              ))
+                            : <div className="px-4 py-7 text-center text-[12px] text-[#9599A1]">No provider calls recorded yet.</div>}
                         </div>
                       </div>
-                      <p className="mt-4 text-[10.5px] leading-relaxed text-slate-400">{usage?.methodology || "Models without a verified rate are labeled Unpriced rather than counted as $0. Usage records never store prompt or response content."}</p>
-                      <button type="button" onClick={async () => { await fetch("/api/usage/clear", { method: "POST" }); await refreshUsage(); }} className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"><Trash2 className="h-3.5 w-3.5" /> Clear usage history</button>
-                    </div>
+                      <p className="mt-4 text-[11px] leading-relaxed text-[#9599A1]">
+                        {usage?.methodology || "Models without a verified rate are labeled Unpriced rather than counted as $0. Usage records never store prompt or response content."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={async () => { await fetch("/api/usage/clear", { method: "POST" }); await refreshUsage(); }}
+                        className="clys-btn mt-4 h-8 px-3 text-[11.5px]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        Clear usage history
+                      </button>
+                    </>
                   ) : null}
 
                   {activeSection === "data" ? (
                     <>
-                      <div className="mb-4 rounded-xl border border-slate-200/80 bg-slate-50 p-4">
-                        <p className="text-[15px] font-semibold text-slate-900">{chatCount} saved chats</p>
-                        <p className="mt-1 text-[13px] text-slate-500">Export a local copy or clear browser history.</p>
-                      </div>
-                      <div className="divide-y divide-slate-100">
+                      <SettingsCard title="On this device" description="Export a local copy or clear browser history.">
+                        <SettingRow title="Saved chats" detail={`${chatCount} stored in this browser.`}>
+                          <span className="clys-value-pill">{chatCount}</span>
+                        </SettingRow>
                         <SettingRow title="Export chats" detail="Download as JSON.">
-                          <button
-                            type="button"
-                            onClick={exportChats}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3.5 py-2 text-[13px] font-medium text-slate-700 transition-all hover:bg-slate-50"
-                          >
-                            <Download className="h-4 w-4" />
+                          <button type="button" onClick={exportChats} className="clys-btn">
+                            <Download aria-hidden />
                             Export
                           </button>
                         </SettingRow>
                         <SettingRow title="Clear chats" detail="Remove from this browser.">
-                          <button
-                            type="button"
-                            onClick={clearChats}
-                            className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3.5 py-2 text-[13px] font-medium text-white transition-all hover:bg-rose-500"
-                          >
-                            <Trash2 className="h-4 w-4" />
+                          <button type="button" onClick={clearChats} className="clys-btn clys-btn--solid-danger">
+                            <Trash2 aria-hidden />
                             Clear
                           </button>
                         </SettingRow>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTheme("Light");
-                          setFontSize("Medium");
-                          setUserBubbleColor("#F4F4F4");
-                          setOrbColorTheme("default");
-                          setSendOnEnter(true);
-                          setAutoScroll(true);
-                          setMarkdownSupport(true);
-                          setCodeHighlighting(true);
-                          setTemperature(0.7);
-                          setSystemPrompt("");
-                          setVoiceRate(0.94);
-                          setVoicePitch(1.03);
-                          setVoiceVolume(0.96);
-                        }}
-                        className="mt-4 inline-flex items-center gap-2 rounded-xl border border-slate-200/80 px-3.5 py-2 text-[13px] font-medium text-slate-600 transition-all hover:bg-slate-50"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        Reset defaults
-                      </button>
+                      </SettingsCard>
+                      <SettingsCard title="Reset" description="Restore every preference to its original value.">
+                        <div className="clys-block clys-block--action">
+                          <p className="clys-row__detail">Resets appearance, conversation, voice and model settings. Your chats are kept.</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTheme("Light");
+                              setFontSize("Medium");
+                              setUserBubbleColor("#F4F4F4");
+                              setOrbColorTheme("default");
+                              setSendOnEnter(true);
+                              setAutoScroll(true);
+                              setMarkdownSupport(true);
+                              setCodeHighlighting(true);
+                              setTemperature(0.7);
+                              setSystemPrompt("");
+                              setVoiceRate(0.94);
+                              setVoicePitch(1.03);
+                              setVoiceVolume(0.96);
+                            }}
+                            className="clys-btn mt-3"
+                          >
+                            <RotateCcw aria-hidden />
+                            Reset defaults
+                          </button>
+                        </div>
+                      </SettingsCard>
                     </>
                   ) : null}
                 </motion.div>
               </div>
             </div>
-          </motion.section>
+    </section>
+  );
+}
+
+/** The floating Settings window: blurred backdrop, soft rise-in, and the
+ * embedded sheet inside. The sheet itself is the same surface the composer
+ * morphs into, so both entry points share one design and one state model. */
+export function SettingsModal(props: SettingsModalProps) {
+  return (
+    <AnimatePresence>
+      {props.isOpen ? (
+        <motion.div
+          className="fixed inset-0 z-[100] grid place-items-center p-4 sm:p-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
+          <motion.button
+            type="button"
+            aria-label="Close settings"
+            className="clys-backdrop"
+            onClick={props.onClose}
+            tabIndex={-1}
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.22, ease: EASE_OUT }}
+          >
+            <SettingsSheet {...props} />
+          </motion.div>
         </motion.div>
       ) : null}
     </AnimatePresence>

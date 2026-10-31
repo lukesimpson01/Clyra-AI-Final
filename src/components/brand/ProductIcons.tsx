@@ -1,14 +1,14 @@
 import { cn } from "../../lib/utils";
 
-/** Official Google Workspace product logos (gstatic). */
+/** Official Google Workspace product logos, bundled locally as SVG so they stay crisp and work offline. */
 export const GOOGLE_PRODUCT_LOGOS = {
-  google: "https://www.gstatic.com/images/branding/product/2x/googleg_48dp.png",
-  gmail: "https://www.gstatic.com/images/branding/product/2x/gmail_48dp.png",
-  calendar: "https://www.gstatic.com/images/branding/product/2x/calendar_48dp.png",
-  docs: "https://www.gstatic.com/images/branding/product/2x/docs_48dp.png",
-  sheets: "https://www.gstatic.com/images/branding/product/2x/sheets_48dp.png",
-  slides: "https://www.gstatic.com/images/branding/product/2x/slides_48dp.png",
-  drive: "https://www.gstatic.com/images/branding/product/2x/drive_48dp.png",
+  google: "/icons/brand/google.svg",
+  gmail: "/icons/brand/gmail.svg",
+  calendar: "/icons/brand/calendar.svg",
+  docs: "/icons/brand/docs.svg",
+  sheets: "/icons/brand/sheets.svg",
+  slides: "/icons/brand/slides.svg",
+  drive: "/icons/brand/drive.svg",
 } as const;
 
 export type GoogleProductId = keyof typeof GOOGLE_PRODUCT_LOGOS;

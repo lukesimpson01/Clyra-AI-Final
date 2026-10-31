@@ -21,6 +21,8 @@
     "dev:open-design": "node tools/open-design-daemon.mjs",
     "setup:hermes": "node tools/install-hermes-runtime.mjs",
     "setup:speech": "node tools/setup-speech-engine.mjs",
+    "shorts:setup": "npm --prefix apps/shorts/app install --no-audit --no-fund && cd apps/shorts/openfilm && pnpm install",
+    "editor:setup": "npm --prefix vendor/openfilm install --no-audit --no-fund --legacy-peer-deps && npm --prefix vendor/openfilm run build:ui",
     "check:openpencil": "node tools/openpencil-check.mjs",
     "vibe-server": "tsx vibe-server.ts",
     "start": "node dist/server.js",
@@ -60,8 +62,6 @@
     "test:automations": "node tools/sqlite-abi.mjs node && tsx tools/automation-engine-unit-tests.ts",
     "test:agent-zero-runtime": "tsx tools/agent-zero-runtime-unit-tests.ts",
     "test:care": "node tools/care-manager-unit-tests.mjs",
-    "eye:install": "npm --prefix apps/clyra-eye ci",
-    "eye:dev": "npm --prefix apps/clyra-eye run dev -- --port 5179 --strictPort",
     "test:security": "node tools/sqlite-abi.mjs node && tsx tools/clyra-agent-system-tests.ts",
     "test:clyra": "npm run test:tools && npm run test:automations && npm run test:care && npm run test:agent-controller && npm run test:computer-agent && npm run test:browser && npm run test:browser-complex && npm run test:research && npm run test:notes && npm run test:vibe-runtime && npm run test:vibe-agent-v3",
     "clyra:test-agent-system": "npm run test:clyra",
@@ -85,9 +85,9 @@
     "test:clyra-code-library": "tsx tools/clyra-code-library-unit-tests.ts",
     "notes:vendor": "node -e \"const f=require('fs');f.mkdirSync('public/notes/vendor',{recursive:true});f.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js','public/notes/vendor/xterm.js');f.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js','public/notes/vendor/addon-fit.js');f.copyFileSync('node_modules/@xterm/xterm/css/xterm.css','public/notes/vendor/xterm.css');console.log('notes vendor refreshed')\"",
     "test:composer-dictation": "tsx tools/composer-dictation-unit-tests.ts",
-    "test:shorts": "tsx tools/shorts-unit-tests.ts",
     "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
-    "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts"
+    "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts",
+    "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
@@ -183,6 +183,25 @@
         "to": "backend/voice-pipeline"
       },
       {
+        "from": "vendor/openfilm",
+        "to": "vendor/openfilm",
+        "filter": [
+          "**/*",
+          "!studio/ui/src/**",
+          "!node_modules/.bin/**",
+          "!node_modules/vite/**",
+          "!node_modules/@vitejs/**",
+          "!node_modules/@tailwindcss/**",
+          "!node_modules/tailwindcss/**",
+          "!node_modules/typescript/**",
+          "!node_modules/@types/**",
+          "!node_modules/@fontsource-variable/**",
+          "!node_modules/lucide-react/**",
+          "!node_modules/react/**",
+          "!node_modules/react-dom/**"
+        ]
+      },
+      {
         "from": "vendor/whisper.cpp/build",
         "to": "speech-runtime/build"
       },
@@ -271,6 +290,7 @@
     "@deepseek-ai/dsh-session": "^0.1.2-alpha.3",
     "@dimforge/rapier2d-compat": "^0.18.2",
     "@dimforge/rapier3d-compat": "^0.18.2",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@mapbox/vector-tile": "^1.3.1",
     "@opencode-ai/sdk": "^1.18.12",
     "@pipecat-ai/client-js": "^1.13.0",
@@ -283,11 +303,15 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "isomorphic-git": "^1.41.4",
+    "katex": "^0.19.0",
     "liquid-glass-react": "^1.1.1",
     "maplibre-gl": "^4.7.1",
+    "mediabunny": "^1.62.1",
     "node-pty": "^1.1.0",
     "pbf": "^3.3.0",
     "pixi.js": "^8.19.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "three": "^0.185.1",
     "uiohook-napi": "^1.5.5"
   }

@@ -1,0 +1,82 @@
+[
+  {
+    "project": "pwvJhmgzQ6qC",
+    "sourceTime": 1,
+    "exportFrame": 30,
+    "maeRGB": 3.5327327251434326,
+    "ecc": 0.999708104394665,
+    "translationPixels": [
+      -0.0019919020123779774,
+      -0.013381386175751686
+    ]
+  },
+  {
+    "project": "pwvJhmgzQ6qC",
+    "sourceTime": 2,
+    "exportFrame": 60,
+    "maeRGB": 3.3177263736724854,
+    "ecc": 0.9996647025137879,
+    "translationPixels": [
+      -0.0247916541993618,
+      -0.0246609877794981
+    ]
+  },
+  {
+    "project": "pwvJhmgzQ6qC",
+    "sourceTime": 3,
+    "exportFrame": 90,
+    "maeRGB": 3.4004294872283936,
+    "ecc": 0.9996631488375274,
+    "translationPixels": [
+      -0.027554765343666077,
+      -0.03197682648897171
+    ]
+  },
+  {
+    "project": "pwvJhmgzQ6qC",
+    "sourceTime": 4,
+    "exportFrame": 120,
+    "maeRGB": 3.307652473449707,
+    "ecc": 0.999376544686238,
+    "translationPixels": [
+      -0.01633439213037491,
+      -0.047364138066768646
+    ]
+  },
+  {
+    "project": "hfuUCaSKMkwU",
+    "sourceTime": 0.1,
+    "exportFrame": 3,
+    "maeRGB": 3.573625326156616,
+    "ecc": 0.998505164547058,
+    "translationPixels": [
+      0.0012901537120342255,
+      0.022587373852729797
+    ],
+    "greenMaskIoU": 0.9751961375980688
+  },
+  {
+    "project": "hfuUCaSKMkwU",
+    "sourceTime": 0.3333333333333333,
+    "exportFrame": 10,
+    "maeRGB": 3.63681960105896,
+    "ecc": 0.9985412740836664,
+    "translationPixels": [
+      -0.00496976962313056,
+      0.020945683121681213
+    ],
+    "greenMaskIoU": 0.9819680577022154
+  },
+  {
+    "project": "hfuUCaSKMkwU",
+    "sourceTime": 0.6,
+    "exportFrame": 18,
+    "maeRGB": 3.616619825363159,
+    "ecc": 0.9984903715958608,
+    "translationPixels": [
+      -0.009465891867876053,
+      0.017981581389904022
+    ],
+    "greenMaskIoU": 0.9780458521525356
+  }
+]

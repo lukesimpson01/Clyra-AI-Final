@@ -4,6 +4,9 @@ import Markdown, { type Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light.js";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Maximize2, Minimize2, Play, RefreshCw, X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useTerminalRunner } from "./terminal/TerminalRunnerProvider";
@@ -251,6 +254,36 @@ function copyCode(text: string) {
   return copied ? Promise.resolve() : Promise.reject(new Error("Copy unavailable"));
 }
 
+/* KaTeX speaks `$…$` / `$$…$$`. The product's math notation is \( … \) and
+   \[ … \]. Translate those two forms only, outside code spans and fences, so
+   plain currency like A$700 is never misparsed as math. Character-scan based
+   (no regex over prose) and streaming-safe: an unclosed delimiter simply
+   stays as literal text until the model completes it. */
+function normalizeMathDelimiters(markdown: string): string {
+  let out = "";
+  let i = 0;
+  while (i < markdown.length) {
+    const ch = markdown[i];
+    if (ch === "`") {
+      let run = 1;
+      while (markdown[i + run] === "`") run += 1;
+      const fence = "`".repeat(run);
+      const close = markdown.indexOf(fence, i + run);
+      if (close === -1) { out += markdown.slice(i); break; }
+      out += markdown.slice(i, close + run);
+      i = close + run;
+      continue;
+    }
+    if (markdown.startsWith("\\[", i)) { out += "$$"; i += 2; continue; }
+    if (markdown.startsWith("\\]", i)) { out += "$$"; i += 2; continue; }
+    if (markdown.startsWith("\\(", i)) { out += "$"; i += 2; continue; }
+    if (markdown.startsWith("\\)", i)) { out += "$"; i += 2; continue; }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
 function CodeBlockHeader({ language, text }: { language: string; text: string }) {
   const [copied, setCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -326,6 +359,17 @@ export function MarkdownMessageContent({
     pre({ children }) {
       return <>{children}</>;
     },
+    // Tables are a first-class response type: wrap the raw <table> in a
+    // horizontally scrollable region so wide tables never break the
+    // conversation column on small screens, and give cells the chat's
+    // premium surface via CSS (see .clyra-md-table in index.css).
+    table({ children }) {
+      return (
+        <div className="clyra-md-table-wrap">
+          <table className="clyra-md-table">{children}</table>
+        </div>
+      );
+    },
     a({ href, children, node: _node, ref: _ref, ...props }) {
       const isClipperVideo =
         typeof href === "string" && false && href.endsWith(".mp4");
@@ -350,6 +394,14 @@ export function MarkdownMessageContent({
               </a>
             </span>
           </span>
+        );
+      }
+      /* an inline citation (App's linkCitations): a small host chip */
+      if (typeof props.title === "string" && /^Source \d+:/.test(props.title)) {
+        return (
+          <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="clyra-ai-cite">
+            {children}
+          </a>
         );
       }
       const googleWorkspaceMatch = typeof href === "string"
@@ -437,8 +489,13 @@ export function MarkdownMessageContent({
   };
 
   return (
-    <Markdown remarkPlugins={[remarkGfm]} components={components}>
-      {content}
+    <Markdown
+      /* only $$…$$ is maths: a single $ is money far more often ("$0.20 per 1M tokens and $1.20…") */
+      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+      rehypePlugins={[[rehypeKatex, { throwOnError: false, errorColor: "#15171C", strict: false }]]}
+      components={components}
+    >
+      {normalizeMathDelimiters(content)}
     </Markdown>
   );
 }

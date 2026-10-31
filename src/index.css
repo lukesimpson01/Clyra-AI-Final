@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap");
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
 
@@ -9,6 +8,54 @@
 .clyra-composer-scroll::-webkit-scrollbar-track { background: transparent; }
 .clyra-composer-scroll::-webkit-scrollbar-thumb { background: rgba(16,18,24,0.16); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
 .clyra-composer-scroll::-webkit-scrollbar-thumb:hover { background: rgba(16,18,24,0.28); background-clip: content-box; }
+
+/* Voice call is a peer surface to chat: a white canvas that eases into view
+   and lets the supplied voice UI finish its own exit before chat returns. */
+.clyra-voice-call-host {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--clyra-surface, #fff);
+  opacity: 0;
+  transform: scale(1.012);
+  transform-origin: 50% 50%;
+  transition:
+    opacity 320ms cubic-bezier(.22, 1, .36, 1),
+    transform 440ms cubic-bezier(.22, 1, .36, 1);
+  will-change: opacity, transform;
+}
+
+.clyra-voice-call-host[data-presented="true"] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.clyra-voice-call-host[data-ending="true"] {
+  opacity: 0;
+  transform: scale(.996);
+  transition:
+    opacity 360ms cubic-bezier(.4, 0, 1, 1) 360ms,
+    transform 560ms cubic-bezier(.22, 1, .36, 1) 120ms;
+}
+
+.clyra-voice-call-host__frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--clyra-surface, #fff);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clyra-voice-call-host,
+  .clyra-voice-call-host[data-ending="true"] {
+    transform: none;
+    transition: opacity 140ms ease;
+  }
+}
 
 /* Clyra Music uses the chat system's quiet focus and motion language. The
    border is deliberately crisp: no glow competing with album artwork. */
@@ -112,6 +159,15 @@
 @keyframes clyraFade { from { opacity:0; } to { opacity:1; } }
 @keyframes clyraShine { from { background-position:200% 0; } to { background-position:-200% 0; } }
 @keyframes clyraSwap { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
+
+@keyframes clyraManageIn {
+  from { opacity: 0; transform: translateX(-34px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes clyraDetailIn {
+  from { opacity: 0; transform: translateX(34px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 @keyframes clyraTempTick { from { transform:rotate(-14deg) scale(.86); opacity:.5; } to { transform:rotate(0deg) scale(1); opacity:1; } }
 @keyframes clyraThinkIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 @keyframes clyraReplyIn { from { opacity:0; transform:translateY(14px); filter:blur(5px); } 55% { opacity:1; } to { opacity:1; transform:translateY(0); filter:blur(0); } }
@@ -191,6 +247,7 @@
   --clyra-content-cap: 768px;
 
   /* Shared Clyra light design tokens */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --clyra-canvas: #f7f7f6;
   --clyra-surface: #ffffff;
   --clyra-surface-muted: #f4f4f3;
@@ -280,7 +337,7 @@
   overflow: hidden;
   background: radial-gradient(circle at 50% 40%, #ffffff 0%, var(--voice-canvas) 48%, #f7f6f3 100%);
   color: var(--voice-ink);
-  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   font-optical-sizing: auto;
 }
 
@@ -1185,6 +1242,29 @@
   50% { transform: scale(1.12); box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
 }
 
+html {
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  color: var(--clyra-text);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
 html, body, #root {
   height: 100%;
   /* Safety-net default so any element that forgets to set its own text
@@ -1267,11 +1347,9 @@ html, body, #root {
   filter: saturate(1.04);
 }
 
-/* Grey hover variant — same slide/scale movement and spring timing as
-   .clyra-workflow-tab__hover above (kept intact for reuse elsewhere), but
-   painted as a flat grey chip like the other buttons in the chat UI instead
-   of the glassy card look. Used by the shared morph-pill workspace switcher
-   in App.tsx. */
+/* Grey hover variant — a flat grey chip like the other buttons in the chat UI
+   instead of the glassy card look. Rendered as a single shared pill (via
+   layoutId in App.tsx) that springs between tabs to follow the cursor. */
 .clyra-workflow-tab__hover--grey {
   position: absolute;
   left: 2px;
@@ -1289,6 +1367,17 @@ html, body, #root {
 
 .clyra-workflow-tabs.dark-tabs .clyra-workflow-tab__hover--grey {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* The tab the grey pill is on (or nearest) reads bold, matching the flat
+   grey chip language across the chat UI. */
+.clyra-workflow-tab--hovered {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.clyra-workflow-tabs.dark-tabs .clyra-workflow-tab--hovered {
+  color: #fff;
 }
 
 .clyra-workflow-tab:hover {
@@ -1579,22 +1668,10 @@ html, body, #root {
   inset: 2px;
   z-index: -1;
   content: "";
-  border: 1px solid rgba(15, 23, 42, 0.07);
+  border: none;
   border-radius: inherit;
-  background:
-    radial-gradient(
-      circle at 24% 12%,
-      rgba(255, 255, 255, 0.95),
-      transparent 34%
-    ),
-    linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.88),
-      rgba(226, 232, 240, 0.44)
-    );
-  box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.07),
-    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  background: rgba(16, 18, 24, 0.06);
+  box-shadow: none;
   opacity: 0;
   transform: scale(0.92);
   transition:
@@ -1654,30 +1731,25 @@ html, body, #root {
     inset 0 1px 0 rgba(255, 255, 255, 0),
     0 8px 18px rgba(15, 23, 42, 0);
   transition:
-    color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    background 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Sidebar hover: the same flat grey chip as the welcome pills and tab
+   switcher — a soft grey pill that lifts half a pixel. */
 .clyra-sidebar-action:hover,
 .clyra-sidebar-footer:hover,
 .clyra-sidebar-search:hover,
 .clyra-sidebar-search:focus,
 .clyra-sidebar-input:focus,
 .clyra-sidebar-close:hover {
-  border-color: rgba(148, 163, 184, 0.2);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.68),
-      rgba(255, 255, 255, 0.3)
-    ),
-    rgba(255, 255, 255, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 10px 24px rgba(15, 23, 42, 0.055);
+  border-color: transparent;
+  background: rgba(16, 18, 24, 0.06);
+  box-shadow: none;
+  transform: translateY(-0.5px);
 }
 
 .clyra-sidebar-action--active {
@@ -1739,30 +1811,6 @@ html, body, #root {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 0 12px rgba(255, 255, 255, 0.88);
-}
-
-.clyra-assistant-message {
-  padding-left: 0;
-  border-left: none;
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.clyra-assistant-message--vibe {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 .clyra-chat-quick-actions {
@@ -2034,18 +2082,6 @@ html, body, #root {
 
   .clyra-assistant-mark {
     display: none;
-  }
-
-  .clyra-assistant-message {
-    padding-left: 0;
-    border-left: none;
-    padding: 0;
-    border-radius: 0;
-  }
-
-  .clyra-assistant-message--vibe {
-    padding: 0;
-    border-radius: 0;
   }
 }
 
@@ -3110,10 +3146,6 @@ body,
   margin-bottom: 0;
 }
 
-.markdown-body--vibe p {
-  color: #334155;
-}
-
 .markdown-body p {
   margin-bottom: 1em;
 }
@@ -3236,133 +3268,12 @@ body,
   will-change: transform, opacity;
 }
 
-/* Clyra Mission Control: one persistent window layer, no replacement cards.
-   Every tool remains at its full source size; only its outer layer transforms. */
-.clyra-task-view { position: absolute; inset: 0; isolation: isolate; overflow: hidden; background: #fbfbfa; perspective: 1600px; }
-.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window:not(.is-active) { visibility: hidden; }
-.clyra-task-view__backdrop { position: absolute; inset: 0; z-index: 0; background: radial-gradient(82% 65% at 50% -8%, #fff 0%, #f7f7f5 58%, #f1f2f1 100%); opacity: 0; transition: opacity 260ms cubic-bezier(.45,.05,.15,1); }
-.clyra-task-view--open .clyra-task-view__backdrop { opacity: 1; }
-.clyra-task-view__window { position: absolute; transform-origin: top left; will-change: transform, opacity; transition: transform 440ms cubic-bezier(.32,.72,0,1), opacity 200ms ease; transform: translate3d(var(--task-view-x), var(--task-view-y), 0) scale(1); }
-.clyra-task-view--open .clyra-task-view__window { transform: translate3d(0,0,0) scale(var(--task-view-target-scale)); }
-.clyra-task-view--open .clyra-task-view__window { transition-delay: calc(var(--task-view-order) * 10ms); }
-.clyra-task-view--closing .clyra-task-view__window { transform: translate3d(var(--task-view-x), var(--task-view-y), 0) scale(1); transition-delay: 0ms; }
-.clyra-task-view--closing[data-task-view-selecting="true"] .clyra-task-view__window:not(.is-selected),
-.clyra-task-view--closing[data-task-view-selecting="false"] .clyra-task-view__window:not(.is-active) { transform: translate3d(0,6px,0) scale(calc(var(--task-view-target-scale) * .97)); opacity: 0; }
-/* Once the zoom-in has genuinely settled (phase "open", not the "opening"
-   window still animating toward it), hover feedback should feel immediate,
-   not ride the same longer curve as the big zoom — that read as sluggish for
-   a ~1% scale nudge. This only takes hold after settle, so the initial
-   zoom-in/out always keeps the slower, deliberate transform transition above. */
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 380ms cubic-bezier(.32,.72,0,1), opacity 200ms ease; transition-delay: 0ms; }
-/* pointer-events is set per-render as an inline style in WorkspaceTaskView.tsx
-   (auto only for the active window outside the grid overview) — it must not
-   be hardcoded here as a static "none". That single static declaration used
-   to always win, since nothing overrode it, and made every mounted app's
-   content unreachable by a real mouse click. */
-.clyra-task-view__surface { position: absolute; inset: 0; overflow: hidden; background: #fbfbfa; border: 1px solid transparent; border-radius: 0; box-shadow: none; transition: border-radius 160ms ease, border-color 200ms ease, box-shadow 200ms ease; }
-.clyra-task-view--open .clyra-task-view__surface { border-color: rgba(37,39,43,.11); border-radius: 12px; box-shadow: 0 16px 38px rgba(26,29,35,.12), 0 2px 7px rgba(26,29,35,.05); }
-.clyra-task-view__window.is-hovered { z-index: 4 !important; }
-.clyra-task-view:not(.clyra-task-view--mode-3d).clyra-task-view--open .clyra-task-view__window.is-hovered { transform: translate3d(0,-3px,0) scale(calc(var(--task-view-target-scale) * 1.012)); }
-.clyra-task-view__window.is-hovered .clyra-task-view__surface { border-color: rgba(57,119,246,.28); box-shadow: 0 20px 42px rgba(26,29,35,.13), 0 2px 7px rgba(26,29,35,.05); }
-.clyra-task-view:not(.clyra-task-view--mode-3d)[data-task-view-phase="open"] .clyra-task-view__window:has(.clyra-task-view__hit-area:active) { transform: translate3d(0,-1px,0) scale(calc(var(--task-view-target-scale) * .994)); transition-duration: 100ms; }
-.clyra-task-view--open .clyra-task-view__window.is-closing-tab { transform: translate3d(0,-22px,0) scale(calc(var(--task-view-target-scale) * .94)); opacity: 0; pointer-events: none; transition: transform 260ms cubic-bezier(.32,.72,0,1), opacity 180ms ease; }
-.clyra-task-view--open .clyra-task-view__window:not(.is-active) *,
-.clyra-task-view--open .clyra-task-view__window:not(.is-active) *::before,
-.clyra-task-view--open .clyra-task-view__window:not(.is-active) *::after { animation-play-state: paused !important; }
-.clyra-task-view__hit-area { position: absolute; inset: 0; z-index: 2; cursor: pointer; border: 0; background: transparent; outline: 0; }
-.clyra-task-view__hit-area:focus-visible { box-shadow: inset 0 0 0 3px rgba(57,119,246,.45); border-radius: 12px; }
-.clyra-task-view__label { position: absolute; left: 0; top: calc(100% + 10px / var(--task-view-target-scale, 1)); z-index: 3; color: #5d6067; font: 600 calc(12.5px / var(--task-view-target-scale, 1))/1.2 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; letter-spacing: -.01em; opacity: 0; transform: translateY(-4px); transition: opacity 180ms ease, transform 220ms cubic-bezier(.45,.05,.15,1), color 160ms ease; transition-delay: calc(var(--task-view-order) * 10ms + 90ms); pointer-events: none; }
-.clyra-task-view--open .clyra-task-view__label { opacity: 1; transform: translateY(0); }
-.clyra-task-view__window.is-hovered .clyra-task-view__label { color: #31343a; transform: translateY(1px); }
-.clyra-task-view--closing .clyra-task-view__label { opacity: 0; transform: translateY(-3px); transition-delay: 0ms; }
-.clyra-task-view__tab-close { position: absolute; z-index: 7; display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 5px 14px rgba(15,23,42,.10); color: #64748b; cursor: pointer; opacity: 0; pointer-events: none; transform: scale(.92); transition: opacity 140ms ease, transform 180ms cubic-bezier(.45,.05,.15,1), background 140ms ease, color 140ms ease, box-shadow 160ms ease; backdrop-filter: blur(10px); }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close { pointer-events: auto; }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered + .clyra-task-view__tab-close,
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close:hover,
-.clyra-task-view__tab-close:focus-visible { opacity: 1; transform: scale(1); pointer-events: auto; }
-.clyra-task-view__tab-close:hover { background: #f1f5f9; color: #0f172a; box-shadow: 0 8px 18px rgba(15,23,42,.14); transform: scale(1.06); }
-.clyra-task-view__tab-close:active { transform: scale(.94); box-shadow: 0 2px 7px rgba(15,23,42,.12); }
-.clyra-task-view__tab-close:focus-visible { outline: 3px solid rgba(57,119,246,.45); outline-offset: 2px; }
-.clyra-task-view__dismiss { position: absolute; inset: 0; z-index: 1; border: 0; background: transparent; cursor: default; }
-.clyra-task-view__controls { position: absolute; top: 22px; left: 50%; z-index: 6; display: flex; align-items: center; gap: 22px; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; color: #8a9099; transform: translateX(-50%); animation: clyra-task-view-controls-in 320ms 180ms cubic-bezier(.45,.05,.15,1) both; }
-.clyra-task-view__controls span,.clyra-task-view__controls button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: 650 11.5px/1 -apple-system,BlinkMacSystemFont,"Inter",sans-serif; }
-.clyra-task-view__controls button { cursor: pointer; color: #30343a; }
-.clyra-task-view__controls button:hover { background: none; color: #0f172a; }
-.clyra-task-view__controls kbd { color: #727984; font: 650 10px/1 -apple-system,BlinkMacSystemFont,"Inter",sans-serif; }
-@keyframes clyra-task-view-controls-in { from { opacity: 0; transform: translate(-50%,-8px) scale(.96); } to { opacity: 1; transform: translate(-50%,0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .clyra-task-view__backdrop,.clyra-task-view__window,.clyra-task-view__surface,.clyra-task-view__label,.clyra-task-view__tab-close { transition-duration: .01ms !important; } .clyra-task-view:not(.clyra-task-view--mode-3d).clyra-task-view--open .clyra-task-view__window.is-hovered,.clyra-task-view:not(.clyra-task-view--mode-3d)[data-task-view-phase="open"] .clyra-task-view__window:has(.clyra-task-view__hit-area:active),.clyra-task-view--open .clyra-task-view__window.is-closing-tab { transform: translate3d(0,0,0) scale(var(--task-view-target-scale)); } }
-
-/* --- 3D spatial fan mode -------------------------------------------------
-   Everything above is the untouched 2D grid. This block only ever applies
-   when the root carries --mode-3d, and only while a card is in the open,
-   non-closing/non-selected state (:not(.is-closing-tab)); the moment a card
-   starts closing or diving into fullscreen, the --closing rules above take
-   over unmodified (they never reference the fan vars), which is what turns
-   "dive to fullscreen" into a plain rotateY→0 ask for free. Cards keep their
-   normal rounded-window surface, shadow and border the whole time — the 3D
-   effect is carried entirely by translate3d/rotateY on this outer layer, so
-   none of Clyra's flat, no-glassmorphism design language changes underneath. */
-.clyra-task-view--mode-3d { perspective: 1800px; perspective-origin: 50% 48%; }
-.clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__window:not(.is-closing-tab) .clyra-task-view__surface {
-  box-shadow: 0 18px 45px rgba(20,24,35,calc(.09 * var(--task-view-shadow, 1))), 0 4px 12px rgba(20,24,35,calc(.05 * var(--task-view-shadow, 1)));
-}
-.clyra-task-view--mode-3d[data-task-view-phase="open"] .clyra-task-view__tab-close { opacity: 0; pointer-events: none; }
-.clyra-task-view--mode-3d[data-task-view-phase="open"] .clyra-task-view__window.is-hovered + .clyra-task-view__tab-close,
-.clyra-task-view--mode-3d[data-task-view-phase="open"] .clyra-task-view__tab-close:hover { opacity: 1; pointer-events: auto; }
-.clyra-task-view--mode-3d .clyra-task-view__tab-close { width: 26px; height: 26px; }
-.clyra-task-view--mode-3d .clyra-task-view__window { transform-style: preserve-3d; backface-visibility: hidden; }
-.clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__window:not(.is-closing-tab) {
-  transform: var(--task-view-fan-transform, translate3d(0, 0, 0) scale(var(--task-view-target-scale)));
-  transition: transform 420ms cubic-bezier(.45,.05,.15,1), opacity 260ms ease;
-}
-.clyra-task-view--mode-3d .clyra-task-view__window.is-hovered { z-index: 7 !important; }
-.clyra-task-view--mode-3d[data-task-view-phase="open"] .clyra-task-view__window:not(.is-closing-tab) {
-  transition: transform 560ms cubic-bezier(.45,.05,.15,1), opacity 260ms ease;
-}
-.clyra-task-view.clyra-task-view--morphing .clyra-task-view__window:not(.is-closing-tab) {
-  transition:
-    left 560ms cubic-bezier(.45,.05,.15,1) var(--task-view-morph-delay, 0ms),
-    top 560ms cubic-bezier(.45,.05,.15,1) var(--task-view-morph-delay, 0ms),
-    transform 560ms cubic-bezier(.45,.05,.15,1) var(--task-view-morph-delay, 0ms),
-    opacity 300ms ease var(--task-view-morph-delay, 0ms);
-}
-@media (prefers-reduced-motion: reduce) {
-  .clyra-task-view.clyra-task-view--morphing .clyra-task-view__window:not(.is-closing-tab) { transition-duration: .01ms !important; transition-delay: 0ms !important; }
-}
-.clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__window.is-dragging:not(.is-closing-tab) {
-  transition: opacity 220ms ease; /* transform follows the pointer every frame via inline style, not this transition */
-  z-index: 8 !important;
-}
-.clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__window.is-dragging:not(.is-closing-tab) .clyra-task-view__surface {
-  box-shadow: 0 30px 60px rgba(26,29,35,.22), 0 6px 16px rgba(26,29,35,.1);
-  border-color: rgba(57,119,246,.32);
-}
-.clyra-task-view--mode-3d .clyra-task-view__hit-area { touch-action: none; }
-.clyra-task-view--mode-3d .clyra-task-view__label { top: calc(100% + 12px / var(--task-view-target-scale, 1)); text-align: center; left: 50%; transform: translate(-50%,-4px); font-size: calc(12.5px / var(--task-view-target-scale, 1)); font-weight: 500; white-space: nowrap; }
-.clyra-task-view--mode-3d.clyra-task-view--open .clyra-task-view__label { transform: translate(-50%,0); }
-.clyra-task-view__mode-toggle { display: flex; align-items: center; gap: 16px; padding: 0; margin: 0; background: none; }
-.clyra-task-view__mode-toggle button { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 0 4px; border: 0; border-radius: 0; background: none; color: #9aa0a8; font: 600 13px/1 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: -.01em; transition: color 160ms ease; }
-.clyra-task-view__mode-toggle button::after { content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; border-radius: 2px; background: #3977f6; transform: scaleX(0); transform-origin: left; transition: transform 240ms cubic-bezier(.16,1,.3,1); }
-.clyra-task-view__mode-toggle button:hover { background: none; color: #30343a; }
-.clyra-task-view__mode-toggle button.is-active { background: none; color: #0f172a; }
-.clyra-task-view__mode-toggle button.is-active::after { transform: scaleX(1); }
-.clyra-task-view__mode-toggle button:focus-visible { outline: 2px solid rgba(57,119,246,.45); outline-offset: 4px; border-radius: 4px; }
-@media (prefers-reduced-motion: reduce) {
-  .clyra-task-view--mode-3d .clyra-task-view__window { transition-duration: .01ms !important; }
-}
+/* Task View lives in the block "Task View · light spatial overview" near the end of this file. */
 .clyra-workflow-tab {
   will-change: transform;
 }
 .clyra-workflow-tab__hover {
   will-change: transform;
-}
-#chat-container {
-  will-change: scroll-position;
-  -webkit-overflow-scrolling: touch;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scroll-behavior: smooth;
 }
 .scrollbar-none {
   -ms-overflow-style: none;
@@ -3423,10 +3334,6 @@ body,
 .clyra-chat-user-bubble--first {
   animation: clyra-first-msg-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-
-#chat-container {
-  padding-bottom: 80px;
-}
 .clyra-composer-glass {
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
@@ -3439,12 +3346,12 @@ body,
 
 /* Chat-only foundation: quiet, compact, and independent from the live workspaces. */
 .clyra-chat-page {
-  --chat-bg: #fbfbfa;
-  --chat-surface: #ffffff;
-  --chat-border: #e7e7e4;
-  --chat-text: #18212f;
-  --chat-muted: #697386;
-  --chat-accent: #496a95;
+  --chat-bg: #FAF9F7;
+  --chat-surface: #FFFFFF;
+  --chat-border: rgba(25, 25, 25, 0.09);
+  --chat-text: #191919;
+  --chat-muted: #63676F;
+  --chat-accent: #1E6FFF;
   --chat-shadow: 0 10px 30px rgba(24, 33, 47, 0.055);
   background: var(--chat-bg) !important;
   color: var(--chat-text);
@@ -3466,8 +3373,9 @@ body,
 .clyra-chat-page .clyra-sidebar-input:focus,
 .clyra-chat-page .clyra-sidebar-close:hover {
   border-color: transparent;
-  background: #f4f6f8;
+  background: rgba(16, 18, 24, 0.06);
   box-shadow: none;
+  transform: translateY(-0.5px);
 }
 
 .clyra-chat-page .clyra-sidebar-action--active {
@@ -3529,8 +3437,7 @@ body,
   font-size: 11px;
 }
 
-.clyra-header-icon,
-.clyra-message-actions button {
+.clyra-header-icon {
   display: grid;
   place-items: center;
   border: 0;
@@ -3540,25 +3447,14 @@ body,
   transition: background 180ms ease, color 180ms ease;
 }
 
-.clyra-message-actions > button {
-  width: 26px;
-  height: 26px;
-}
-
 .clyra-header-icon {
   width: 32px;
   height: 32px;
 }
 
-.clyra-header-icon:hover,
-.clyra-message-actions > button:hover {
+.clyra-header-icon:hover {
   background: #f1f4f7;
   color: var(--chat-text);
-}
-
-.clyra-chat-page #chat-container {
-  padding: 30px 2px 112px;
-  scroll-behavior: auto;
 }
 
 .clyra-chat-page .clyra-chat-user-bubble {
@@ -3593,35 +3489,6 @@ body,
   box-shadow: none;
 }
 
-.clyra-chat-page .clyra-assistant-message {
-  max-width: 100%;
-  color: var(--chat-text);
-}
-
-.clyra-message-actions {
-  display: flex;
-  width: 100%;
-  height: 26px;
-  align-items: center;
-  gap: 2px;
-  margin-top: 7px;
-  opacity: 0;
-  transform: translateY(-2px) scale(0.96);
-  overflow: visible;
-  transition: opacity 200ms cubic-bezier(0.16, 1, 0.3, 1), transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.clyra-assistant-message:hover .clyra-message-actions,
-.clyra-assistant-message:focus-within .clyra-message-actions {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.clyra-user-message-group:hover .clyra-user-message-edit-trigger,
-.clyra-user-message-edit-trigger:focus-visible {
-  opacity: 1;
-}
-
 .clyra-message-timestamp {
   margin-right: 4px;
   padding: 0 4px;
@@ -3630,26 +3497,6 @@ body,
   color: var(--clyra-text-tertiary);
   white-space: nowrap;
   user-select: none;
-}
-
-.clyra-message-actions button {
-  width: 26px;
-  height: 26px;
-}
-
-.clyra-scroll-latest {
-  position: absolute;
-  right: 10px;
-  bottom: 16px;
-  z-index: 3;
-  border: 1px solid #dfe4e9;
-  border-radius: 999px;
-  background: #fff;
-  box-shadow: var(--chat-shadow);
-  color: #4b5b70;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 7px 10px;
 }
 
 .clyra-chat-page .clyra-composer-transition {
@@ -4895,11 +4742,11 @@ body,
 
 /* Reference-aligned Chat surface. Kept scoped so workspace tools retain their own UI. */
 .clyra-chat-page {
-  --chat-bg: #fdfdfc;
-  --chat-surface: #fff;
-  --chat-border: #e4e8ee;
-  --chat-text: #142033;
-  --chat-muted: #7a8aa1;
+  --chat-bg: #FAF9F7;
+  --chat-surface: #FFFFFF;
+  --chat-border: rgba(25, 25, 25, 0.09);
+  --chat-text: #191919;
+  --chat-muted: #63676F;
   --chat-shadow: 0 16px 38px rgba(30, 42, 60, .055);
 }
 
@@ -5022,16 +4869,6 @@ body,
 .clyra-conversation-menu button { padding: 8px 10px; border-radius: 8px; color: #4d5b70; font-size: 12px; text-align: left; }
 .clyra-conversation-menu button:hover { background: #f4f7fa; color: var(--chat-text); }
 
-.clyra-chat-page #chat-container {
-  width: min(100%, 820px);
-  align-self: center;
-  padding: 4px 8px 132px;
-}
-
-.clyra-chat-page #chat-container > .flex {
-  margin-bottom: 28px;
-}
-
 .clyra-chat-page .clyra-chat-user-message {
   display: grid;
   justify-items: end;
@@ -5065,31 +4902,6 @@ body,
   flex-basis: 48px;
   margin-top: 0;
   border-color: #e3e8ef;
-}
-
-.clyra-chat-page .clyra-assistant-message { max-width: 690px; padding-top: 5px; }
-.clyra-chat-page .clyra-assistant-message > .markdown-body { margin-top: 0; }
-
-.clyra-message-actions {
-  height: 30px;
-  gap: 4px;
-  margin-top: 10px;
-}
-.clyra-message-actions > button { width: 30px; height: 30px; border-radius: 8px; }
-.clyra-message-actions > button.is-active { color: #406b9e; background: #edf4fb; }
-.clyra-message-actions__divider { width: 1px; height: 16px; margin: 0 3px; background: #e1e6ed; }
-
-.clyra-scroll-latest {
-  right: auto;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 16px;
-  border-color: #e2e7ed;
-  box-shadow: 0 8px 22px rgba(37, 52, 70, .09);
 }
 
 .clyra-chat-page .clyra-composer-transition {
@@ -5197,7 +5009,6 @@ body,
 
 @media (max-width: 760px) {
   .clyra-chat-page .clyra-conversation-header { margin-bottom: 20px; padding: 15px; border-radius: 16px; }
-  .clyra-chat-page #chat-container { padding-inline: 2px; }
   .clyra-chat-page .clyra-composer-transition { padding-inline: 12px; }
   .clyra-chat-page .clyra-chat-user-bubble { max-width: 82vw !important; }
   .clyra-chat-page .clyra-assistant-mark { width: 32px; height: 32px; flex-basis: 32px; }
@@ -5392,12 +5203,7 @@ body,
 .clyra-continue-work__row > svg:first-child { width: 25px; height: 25px; padding: 5px; border-radius: 7px; }
 .clyra-continue-work strong { font-size: 11px; }
 .clyra-continue-work small { display: none; }
-
-.clyra-chat-page #chat-container { width: 100%; max-width: 1040px; align-self: center; padding: 24px 8px 18px; scroll-padding-bottom: 32px; overflow-y: auto; overscroll-behavior: contain; }
-.clyra-chat-page #chat-container > .flex { margin-bottom: 22px; }
 .clyra-chat-page .clyra-chat-user-bubble { max-width: min(72%, 520px) !important; min-height: 0; display: block; padding: 10px 13px !important; border-radius: 14px !important; }
-.clyra-chat-page .clyra-assistant-message { max-width: min(78%, 760px); padding-top: 0; }
-.clyra-chat-page .clyra-message-actions { margin-top: 7px; }
 
 .clyra-chat-page .clyra-composer-transition { width: 100%; max-width: 720px; padding-inline: 16px; }
 .clyra-composer-tools { position: relative; z-index: 40; margin: 0 0 8px 12px; pointer-events: auto; }
@@ -5406,13 +5212,9 @@ body,
 .clyra-chat-page .input-wrapper:not(.loading):focus-within,
 .clyra-chat-page .input-wrapper:not(.loading):has(textarea:not(:placeholder-shown)) { border-radius: 28px !important; }
 
-.clyra-scroll-latest { z-index: 45; bottom: 12px; left: calc(50% - 28px); transform: translateX(-50%); padding: 7px 12px; transition: opacity 120ms ease, transform 120ms ease; pointer-events: auto; }
-
 @media (max-width: 760px) {
   .clyra-chat-page .clyra-workspace-card:has(.clyra-chat-quick-actions) h1 { font-size: 1.875rem; }
-  .clyra-chat-page #chat-container { padding-inline: 12px; }
   .clyra-chat-page .clyra-composer-transition { padding-inline: 12px; }
-  .clyra-chat-page .clyra-assistant-message { max-width: calc(100% - 4px); }
 }
 
 /* Final Chat welcome and composer polish. */
@@ -5512,7 +5314,6 @@ body,
    animation. Applying a second 420ms transform transition under .clyra-chat-page
    made Vibe/Clip → Chat fight the swipe (wrong speed, spawning, drift). */
 .clyra-chat-page .clyra-workspace-card:not([data-workspace-motion]),
-.clyra-chat-page #chat-container,
 .clyra-chat-page .clyra-composer-transition {
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform;
@@ -5540,18 +5341,6 @@ body,
 
 /* The active conversation already spans the viewport. Recentre just its
    reading and composer rails instead of shifting the full-width canvas. */
-.clyra-workspace-scene--sidebar-open .clyra-workspace-card:not([data-workspace-motion]):has(#chat-container) {
-  transform: none !important;
-}
-
-.clyra-workspace-scene--sidebar-open .clyra-workspace-card:has(#chat-container) #chat-container,
-.clyra-workspace-scene--sidebar-open .clyra-workspace-card:has(#chat-container) .clyra-composer-transition {
-  /* The conversation is already centred within its full-width scene.  Moving
-     both rails here made the chat appear to jump sideways while the sidebar
-     was animating.  Let their normal centred geometry remain the single
-     source of truth. */
-  transform: none !important;
-}
 .clyra-chat-page .input-wrapper:not(.loading) {
   border-radius: 999px !important;
 }
@@ -5708,9 +5497,6 @@ body,
 
 @media (min-width: 761px) and (max-width: 1100px) {
   .clyra-workspace-scene--sidebar-open .clyra-workspace-card:not([data-workspace-motion]) { transform: none !important; }
-  .clyra-workspace-scene--sidebar-open .clyra-workspace-card:not([data-workspace-motion]):has(#chat-container) { transform: none !important; }
-  .clyra-workspace-scene--sidebar-open .clyra-workspace-card:has(#chat-container) #chat-container,
-  .clyra-workspace-scene--sidebar-open .clyra-workspace-card:has(#chat-container) .clyra-composer-transition { transform: none !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5767,6 +5553,12 @@ body,
 
 .clyra-code-root .cc-mono {
   font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+/* The Vibe Coder composer shares the main Chat composer's type treatment so
+   the two message inputs read as one product. */
+.clyra-code-root .cc-composer {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
 }
 
 /* Masked glyph shimmer for active action targets. Light passes across the
@@ -6147,22 +5939,64 @@ body,
   box-shadow: 0 0 0 1px rgba(10, 132, 255, .06), 0 1px 6px rgba(41, 151, 255, .24);
 }
 
+/* Lightweight launch bar — transform/opacity only, so it composites on the GPU
+   and never forces layout or repaint while the app preloads underneath. */
+.clyra-startup-loader {
+  display: flex;
+  width: min(280px, calc(100vw - 64px));
+  justify-content: center;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.clyra-startup-progress {
+  position: relative;
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(8, 120, 246, 0.14);
+}
+
+.clyra-startup-progress__indicator {
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0878f6 0%, #1996ff 100%);
+  /* The fill is driven by a requestAnimationFrame loop that already eases the
+     value in and out, so no CSS transition here — a second easing layer would
+     make the bar lag behind its own updates and read as janky. */
+  transition: none;
+  will-change: transform;
+}
+
+/* A bright glint riding the leading edge of the fill — it travels up to the
+   latest progress point and pulses softly, so the bar reads as "alive" rather
+   than a static fill. Pure gradient + opacity, composited with the parent. */
+.clyra-startup-progress__tip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 55%, rgba(255, 255, 255, 0.95) 100%);
+  animation: clyra-startup-tip-pulse 2s ease-in-out infinite;
+  will-change: opacity;
+}
+
+@keyframes clyra-startup-tip-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .clyra-boot-overlay.clyra-boot-overlay--progress .clyra-boot-progress--intro .clyra-boot-progress__fill { box-shadow: none; }
+  .clyra-startup-progress__indicator { transition: none; }
+  .clyra-startup-progress__tip { animation: none; }
 }
 
 /* The message rail reserves a real gutter for entering bubbles. This prevents
    right-aligned user messages from being clipped by an ancestor during motion. */
-.clyra-chat-page #chat-container {
-  box-sizing: border-box;
-  padding-inline: clamp(16px, 2.4vw, 28px);
-  overflow-x: clip;
-}
-
-.clyra-chat-page #chat-container > .flex {
-  min-width: 0;
-  padding-inline: 1px;
-}
 
 .clyra-chat-page .clyra-chat-user-bubble {
   max-width: min(520px, calc(100% - 2px)) !important;
@@ -6180,14 +6014,6 @@ body,
 /* Every message must resolve inside the scroll rail before it animates.  This
    also protects long unbroken text and prevents an assistant reply from being
    visually cut at a narrow viewport edge. */
-.clyra-chat-page .clyra-assistant-message,
-.clyra-chat-page .clyra-assistant-message .markdown-body {
-  min-width: 0;
-  max-width: min(760px, calc(100% - 2px));
-  box-sizing: border-box;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
 
 /* Compact recent-session shortcut: one quiet floating card, not a second form. */
 .clyra-continue-work {
@@ -6239,29 +6065,16 @@ body,
 }
 
 /* Conversation actions remain available on the latest answer without a hover. */
-.clyra-chat-page .clyra-assistant-message--latest .clyra-message-actions {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
 
 /* One centred rail owns the chat geometry. Message edges now share the exact
    left/right limits of the composer without relying on sidebar offsets. */
-.clyra-chat-page #chat-container,
 .clyra-chat-page .clyra-composer-transition {
   width: min(850px, calc(100% - 48px));
   max-width: none;
   margin-inline: auto;
 }
-
-.clyra-chat-page #chat-container {
-  align-self: center;
-  padding-inline: 0;
-}
-
-.clyra-chat-page #chat-container > .flex { padding-inline: 0; }
 .clyra-chat-page .clyra-chat-user-message { padding-inline: 0; }
 .clyra-chat-page .clyra-chat-user-bubble { max-width: min(74%, 620px) !important; }
-.clyra-chat-page .clyra-assistant-message { max-width: 100%; }
 
 .clyra-chat-page .clyra-composer-transition {
   transition: transform 760ms cubic-bezier(0.16, 1, 0.3, 1), margin 760ms cubic-bezier(0.16, 1, 0.3, 1), padding 760ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -6302,7 +6115,6 @@ body,
 @keyframes clyra-youtube-scan-beam { to { transform: translateX(520%); } }
 
 @media (max-width: 760px) {
-  .clyra-chat-page #chat-container,
   .clyra-chat-page .clyra-composer-transition { width: min(850px, calc(100% - 24px)); }
   .clyra-continue-work { width: min(100%, 570px); }
 }
@@ -6310,7 +6122,6 @@ body,
 /* Final motion pass: one deliberately narrow rail keeps the input and every
    chat response visually aligned. The composer grows from its top edge, so
    opening its controls only reveals space below the text field. */
-.clyra-chat-page #chat-container,
 .clyra-chat-page .clyra-composer-transition {
   width: min(680px, calc(100% - 48px));
   max-width: none;
@@ -6320,17 +6131,6 @@ body,
 /* The composer keeps a 20px breathing gutter around its visible input. Move
    the reading rail in by the same amount so message edges meet the actual
    input edge—not merely the outer composer wrapper. */
-.clyra-chat-page #chat-container {
-  width: min(640px, calc(100% - 48px));
-}
-
-.clyra-chat-page #chat-container {
-  align-self: center;
-  padding-inline: 0;
-}
-
-.clyra-chat-page #chat-container > .flex { padding-inline: 0; }
-.clyra-chat-page .clyra-assistant-message { max-width: 100%; }
 .clyra-chat-page .clyra-chat-user-bubble { max-width: min(74%, 500px) !important; }
 
 .clyra-chat-page .clyra-composer-transition {
@@ -6470,35 +6270,6 @@ body,
 
 /* A reserved outer gutter keeps the chat scrollbar calm and outside the
    reading rail. Native thumb length naturally reflects conversation length. */
-.clyra-chat-page #chat-container.clyra-visible-scrollbar {
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(100, 124, 151, .42) transparent;
-  padding-right: 18px;
-}
-
-.clyra-chat-page #chat-container.clyra-visible-scrollbar::-webkit-scrollbar {
-  width: 10px;
-}
-
-.clyra-chat-page #chat-container.clyra-visible-scrollbar::-webkit-scrollbar-track {
-  margin-block: 18px;
-  border-radius: 999px;
-  background: transparent;
-}
-
-.clyra-chat-page #chat-container.clyra-visible-scrollbar::-webkit-scrollbar-thumb {
-  min-height: 28px;
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background-clip: content-box;
-  background-color: rgba(100, 124, 151, .38);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.72);
-}
-
-.clyra-chat-page #chat-container.clyra-visible-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(73, 97, 124, .56);
-}
 
 .clyra-chat-page .clyra-composer-transition {
   will-change: transform;
@@ -6507,52 +6278,11 @@ body,
   transition: none !important;
 }
 
-.clyra-scroll-latest {
-  z-index: 35;
-  min-height: 34px;
-  border-color: #dce6f0;
-  background: rgba(255,255,255,.94);
-  box-shadow: 0 10px 26px rgba(27, 48, 76, .12), 0 1px 4px rgba(27, 48, 76, .05);
-  backdrop-filter: blur(12px) saturate(1.08);
-  -webkit-backdrop-filter: blur(12px) saturate(1.08);
-  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
-}
-
-.clyra-scroll-latest:hover {
-  border-color: #c9d7e6;
-  background: #fbfdff;
-  box-shadow: 0 12px 28px rgba(27, 48, 76, .15), 0 1px 4px rgba(27, 48, 76, .05);
-}
-
 /* Overlay over the transcript frame (not inside its scroll content). The
    wrapper centres the control; framer-motion owns the button's transform. */
-.clyra-scroll-latest-anchor {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 16px;
-  z-index: 3;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.clyra-scroll-latest-anchor .clyra-scroll-latest {
-  position: relative !important;
-  left: auto !important;
-  right: auto !important;
-  bottom: auto !important;
-  pointer-events: auto;
-}
 
 /* A cancelled reply says so, in quiet metadata type, instead of ending
    mid-sentence without explanation. */
-.clyra-stopped-note {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #8a8f98;
-}
 
 .clyra-status-text-shimmer {
   display: inline-block;
@@ -6574,40 +6304,34 @@ body,
   to { background-position: -115% 50%; }
 }
 
-.clyra-thinking-wave {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-
 /* The active tool label remains readable, while the small moving highlight
    connects the normal thinking state to web and Google Workspace stages. */
-.clyra-thinking-wave--shimmer {
-  color: #404040;
-  background-image: linear-gradient(110deg, #404040 0%, #404040 35%, #fff 50%, #404040 75%, #404040 100%);
-  background-size: 200% 100%;
-  background-position: 200% 0;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: clyra-text-shine 3.2s linear infinite;
-  will-change: background-position;
-}
 
-/* Composer temporary-chat controls copied from the artboard: a quiet circular
-   hover for the viewport-anchored toggle and a matching quiet pill on home. */
+/* Composer temporary-chat controls: the same FLAT grey hover chip as the
+   workspace tab switcher (rgba(16,18,24,0.06)), with the tab spring timing,
+   so every corner control on the welcome screen shares one grey language. */
+.clyra-welcome-corner {
+  background: transparent;
+  transition: background 0.22s cubic-bezier(0.22, 1, 0.36, 1), transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.clyra-welcome-corner:hover {
+  background: rgba(16, 18, 24, 0.06);
+}
 .clyra-composer-temp-toggle {
   background: transparent;
+  transition: background 0.22s cubic-bezier(0.22, 1, 0.36, 1), transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .clyra-composer-temp-toggle:hover {
-  background: rgba(16, 18, 24, 0.05);
+  background: rgba(16, 18, 24, 0.06);
 }
 .clyra-composer-temp-toggle:focus-visible {
   outline: 2px solid rgba(30, 111, 255, 0.42);
   outline-offset: 2px;
 }
 .clyra-composer-temp-pill:hover {
-  background: rgba(16, 18, 24, 0.075) !important;
+  background: rgba(16, 18, 24, 0.06) !important;
+  box-shadow: none !important;
+  transform: translateY(-0.5px);
 }
 .clyra-composer-temp-pill:focus-visible {
   outline: 2px solid rgba(30, 111, 255, 0.42);
@@ -6620,7 +6344,6 @@ body,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .clyra-thinking-wave--shimmer { animation: none; }
   .clyra-composer-temp-toggle,
   .clyra-composer-temp-pill {
     transition-duration: 0.01ms !important;
@@ -6669,9 +6392,7 @@ body,
 }
 
 @media (max-width: 760px) {
-  .clyra-chat-page #chat-container,
   .clyra-chat-page .clyra-composer-transition { width: min(680px, calc(100% - 24px)); }
-  .clyra-chat-page #chat-container { width: min(640px, calc(100% - 24px)); }
   .clyra-command-palette { min-width: min(340px, calc(100vw - 28px)); }
 }
 
@@ -6869,131 +6590,13 @@ body,
 }
 
 /* Finished browse/search source chips — sit to the right of message actions */
-.clyra-message-source-chips {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 10px;
-  padding-left: 10px;
-  border-left: 1px solid #e1e6ed;
-  max-width: min(520px, 70vw);
-  overflow: visible;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.clyra-message-source-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  height: 22px;
-  max-width: 22px;
-  padding: 0;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 999px;
-  background: #fff;
-  color: #4b5b70;
-  flex: 0 0 auto;
-  min-width: 22px;
-  overflow: hidden;
-  cursor: pointer;
-  text-decoration: none;
-  position: relative;
-  z-index: 1;
-  transition:
-    max-width 0.34s cubic-bezier(0.22, 1, 0.36, 1),
-    gap 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    background 0.2s ease,
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
-}
-.clyra-message-source-chip:hover,
-.clyra-message-source-chip:focus-visible,
-.clyra-message-source-chip.is-expanded {
-  z-index: 2;
-  max-width: 240px;
-  gap: 6px;
-  padding: 0 10px 0 2px;
-  background: #f7f9fb;
-  border-color: rgba(64, 107, 158, 0.22);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-  outline: none;
-  transform: none;
-}
-.clyra-message-source-chip__icon {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-}
-.clyra-message-source-chip img {
-  width: 14px;
-  height: 14px;
-  object-fit: cover;
-  border-radius: 3px;
-}
-.clyra-message-source-chip__bullet {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  transform: translateX(-6px);
-  transition:
-    max-width 0.34s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.22s ease,
-    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.clyra-message-source-chip:hover .clyra-message-source-chip__bullet,
-.clyra-message-source-chip:focus-visible .clyra-message-source-chip__bullet,
-.clyra-message-source-chip.is-expanded .clyra-message-source-chip__bullet {
-  max-width: 200px;
-  opacity: 1;
-  transform: translateX(0);
-}
-.clyra-message-source-chip__dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: #7d8795;
-  flex-shrink: 0;
-}
-.clyra-message-source-chip__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1;
-  color: #3d4d61;
-}
 
 /* Keep action-row height stable while a source pill expands horizontally */
-.clyra-message-actions:has(.clyra-message-source-chip:hover),
-.clyra-message-actions:has(.clyra-message-source-chip:focus-visible),
-.clyra-message-actions:has(.clyra-message-source-chip.is-expanded) {
-  overflow: visible;
-}
 
 /* Source chips must stay clickable even if a status node is exiting. */
-.clyra-message-actions .clyra-message-source-chips,
-.clyra-message-actions .clyra-message-source-chip {
-  pointer-events: auto;
-}
 
 /* Source chips sit in the assistant action rail. Keep their compact favicon
    geometry instead of inheriting the square action-button dimensions. */
-.clyra-message-actions .clyra-message-source-chip {
-  width: auto;
-  height: 22px;
-  min-width: 22px;
-  border-radius: 999px;
-}
 
 .clyra-browser-ai-control {
   box-shadow: none;
@@ -7407,48 +7010,17 @@ body,
 }
 
 /* Lightweight streaming paint — compositor-friendly; no per-char layout. */
-.clyra-stream-paint {
-  contain: content;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
-.clyra-stream-paint__caret {
-  display: inline-block;
-  width: 0.085em;
-  height: 0.95em;
-  margin-left: 1px;
-  vertical-align: -0.1em;
-  border-radius: 1px;
-  background: currentColor;
-  opacity: 0.28;
-  animation: clyra-stream-caret 1.15s ease-in-out infinite;
-}
 
 @keyframes clyra-stream-caret {
   0%, 100% { opacity: 0.12; }
   50% { opacity: 0.34; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .clyra-stream-paint__caret { animation: none; opacity: 0.22; }
-}
-
 /* Assistant controls must never leak through a held thinking state.
    Once the answer + actions are showing, keep chips/buttons interactive. */
-.clyra-assistant-message:has([role="status"]):not(:has(.clyra-message-source-chips)) .clyra-message-actions {
-  opacity: 0 !important;
-  pointer-events: none;
-}
 
 /* Keep both phases on a common baseline; opacity/blur hand off the response
    without translating the first response line after thinking disappears. */
-.clyra-assistant-message > div {
-  gap: 0 !important;
-}
-.clyra-assistant-message .markdown-body {
-  margin-top: 0 !important;
-}
 
 /* The reveal is driven by the component's radial gradient. This late override
    intentionally neutralises older CSS-only wave experiments so they cannot
@@ -7595,10 +7167,6 @@ body,
 /* Chat uses one centred conversation rail. The rail is intentionally wider
    than the old 640px cap so user bubbles do not crowd the middle of a desktop
    workspace, while retaining a generous gutter at smaller widths. */
-.clyra-chat-page #chat-container {
-  width: min(780px, calc(100% - 48px));
-  margin-inline: auto;
-}
 
 /* Chat is allowed to use the complete scene even when a previous workspace
    leaves a split-pane shell mounted for a transition. This keeps the welcome
@@ -7650,13 +7218,6 @@ body,
    affordance floats above it where it remains visible and immediately usable. */
 .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) {
   bottom: 0;
-}
-
-.clyra-scroll-latest {
-  bottom: 104px;
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
 }
 
 /* The workspace scene, not an inherited split-pane, owns Chat's centre.
@@ -8235,11 +7796,6 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .clyra-chat-welcome__actions > button { transition: none; }
   .clyra-chat-welcome__actions > button:hover { transform: none; }
-}
-
-@media (max-width: 760px) {
-  .clyra-chat-page #chat-container { width: calc(100% - 28px); }
-  .clyra-scroll-latest { bottom: 92px; }
 }
 
 /* AI Clipper editor: thin timeline zoom slider with a small dark-blue thumb. */
@@ -9295,9 +8851,12 @@ body,
 :root[data-clyra-theme="dark"] [class*="hover:bg-slate-50"]:hover {
   background-color: var(--clyra-hover) !important;
 }
-:root[data-clyra-theme="dark"] [class*="placeholder:text-slate-400"]::placeholder,
-:root[data-clyra-theme="dark"] [class*="placeholder:text-slate-500"]::placeholder {
-  color: var(--clyra-text-tertiary) !important;
+/* A class-attribute selector combined with ::placeholder makes Chrome treat every class change anywhere as
+   invalidating that element's whole subtree (it restyled all of Task View on open), so dark placeholders are set
+   for every field instead. */
+:root[data-clyra-theme="dark"] input::placeholder,
+:root[data-clyra-theme="dark"] textarea::placeholder {
+  color: var(--clyra-text-tertiary);
 }
 
 /* Clyra Code is deliberately a light, focused workbench. It keeps its own
@@ -9336,7 +8895,6 @@ body,
    composer. Previously #chat-container (780px) and .clyra-composer-transition
    (680px) disagreed, so replies and the input visually belonged to two
    different rails. */
-.clyra-chat-page #chat-container,
 .clyra-chat-page .clyra-composer-transition {
   width: min(880px, calc(100% - 48px)) !important;
   max-width: none !important;
@@ -9344,7 +8902,6 @@ body,
 }
 
 @media (max-width: 760px) {
-  .clyra-chat-page #chat-container,
   .clyra-chat-page .clyra-composer-transition {
     width: min(880px, calc(100% - 28px)) !important;
   }
@@ -9370,9 +8927,6 @@ body,
 /* Reserve enough room below the thread for the composer (up to ~260px when
    fully expanded, plus its floating tool chip and a breathing gutter) so the
    last reply is never hidden behind the input instead of scrolling above it. */
-.clyra-chat-page #chat-container {
-  padding-bottom: 188px !important;
-}
 
 /* --- User message alignment -------------------------------------------- */
 /* Root cause of "user bubble floats away from the right edge": the bubble's
@@ -9460,23 +9014,6 @@ body,
 
 /* --- Source chips: a quiet "Sources · N" control rather than a row of
    unexplained favicons sitting beside like/dislike. --- */
-.clyra-message-actions .clyra-message-source-summary {
-  display: inline-flex !important;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  width: auto;
-  margin-left: 8px;
-  padding: 0 10px;
-  border: 1px solid var(--clyra-border, rgba(0,0,0,.08));
-  border-radius: 999px;
-  background: transparent;
-  color: var(--clyra-text-tertiary, #8a93a3);
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
-}
 .clyra-message-source-summary:hover,
 .clyra-message-source-summary[aria-expanded="true"] {
   border-color: var(--clyra-border-strong, rgba(0,0,0,.14));
@@ -9512,10 +9049,6 @@ body,
 /* --- Soft-failure responses: same layout as a normal reply, just softened
    text so it doesn't read identically to a confident answer. Use the
    existing Regenerate action in the message toolbar to retry. --- */
-.clyra-assistant-message--error .markdown-body,
-.clyra-assistant-message--error .markdown-body p {
-  color: var(--clyra-text-secondary, #6b7280);
-}
 
 /* --- Chat code blocks deliberately use the exact Clyra Notes editor surface:
    quiet canvas, a compact language line, and an action cluster that reveals
@@ -9547,7 +9080,7 @@ body,
   padding: 0 6px;
   border-radius: 4px;
   color: var(--clyra-text-tertiary, #a7a5a2);
-  font-family: Instrument Sans, ui-sans-serif, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   font-size: 12px;
   line-height: 20px;
 }
@@ -9646,7 +9179,7 @@ body,
   flex: 1;
   overflow: hidden;
   color: var(--clyra-text-tertiary, #a7a5a2);
-  font: 12px/1 Instrument Sans, ui-sans-serif, sans-serif;
+  font: 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9800,7 +9333,7 @@ body,
    src/components/chat/ClyraComposerShell.tsx for the fully-ported
    reference component these values come from. */
 .clyra-chat-page {
-  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif !important;
 }
 
 .clyra-chat-page .input-wrapper:not(.loading) {
@@ -9881,29 +9414,33 @@ body,
     inset 0 0 0 1px rgba(16, 18, 24, 0.07) !important;
 }
 
-/* "Thinking" label shimmer — exact gradient/animation from the Composer
-   artboard's thinkingStyle (clyraThinkIn entrance + clyraShine loop),
-   applied over the existing ChatThinkingLabel component's structure. */
-.clyra-thinking-wave--shimmer {
-  font-size: 16px !important;
-  font-weight: 400 !important;
-  letter-spacing: 0 !important;
-  color: transparent !important;
-  background-image: linear-gradient(110deg, #A8ACB4 0%, #A8ACB4 30%, #0E1014 48%, #0E1014 52%, #A8ACB4 70%, #A8ACB4 100%) !important;
-  background-size: 220% 100% !important;
-  /* This must not be !important: important declarations win over animated
-     values, which was pinning the highlight at its first frame. */
-  background-position: 220% 0;
-  background-clip: text !important;
-  -webkit-background-clip: text !important;
-  -webkit-text-fill-color: transparent !important;
-  animation: clyra-thinking-label-sweep 2.35s linear infinite !important;
-  will-change: background-position;
+/* "Thinking" label shimmer — the Composer artboard's gradient sweep, but set
+   in the app's normal UI font (the artboard's Calibri looked thin and out of
+   place next to the rest of the chat). */
+
+@keyframes clyra-shimmer {
+  to { background-position: -140% 0; }
 }
 
-@keyframes clyra-thinking-label-sweep {
-  from { background-position: 220% 0; }
-  to { background-position: -120% 0; }
+/* Reusable shimmer token — same travelling highlight as the thinking label,
+   clipped to the text, so it can be reused across active status labels. */
+.clyra-shimmer {
+  background-image: linear-gradient(105deg, #777b84 40%, #282b30 50%, #777b84 60%);
+  background-size: 240% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: clyra-shimmer 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clyra-shimmer {
+    animation: none !important;
+    background-image: none !important;
+    color: #777b84 !important;
+    -webkit-text-fill-color: currentColor !important;
+  }
 }
 
 /* Message bubbles — exact values from the Composer artboard's rowStyle/
@@ -9919,54 +9456,22 @@ body,
   border: none !important;
   box-shadow: none !important;
   color: #15171c !important;
-  font-size: 14.5px !important;
-  line-height: 1.5 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+  font-weight: 400 !important;
   letter-spacing: -0.01em !important;
 }
 .clyra-chat-page .clyra-chat-user-bubble--first::after {
   display: none !important;
 }
-.clyra-chat-page .clyra-assistant-message {
-  max-width: 78% !important;
-  padding: 2px 4px !important;
-  font-size: 14.5px !important;
-  line-height: 1.55 !important;
-  letter-spacing: -0.01em !important;
-  color: #15171c !important;
-}
+
+/* The reading body stays on one calm scale regardless of the app-wide
+   .markdown-body clamp, so prose, lists and tables all share 16px / 1.7. */
 
 /* Assistant message actions (copy/regenerate/feedback/read-aloud) — the
    artboard has no equivalent row at all, so this keeps the real
    functionality but restyles it as plain ghost icon buttons matching the
    rest of the new design instead of the old bordered/backgrounded look. */
-.clyra-chat-page .clyra-message-actions {
-  display: flex !important;
-  align-items: center !important;
-  gap: 2px !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-.clyra-chat-page .clyra-message-actions button {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  width: 28px !important;
-  height: 28px !important;
-  padding: 0 !important;
-  border: none !important;
-  border-radius: 999px !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: #5f636b !important;
-  transition: background 0.2s ease, color 0.2s ease !important;
-}
-.clyra-chat-page .clyra-message-actions button:hover {
-  background: rgba(16, 18, 24, 0.05) !important;
-  color: #15171c !important;
-}
 .clyra-chat-page .clyra-message-timestamp {
   color: #63676f !important;
   font-size: 11px !important;
@@ -9978,73 +9483,6 @@ body,
 /* Chat's active search is intentionally the same typographic scale as the
    thinking line. Source domains live below it instead of competing with the
    status as a row of anonymous favicons. */
-.clyra-thinking-status__line {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-.clyra-coding-prompt {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  min-width: 30px;
-  color: #9da1a9;
-  font: 500 16px/1 "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: -.01em;
-}
-
-.clyra-search-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: 100%;
-  gap: 3px;
-  margin: 1px 0 0 7px;
-  padding: 3px 0 3px 12px;
-  border-left: 1px solid rgba(82, 92, 105, .18);
-}
-
-.clyra-search-step {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  width: 100%;
-  gap: 8px;
-  padding: 2px 0;
-  font: 450 13px/1.35 "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  letter-spacing: 0;
-  text-decoration: none;
-  animation: clyra-search-site-in .8s cubic-bezier(.32, .72, 0, 1) both;
-}
-
-.clyra-search-step__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  flex: 0 0 16px;
-}
-
-.clyra-search-step__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.clyra-search-step--query { color: #5e6671; }
-.clyra-search-step--query .clyra-search-step__icon { color: #78828e; }
-@keyframes clyraCodeReplyIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.clyra-thinking-status--search {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 7px;
-}
 .clyra-search-sites {
   display: contents;
 }
@@ -10055,18 +9493,183 @@ body,
 .clyra-search-sites img { width: 15px; height: 15px; border-radius: 4px; }
 @keyframes clyra-search-site-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Web search source icon row — real favicons slide into a stable horizontal
+   row as results arrive. Existing icons keep their identity when new ones
+   land (see SearchSourceRow's layout="position" in App.tsx). */
+.clyra-source-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  padding: 1px 0;
+  scrollbar-width: none;
+}
+.clyra-source-row::-webkit-scrollbar { display: none; }
+.clyra-source-icon {
+  display: inline-flex;
+  flex: 0 0 23px;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(25, 25, 25, 0.08);
+  border-radius: 7px;
+  color: #63676f;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+.clyra-source-icon img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.clyra-source-icon__fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #63676f;
+  border-radius: 4px;
+}
+.clyra-source-icon:focus-visible {
+  outline: 2px solid #1e6fff;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-source-icon { animation: none !important; transition: none !important; }
+}
+
+/* Compact, expandable completed-search summary. A single semantic toggle sits
+   above the answer and reveals the real query and source list on demand. */
+.clyra-search-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 10px;
+}
+.clyra-search-summary__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.004em;
+  color: #5f636b;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+}
+.clyra-search-summary__toggle:hover { color: #2f333a; background: rgba(25, 25, 25, 0.03); }
+.clyra-search-summary__toggle:focus-visible {
+  outline: 2px solid #1e6fff;
+  outline-offset: 3px;
+}
+.clyra-search-summary__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2e9e4f;
+  flex-shrink: 0;
+}
+.clyra-search-summary__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9da1a9;
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.clyra-search-summary__chevron.is-open { transform: rotate(180deg); }
+.clyra-search-summary__details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(25, 25, 25, 0.08);
+  border-left: 2px solid rgba(25, 25, 25, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.clyra-search-summary__query {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #3f4853;
+}
+.clyra-search-summary__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.clyra-search-summary__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+.clyra-search-summary__item-icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+.clyra-search-summary__item-icon img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+.clyra-search-summary__item-icon .clyra-source-icon__fallback {
+  width: 15px;
+  height: 15px;
+  font-size: 10px;
+}
+.clyra-search-summary__item-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.clyra-search-summary__item-title {
+  font-size: 13px;
+  color: #15171c;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clyra-search-summary__item-title:hover { text-decoration: underline; text-underline-offset: 2px; }
+.clyra-search-summary__item-host {
+  font-size: 11.5px;
+  color: #9da1a9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Keep the useful response controls present but quiet: they surface on hover,
    keyboard focus, or immediately after a response is complete. */
-.clyra-chat-page .clyra-message-actions {
-  display: flex !important;
-  align-items: center;
-  gap: 3px !important;
-  width: fit-content;
-  min-height: 30px;
-  margin-top: 7px !important;
-  color: #8a8f98;
-  transition: opacity .18s ease;
-}
 
 .clyra-message-source-control {
   position: relative;
@@ -10077,124 +9680,71 @@ body,
   border-left: 1px solid rgba(16, 18, 24, .09);
 }
 
-.clyra-message-actions .clyra-message-source-summary {
-  margin-left: 0;
-  padding-inline: 9px;
+@media (prefers-reduced-motion: reduce) {
+  .clyra-search-sites a { animation: none !important; }
 }
-.clyra-chat-page .clyra-message-actions > button {
-  display: grid !important;
-  width: 28px !important;
-  height: 28px !important;
-  place-items: center;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 8px !important;
-  background: transparent !important;
-  color: inherit;
-  box-shadow: none !important;
-  transition: color .14s ease, background-color .14s ease, transform .14s ease;
-}
-.clyra-chat-page .clyra-message-actions > button:hover,
-.clyra-chat-page .clyra-message-actions > button:focus-visible {
-  background: rgba(16, 18, 24, .055) !important;
-  color: #25282e;
-  outline: none;
-}
-.clyra-chat-page .clyra-message-actions > button:active { transform: scale(.92); }
-.clyra-message-actions__more { position: relative; }
-.clyra-chat-page .clyra-message-actions__more > button {
-  display: grid !important;
-  width: 28px !important;
-  height: 28px !important;
-  place-items: center;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 8px !important;
-  background: transparent !important;
-  color: inherit;
-  box-shadow: none !important;
-  transition: color .14s ease, background-color .14s ease, transform .14s ease;
-}
-.clyra-chat-page .clyra-message-actions__more > button:hover,
-.clyra-chat-page .clyra-message-actions__more > button:focus-visible {
-  background: rgba(16, 18, 24, .055) !important;
-  color: #25282e;
-  outline: none;
-}
-.clyra-message-actions__menu {
-  position: absolute;
-  z-index: 30;
-  bottom: calc(100% + 6px);
-  left: 0;
-  display: grid;
-  min-width: 188px;
-  gap: 2px;
-  padding: 5px;
-  border: 1px solid rgba(16, 18, 24, .09);
+
+/* ── First-class chat tables ────────────────────────────────────────────
+   GFM tables are rendered as real <table> elements inside a scroll wrapper
+   (MarkdownMessageContent). Header rows, alignment, wrapping and copy-safe
+   cell padding live here; the wrapper handles wide tables on small screens
+   without ever stretching the conversation column. */
+.clyra-md-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0 6px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, .98);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, .12);
-  animation: clyra-search-site-in .16s cubic-bezier(.22, 1, .36, 1) both;
+  box-shadow: inset 0 0 0 1px rgba(16, 18, 24, 0.07);
+  background: rgba(255, 255, 255, 0.6);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
-.clyra-message-actions__menu button {
-  display: flex !important;
-  align-items: center;
-  gap: 8px;
-  width: 100% !important;
-  min-height: 31px;
-  padding: 0 8px !important;
-  border: 0 !important;
-  border-radius: 8px !important;
-  background: transparent !important;
-  color: #4f545d;
-  font: 500 12px/1 "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+.clyra-md-table {
+  width: 100%;
+  min-width: 280px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+  color: #1c1f24;
+}
+.clyra-md-table thead th {
   text-align: left;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #5f636b;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(16, 18, 24, 0.1);
+  background: rgba(16, 18, 24, 0.03);
   white-space: nowrap;
 }
-.clyra-message-actions__menu button:hover,
-.clyra-message-actions__menu button:focus-visible {
-  background: rgba(16, 18, 24, .055) !important;
-  color: #15171c;
-  outline: none;
+.clyra-md-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(16, 18, 24, 0.06);
+  vertical-align: top;
 }
-.clyra-message-actions__menu svg { flex: 0 0 auto; color: #7d838d; }
+.clyra-md-table tbody tr:last-child td { border-bottom: none; }
+.clyra-md-table tbody tr { transition: background 0.18s ease; }
+.clyra-md-table tbody tr:hover { background: rgba(16, 18, 24, 0.025); }
+/* GFM alignment attributes are carried through as style="text-align:…" by
+   react-markdown, so numeric columns stay aligned as authored. */
 
-@media (prefers-reduced-motion: reduce) {
-  .clyra-thinking-wave--shimmer,
-  .clyra-search-sites a { animation: none !important; }
-  .clyra-coding-prompt { animation: none !important; }
-}
+/* Compact completed-activity summary shown above research/workspace answers:
+   one quiet status row — the work happened, the answer follows. */
 
 /* Chat sits on a wide reading rail, while its actual scroll host reaches the
    workspace edge. This keeps the native thumb where a desktop user expects
    it without making individual replies too wide to read. */
-.clyra-chat-page #chat-container {
-  width: 100% !important;
-  max-width: none !important;
-  align-self: stretch !important;
-  padding-inline: max(24px, calc((100% - 1040px) / 2)) !important;
-  scrollbar-gutter: stable;
-}
-.clyra-chat-page #chat-container > .flex {
-  width: min(100%, 1000px);
-  margin-inline: auto;
-}
 .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) {
-  width: min(1000px, calc(100% - 48px)) !important;
-}
-.clyra-chat-page .clyra-assistant-message {
-  max-width: min(920px, 100%) !important;
+  width: min(760px, calc(100% - 48px)) !important;
 }
 .clyra-chat-page .markdown-body {
   transform: translateZ(0);
   backface-visibility: hidden;
 }
 @media (max-width: 760px) {
-  .clyra-chat-page #chat-container { padding-inline: 14px !important; }
-  .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) { width: calc(100% - 28px) !important; }
-  .clyra-chat-page .clyra-assistant-message { max-width: 100% !important; }
+  .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) { width: calc(100% - 32px) !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   .clyra-chat-page .markdown-body { transform: none; }
@@ -10221,43 +9771,10 @@ body,
    thumb lives at the true workspace edge.  These rules intentionally sit at
    the end of the cascade, where older experimental chat styles cannot fight
    the composer shell. */
-.clyra-chat-page #chat-container.clyra-composer-scroll {
-  scrollbar-gutter: stable both-edges;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(16,18,24,.24) transparent;
-}
-.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar { width: 12px; }
-.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar-track { background: transparent; }
-.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar-thumb {
-  min-height: 36px;
-  border: 4px solid transparent;
-  border-radius: 999px;
-  background: rgba(16,18,24,.25);
-  background-clip: content-box;
-}
-.clyra-chat-page #chat-container.clyra-composer-scroll::-webkit-scrollbar-thumb:hover { background-color: rgba(16,18,24,.42); }
 
-/* A transform-driven highlight is smoother than repeatedly repainting the
-   entire thinking label, particularly on lower-power laptop GPUs. */
-.clyra-thinking-wave--shimmer {
-  background-size: 260% 100% !important;
-  animation-duration: 2.8s !important;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-.clyra-search-step { will-change: opacity, transform; }
-.clyra-search-step__icon img,
+/* Exact spec values (clyra-shimmer 1.8s sweep over a 240% gradient) — kept
+   on a transform layer so the highlight stays smooth on weaker GPUs. */
 .clyra-message-source-popover img { display: block; width: 15px; height: 15px; border-radius: 4px; object-fit: cover; }
-.clyra-site-mark__fallback {
-  display: grid;
-  width: 15px;
-  height: 15px;
-  place-items: center;
-  border-radius: 4px;
-  background: #edf2f8;
-  color: #53677d;
-  font: 700 9px/1 "Instrument Sans", -apple-system, sans-serif;
-}
 .clyra-message-source-popover {
   transform-origin: top left;
   border-color: rgba(16,18,24,.10);
@@ -10266,141 +9783,19 @@ body,
 }
 .clyra-message-source-popover a { min-height: 32px; padding: 7px 9px; border-radius: 9px; }
 .clyra-message-source-popover a:hover { background: rgba(16,18,24,.05); }
-.clyra-message-actions__menu { transform-origin: bottom left; border-radius: 14px; box-shadow: 0 18px 42px rgba(16,18,24,.14), 0 2px 8px rgba(16,18,24,.04); }
-.clyra-message-actions__menu button { min-height: 34px; border-radius: 9px !important; }
 
 /* Finished-search sources are direct links, not a secondary menu. Keeping the
    rail at the response edge makes the action controls easy to scan; expanding
    a favicon grows the rail leftward so it never covers neighbouring controls. */
-.clyra-chat-page .clyra-message-actions {
-  width: 100% !important;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.clyra-chat-page .clyra-message-source-chips {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  min-width: 0;
-  max-width: min(60vw, 440px);
-  margin-left: auto;
-  padding-left: 10px;
-  border-left: 1px solid rgba(16, 18, 24, .09);
-  overflow: visible;
-}
-.clyra-chat-page .clyra-message-source-chip {
-  display: inline-flex !important;
-  align-items: center;
-  width: auto !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  max-width: 24px;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 1px solid rgba(16, 18, 24, .09) !important;
-  border-radius: 999px !important;
-  background: #fff !important;
-  color: #59616c !important;
-  box-shadow: 0 1px 2px rgba(16, 18, 24, .035) !important;
-  overflow: hidden;
-  text-decoration: none;
-  transition: max-width .26s cubic-bezier(.22, 1, .36, 1), padding .26s cubic-bezier(.22, 1, .36, 1), border-color .16s ease, background .16s ease, box-shadow .16s ease !important;
-}
-.clyra-chat-page .clyra-message-source-chip:hover,
-.clyra-chat-page .clyra-message-source-chip:focus-visible {
-  max-width: min(190px, 46vw);
-  padding-right: 9px !important;
-  border-color: rgba(16, 18, 24, .16) !important;
-  background: #f7f8f9 !important;
-  box-shadow: 0 5px 14px rgba(16, 18, 24, .09) !important;
-  outline: none;
-}
-.clyra-chat-page .clyra-message-source-chip__icon {
-  width: 22px;
-  height: 22px;
-}
-.clyra-chat-page .clyra-message-source-chip__bullet {
-  max-width: 0;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: max-width .26s cubic-bezier(.22, 1, .36, 1), opacity .16s ease, transform .26s cubic-bezier(.22, 1, .36, 1);
-}
-.clyra-chat-page .clyra-message-source-chip:hover .clyra-message-source-chip__bullet,
-.clyra-chat-page .clyra-message-source-chip:focus-visible .clyra-message-source-chip__bullet {
-  max-width: 154px;
-  opacity: 1;
-  transform: translateX(0);
-}
-.clyra-chat-page .clyra-message-source-chip__label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #4b535e;
-}
 
 /* Premium compact rail — it lives directly after copy, regenerate and read
    aloud. Source marks retain their real colour; a hovered mark opens with a
    soft spring instead of a menu or an overlapping popover. */
-.clyra-chat-page .clyra-message-actions {
-  width: fit-content !important;
-  flex-wrap: nowrap;
-  gap: 3px !important;
-}
-.clyra-chat-page .clyra-message-source-chips {
-  justify-content: flex-start;
-  gap: 4px;
-  max-width: min(54vw, 350px);
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid rgba(16, 18, 24, .10);
-}
-.clyra-chat-page .clyra-message-source-chip {
-  height: 26px !important;
-  min-width: 26px !important;
-  max-width: 26px;
-  border-color: rgba(16, 18, 24, .10) !important;
-  background: linear-gradient(145deg, rgba(255,255,255,.98), rgba(244,246,249,.92)) !important;
-  box-shadow: 0 1px 2px rgba(16,18,24,.06), inset 0 1px 0 rgba(255,255,255,.92) !important;
-  will-change: max-width, transform;
-  transition: max-width .38s cubic-bezier(.16, 1, .3, 1), padding .38s cubic-bezier(.16, 1, .3, 1), transform .24s cubic-bezier(.16, 1, .3, 1), border-color .2s ease, background .2s ease, box-shadow .24s ease !important;
-}
-.clyra-chat-page .clyra-message-source-chip:hover,
-.clyra-chat-page .clyra-message-source-chip:focus-visible {
-  max-width: min(145px, 36vw);
-  padding-right: 10px !important;
-  border-color: rgba(43, 93, 165, .22) !important;
-  background: linear-gradient(145deg, #ffffff, #edf4ff) !important;
-  box-shadow: 0 8px 18px rgba(33, 76, 140, .13), inset 0 1px 0 #fff !important;
-  transform: translateY(-1px);
-}
-.clyra-chat-page .clyra-message-source-chip__icon {
-  width: 24px;
-  height: 24px;
-}
-.clyra-chat-page .clyra-message-source-chip__icon img,
-.clyra-chat-page .clyra-message-source-chip__icon .clyra-site-mark__fallback {
-  width: 17px !important;
-  height: 17px !important;
-  border-radius: 5px !important;
-  filter: none !important;
-  opacity: 1 !important;
-}
-.clyra-chat-page .clyra-message-source-chip__bullet {
-  transition: max-width .38s cubic-bezier(.16, 1, .3, 1), opacity .2s ease, transform .38s cubic-bezier(.16, 1, .3, 1);
-}
-.clyra-chat-page .clyra-message-source-chip:hover .clyra-message-source-chip__bullet,
-.clyra-chat-page .clyra-message-source-chip:focus-visible .clyra-message-source-chip__bullet {
-  max-width: 110px;
-}
-.clyra-chat-page .clyra-message-source-chip__label {
-  font-size: 11.5px;
-  font-weight: 650;
-  letter-spacing: -.012em;
-  color: #344252;
-}
 
 /* The sidebar settings control is deliberately tucked above identity: it is
-   always discoverable, but reads as a calm utility rather than another chat. */
+   always discoverable, but reads as a calm utility rather than another chat.
+   Its hover is the same flat grey chip as the tab switcher, and its icon is a
+   plain line glyph exactly like the other sidebar icons. */
 .clyra-composer-settings-button {
   display: flex;
   align-items: center;
@@ -10414,10 +9809,10 @@ body,
   background: transparent;
   color: #5c6069;
   cursor: pointer;
-  font: 500 12.5px/1 "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font: 500 12.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   letter-spacing: -.008em;
   text-align: left;
-  transition: background .28s cubic-bezier(.16,1,.3,1), border-color .28s ease, color .2s ease, transform .28s cubic-bezier(.16,1,.3,1), box-shadow .28s ease;
+  transition: background .22s cubic-bezier(.22,1,.36,1), color .22s ease, transform .22s cubic-bezier(.22,1,.36,1);
 }
 .clyra-composer-settings-button__icon {
   display: grid;
@@ -10425,9 +9820,9 @@ body,
   height: 26px;
   place-items: center;
   border-radius: 9px;
-  background: rgba(16,18,24,.045);
+  background: transparent;
   color: #676d76;
-  transition: background .28s ease, color .28s ease, transform .52s cubic-bezier(.16,1,.3,1);
+  transition: color .22s ease;
 }
 .clyra-composer-settings-button__arrow {
   margin-left: auto;
@@ -10437,18 +9832,16 @@ body,
 }
 .clyra-composer-settings-button:hover,
 .clyra-composer-settings-button:focus-visible {
-  border-color: rgba(16,18,24,.075);
-  background: linear-gradient(135deg, rgba(247,249,252,.96), rgba(239,244,251,.9));
-  color: #25282e;
-  box-shadow: 0 6px 18px rgba(24,42,70,.075), inset 0 1px 0 rgba(255,255,255,.86);
+  border-color: transparent;
+  background: rgba(16, 18, 24, 0.06);
+  color: #1a1c20;
+  box-shadow: none;
   outline: none;
-  transform: translateY(-1px);
 }
 .clyra-composer-settings-button:hover .clyra-composer-settings-button__icon,
 .clyra-composer-settings-button:focus-visible .clyra-composer-settings-button__icon {
-  background: #fff;
-  color: #3567a8;
-  transform: rotate(60deg);
+  background: transparent;
+  color: #1a1c20;
 }
 .clyra-composer-settings-button:hover .clyra-composer-settings-button__arrow,
 .clyra-composer-settings-button:focus-visible .clyra-composer-settings-button__arrow {
@@ -10465,129 +9858,125 @@ body,
 /* Response overflow menu: pin its right edge to the three-dot control. The
    solid surface and short upward settle keep message text from visually
    bleeding through or making the menu feel detached from its trigger. */
-.clyra-message-actions__more {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-.clyra-message-actions__menu {
-  right: 0;
-  bottom: calc(100% + 10px);
-  left: auto;
-  z-index: 1000;
-  box-sizing: border-box;
-  width: min(224px, calc(100vw - 32px));
-  min-width: 0;
-  gap: 3px;
-  padding: 6px;
-  border: 1px solid rgba(16, 18, 24, .10);
-  border-radius: 15px;
-  background: #fff;
-  box-shadow: 0 20px 46px rgba(16, 18, 24, .16), 0 3px 10px rgba(16, 18, 24, .06), inset 0 1px 0 rgba(255,255,255,.9);
-  isolation: isolate;
-  transform-origin: right bottom;
-  animation: clyra-action-menu-in .22s cubic-bezier(.16, 1, .3, 1) both;
-}
-.clyra-message-actions__menu button {
-  min-height: 36px;
-  padding: 0 10px !important;
-  border-radius: 10px !important;
-  color: #444b55;
-  font-size: 12.5px;
-}
-.clyra-message-actions__menu button:hover,
-.clyra-message-actions__menu button:focus-visible {
-  background: linear-gradient(135deg, #f4f7fb, #edf3fb) !important;
-  color: #20242a;
-}
-.clyra-message-actions__menu svg { color: #657180; }
 @keyframes clyra-action-menu-in {
   from { opacity: 0; transform: scale(.96); filter: blur(2px); }
   to { opacity: 1; transform: scale(1); filter: blur(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .clyra-message-actions__menu { animation: none; }
 }
 
 /* Research answers use the same comfortable, ordinary chat text metrics as a
    short reply. Long words still wrap rather than widening the reading rail. */
 .clyra-chat-page .markdown-body {
-  font-size: 15px !important;
-  line-height: 1.55 !important;
+  font-size: 16px !important;
+  line-height: 1.7 !important;
+  font-weight: 400;
   letter-spacing: -0.01em;
 }
 .clyra-chat-page .markdown-body p,
 .clyra-chat-page .markdown-body li {
   font-size: inherit;
   line-height: inherit;
+  font-weight: inherit;
 }
-@media (prefers-reduced-motion: reduce) {
-  .clyra-chat-page .clyra-message-source-chip,
-  .clyra-chat-page .clyra-message-source-chip__bullet { transition: none !important; }
+/* Quiet, precise heading scale: one primary and two secondary levels. */
+.clyra-chat-page .markdown-body h1 {
+  font-size: 24px !important;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+.clyra-chat-page .markdown-body h2 {
+  font-size: 20px !important;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+}
+.clyra-chat-page .markdown-body h3 {
+  font-size: 17px !important;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+
+/* Conversation precision layer -------------------------------------------------
+   Keep the scroll host full-width (so its native thumb stays at the workspace
+   edge) while every conversational element shares one calm, 760px reading
+   column. This is deliberately last in the cascade: older experiments used
+   several slightly different rail widths and type ramps. */
+.clyra-chat-page {
+  --clyra-chat-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --clyra-chat-body-size: 16px;
+  --clyra-chat-body-leading: 1.7;
+  --clyra-chat-secondary: #63676f;
+  --clyra-chat-muted: #858992;
+}
+
+.clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) {
+  width: min(760px, calc(100% - 48px)) !important;
+}
+
+.clyra-chat-page .clyra-chat-user-bubble,
+.clyra-chat-page .clyra-chat-user-text {
+  font-family: var(--clyra-chat-font);
+  font-size: 16px !important;
+  font-weight: 400 !important;
+  line-height: 1.6 !important;
+}
+
+.clyra-chat-page .markdown-body,
+.clyra-chat-page .markdown-body :is(p, li, td, th) {
+  font-family: var(--clyra-chat-font);
+  font-size: var(--clyra-chat-body-size) !important;
+  font-weight: 400;
+  line-height: var(--clyra-chat-body-leading) !important;
+}
+
+.clyra-chat-page .markdown-body p { margin-block: 0 16px; }
+.clyra-chat-page .markdown-body :is(ul, ol) { margin-block: 0 16px; }
+.clyra-chat-page .markdown-body li + li { margin-top: 8px; }
+.clyra-chat-page .markdown-body :is(h1, h2, h3) { font-family: var(--clyra-chat-font); }
+
+.clyra-chat-page .markdown-body :is(pre, pre code) {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+
+.clyra-chat-page .markdown-body pre {
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
+.clyra-chat-page .clyra-search-summary__toggle {
+  font-family: var(--clyra-chat-font);
+  font-size: 13px !important;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.clyra-chat-page :is(.clyra-search-summary__query, .clyra-search-summary__item-host) {
+  font-family: var(--clyra-chat-font);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.clyra-chat-page .clyra-search-summary__item-title {
+  font-family: var(--clyra-chat-font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+@media (min-width: 761px) and (max-width: 1023px) {
+  .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) { width: calc(100% - 40px) !important; }
+}
+
+@media (max-width: 760px) {
+  .clyra-chat-page .clyra-composer-transition:not(.clyra-composer-welcome) { width: calc(100% - 32px) !important; }
 }
 
 /* Search sources keep their publisher colour at rest, without extra chrome.
    Hover/focus grows one restrained grey pill at a time so the action rail
    stays calm and easy to scan. */
-.clyra-chat-page .clyra-message-source-chips {
-  gap: 5px;
-  margin-left: 5px;
-  padding-left: 8px;
-  border-left-color: rgba(16, 18, 24, .08);
-}
-.clyra-chat-page .clyra-message-source-chip {
-  height: 24px !important;
-  min-width: 22px !important;
-  max-width: 22px;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  transition:
-    max-width .72s cubic-bezier(.22, 1, .36, 1),
-    padding .72s cubic-bezier(.22, 1, .36, 1),
-    background .42s ease,
-    color .32s ease !important;
-}
-.clyra-chat-page .clyra-message-source-chip:hover,
-.clyra-chat-page .clyra-message-source-chip:focus-visible {
-  max-width: min(156px, 41vw);
-  padding-right: 11px !important;
-  background: #e8eaed !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  transform: none;
-}
-.clyra-chat-page .clyra-message-source-chip__icon {
-  width: 22px;
-  height: 22px;
-}
-.clyra-chat-page .clyra-message-source-chip__icon img,
-.clyra-chat-page .clyra-message-source-chip__icon .clyra-site-mark__fallback {
-  width: 16px !important;
-  height: 16px !important;
-  border-radius: 4px !important;
-  filter: none !important;
-  opacity: 1 !important;
-}
-.clyra-chat-page .clyra-message-source-chip__bullet {
-  transition:
-    max-width .72s cubic-bezier(.22, 1, .36, 1),
-    opacity .3s ease .14s,
-    transform .72s cubic-bezier(.22, 1, .36, 1) !important;
-}
-.clyra-chat-page .clyra-message-source-chip:hover .clyra-message-source-chip__bullet,
-.clyra-chat-page .clyra-message-source-chip:focus-visible .clyra-message-source-chip__bullet {
-  max-width: 118px;
-}
-.clyra-chat-page .clyra-message-source-chip__label { color: #4d535a; }
-@media (prefers-reduced-motion: reduce) {
-  .clyra-chat-page .clyra-message-source-chip,
-  .clyra-chat-page .clyra-message-source-chip__bullet,
-  .clyra-chat-page .clyra-message-source-chip__icon img,
-  .clyra-chat-page .clyra-message-source-chip__icon .clyra-site-mark__fallback { transition: none !important; }
-}
 
 /* Settings follows Chat's calm material hierarchy: one quiet floating sheet,
    a restrained source list and an unfussy single-column detail view. */
@@ -10600,7 +9989,7 @@ body,
   border-radius: 22px !important;
   background: #fcfcfb !important;
   box-shadow: 0 34px 90px rgba(16,18,24,.20), 0 2px 8px rgba(16,18,24,.08), inset 0 1px 0 rgba(255,255,255,.96) !important;
-  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   font-optical-sizing: auto;
 }
 .clyra-settings-panel aside {
@@ -10736,7 +10125,7 @@ body,
   box-shadow: inset 0 1px 0 rgba(255,255,255,.78);
   color: #555a63;
   cursor: pointer;
-  font: 600 10px/1 "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font: 600 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   letter-spacing: -.01em;
   transition: transform .22s cubic-bezier(.16,1,.3,1), border-color .22s cubic-bezier(.16,1,.3,1), box-shadow .22s cubic-bezier(.16,1,.3,1), color .18s ease, background .22s ease;
 }
@@ -10794,9 +10183,6 @@ body,
      but an older chat-container rule still gave it a large layout height.
      Removing that phantom spacer is what keeps the welcome heading and the
      real input controls inside a short window. */
-  .clyra-composer-shell__stage:has(.clyra-composer-shell__welcome) > #chat-container {
-    display: none !important;
-  }
 
   .clyra-composer-shell__stage {
     height: auto !important;
@@ -11061,10 +10447,7 @@ body,
 .cowork-empty h1 { margin:0; color:var(--agents-text-deep); font-size:21px; font-weight:690; letter-spacing:-.04em; }
 .cowork-empty p { margin:9px 0 17px; color:var(--agents-secondary); font-size:12.5px; line-height:1.55; }
 .cowork-empty button { height:31px; padding:0 12px; border-radius:8px; color:white; background:var(--agents-text-deep); font-size:11.5px; font-weight:620; transition:transform .14s var(--agents-ease),opacity .14s ease; }.cowork-empty button:hover { opacity:.88; }.cowork-empty button:active { transform:scale(.96); }
-.clyra-thinking { display:flex; width:100%; min-height:27px; align-items:center; gap:8px; padding:2px 4px; animation:clyraThinkIn .55s var(--agents-shell-ease) both; }
-.clyra-thinking__icon { display:flex; flex:0 0 auto; align-items:center; color:var(--agents-warning); }
-.clyra-thinking__text { display:inline-block; color:transparent; background-image:linear-gradient(110deg,var(--agents-placeholder) 0%,var(--agents-placeholder) 30%,var(--agents-text-deep) 48%,var(--agents-text-deep) 52%,var(--agents-placeholder) 70%,var(--agents-placeholder) 100%); background-size:220% 100%; background-clip:text; -webkit-background-clip:text; font:400 13px/1.35 Calibri,Carlito,"Segoe UI",system-ui,sans-serif; animation:clyraShine 4.2s linear infinite; }
-.cowork-task { display:flex; max-width:660px; align-items:center; gap:10px; margin:5px 0 13px; }.cowork-task>.clyra-thinking { flex:1; }.cowork-task>p { margin:0; color:var(--agents-danger); font-size:10.5px; }
+.cowork-task { display:flex; max-width:660px; align-items:center; gap:10px; margin:5px 0 13px; }.cowork-task>p { margin:0; color:var(--agents-danger); font-size:10.5px; }
 .cowork-task-controls { display:flex; flex:0 0 auto; align-items:center; gap:4px; }
 .cowork-task-controls button { display:inline-flex; height:25px; align-items:center; gap:4px; padding:0 8px; border-radius:7px; color:white; background:var(--agents-text-deep); font-size:10.5px; font-weight:620; }
 .cowork-task-controls button.is-quiet { color:var(--agents-secondary); background:var(--agents-soft); }.cowork-task-controls button:hover { opacity:.82; }
@@ -11091,7 +10474,7 @@ body,
 .cowork-screen-control button { display:inline-flex; height:26px; align-items:center; gap:4px; padding:0 7px; border-radius:7px; color:var(--agents-secondary); font-size:10.5px; }.cowork-screen-control button:hover { color:var(--agents-text); background:var(--agents-hover); }
 .cowork-actions { flex:1; min-height:0; overflow:auto; padding:7px 16px 20px; }
 .cowork-actions__heading { display:flex; min-height:30px; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }.cowork-actions h2 { margin:0; color:var(--agents-text); font-size:11.5px; font-weight:660; }
-.cowork-actions ol { display:grid; gap:2px; margin:0; padding:0; list-style:none; }.cowork-actions li { display:flex; min-height:29px; align-items:center; gap:8px; padding:3px 4px; color:var(--agents-secondary); font-size:11.5px; line-height:1.4; animation:clyraActionResolve .24s ease both; }.cowork-actions li.is-active { color:var(--agents-text); animation:none; }.cowork-actions li.is-active .clyra-thinking { padding:0; }.cowork-actions li.is-failed { color:var(--agents-danger); }.cowork-action-icon { display:grid; width:14px; flex:0 0 auto; place-items:center; opacity:.7; }.cowork-actions p { margin:4px; color:var(--agents-placeholder); font-size:11px; line-height:1.5; }
+.cowork-actions ol { display:grid; gap:2px; margin:0; padding:0; list-style:none; }.cowork-actions li { display:flex; min-height:29px; align-items:center; gap:8px; padding:3px 4px; color:var(--agents-secondary); font-size:11.5px; line-height:1.4; animation:clyraActionResolve .24s ease both; }.cowork-actions li.is-active { color:var(--agents-text); animation:none; }.cowork-actions li.is-failed { color:var(--agents-danger); }.cowork-action-icon { display:grid; width:14px; flex:0 0 auto; place-items:center; opacity:.7; }.cowork-actions p { margin:4px; color:var(--agents-placeholder); font-size:11px; line-height:1.5; }
 .cowork-live.is-expanded { position:fixed; z-index:100; inset:0; display:grid; grid-template-rows:50px minmax(0,1fr); width:100vw; height:100vh; border:0; background:var(--agents-surface); animation:clyraFade .18s ease both; }.cowork-live.is-expanded .cowork-screen { width:100%; height:100%; min-height:0; margin:0; border:0; border-radius:0; }.cowork-live.is-expanded .cowork-actions,.cowork-live.is-expanded .cowork-screen-control { display:none; }
 
 :root[data-clyra-theme="dark"] .cowork-avatar { color:#a9c2ee; background:linear-gradient(145deg,#252a34,#1e222b); }
@@ -11152,20 +10535,9 @@ body,
 /* The response action rail is intentionally quiet until needed. Read aloud is
    a real client-side action, so its active state gets a small breathing cue
    instead of an ambiguous persistent spinner. */
-.clyra-chat-page .clyra-message-actions > button.is-active {
-  color: #1d5fbb !important;
-  background: rgba(30, 111, 255, .10) !important;
-  box-shadow: inset 0 0 0 1px rgba(30, 111, 255, .11);
-}
-.clyra-chat-page .clyra-message-actions > button.is-active svg {
-  animation: clyra-read-aloud-breathe 1.15s ease-in-out infinite;
-}
 @keyframes clyra-read-aloud-breathe {
   0%, 100% { opacity: .66; transform: scale(.88); }
   50% { opacity: 1; transform: scale(1); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .clyra-chat-page .clyra-message-actions > button.is-active svg { animation: none; }
 }
 
 /* Persistent workspace portals: each app lives in its own node, adopted by whichever slot shows it. */
@@ -11180,38 +10552,6 @@ body,
 .clyra-workspace-placeholder__line { width: 38%; height: 22px; border-radius: 11px; background: linear-gradient(100deg, rgba(0,0,0,.05) 30%, rgba(0,0,0,.09) 50%, rgba(0,0,0,.05) 70%); background-size: 200% 100%; animation: cc-lib-shimmer 1.4s linear infinite; }
 .clyra-workspace-placeholder__line--short { width: 24%; margin-top: -14px; }
 
-/* ───────── Task View · Mission Control presentation ─────────
-   One dimmed backdrop, every window moving together on a single fast-settling curve (no stagger), macOS window
-   corners and shadows at their final on-screen size, a blue outline on hover, titles in a pill under each window
-   and the close button at the window's top-left. Shadows and outlines live on pseudo-elements and only fade, so
-   the zoom itself is a pure compositor transform. */
-.clyra-task-view { background: #1d1e22; }
-.clyra-task-view__backdrop { background: radial-gradient(120% 95% at 50% -10%, #4a4d55 0%, #2e3036 48%, #1b1c20 100%); transition: opacity 300ms cubic-bezier(.2,.8,.2,1); }
-.clyra-task-view__window,
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 360ms cubic-bezier(.22,.9,.24,1), opacity 220ms ease; transition-delay: 0ms; }
-.clyra-task-view--open .clyra-task-view__window { transition-delay: 0ms; }
-.clyra-task-view--closing .clyra-task-view__window { transition: transform 340ms cubic-bezier(.22,.9,.24,1), opacity 200ms ease; }
-.clyra-task-view--closing[data-task-view-selecting="true"] .clyra-task-view__window:not(.is-selected),
-.clyra-task-view--closing[data-task-view-selecting="false"] .clyra-task-view__window:not(.is-active) { transform: translate3d(0,0,0) scale(calc(var(--task-view-target-scale) * .94)); opacity: 0; }
-.clyra-task-view__surface,
-.clyra-task-view--open .clyra-task-view__surface { border: 0; box-shadow: none; transition: none; }
-.clyra-task-view--open .clyra-task-view__surface,
-.clyra-task-view--closing .clyra-task-view__surface { border-radius: calc(11px / var(--task-view-target-scale, 1)); }
-.clyra-task-view[data-task-view-phase="closing"] .clyra-task-view__window.is-selected .clyra-task-view__surface,
-.clyra-task-view[data-task-view-phase="closing"][data-task-view-selecting="false"] .clyra-task-view__window.is-active .clyra-task-view__surface { border-radius: 0; transition: border-radius 340ms cubic-bezier(.22,.9,.24,1); }
-.clyra-task-view__window::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: calc(11px / var(--task-view-target-scale, 1)); box-shadow: 0 calc(22px / var(--task-view-target-scale, 1)) calc(48px / var(--task-view-target-scale, 1)) rgba(0,0,0,.42), 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(255,255,255,.08); opacity: 0; transition: opacity 260ms ease; pointer-events: none; }
-.clyra-task-view--open .clyra-task-view__window::before { opacity: 1; }
-.clyra-task-view__window::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: calc(11px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(3.5px / var(--task-view-target-scale, 1)) #3d8bfd; opacity: 0; transition: opacity 140ms ease; pointer-events: none; }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered::after { opacity: 1; }
-.clyra-task-view:not(.clyra-task-view--mode-3d).clyra-task-view--open .clyra-task-view__window.is-hovered { transform: translate3d(0,0,0) scale(calc(var(--task-view-target-scale) * 1.018)); }
-.clyra-task-view__window.is-hovered .clyra-task-view__surface { border-color: transparent; box-shadow: none; }
-.clyra-task-view__label,
-.clyra-task-view--mode-3d .clyra-task-view__label { left: 50%; right: auto; top: calc(100% + 14px / var(--task-view-target-scale, 1)); transform: translate(-50%, calc(-4px / var(--task-view-target-scale, 1))); padding: calc(4px / var(--task-view-target-scale, 1)) calc(11px / var(--task-view-target-scale, 1)); border-radius: 999px; color: rgba(255,255,255,.92); font: 600 calc(12.5px / var(--task-view-target-scale, 1))/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; letter-spacing: -.01em; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.35); background: transparent; transition: opacity 200ms ease, transform 260ms cubic-bezier(.22,.9,.24,1), background-color 160ms ease; transition-delay: 120ms; }
-.clyra-task-view--open .clyra-task-view__label { transform: translate(-50%, 0); }
-.clyra-task-view__window.is-hovered .clyra-task-view__label { color: #fff; background: rgba(255,255,255,.16); transform: translate(-50%, 0); transition-delay: 0ms; }
-.clyra-task-view__tab-close { width: 26px; height: 26px; background: rgba(54,56,62,.88); color: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.35), inset 0 0 0 .5px rgba(255,255,255,.18); backdrop-filter: blur(12px); }
-.clyra-task-view__tab-close:hover { background: rgba(70,72,79,.95); color: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.4), inset 0 0 0 .5px rgba(255,255,255,.25); transform: scale(1.06); }
-.clyra-task-view__tab-close svg { width: 13px; height: 13px; }
 
 /* The floating Music notch sits top-centre; Maps' category chips step down beneath it while it is showing. */
 .clyra-maps-chips { transition: top 260ms cubic-bezier(.22,1,.36,1); }
@@ -11223,3 +10563,1005 @@ body,
 .cc-agents-indeterminate { animation: cc-agents-indeterminate 1.4s cubic-bezier(.45,0,.55,1) infinite; }
 @keyframes cc-agents-indeterminate { from { transform: translateX(-110%); } to { transform: translateX(320%); } }
 @media (prefers-reduced-motion: reduce) { .cc-agents-orbit, .cc-agents-indeterminate { animation: none; } }
+
+/* ───────── Task View · light spatial overview ─────────
+   One light surface. Every window is the real app at full size, positioned only by a compositor transform
+   (--tv-t): the zoom out, the grid reflow when a window closes, drag-to-reorder and the zoom back in are all the
+   same property on the same curve, so nothing disappears and reappears. Decorative depth is a hairline ring and
+   one small shadow at the final on-screen size; hover is an outline, never movement. */
+.clyra-task-view { --tv-ease-out: cubic-bezier(.2,.8,.2,1); --tv-ease-in: cubic-bezier(.4,0,1,1); position: absolute; inset: 0; isolation: isolate; overflow: hidden; background: #f3f4f6; }
+.clyra-task-view__backdrop { position: absolute; inset: 0; z-index: 0; background: linear-gradient(180deg, #f7f7f8 0%, #eef0f3 100%); opacity: 0; transition: opacity 240ms var(--tv-ease-out); }
+.clyra-task-view--open .clyra-task-view__backdrop { opacity: 1; }
+/* Outside Task View the stage is just the workspace: transparent, only the front window showing, and app switches
+   are a single horizontal slide (see data-switching). Unseen windows stay rendered at opacity 0 — never a visibility
+   toggle, which restyles the whole app. */
+.clyra-task-view[data-task-view-phase="closed"] { background: transparent; }
+/* Steady state: no transition, so a window snapped to its hidden recessed pose
+   (after the slide finishes) does so instantly and never flashes on screen. */
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window { transition: none; will-change: auto; }
+/* While a switch is in flight both windows share one transform ease — a gentle
+   symmetric accel/decel matching quintic smootherstep. Opacity is deliberately
+   left out: the two workspaces pass one another fully opaque. */
+.clyra-task-view[data-task-view-phase="closed"][data-switching="true"] .clyra-task-view__window { transition: transform 500ms cubic-bezier(0.22, 1, 0.36, 1); }
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window:not(.is-front) { pointer-events: none; }
+.clyra-task-view .clyra-workspace-card { transform: none; will-change: auto; }
+.clyra-stage-app { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.clyra-task-view__window { position: absolute; left: 0; top: 0; transform-origin: 0 0; transform: var(--tv-closed); will-change: transform; transition: transform 300ms var(--tv-ease-out), opacity 200ms var(--tv-ease-out); }
+.clyra-task-view--open .clyra-task-view__window { transform: var(--tv-t); }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 240ms var(--tv-ease-out), opacity 180ms var(--tv-ease-out); }
+.clyra-task-view--open .clyra-task-view__window.is-dragging { transition: none; z-index: 8 !important; }
+.clyra-task-view--closing .clyra-task-view__window { transform: var(--tv-closed); transition: transform 280ms var(--tv-ease-out), opacity 160ms var(--tv-ease-in); }
+.clyra-task-view--open .clyra-task-view__window.is-closing-tab { opacity: 0; pointer-events: none; transition: opacity 160ms var(--tv-ease-in); }
+.clyra-task-view__surface { position: absolute; inset: 0; overflow: hidden; border-radius: 0; }
+.clyra-task-view--open .clyra-task-view__surface,
+.clyra-task-view--closing .clyra-task-view__surface { background: #fbfbfa; }
+.clyra-task-view--open .clyra-task-view__surface,
+.clyra-task-view--closing .clyra-task-view__surface { border-radius: calc(12px / var(--task-view-target-scale, 1)); }
+.clyra-task-view[data-task-view-phase="closing"] .clyra-task-view__window.is-front .clyra-task-view__surface { border-radius: 0; transition: border-radius 280ms var(--tv-ease-out); }
+.clyra-task-view__window::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.08), 0 calc(4px / var(--task-view-target-scale, 1)) calc(14px / var(--task-view-target-scale, 1)) rgba(15,23,42,.07); opacity: 0; transition: opacity 200ms var(--tv-ease-out); pointer-events: none; }
+.clyra-task-view--open .clyra-task-view__window::before { opacity: 1; }
+.clyra-task-view__window::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(2.5px / var(--task-view-target-scale, 1)) #3977f6; opacity: 0; transition: opacity 120ms ease; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered::after,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-dragging::after { opacity: 1; }
+.clyra-task-view__hit-area { position: absolute; inset: 0; z-index: 2; cursor: pointer; border: 0; background: transparent; outline: 0; touch-action: none; }
+.clyra-task-view__window.is-dragging .clyra-task-view__hit-area { cursor: grabbing; }
+.clyra-task-view__hit-area:focus-visible { box-shadow: inset 0 0 0 calc(3px / var(--task-view-target-scale, 1)) rgba(57,119,246,.45); border-radius: calc(12px / var(--task-view-target-scale, 1)); }
+.clyra-task-view__label { position: absolute; left: 50%; top: calc(100% + 12px / var(--task-view-target-scale, 1)); z-index: 3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: calc(3px / var(--task-view-target-scale, 1)) calc(10px / var(--task-view-target-scale, 1)); border-radius: 999px; color: #3a3d43; font: 500 calc(12.5px / var(--task-view-target-scale, 1))/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; letter-spacing: -.01em; transform: translateX(-50%); opacity: 0; transition: opacity 160ms var(--tv-ease-out), background-color 120ms ease, color 120ms ease; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__label { opacity: 1; }
+.clyra-task-view--closing .clyra-task-view__label { opacity: 0; transition: opacity 100ms var(--tv-ease-in); }
+.clyra-task-view__window.is-hovered .clyra-task-view__label { color: #fff; background: #3977f6; }
+.clyra-task-view__tab-close { position: absolute; left: 0; top: 0; z-index: 9; display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 999px; background: #fff; color: #5b6069; box-shadow: 0 0 0 .5px rgba(15,23,42,.14), 0 1px 4px rgba(15,23,42,.12); cursor: pointer; opacity: 0; pointer-events: none; transform: var(--tv-close-t); transition: opacity 120ms ease, transform 240ms var(--tv-ease-out), background-color 120ms ease, color 120ms ease; }
+.clyra-task-view__tab-close svg { width: 12px; height: 12px; }
+.clyra-task-view__chrome { position: absolute; inset: 0; z-index: 9; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close { pointer-events: auto; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close.is-visible,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close:hover,
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__tab-close:focus-visible { opacity: 1; }
+.clyra-task-view__tab-close:hover { background: #f3f4f6; color: #111318; }
+.clyra-task-view__tab-close:active { background: #e8eaee; }
+.clyra-task-view__tab-close:focus-visible { outline: 2px solid rgba(57,119,246,.5); outline-offset: 2px; }
+.clyra-task-view__dismiss { position: absolute; inset: 0; z-index: 0; border: 0; background: transparent; cursor: default; pointer-events: none; }
+.clyra-task-view--open .clyra-task-view__dismiss, .clyra-task-view--closing .clyra-task-view__dismiss { pointer-events: auto; }
+.clyra-task-view__empty { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: #6b7079; font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; pointer-events: none; }
+/* Reduce Motion: the zoom becomes a restrained cross-fade and the workspace
+   slide collapses to an immediate switch. */
+@media (prefers-reduced-motion: reduce) {
+  .clyra-task-view__window, .clyra-task-view--closing .clyra-task-view__window, .clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window, .clyra-task-view__tab-close { transition: opacity 160ms ease !important; }
+  .clyra-task-view[data-task-view-phase="closed"][data-switching="true"] .clyra-task-view__window { transition: none !important; }
+  .clyra-task-view__backdrop, .clyra-task-view__label { transition-duration: 120ms; }
+}
+
+/* ── Spotify task timeline (in-chat) ─────────────────────────────────────── */
+.clyra-sp { --sp-green:#1DB954; --sp-muted:rgba(120,126,138,.95); --sp-rule:rgba(120,126,138,.28); margin:6px 0 4px; max-width:100%; font-size:13px; line-height:1.45; }
+.clyra-sp-head { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--sp-muted); }
+.clyra-sp-head__state { display:grid; place-items:center; width:14px; height:14px; color:var(--sp-green); }
+.clyra-sp-head__sep { opacity:.5; }
+.clyra-sp-head__time, .clyra-sp-step__mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; font-variant-numeric:tabular-nums; }
+.clyra-sp-head__app { display:inline-flex; align-items:center; gap:5px; }
+.clyra-sp-line { position:relative; height:2px; margin:7px 0 10px; border-radius:2px; overflow:hidden; background:var(--sp-rule); }
+.clyra-sp-line > span { position:absolute; inset:0 auto 0 0; width:32%; border-radius:2px; background:linear-gradient(90deg,transparent,var(--sp-green),transparent); transform:translateX(-100%); }
+.clyra-sp-line[data-active="true"] > span { animation:clyraSpSweep 1.6s cubic-bezier(.4,0,.2,1) infinite; }
+.clyra-sp-line[data-active="false"] > span { width:100%; transform:none; background:var(--sp-green); opacity:.55; transition:opacity .3s; }
+.clyra-sp[data-status="failed"] .clyra-sp-line > span { background:#e5484d; }
+.clyra-sp-steps { list-style:none; margin:0; padding:0; }
+.clyra-sp-step { position:relative; display:flex; gap:10px; padding-bottom:10px; animation:clyraSpIn .32s cubic-bezier(.32,.72,0,1) both; }
+.clyra-sp-step__rail { position:absolute; left:7px; top:18px; bottom:0; width:1px; background:var(--sp-rule); }
+.clyra-sp-step:last-child .clyra-sp-step__rail { display:none; }
+.clyra-sp-mark { position:relative; z-index:1; flex:none; display:grid; place-items:center; width:15px; height:15px; margin-top:2px; border-radius:50%; color:#fff; background:var(--sp-green); transition:background .25s, transform .25s; }
+.clyra-sp-mark--running { background:transparent; color:var(--sp-green); }
+.clyra-sp-mark--failed { background:#e5484d; }
+.clyra-sp-spin { width:11px; height:11px; border-radius:50%; border:1.6px solid currentColor; border-right-color:transparent; animation:clyraSpRot .8s linear infinite; }
+.clyra-sp-step__main { min-width:0; flex:1; }
+.clyra-sp-step__head { display:flex; align-items:center; gap:7px; width:100%; padding:0; border:0; background:none; color:inherit; font:inherit; text-align:left; cursor:default; }
+.clyra-sp-step__head:not(:disabled) { cursor:pointer; }
+.clyra-sp-step__icon { display:inline-flex; color:var(--sp-muted); }
+.clyra-sp-step__title { font-weight:500; transition:opacity .25s; }
+.clyra-sp-step--done .clyra-sp-step__title, .clyra-sp-step--done .clyra-sp-step__detail { opacity:.72; }
+.clyra-sp-step__status { margin-left:auto; font-size:11px; color:var(--sp-muted); }
+.clyra-sp-step--running .clyra-sp-step__status { color:var(--sp-green); }
+.clyra-sp-step--failed .clyra-sp-step__status { color:#e5484d; }
+.clyra-sp-step__chev { color:var(--sp-muted); transition:transform .2s; }
+.clyra-sp-step__chev[data-open="true"] { transform:rotate(90deg); }
+.clyra-sp-step__detail { margin:2px 0 0; color:var(--sp-muted); font-size:12.5px; }
+.clyra-sp-step__detail--error { color:#e5484d; }
+.clyra-sp-step__mono { display:inline-block; margin-top:3px; color:var(--sp-muted); background:rgba(120,126,138,.12); padding:1px 6px; border-radius:5px; }
+.clyra-sp-collapse { display:grid; grid-template-rows:0fr; transition:grid-template-rows .22s cubic-bezier(.32,.72,0,1); }
+.clyra-sp-collapse[data-open="true"] { grid-template-rows:1fr; }
+.clyra-sp-collapse__inner { overflow:hidden; min-height:0; }
+.clyra-sp-tracks { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; max-height:260px; overflow:auto; }
+.clyra-sp-tracks li { display:flex; align-items:center; gap:9px; }
+.clyra-sp-tracks__text, .clyra-sp-result__text { display:flex; flex-direction:column; min-width:0; flex:1; }
+.clyra-sp-tracks__title, .clyra-sp-result__title { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.clyra-sp-tracks__sub, .clyra-sp-result__sub { font-size:11.5px; color:var(--sp-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.clyra-sp-art { flex:none; display:grid; place-items:center; border-radius:5px; overflow:hidden; background:rgba(120,126,138,.16); color:var(--sp-muted); }
+.clyra-sp-art img { width:100%; height:100%; object-fit:cover; display:block; }
+.clyra-sp-final { margin-top:4px; animation:clyraSpIn .32s cubic-bezier(.32,.72,0,1) both; }
+.clyra-sp-final p { margin:0 0 8px; }
+.clyra-sp-result { display:flex; align-items:center; gap:11px; padding:8px; max-width:420px; border:1px solid var(--sp-rule); border-radius:12px; }
+.clyra-sp-result__live { color:var(--sp-green); }
+.clyra-sp-result__open { display:inline-flex; align-items:center; gap:5px; flex:none; padding:5px 9px; border-radius:999px; border:1px solid var(--sp-rule); font-size:11.5px; color:inherit; text-decoration:none; transition:background .15s; }
+.clyra-sp-result__open:hover { background:rgba(120,126,138,.12); }
+.clyra-sp-shimmer { color:transparent; background-image:linear-gradient(110deg,rgba(120,126,138,.9) 0%,rgba(120,126,138,.9) 35%,currentColor 50%,rgba(120,126,138,.9) 65%,rgba(120,126,138,.9) 100%); background-size:220% 100%; -webkit-background-clip:text; background-clip:text; animation:clyraShine 2.6s linear infinite; }
+@keyframes clyraSpIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes clyraSpRot { to { transform:rotate(360deg); } }
+@keyframes clyraSpSweep { from { transform:translateX(-100%); } to { transform:translateX(320%); } }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-sp-step, .clyra-sp-final { animation:none; }
+  .clyra-sp-spin, .clyra-sp-shimmer, .clyra-sp-line[data-active="true"] > span { animation:none; }
+  .clyra-sp-shimmer { color:inherit; background:none; }
+  .clyra-sp-line[data-active="true"] > span { transform:none; width:100%; opacity:.4; background:var(--sp-green); }
+  .clyra-sp-collapse, .clyra-sp-step__chev { transition:none; }
+}
+
+/* Clyra Maps · Ask Clyra composer (Chat's composer language) and the agent's step timeline. */
+.maps-capsule { padding: 12px 10px 9px 15px; border-radius: 24px; background: #fff; cursor: text;
+  box-shadow: 0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.12), 0 28px 56px -28px rgba(16,18,24,0.24), inset 0 0 0 1px rgba(16,18,24,0.06);
+  transition: box-shadow .24s ease; }
+.maps-capsule:focus-within { box-shadow: 0 1px 1px rgba(16,18,24,0.03), 0 10px 24px -8px rgba(16,18,24,0.15), 0 30px 60px -28px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(30,111,255,0.22); }
+.maps-steps { list-style: none; margin: 0; padding: 0; }
+.maps-step { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 2px 0 4px; font-size: 12.5px; line-height: 18px; color: #5f636b; }
+.maps-step:not(:last-child)::before { content: ""; position: absolute; left: 6.5px; top: 17px; bottom: -3px; width: 1px; background: rgba(16,18,24,0.1); }
+.maps-step-node { position: relative; z-index: 1; display: inline-grid; flex: none; width: 14px; height: 14px; margin-top: 2px; place-items: center; border-radius: 50%; background: #f1f2f4; color: #6b7079; font-size: 10px; font-weight: 700; }
+.maps-step[data-state="map"] .maps-step-node { background: rgba(30,111,255,0.1); color: #1e6fff; }
+.maps-step[data-state="map"] { color: #2f63d8; font-weight: 500; }
+.maps-step[data-state="error"] .maps-step-node { background: #fde8d8; color: #b45309; }
+.maps-step[data-state="running"] .maps-step-node { background: #fff; box-shadow: inset 0 0 0 1.5px rgba(30,111,255,0.22); }
+.maps-step[data-state="running"] .maps-step-node::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid transparent; border-top-color: #1e6fff; animation: cxa-turn .9s linear infinite; }
+@keyframes cxa-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .maps-step[data-state="running"] .maps-step-node::after { animation: none; } }
+
+/* ============================================================
+   Settings — clean, light, soft-card design language. A narrow
+   nav rail on the left (back link, search, grouped sections) and
+   a spacious white content column of grouped cards on the right.
+   Tokens: #0066FF accent, #0D0D0D ink, #737373 muted, #E5E5E5
+   hairline borders, off-white #FCFCFC rail vs #FFFFFF surfaces.
+   ============================================================ */
+.clys-window {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  width: min(980px, 92vw);
+  height: min(740px, 90vh);
+  overflow: hidden;
+  border: 1px solid #E5E5E5;
+  border-radius: 20px;
+  background: #FFFFFF;
+  box-shadow:
+    0 1px 1px rgba(13, 13, 13, 0.02),
+    0 16px 40px -12px rgba(13, 13, 13, 0.1),
+    0 48px 96px -32px rgba(13, 13, 13, 0.16);
+}
+.clys-window--collapsed { grid-template-columns: 68px minmax(0, 1fr); }
+.clys-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(19, 23, 29, 0.18);
+  backdrop-filter: blur(10px) saturate(1.05);
+  -webkit-backdrop-filter: blur(10px) saturate(1.05);
+}
+.clys-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 10px 14px;
+  background: #FCFCFC;
+  border-right: 1px solid #ECECEC;
+}
+.clys-sidebar__top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 4px 14px;
+  border-bottom: 1px solid #ECECEC;
+}
+.clys-sidebar__brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+}
+.clys-brand__mark {
+  display: block;
+  color: #0066FF;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.clys-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #737373;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.clys-icon-btn:hover { background: #F0F1F3; color: #0D0D0D; }
+.clys-icon-btn svg { width: 16px; height: 16px; }
+.clys-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #4A4F57;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.006em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.clys-back svg { width: 15px; height: 15px; flex: none; color: #737373; stroke-width: 1.8; transition: color 150ms ease; }
+.clys-back:hover { background: #F0F1F3; color: #0D0D0D; }
+.clys-back:hover svg { color: #0D0D0D; }
+.clys-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #F0F1F3;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+.clys-search:focus-within {
+  background: #FFFFFF;
+  border-color: #0066FF;
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
+}
+.clys-search__icon { width: 15px; height: 15px; flex: none; color: #9BA0A8; }
+.clys-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #0D0D0D;
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+}
+.clys-search input::placeholder { color: #9BA0A8; }
+.clys-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 2px 2px;
+}
+.clys-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.clys-nav-group__label {
+  padding: 0 12px 5px;
+  color: #9BA0A8;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.clys-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #4A4F57;
+  font: 500 13.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.006em;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+  transition: background 150ms ease, color 150ms ease;
+}
+.clys-nav-item svg { width: 17px; height: 17px; flex: none; color: #8A8F97; stroke-width: 1.7; transition: color 150ms ease; }
+.clys-nav-item:hover { background: #F2F3F5; color: #0D0D0D; }
+.clys-nav-item:hover svg { color: #5A5F68; }
+.clys-nav-item:focus-visible { box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.28); }
+.clys-nav-item[data-active="true"] { background: #EEF0F3; color: #0D0D0D; }
+.clys-nav-item[data-active="true"] svg { color: #0066FF; }
+.clys-nav-empty {
+  padding: 8px 12px;
+  color: #9BA0A8;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.clys-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #FFFFFF;
+}
+.clys-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 32px;
+  border-bottom: 1px solid #ECECEC;
+  background: #FFFFFF;
+}
+.clys-header__title {
+  color: #0D0D0D;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.clys-header__close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #8A8F97;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.clys-header__close:hover { background: #F2F3F5; color: #0D0D0D; }
+.clys-header__close:focus-visible { outline: 2px solid rgba(0, 102, 255, 0.35); outline-offset: 2px; }
+.clys-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #FFFFFF;
+}
+.clys-content__inner {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 28px 36px 48px;
+}
+.clys-section-title {
+  color: #0D0D0D;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  line-height: 1.15;
+}
+.clys-section-detail {
+  margin-top: 6px;
+  color: #737373;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.clys-lead-gap { height: 24px; }
+
+/* Settings card: white container, hairline border, rows divided by hairlines. */
+.clys-settings-card { margin-bottom: 18px; }
+.clys-settings-card__head { padding: 0 4px 10px; }
+.clys-subtitle {
+  color: #0D0D0D;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.clys-subdetail {
+  margin-top: 3px;
+  color: #737373;
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 460px;
+}
+.clys-card {
+  border: 1px solid #E5E5E5;
+  border-radius: 14px;
+  background: #FFFFFF;
+}
+.clys-card--muted { background: #FAFAFA; }
+.clys-settings-card__body { padding: 0; overflow: hidden; }
+.clys-settings-card__body > * + * { border-top: 1px solid #EFEFEF; }
+.clys-settings-card__body > .clys-row { padding: 16px 20px; }
+.clys-settings-card__body > .clys-range-row { padding: 16px 20px; }
+.clys-settings-card__body > .clys-block { padding: 20px; }
+.clys-settings-card__body > .clys-profile { padding: 20px; }
+
+.clys-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 16px 20px;
+}
+.clys-row__label { color: #0D0D0D; font-size: 14px; font-weight: 550; letter-spacing: -0.008em; }
+.clys-row__detail { margin-top: 3px; color: #737373; font-size: 12.5px; line-height: 1.5; max-width: 400px; }
+.clys-row__control { flex: none; display: flex; align-items: center; gap: 8px; }
+.clys-group { padding: 4px 0 2px; }
+.clys-group__title { color: #0D0D0D; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.clys-group__detail { margin-top: 3px; color: #737373; font-size: 12.5px; line-height: 1.5; max-width: 460px; }
+
+.clys-block { min-width: 0; }
+.clys-block--action { display: flex; flex-direction: column; align-items: flex-start; }
+
+/* Profile header card. */
+.clys-profile { display: flex; align-items: center; gap: 16px; }
+.clys-profile__avatar {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 50%;
+  color: #FFFFFF;
+  font-size: 22px;
+  font-weight: 600;
+}
+.clys-profile__meta { min-width: 0; }
+.clys-profile__name { color: #0D0D0D; font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
+.clys-profile__email { margin-top: 2px; color: #737373; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clys-profile__count { margin-top: 3px; color: #9BA0A8; font-size: 12px; font-weight: 500; }
+.clys-value-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #F0F1F3;
+  color: #0D0D0D;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Danger zone: standalone red-bordered card. */
+.clys-danger-zone {
+  padding: 20px;
+  border: 1px solid #F3D4D4;
+  border-radius: 14px;
+  background: #FFF7F7;
+}
+.clys-danger-zone__title { color: #B3382F; font-size: 14px; font-weight: 600; }
+.clys-danger-zone__detail { margin-top: 4px; color: #737373; font-size: 12.5px; line-height: 1.5; max-width: 420px; }
+
+/* Theme / mode visual selection cards. */
+.clys-theme-cards-wrap { margin-top: 12px; }
+.clys-theme-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  max-width: 300px;
+}
+.clys-theme-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1.5px solid #E5E5E5;
+  border-radius: 12px;
+  background: #FFFFFF;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.clys-theme-card:hover { border-color: #D4D8DE; }
+.clys-theme-card[data-active="true"] { border-color: #0066FF; box-shadow: 0 0 0 1px #0066FF; }
+.clys-theme-card__label { color: #0D0D0D; font-size: 12.5px; font-weight: 600; text-align: center; }
+.clys-theme-card__check { position: absolute; top: 10px; right: 10px; width: 14px; height: 14px; color: #0066FF; }
+.clys-theme-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 44px;
+  padding: 9px;
+  border: 1px solid #ECECEC;
+  border-radius: 8px;
+  background: #FFFFFF;
+}
+.clys-theme-thumb--dark { background: #1B1D21; border-color: #2A2C31; }
+.clys-theme-thumb__bar { height: 5px; width: 78%; border-radius: 3px; background: #E2E5EA; }
+.clys-theme-thumb__bar--wide { width: 100%; }
+.clys-theme-thumb__bar--short { width: 55%; }
+.clys-theme-thumb--dark .clys-theme-thumb__bar { background: #3A3D44; }
+
+/* Color swatches: precise double-ring selection, no glow. */
+.clys-swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.clys-swatch {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(13, 13, 13, 0.08);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(.16, 1, .3, 1), box-shadow 180ms ease;
+}
+.clys-swatch:hover { transform: scale(1.06); box-shadow: 0 0 0 2.5px rgba(13, 13, 13, 0.06); }
+.clys-swatch[data-selected="true"] {
+  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #0066FF;
+  transform: none;
+}
+.clys-swatch:focus-visible { outline: 2px solid rgba(0, 102, 255, 0.4); outline-offset: 2px; }
+.clys-swatch--custom { display: grid; place-items: center; overflow: hidden; }
+.clys-swatch__rainbow { position: absolute; inset: 0; background: conic-gradient(#ef4444, #f59e0b, #22c55e, #06b6d4, #6366f1, #ef4444); }
+.clys-swatch__input { position: absolute; inset: -10px; width: 52px; height: 52px; opacity: 0; cursor: pointer; }
+.clys-hex {
+  margin-left: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  color: #737373;
+}
+
+/* Option cards (voice presets, model character). */
+.clys-option-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.clys-option-card {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  border: 1.5px solid #E5E5E5;
+  border-radius: 12px;
+  background: #FFFFFF;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.clys-option-card:hover { border-color: #D4D8DE; }
+.clys-option-card[data-active="true"] {
+  border-color: #0066FF;
+  box-shadow: 0 0 0 1px #0066FF, 0 4px 14px rgba(0, 102, 255, 0.08);
+}
+.clys-option-card__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.clys-option-card__icon { width: 16px; height: 16px; color: #737373; }
+.clys-option-card[data-active="true"] .clys-option-card__icon { color: #0066FF; }
+.clys-option-card__label { margin-top: 10px; color: #0D0D0D; font-size: 13px; font-weight: 600; }
+.clys-option-card[data-active="true"] .clys-option-card__label { color: #0066FF; }
+.clys-option-card__detail { margin-top: 3px; color: #737373; font-size: 11.5px; }
+.clys-option-card__preview {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #F0F1F3;
+  color: #737373;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.clys-option-card__preview:hover { background: #E8EAEE; }
+.clys-option-card[data-active="true"] .clys-option-card__preview { background: #EBF2FF; color: #0066FF; }
+.clys-option-status { margin-top: 12px; color: #737373; font-size: 12px; font-weight: 500; }
+.clys-option-status--error { color: #B3382F; }
+
+/* Range controls. */
+.clys-range-row__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.clys-range-row__value { color: #737373; font-size: 12px; font-weight: 500; }
+.clys-range {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+.clys-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 2px solid #0066FF;
+  box-shadow: 0 1px 3px rgba(13, 13, 13, 0.18);
+}
+
+.clys-control-group { display: flex; align-items: center; gap: 8px; }
+.clys-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.clys-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #FAFAFA;
+  color: #737373;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.clys-note__icon { width: 16px; height: 16px; margin-top: 1px; flex: none; color: #9BA0A8; }
+
+/* Segmented control: soft neutral well, white selected pill, quiet text. */
+.clys-segmented {
+  display: inline-flex;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid #E5E5E5;
+  border-radius: 11px;
+  background: #F2F3F5;
+}
+.clys-segmented__option {
+  position: relative;
+  min-width: 72px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #737373;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  cursor: pointer;
+  transition: color 200ms ease;
+}
+.clys-segmented__option:hover { color: #3A3E46; }
+.clys-segmented__option[data-active="true"] {
+  background: #FFFFFF;
+  color: #0D0D0D;
+  box-shadow: 0 1px 2px rgba(13, 13, 13, 0.1), 0 0 0 1px rgba(13, 13, 13, 0.03);
+}
+.clys-segmented__option:focus-visible { outline: 2px solid rgba(0, 102, 255, 0.35); outline-offset: 1px; }
+
+/* Toggle: restrained blue, soft knob. */
+.clys-toggle {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #E2E5EA;
+  cursor: pointer;
+  transition: background 200ms ease;
+}
+.clys-toggle[data-on="true"] { background: #0066FF; }
+.clys-toggle__knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(13, 13, 13, 0.22);
+  transition: transform 200ms cubic-bezier(.16, 1, .3, 1);
+}
+.clys-toggle[data-on="true"] .clys-toggle__knob { transform: translateX(16px); }
+.clys-toggle:focus-visible { outline: 2px solid rgba(0, 102, 255, 0.35); outline-offset: 2px; }
+
+/* Inputs, selects and buttons. */
+.clys-input {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #E5E5E5;
+  border-radius: 10px;
+  background: #FFFFFF;
+  color: #0D0D0D;
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.clys-input:focus { border-color: #0066FF; box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12); }
+.clys-textarea {
+  width: 100%;
+  min-height: 104px;
+  padding: 11px 12px;
+  resize: vertical;
+  border: 1px solid #E5E5E5;
+  border-radius: 12px;
+  background: #FFFFFF;
+  color: #0D0D0D;
+  font: 400 13px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.clys-textarea:focus { border-color: #0066FF; box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12); }
+.clys-select {
+  height: 36px;
+  padding: 0 32px 0 12px;
+  border: 1px solid #E5E5E5;
+  border-radius: 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #FFFFFF;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  color: #0D0D0D;
+  font: 500 12.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.clys-select:focus { border-color: #0066FF; box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12); }
+.clys-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #E5E5E5;
+  border-radius: 10px;
+  background: #FFFFFF;
+  color: #3A3E46;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms cubic-bezier(.16,1,.3,1);
+}
+.clys-btn:hover { background: #F2F3F5; border-color: #D5D9E0; }
+.clys-btn:active { transform: scale(0.98); }
+.clys-btn--primary { background: #0066FF; border-color: #0066FF; color: #FFFFFF; }
+.clys-btn--primary:hover { background: #0057DB; border-color: #0057DB; }
+.clys-btn--danger { border-color: #F3D4D4; background: #FFF7F7; color: #B3382F; }
+.clys-btn--danger:hover { background: #FDECEC; border-color: #EFC4C4; }
+.clys-btn--solid-danger { background: #D92D20; border-color: #D92D20; color: #FFFFFF; }
+.clys-btn--solid-danger:hover { background: #B42318; border-color: #B42318; }
+.clys-btn svg { width: 15px; height: 15px; }
+
+/* Collapsed sidebar: icon-only rail. */
+.clys-window--collapsed .clys-sidebar { padding: 14px 8px; }
+.clys-window--collapsed .clys-sidebar__top { padding: 0 0 14px; gap: 8px; }
+.clys-window--collapsed .clys-sidebar__brand { justify-content: center; padding: 0; }
+.clys-window--collapsed .clys-brand__mark { display: none; }
+.clys-window--collapsed .clys-back { justify-content: center; padding: 0; }
+.clys-window--collapsed .clys-back span { display: none; }
+.clys-window--collapsed .clys-search { display: none; }
+.clys-window--collapsed .clys-nav-group { margin-bottom: 6px; }
+.clys-window--collapsed .clys-nav-group__label { display: none; }
+.clys-window--collapsed .clys-nav-item { justify-content: center; padding: 0; }
+.clys-window--collapsed .clys-nav-item span { display: none; }
+
+@media (max-width: 760px) {
+  .clys-window { grid-template-columns: 1fr; width: min(980px, 96vw); }
+  .clys-sidebar { display: none; }
+}
+.clys-sheet--embedded {
+  width: 100% !important;
+  height: 100% !important;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clys-swatch, .clys-toggle__knob, .clys-btn, .clys-nav-item { transition: none !important; }
+}
+
+/* ============================================================
+   Workspace dock customiser — macOS Touch Bar customisation,
+   adapted to Clyra: off-white surface, near-black ink, #0066FF
+   accent, a light live-dock preview that mirrors the real
+   switcher's hover state, and a grouped app library.
+   ============================================================ */
+.clys-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.clys-dock__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.clys-dock__title {
+  color: #0D0D0D;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.clys-dock__subtitle {
+  margin-top: 3px;
+  color: #737373;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* Live dock preview — a light, pill-shaped replica of the real workspace
+   switcher in its hover state (soft glass chrome, near-black labels), and the
+   real, editable drop zone. */
+.clys-dock__preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.82)),
+    rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 16px 34px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(9px) saturate(1.06);
+  -webkit-backdrop-filter: blur(9px) saturate(1.06);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+.clys-dock__preview.is-over {
+  border-color: rgba(0, 102, 255, 0.5);
+  box-shadow:
+    0 0 0 3px rgba(0, 102, 255, 0.12),
+    0 16px 34px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.clys-dock__slot {
+  position: relative;
+  flex: none;
+}
+.clys-dock__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px 13px;
+  border-radius: 999px;
+  color: rgba(71, 85, 105, 0.82);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: grab;
+  transition: color 180ms ease, background 160ms ease, transform 160ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease;
+}
+.clys-dock__item:hover { background: rgba(15, 23, 42, 0.05); color: #0f172a; }
+.clys-dock__item:active { cursor: grabbing; transform: scale(0.97); }
+.clys-dock__item.is-dragging { opacity: 0.4; }
+.clys-dock__item--pinned {
+  cursor: default;
+  color: #0f172a;
+  text-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+.clys-dock__item--pinned:hover { background: transparent; color: #0f172a; }
+.clys-dock__icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+.clys-dock__label { color: inherit; }
+.clys-dock__marker {
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  z-index: 2;
+  width: 2px;
+  height: 22px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #B6BAC2;
+}
+.clys-dock__marker--end { left: auto; right: -5px; }
+.clys-dock__hint {
+  margin-top: -10px;
+  color: #9BA0A8;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Grouped app library. */
+.clys-dock__library {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+}
+.clys-dock__group { display: flex; flex-direction: column; gap: 8px; }
+.clys-dock__group-label {
+  color: #9BA0A8;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.clys-dock__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.clys-dock__lib-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 15px;
+  border: 1px solid #E5E5E5;
+  border-radius: 999px;
+  background: #FFFFFF;
+  cursor: grab;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease;
+}
+.clys-dock__lib-item:hover {
+  border-color: #D4D8DE;
+  background: #FCFCFD;
+  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+.clys-dock__lib-item:active { transform: translateY(0) scale(0.97); }
+.clys-dock__lib-item.is-dragging { opacity: 0.42; }
+.clys-dock__lib-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: #4A4F57;
+}
+.clys-dock__lib-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0D0D0D;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.006em;
+}
+.clys-dock__lib-item--action { cursor: pointer; }
+.clys-dock__lib-item--action .clys-dock__lib-icon { color: #0066FF; }
+
+/* Removal drop zone. */
+.clys-dock__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 40px;
+  border: 1px dashed #E0E2E6;
+  border-radius: 11px;
+  color: #9BA0A8;
+  font-size: 12px;
+  font-weight: 500;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.clys-dock__remove.is-over { border-color: #D92D20; background: #FFF5F5; color: #D92D20; }
+
+/* Footer. */
+.clys-dock__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+.clys-dock__footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.clys-dock__limit {
+  color: #9BA0A8;
+  font-size: 12px;
+  font-weight: 500;
+}
+.clys-dock__saved {
+  color: #16a34a;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clys-dock__item, .clys-dock__lib-item, .clys-dock__remove { transition: none !important; }
+}
+
+/* Conversation precision — final cascade. Kept at EOF so unrelated workspace
+   styling cannot reintroduce a second chat gutter or cap the scroll viewport. */

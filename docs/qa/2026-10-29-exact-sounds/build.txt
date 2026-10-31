@@ -1,0 +1,34 @@
+
+> openfilm@0.2.5 build:ui
+> vite build --config studio/ui/vite.config.ts
+
+vite v7.3.7 building client environment for production...
+transforming...
+
+new URL('./fonts/',import.meta.url) doesn't exist at build time, it will remain unchanged to be resolved at runtime. If this is intended, you can use the /* @vite-ignore */ comment to suppress this warning.
+✓ 1976 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                1.18 kB │ gzip:     0.70 kB
+dist/assets/scene-worker-a8h7Fciy.js                           1.70 kB
+dist/assets/mask-worker-DA10Fslk.js                            5.90 kB
+dist/assets/track-worker-D-0ezbtu.js                           9.73 kB
+dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2       10.25 kB
+dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2        11.23 kB
+dist/assets/universal-worker-B_tbgHKZ.js                      14.60 kB
+dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2         18.75 kB
+dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2            19.00 kB
+dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2     25.96 kB
+dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2            48.26 kB
+dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2        85.07 kB
+dist/assets/index-D6x3dgmT.css                               135.32 kB │ gzip:    22.61 kB
+dist/assets/universal-analysis-szm18RUo.js                     9.25 kB │ gzip:     3.99 kB
+dist/assets/places-BWEJyR9l.js                               431.08 kB │ gzip:   165.92 kB
+dist/assets/index-COHg3ooW.js                                722.71 kB │ gzip:   185.96 kB
+dist/assets/index-D5xEdCOS.js                              3,713.10 kB │ gzip: 1,211.79 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 11.07s

@@ -8,6 +8,7 @@
  * passed in as `transcript` — this component only supplies the surrounding
  * scroll container, welcome state and bubble-entrance animation hook.
  */
+import "./composer-files.css";
 import React, {
   type CSSProperties,
   type KeyboardEvent,
@@ -25,6 +26,7 @@ import { ArrowUp } from "lucide-react";
 import { VoiceWaveIcon } from "../voice/VoiceWaveIcon";
 import { ClyraFace } from "../../voice/ClyraFace";
 import { setOrbAnchor } from "../../voice/orbAnchor";
+import { registerHomeFace, type HomeFaceHandle } from "../../voice/homeFace";
 import { FlowComposerOverlay, type FlowSession } from "./FlowComposerOverlay";
 import { EffortSlider } from "./EffortSlider";
 import {
@@ -34,11 +36,12 @@ import {
   isDictationSessionOpen,
   type ComposerDictationPhase,
 } from "../../lib/composerDictation";
+import { shortcut } from "../../lib/platform";
 
 export type ChatEffortLevel = "light" | "medium" | "high" | "max";
 
 export interface ComposerEffortOption {
-  value: ChatEffortLevel;
+  value: string;
   label: string;
   hint: string;
   icon: ReactNode;
@@ -97,6 +100,8 @@ export interface ComposerChatRow {
   when: string;
   /** Last message in the conversation, trimmed for a one-line preview. */
   preview?: string;
+  /** Clyra is working in it now: a spinner shows until it is done. */
+  running?: boolean;
 }
 
 export interface ComposerConnectionScope {
@@ -196,10 +201,26 @@ export interface ClyraComposerShellProps {
 
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  /** Called whenever the composer morphs into a sheet (Manage/Settings) or
+   * back out, so the caller can clear surrounding chrome (docked sidebar,
+   * workspace tab switcher) to give the sheet room to breathe. */
+  onMorphChange?: (open: boolean) => void;
   /** false hides the shell's own "Chats" drawer and its toggle (Chat uses the app-level sidebar instead). */
   historyPanel?: boolean;
+  /** Delays the shell's entrance (sidebar slide + content fade) until true. The
+   *  boot loader passes `false` while the progress bar is up, then flips it at
+   *  the reveal so the sidebar, tab switcher and content all animate in on one
+   *  shared beat instead of finishing behind the splash. Defaults to `true`. */
+  introReady?: boolean;
   /** Opens the app-wide settings sheet from the persistent sidebar footer. */
   onOpenSettings: () => void;
+  /** Opens settings on the Account section. Retained in the interface for
+   *  callers that still pass it — the top-right profile button is retired. */
+  onOpenProfile?: () => void;
+  /** The settings surface to mount inside the composer morph. When provided,
+   * the shell's own Settings button morphs the bar open (like Manage) and
+   * renders this inside it instead of calling `onOpenSettings`. */
+  settingsSheet?: ReactNode;
   chats: ComposerChatRow[];
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
@@ -273,8 +294,8 @@ export const userBubbleInnerStyle: CSSProperties = {
 export const assistantBubbleInnerStyle: CSSProperties = {
   maxWidth: "78%",
   padding: "2px 4px",
-  fontSize: 14.5,
-  lineHeight: 1.55,
+  fontSize: 16,
+  lineHeight: 1.7,
   letterSpacing: "-0.01em",
   color: "#15171C",
 };
@@ -390,8 +411,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     dictation,
     sidebarOpen,
     historyPanel = true,
+    introReady = true,
     onToggleSidebar,
+    onMorphChange,
     onOpenSettings,
+    settingsSheet,
     chats,
     onNewChat,
     onOpenChat,
@@ -406,6 +430,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     transcriptContainerRef,
   } = props;
   const reduceMotion = useReducedMotion();
+
+  // The welcome orb's face is registered so App-level controls (the workspace
+  // tab switcher hover, the composer focus) can drive its gaze from anywhere.
+  const orbFaceRef = useRef<HomeFaceHandle | null>(null);
+  useEffect(() => {
+    registerHomeFace(orbFaceRef.current);
+    return () => registerHomeFace(null);
+  }, []);
 
   // Plays once, the first time the shell ever paints: the welcome heading,
   // composer bar and source dock rise/fade in with a short stagger instead of
@@ -477,12 +509,15 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
 
   const [effortMenuOpen, setEffortMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  // Mirrors the artboard's `collapsing` state: for 1.75s after Manage closes,
-  // the surrounding content's grow-back transitions (welcome text, transcript,
-  // stage padding) carry a .7s delay so the composer bar finishes shrinking
-  // FIRST, then everything else reflows into the freed space — matches the
-  // artboard's `closeManage()` sequencing exactly instead of animating both
-  // at once.
+  // Settings morphs the composer exactly like Manage: the bar grows to fit
+  // the sheet, the compose face slides out, and the sheet slides in.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Mirrors the artboard's `collapsing` state: for 2s after Manage/Settings
+  // closes, the surrounding content's grow-back transitions (welcome text,
+  // transcript, stage padding) carry a .7s delay so the composer bar finishes
+  // shrinking FIRST, then everything else reflows into the freed space —
+  // matches the artboard's `closeManage()` sequencing exactly instead of
+  // animating both at once.
   const [collapsing, setCollapsing] = useState(false);
   const collapseTimerRef = useRef<number | null>(null);
   const [connectionsStep, setConnectionsStep] = useState<null | "detail">(null);
@@ -515,20 +550,27 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   }, [effortMenuOpen]);
 
   useEffect(() => {
+    // Re-measured when the window or the composer's surroundings resize (no polling timer); skipped while the
+    // app is scaled down inside Task View, where on-screen positions are not the app's own.
     const measure = () => {
-      if (!barRef.current) return;
-      const r = barRef.current.getBoundingClientRect();
+      const bar = barRef.current;
+      if (!bar || bar.closest(".clyra-task-view--open")) return;
+      const r = bar.getBoundingClientRect();
+      if (!r.height) return;
       const above = Math.round(r.top - 16);
       if (Math.abs(above - headroom) > 2) setHeadroom(above);
     };
     measure();
     window.addEventListener("resize", measure);
-    const id = window.setInterval(measure, 260);
+    const observer = new ResizeObserver(measure);
+    const host = barRef.current?.offsetParent ?? barRef.current?.parentElement;
+    if (host) observer.observe(host);
     return () => {
       window.removeEventListener("resize", measure);
-      window.clearInterval(id);
+      observer.disconnect();
     };
-  }, [headroom]);
+    // Also re-measured when the palette opens, since that is the only time the headroom is read.
+  }, [headroom, paletteOpen]);
 
   useEffect(() => {
     // Mirror the Composer artboard: either direction briefly confirms the
@@ -562,31 +604,45 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const currentEffortOption =
     efforts.find((e) => e.value === currentEffort) ?? efforts[0];
   const mg = manageOpen;
+  const st = settingsOpen;
+  const morphOpen = mg || st;
   const dt = connectionsStep === "detail";
   const webOff = !connections.webSearchEnabled;
+  // Notify the app shell so it can clear the surrounding chrome (docked
+  // sidebar, workspace tab switcher) while a sheet is open and bring it back
+  // when the sheet closes.
+  useEffect(() => {
+    onMorphChange?.(morphOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [morphOpen]);
   // Matches the artboard's step==="connected" height (384) exactly — the
   // real detail view (email + scope rows) is the same shape as that step.
   const selectionRows = selections.length;
   // While Flow dictation covers the card, give it room for live words / edits (more when a selection header shows).
   // The composer keeps its normal size while Flow dictation covers it.
-  const barHeight = dt
-    ? 384
-    : mg
-      ? webOff
-        ? 292
-        : 226
-      : 118 + Math.ceil(files.length / 2) * 48 + selectionRows * 36;
-  const backDelay = !mg && collapsing ? ".7s" : "0s";
+  // Settings gets a taller, wider bar: the sheet keeps its own natural size
+  // and the composer grows to frame it.
+  const barHeight = st
+    ? Math.min(628, Math.max(430, Math.round(window.innerHeight * 0.8)))
+    : dt
+      ? 384
+      : mg
+        ? webOff
+          ? 292
+          : 226
+        : 118 + (files.length ? 68 : 0) + selectionRows * 36;
+  const backDelay = !morphOpen && collapsing ? ".7s" : "0s";
 
-  const closeManage = () => {
+  const closeMorph = () => {
     setManageOpen(false);
+    setSettingsOpen(false);
     setConnectionsStep(null);
     setCollapsing(true);
     if (collapseTimerRef.current != null)
       window.clearTimeout(collapseTimerRef.current);
     collapseTimerRef.current = window.setTimeout(
       () => setCollapsing(false),
-      1750,
+      2000,
     );
   };
   useEffect(() => {
@@ -613,8 +669,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // across that sub-switch too and the bar's height transition carries the
   // same .7s delay every time it moves while mg is true. So both cases use
   // the same 950ms mount delay here, not a quick one for the sub-switch.
-  type PanelKind = "manage" | "detail" | null;
-  const targetPanel: PanelKind = dt ? "detail" : mg ? "manage" : null;
+  type PanelKind = "manage" | "detail" | "settings" | null;
+  const targetPanel: PanelKind = dt ? "detail" : st ? "settings" : mg ? "manage" : null;
   const [mountedPanel, setMountedPanel] = useState<PanelKind>(null);
   const [exitingPanel, setExitingPanel] = useState<PanelKind>(null);
   const panelTimerRef = useRef<number | null>(null);
@@ -636,7 +692,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       panelTimerRef.current = window.setTimeout(() => {
         setMountedPanel(null);
         setExitingPanel(null);
-      }, 200);
+      }, 280);
     }
     return () => {
       if (panelTimerRef.current != null)
@@ -656,7 +712,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // double-wrapped with duplicate absolute-position + padding, clipping
   // the rows out of view. That's fixed at the call sites below, so the
   // original artboard timing is restored here unaltered.)
-  const faceDelay = mg ? ".95s" : ".7s";
+  // On close the compose face waits for the bar to finish shrinking (the same
+  // .7s pause + .7s move as the grow) before fading back in, so collapse is
+  // the mirror of the open rather than a quick fade.
+  const faceDelay = morphOpen ? ".95s" : collapsing ? ".95s" : ".7s";
   const faceStyle = (
     on: boolean,
     y: number,
@@ -746,6 +805,27 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     "Previous 7 days",
     "Earlier",
   ];
+  // On wide windows the chat list is a persistent column; on narrow ones it floats over the content.
+  const [wideLayout, setWideLayout] = useState(() => (typeof window === "undefined" ? true : window.matchMedia("(min-width: 960px)").matches));
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 960px)");
+    const onChange = () => setWideLayout(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const dockSidebar = historyPanel && sidebarOpen && wideLayout;
+  // Intro choreography: everything reveals on one shared beat — the welcome
+  // content fades in while the sidebar slides in from the left at the same
+  // time. Once done, this stays true forever so normal toggles keep their
+  // usual behavior.
+  const [sidebarIntro, setSidebarIntro] = useState(reduceMotion);
+  useEffect(() => {
+    if (!introReady) return undefined;
+    if (reduceMotion) { setSidebarIntro(true); return undefined; }
+    const raf = requestAnimationFrame(() => setSidebarIntro(true));
+    return () => cancelAnimationFrame(raf);
+  }, [reduceMotion, introReady]);
+  const sidebarShown = sidebarOpen && sidebarIntro;
   const filteredChats = useMemo(() => {
     const q = sideQuery.trim().toLowerCase();
     return chats.filter((c) => !q || c.title.toLowerCase().includes(q));
@@ -755,6 +835,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     <div
       ref={composerRootRef}
       className="clyra-composer-shell"
+      data-chat-state={sent ? "conversation" : "welcome"}
       style={{
         position: "relative",
         height: "100%",
@@ -762,10 +843,20 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         display: "flex",
         alignItems: "stretch",
         justifyContent: "center",
-        background:
-          "radial-gradient(120% 90% at 50% 0%, #FCFCFD 0%, #F5F6F8 58%, #EEF0F3 100%)",
+        boxSizing: "border-box",
+        // Treat the history as an application rail, not a floating card. The
+        // conversation therefore centres in the remaining workspace, as it
+        // does in a focused chat app, rather than shifting away from both
+        // edges when the rail is open.
+        paddingLeft: dockSidebar && sidebarIntro ? 272 : 0,
+        paddingRight: 0,
+        ["--clyra-shell-pad" as string]: "0px",
+        transition: "padding-left .36s cubic-bezier(.22,1,.36,1)",
+        // Pure white: the welcome reads as one clean canvas. The header blur
+        // and the composer's own shadow carry the depth instead of a grey wash.
+        background: "#FFFFFF",
         fontFamily:
-          "'Instrument Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
+          "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif",
         WebkitFontSmoothing: "antialiased",
         overflow: "hidden",
       }}
@@ -775,9 +866,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         type="button"
         onClick={onToggleSidebar}
         title="Chat history"
+        className="clyra-welcome-corner"
         style={{
           position: "absolute",
-          top: 18,
+          top: 1,
           left: 18,
           zIndex: 48,
           display: historyPanel ? "flex" : "none",
@@ -789,11 +881,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           border: "none",
           cursor: "pointer",
           color: "#5C6069",
-          background: "transparent",
-          opacity: sidebarOpen ? 0 : 1,
-          transform: sidebarOpen ? "translateX(-10px)" : "translateX(0)",
-          pointerEvents: sidebarOpen ? "none" : "auto",
-          transition: `background .24s ${EASE}, color .24s ease, opacity .3s ease, transform .5s ${SHELL_EASE}`,
+          opacity: sidebarOpen || morphOpen ? 0 : 1,
+          transform: sidebarOpen || morphOpen ? "translateX(-10px)" : "translateX(0)",
+          pointerEvents: sidebarOpen || morphOpen ? "none" : "auto",
+          transition: `background .22s cubic-bezier(.22,1,.36,1), opacity .3s ease, transform .5s ${SHELL_EASE}`,
         }}
       >
         <svg
@@ -830,7 +921,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           // This is deliberately viewport-anchored, like the Composer
           // reference: it never rides with the transcript or the composer.
           position: "fixed",
-          top: 18,
+          top: 1,
           right: 18,
           zIndex: 48,
           display: "flex",
@@ -842,8 +933,15 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           border: "none",
           cursor: "pointer",
           color: temp ? "#15171C" : "#5C6069",
-          background: "transparent",
-          transition: `background .28s ${EASE}, color .28s ease`,
+          // No inline background: the grey hover chip lives in index.css
+          // (.clyra-composer-temp-toggle:hover) so it matches the sidebar
+          // toggle and the workspace tab switcher exactly.
+          // Same one-beat entrance as the rest of the home screen: a gentle
+          // fade + settle, no stagger. Clears away while a sheet is open.
+          opacity: reduceMotion || mounted ? (morphOpen ? 0 : 1) : 0,
+          pointerEvents: morphOpen ? "none" : "auto",
+          transform: reduceMotion || mounted ? "none" : "translateY(-8px)",
+          transition: `opacity .6s ${SHELL_EASE}, transform .6s ${SHELL_EASE}, background .22s cubic-bezier(.22,1,.36,1), color .22s ease`,
         }}
       >
         <svg
@@ -872,7 +970,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           position: "absolute",
           inset: 0,
           zIndex: 44,
-          display: historyPanel ? "block" : "none",
+          display: historyPanel && !wideLayout ? "block" : "none",
           background: "transparent",
           pointerEvents: sidebarOpen ? "auto" : "none",
         }}
@@ -880,24 +978,24 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
 
       {/* Sidebar panel */}
       <aside
+        className="clyra-composer-shell__sidebar"
         style={{
           position: "absolute",
-          top: 16,
-          left: 16,
-          bottom: 16,
+          top: 0,
+          left: 0,
+          bottom: 0,
           zIndex: 46,
           display: historyPanel ? "flex" : "none",
           flexDirection: "column",
-          width: 290,
-          borderRadius: 24,
-          background: "#FFFFFF",
+          width: 272,
+          borderRadius: 0,
+          background: "#F9F9F9",
           overflow: "hidden",
-          boxShadow:
-            "0 24px 60px -26px rgba(16,18,24,0.22), inset 0 0 0 1px rgba(16,18,24,0.05)",
-          visibility: sidebarOpen ? "visible" : "hidden",
-          transform: `translateX(${sidebarOpen ? 0 : -322}px)`,
-          pointerEvents: sidebarOpen ? "auto" : "none",
-          transition: `visibility 0s linear ${sidebarOpen ? "0s" : ".72s"}, transform .72s cubic-bezier(.14,.96,.18,1)`,
+          boxShadow: "inset -1px 0 0 rgba(16,18,24,0.07)",
+          visibility: sidebarShown ? "visible" : "hidden",
+          transform: `translateX(${sidebarShown ? 0 : -272}px)`,
+          pointerEvents: sidebarShown ? "auto" : "none",
+          transition: `visibility 0s linear ${sidebarShown ? "0s" : ".36s"}, transform .36s cubic-bezier(.22,1,.36,1)`,
         }}
       >
         <div
@@ -923,6 +1021,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             type="button"
             onClick={onToggleSidebar}
             title="Hide"
+            className="clyra-icon-ghost"
             style={iconGhostButtonStyle(30)}
           >
             <svg
@@ -966,13 +1065,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               fontWeight: 500,
               letterSpacing: "-0.008em",
               color: "#15171C",
+              transition: "background .32s cubic-bezier(.16,1,.3,1)",
             }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.background = "rgba(16,18,24,0.035)")
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background = "transparent")
-            }
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(16,18,24,0.03)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+            }}
           >
             <svg
               width={15}
@@ -997,6 +1097,13 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               borderRadius: 12,
               background: "transparent",
               cursor: "text",
+              transition: "background .32s cubic-bezier(.16,1,.3,1), box-shadow .32s cubic-bezier(.16,1,.3,1)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(16,18,24,0.03)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
             }}
           >
             <svg
@@ -1099,10 +1206,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                         padding: "9px 6px 9px 10px",
                         borderRadius: 13,
                         background: hov
-                          ? "rgba(16,18,24,0.035)"
+                          ? "rgba(16,18,24,0.03)"
                           : "transparent",
                         cursor: "pointer",
-                        transition: `background .26s ${EASE}`,
+                        transition: `background .32s cubic-bezier(.16,1,.3,1)`,
                       }}
                     >
                       {editing ? (
@@ -1155,75 +1262,95 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                           {c.title}
                         </span>
                       )}
+                      {c.running && !editing ? <span className="clyra-chat-spinner" role="status" aria-label="Working" title="Working" /> : null}
                       <span
                         style={{
-                          fontSize: 10.5,
-                          color: "#63676F",
+                          position: "relative",
                           flexShrink: 0,
-                          opacity: hov || editing ? 0 : 1,
-                          transition: "opacity .2s ease",
+                          width: 58,
+                          height: 26,
                         }}
                       >
-                        {c.when}
-                      </span>
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 2,
-                          flexShrink: 0,
-                          overflow: "hidden",
-                          width: hov && !editing ? 58 : 0,
-                          opacity: hov && !editing ? 1 : 0,
-                          transition: "width .34s ease, opacity .26s ease",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          title="Rename"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditChatId(c.id);
-                            setEditDraft(c.title);
+                        <span
+                          style={{
+                            position: "absolute",
+                            right: 0,
+                            top: "50%",
+                            transform: `translateY(-50%) translateX(${hov || editing ? -4 : 0}px)`,
+                            fontSize: 10.5,
+                            color: "#63676F",
+                            whiteSpace: "nowrap",
+                            opacity: hov || editing ? 0 : 1,
+                            transition:
+                              "opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1)",
                           }}
-                          style={iconGhostButtonStyle(26)}
                         >
-                          <svg
-                            width={13}
-                            height={13}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={1.55}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M4 20h4.2L20 8.2a2.1 2.1 0 0 0 0-3l-1.2-1.2a2.1 2.1 0 0 0-3 0L4 15.8z" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          title="Delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteChat(c.id);
+                          {c.when}
+                        </span>
+                        <span
+                          style={{
+                            position: "absolute",
+                            right: 0,
+                            top: "50%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 2,
+                            transform: `translateY(-50%) translateX(${hov && !editing ? 0 : 8}px)`,
+                            opacity: hov && !editing ? 1 : 0,
+                            pointerEvents: hov && !editing ? "auto" : "none",
+                            transition:
+                              "opacity .26s cubic-bezier(.16,1,.3,1), transform .4s cubic-bezier(.16,1,.3,1)",
                           }}
-                          style={iconGhostButtonStyle(26)}
                         >
-                          <svg
-                            width={13}
-                            height={13}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={1.55}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                          <button
+                            type="button"
+                            title="Rename"
+                            className="clyra-icon-ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditChatId(c.id);
+                              setEditDraft(c.title);
+                            }}
+                            style={iconGhostButtonStyle(26)}
                           >
-                            <path d="M4.6 7.2h14.8M9.8 4.4h4.4a1 1 0 0 1 1 1v1.8H8.8V5.4a1 1 0 0 1 1-1z" />
-                            <path d="M6.9 7.2l.8 11.5a1.6 1.6 0 0 0 1.6 1.5h5.4a1.6 1.6 0 0 0 1.6-1.5l.8-11.5" />
-                          </svg>
-                        </button>
+                            <svg
+                              width={13}
+                              height={13}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.55}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M4 20h4.2L20 8.2a2.1 2.1 0 0 0 0-3l-1.2-1.2a2.1 2.1 0 0 0-3 0L4 15.8z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete"
+                            className="clyra-icon-ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteChat(c.id);
+                            }}
+                            style={iconGhostButtonStyle(26)}
+                          >
+                            <svg
+                              width={13}
+                              height={13}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.55}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M4.6 7.2h14.8M9.8 4.4h4.4a1 1 0 0 1 1 1v1.8H8.8V5.4a1 1 0 0 1 1-1z" />
+                              <path d="M6.9 7.2l.8 11.5a1.6 1.6 0 0 0 1.6 1.5h5.4a1.6 1.6 0 0 0 1.6-1.5l.8-11.5" />
+                            </svg>
+                          </button>
+                        </span>
                       </span>
                     </div>
                   );
@@ -1286,7 +1413,15 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         <button
           type="button"
           className="clyra-composer-settings-button"
-          onClick={onOpenSettings}
+          onClick={() => {
+            if (settingsSheet) {
+              setSettingsOpen((open) => !open);
+              setManageOpen(false);
+              setConnectionsStep(null);
+            } else {
+              onOpenSettings();
+            }
+          }}
           title="Open settings"
         >
           <span className="clyra-composer-settings-button__icon" aria-hidden>
@@ -1372,8 +1507,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           display: "flex",
           justifyContent: "center",
           pointerEvents: "none",
-          transform: `translate(-50%, ${sent && !mg && tempNote ? 0 : -10}px)`,
-          opacity: sent && !mg && tempNote ? 1 : 0,
+          transform: `translate(-50%, ${sent && !morphOpen && tempNote ? 0 : -10}px)`,
+          opacity: sent && !morphOpen && tempNote ? 1 : 0,
           transition:
             "opacity .45s ease, transform .55s cubic-bezier(.32,.72,0,1)",
         }}
@@ -1460,22 +1595,22 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           // The home composition is a centred 640px column. Once a
           // conversation starts, the stage widens to a comfortable reading
           // column instead of stretching edge-to-edge on wide windows.
-          maxWidth: sent && !mg ? 820 : 640,
+          maxWidth: st ? 920 : sent && !morphOpen ? 820 : 640,
           margin: "0 auto",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: sent && !mg ? 0 : 12,
+          gap: sent && !morphOpen ? 0 : 12,
           height: "100%",
           padding:
-            sent && !mg
+            sent && !morphOpen
               ? tempNote
-                ? "76px 32px 14px"
-                : "40px 32px 14px"
+                ? "76px 32px 24px"
+                : "40px 32px 24px"
               : "0 32px",
           boxSizing: "border-box",
-          justifyContent: sent && !mg ? "flex-end" : "center",
-          transition: `padding 1.15s ${SHELL_EASE} ${backDelay}, gap 1.15s ${SHELL_EASE} ${backDelay}`,
+          justifyContent: sent && !morphOpen ? "flex-end" : "center",
+          transition: `padding .42s ${SHELL_EASE} ${backDelay}, gap .42s ${SHELL_EASE} ${backDelay}`,
         }}
       >
         {/* The frame owns the transcript's layout box and is the containing
@@ -1488,12 +1623,12 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             display: "flex",
             flexDirection: "column",
             width: "100%",
-            flex: sent && !mg ? "1 1 auto" : "0 0 auto",
+            flex: sent && !morphOpen ? "1 1 auto" : "0 0 auto",
             minHeight: 0,
-            maxHeight: sent && !mg ? "none" : 0,
-            marginBottom: sent && !mg ? 18 : 0,
-            opacity: sent && !mg ? 1 : 0,
-            transition: `margin-bottom 1.15s ${SHELL_EASE} ${backDelay}, flex-grow 1.15s ${SHELL_EASE} ${backDelay}, opacity .6s ease ${mg ? "0s" : ".5s"}`,
+            maxHeight: sent && !morphOpen ? "none" : 0,
+            marginBottom: sent && !morphOpen ? 18 : 0,
+            opacity: sent && !morphOpen ? 1 : 0,
+            transition: `margin-bottom .36s ${SHELL_EASE} ${backDelay}, flex-grow .42s ${SHELL_EASE} ${backDelay}, opacity .22s ease ${backDelay}`,
           }}
         >
           <div
@@ -1530,17 +1665,22 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               width: "100%",
               overflow: "hidden",
               padding: "0 8px",
-              maxHeight: mg ? 0 : 380,
-              marginBottom: mg ? 0 : 26,
-              opacity: mg ? 0 : 1,
-              transform: `translateY(${mg ? -12 : 0}px)`,
-              pointerEvents: mg ? "none" : "auto",
-              transition: `max-height .95s ${SHELL_EASE} ${backDelay}, margin-bottom .95s ${SHELL_EASE} ${backDelay}, opacity .6s ease ${backDelay}, transform .95s ${SHELL_EASE} ${backDelay}`,
+              // Manage keeps the greeting (its panel is short). Settings is a
+              // full sheet, so the welcome yields exactly like it does when a
+              // conversation starts, then flows back on collapse.
+              maxHeight: sent || morphOpen ? 0 : 440,
+              marginBottom: sent || morphOpen ? 0 : 26,
+              opacity: sent || morphOpen ? 0 : 1,
+              transform: sent || morphOpen ? "translateY(-12px)" : "none",
+              pointerEvents: sent || morphOpen ? "none" : "auto",
+              transition: `max-height ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}, margin-bottom ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}, opacity ${sent ? ".3s" : ".6s"} ease ${backDelay}, transform ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}`,
             }}
           >
             {/* Clyra's orb: the same living face the voice call uses. It is the
-                shared element the call flies out of / back into (see orbAnchor). */}
-            <div
+                shared element the call flies out of / back into (see orbAnchor).
+                Intro uses the same spring the voice call flies with, then the
+                rest of the home screen reveals behind it. */}
+            <motion.div
               id="clyra-bloub-home-target"
               ref={setOrbAnchor}
               className="clyra-composer-shell__orb"
@@ -1550,14 +1690,23 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 height: 104,
                 marginBottom: 22,
                 flexShrink: 0,
-                opacity: reduceMotion ? 1 : mounted ? 1 : 0,
-                transform: reduceMotion ? "none" : `scale(${mounted ? 1 : 0.55})`,
-                transition: `opacity .7s ${SHELL_EASE} .05s, transform 1.05s ${SHELL_EASE} .05s`,
                 pointerEvents: "none",
               }}
+              initial={reduceMotion ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : {
+                      // The orb fades in on the exact same beat as the heading,
+                      // subtitle, composer, tab bar and sidebar — one shared
+                      // entrance, no scale, rise or blur choreography.
+                      opacity: { duration: 0.6, delay: 0, ease: [0.32, 0.72, 0, 1] },
+                    }
+              }
             >
-              <ClyraFace state="ready" muted={false} />
-            </div>
+              <ClyraFace ref={orbFaceRef} state="ready" muted={false} />
+            </motion.div>
             {tempPillMounted ? (
               <button
                 type="button"
@@ -1640,7 +1789,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 letterSpacing: "-0.034em",
                 lineHeight: 1.08,
                 color: "#15171C",
-                ...entrance(0.18),
+                ...entrance(0),
               }}
             >
               Where should we start, <span style={{ color: accentColor }}>{userName}</span>?
@@ -1655,7 +1804,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 lineHeight: 1.55,
                 letterSpacing: "-0.008em",
                 color: "#63676F",
-                ...entrance(0.26),
+                ...entrance(0),
               }}
             >
               Type <span style={{ color: "#0B54D6", fontWeight: 600 }}>/</span>{" "}
@@ -1670,28 +1819,32 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           className="clyra-composer-shell__bar"
           style={{
             position: "relative",
-            width: "min(640px, 100%)",
+            width: st ? "min(920px, 100%)" : "min(640px, 100%)",
             borderRadius: 32,
             background: "#FFFFFF",
-            overflow: mg || dt ? "hidden" : "visible",
+            overflow: mg || dt || st ? "hidden" : "visible",
             height: barHeight,
+            flexShrink: 0,
             boxShadow:
               "0 1px 1px rgba(16,18,24,0.03), 0 8px 20px -8px rgba(16,18,24,0.10), 0 30px 60px -28px rgba(16,18,24,0.20), inset 0 0 0 1px rgba(16,18,24,0.055)",
             // The artboard's own barStyle carries a delay on this transition
             // too — height .7s ${shell} + (mg ? ".7s" : "0s") — meaning the
             // bar visibly PAUSES for .7s before it starts growing whenever
             // mg is true (opening Manage, or switching manage <-> detail),
-            // and shrinks immediately (no delay) when mg goes false. Without
-            // this the bar used to start growing at the same instant the
-            // compose face began fading out, which read as abrupt/too fast
-            // next to the fade — this was missing from the port entirely.
+            // and shrinks with the SAME .7s pause when it closes — the bar's
+            // height transition is symmetric so collapse is the exact reverse
+            // of the grow (pause first, then move), not an instant snap. Only
+            // a file/selection edit (neither opening nor collapsing) moves
+            // with no delay. Without this the close used to start shrinking
+            // at the same instant the panel began fading out, which read as
+            // abrupt/too fast next to the open.
             // The opacity/transform clauses only ever animate once, for the
             // shell's first-mount entrance (see `mounted` above); once that
             // finishes they're static no-ops that don't touch the height
             // choreography above.
             transition: reduceMotion
-              ? `height .7s ${SHELL_EASE} ${mg ? ".7s" : "0s"}, max-width .5s ${SHELL_EASE}`
-              : `height .7s ${SHELL_EASE} ${mg ? ".7s" : "0s"}, max-width .5s ${SHELL_EASE}, opacity .6s ${SHELL_EASE} .1s, transform .6s ${SHELL_EASE} .1s`,
+              ? `height .01s linear, max-width .01s linear`
+              : `height .42s ${SHELL_EASE}, max-width .32s ${SHELL_EASE}, opacity .22s ${SHELL_EASE}, transform .22s ${SHELL_EASE}`,
             opacity: reduceMotion ? 1 : mounted ? 1 : 0,
             // Forces a stable compositing layer for this rounded, clipped,
             // height-animating box — mitigates a known Chromium paint glitch
@@ -1713,12 +1866,12 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           <div
             className="clyra-composer-shell__face"
             style={{
-              ...faceStyle(!mg && !dt, -14, mg || dt),
+              ...faceStyle(!morphOpen && !dt, -14, morphOpen || dt),
               flexDirection: "column",
               gap: 8,
               padding: "16px 14px 12px 18px",
               zIndex: 5,
-              overflow: mg || dt ? "hidden" : "visible",
+              overflow: mg || dt || st ? "hidden" : "visible",
             }}
           >
             {/* "/" palette */}
@@ -1985,128 +2138,39 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             </AnimatePresence>
 
             {files.length > 0 ? (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  flexWrap: "wrap",
-                  padding: "0 2px 2px",
-                }}
-              >
+              <ul className="clyra-attach-row" aria-label="Attached files">
                 {files.map((fl) => (
-                  <span
-                    key={fl.id}
-                    style={{
-                      position: "relative",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "5px 9px 5px 5px",
-                      borderRadius: 15,
-                      background: "rgba(16,18,24,0.045)",
-                      maxWidth: 236,
-                      animation: "clyraRise .3s cubic-bezier(.16,1,.3,1) both",
-                    }}
-                  >
-                    {fl.onOpen ? (
-                      <button
-                        type="button"
-                        onClick={fl.onOpen}
-                        title="Preview"
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          width: "100%",
-                          height: "100%",
-                          border: "none",
-                          background: "transparent",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      />
-                    ) : null}
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 34,
-                        height: 34,
-                        borderRadius: 11,
-                        overflow: "hidden",
-                        flexShrink: 0,
-                        fontSize: 10,
-                        fontWeight: 600,
-                        letterSpacing: "0.02em",
-                        color: "#5F636B",
-                        background: "#FFFFFF",
-                        boxShadow: "inset 0 0 0 1px rgba(16,18,24,0.07)",
-                      }}
-                    >
-                      {fl.thumb ??
-                        fl.name.split(".").pop()?.toUpperCase().slice(0, 4)}
-                    </span>
-                    <span
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 500,
-                          color: "#15171C",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          maxWidth: 118,
-                        }}
-                      >
-                        {fl.name}
-                      </span>
-                      <span style={{ fontSize: 10.5, color: "#63676F" }}>
-                        {fl.meta}
-                      </span>
-                    </span>
+                  <li key={fl.id} className="clyra-attach-card">
                     <button
                       type="button"
+                      className="clyra-attach-card__open"
+                      onClick={fl.onOpen}
+                      disabled={!fl.onOpen}
+                      title={fl.onOpen ? `Preview ${fl.name}` : fl.name}
+                      aria-label={`Preview ${fl.name}`}
+                    >
+                      <span className="clyra-attach-card__thumb">
+                        {fl.thumb ?? <span>{fl.name.split(".").pop()?.toUpperCase().slice(0, 4)}</span>}
+                      </span>
+                      <span className="clyra-attach-card__text">
+                        <span className="clyra-attach-card__name">{fl.name}</span>
+                        <span className="clyra-attach-card__meta">{fl.meta}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="clyra-attach-card__remove"
                       onClick={fl.onRemove}
                       title="Remove"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        position: "relative",
-                        zIndex: 2,
-                        width: 17,
-                        height: 17,
-                        borderRadius: 999,
-                        border: "none",
-                        background: "rgba(16,18,24,0.07)",
-                        cursor: "pointer",
-                        color: "#5F636B",
-                        flexShrink: 0,
-                      }}
+                      aria-label={`Remove ${fl.name}`}
                     >
-                      <svg
-                        width={9}
-                        height={9}
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={2.6}
-                        strokeLinecap="round"
-                      >
+                      <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
                         <path d="M6 6l12 12M18 6L6 18" />
                       </svg>
                     </button>
-                  </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             ) : null}
 
             {!dictationBusy || dictation.flow ? (
@@ -2547,14 +2611,14 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               style={{
                 animation:
                   exitingPanel === "manage"
-                    ? "clyraFade .2s ease reverse both"
+                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
                     : `clyraFade .28s ${SHELL_EASE} both`,
               }}
             >
               <ConnectionsPanel
                 connections={connections}
                 webOff={webOff}
-                onClose={closeManage}
+                onClose={closeMorph}
                 onOpenDetail={() => setConnectionsStep("detail")}
               />
             </div>
@@ -2566,7 +2630,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               style={{
                 animation:
                   exitingPanel === "detail"
-                    ? "clyraFade .2s ease reverse both"
+                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
                     : `clyraFade .28s ${SHELL_EASE} both`,
               }}
             >
@@ -2574,6 +2638,29 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 connections={connections}
                 onBack={() => setConnectionsStep(null)}
               />
+            </div>
+          ) : null}
+
+          {/* Settings face — the composer morphs into the full settings sheet
+              with the same grow/slide choreography as Manage. The sheet keeps
+              its own natural size; the bar above frames it. */}
+          {mountedPanel === "settings" || exitingPanel === "settings" ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                animation:
+                  exitingPanel === "settings"
+                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
+                    : `clyraFade .28s ${SHELL_EASE} both`,
+              }}
+            >
+              {settingsSheet
+                ? React.cloneElement(settingsSheet as React.ReactElement<{ onClose: () => void }>, { onClose: closeMorph })
+                : null}
             </div>
           ) : null}
         </div>
@@ -2589,13 +2676,13 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            overflow: mg || sent ? "hidden" : "visible",
-            marginTop: mg || sent ? 0 : 20,
-            maxHeight: mg || sent ? 0 : 76,
-            opacity: mg || sent ? 0 : 1,
-            transform: `translateY(${mg || sent ? -6 : 0}px)`,
-            pointerEvents: mg || sent ? "none" : "auto",
-            transition: `opacity .3s ease, transform .4s ${SHELL_EASE}`,
+            overflow: morphOpen || sent ? "hidden" : "visible",
+            marginTop: morphOpen || sent ? 0 : 20,
+            maxHeight: morphOpen || sent ? 0 : 76,
+            opacity: morphOpen || sent ? 0 : 1,
+            transform: `translateY(${morphOpen || sent ? -6 : 0}px)`,
+            pointerEvents: morphOpen || sent ? "none" : "auto",
+            transition: `opacity .3s ease ${backDelay}, transform .4s ${SHELL_EASE} ${backDelay}, max-height .5s ${SHELL_EASE} ${backDelay}, margin-top .5s ${SHELL_EASE} ${backDelay}`,
           }}
         >
           <div
@@ -2610,7 +2697,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               padding: "12px 14px",
               borderRadius: 999,
               background: "transparent",
-              ...entrance(0.12),
+              ...entrance(0),
             }}
           >
             {sources.map((s) => {
@@ -2668,7 +2755,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             />
             <button
               type="button"
-              onClick={() => setManageOpen(true)}
+              onClick={() => { setManageOpen(true); setSettingsOpen(false); setConnectionsStep(null); }}
               style={{
                 height: 30,
                 padding: "0 12px",
@@ -2688,6 +2775,76 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           </div>
         </div>
 
+        {/* Welcome quick-start pills. Collapses away exactly like the dock. */}
+        <div
+          className="clyra-welcome-extras"
+          aria-hidden={morphOpen || sent}
+          style={{
+            width: st ? "min(920px, 100%)" : "min(640px, 100%)",
+            overflow: "hidden",
+            maxHeight: morphOpen || sent ? 0 : 80,
+            marginTop: morphOpen || sent ? 0 : 2,
+            opacity: morphOpen || sent ? 0 : 1,
+            transform: `translateY(${morphOpen || sent ? -6 : 0}px)`,
+            pointerEvents: morphOpen || sent ? "none" : "auto",
+            transition: `opacity .3s ease ${backDelay}, transform .4s ${SHELL_EASE} ${backDelay}, max-height .5s ${SHELL_EASE} ${backDelay}, margin-top .5s ${SHELL_EASE} ${backDelay}`,
+          }}
+        >
+          {suggestions.length > 0 ? (
+            <div
+              className="clyra-welcome-pills"
+              style={entrance(0)}
+            >
+              {suggestions.slice(0, 4).map((sg) => (
+                <button key={sg.id} type="button" data-pill="1" className="clyra-welcome-pill" onClick={sg.onPick} tabIndex={morphOpen || sent ? -1 : 0}>
+                  <span className="clyra-welcome-pill__icon">{sg.icon}</span>
+                  {sg.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {/* Global chords — a single quiet line under everything, plain text with
+            no pill or background, so the two shortcuts stay discoverable. */}
+        <div
+          className="clyra-welcome-hotkeys"
+          aria-hidden={morphOpen || sent}
+          style={{
+            width: st ? "min(920px, 100%)" : "min(640px, 100%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            maxHeight: morphOpen || sent ? 0 : 30,
+            marginTop: morphOpen || sent ? 0 : 14,
+            opacity: morphOpen || sent ? 0 : 1,
+            transform: `translateY(${morphOpen || sent ? -6 : 0}px)`,
+            pointerEvents: morphOpen || sent ? "none" : "auto",
+            transition: `opacity .3s ease ${backDelay}, transform .4s ${SHELL_EASE} ${backDelay}, max-height .5s ${SHELL_EASE} ${backDelay}, margin-top .5s ${SHELL_EASE} ${backDelay}`,
+          }}
+        >
+          <span className="clyra-welcome-hotkeys__line">
+            <span className="clyra-welcome-hotkeys__key">{shortcut("J")}</span> Task view
+            <span className="clyra-welcome-hotkeys__dot" aria-hidden="true">·</span>
+            <span className="clyra-welcome-hotkeys__key">{shortcut("K")}</span> App launcher
+          </span>
+        </div>
+        <style>{`
+          .clyra-welcome-pills { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 4px 0 6px; }
+          .clyra-welcome-pill { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px 0 11px; border: none; border-radius: 999px; background: rgba(16,18,24,0); font-family: inherit; font-size: 13px; font-weight: 500; letter-spacing: -.01em; color: #15171C; cursor: pointer; transition: background .28s cubic-bezier(.22,1,.36,1), transform .45s cubic-bezier(.16,1,.3,1), color .28s ease; will-change: transform; }
+          .clyra-welcome-pill:hover { background: rgba(16,18,24,.05); transform: translateY(-2px) scale(1.035); }
+          .clyra-welcome-pill:active { transform: translateY(0) scale(.97); transition-duration: .08s; }
+          .clyra-welcome-pill:focus-visible { outline: 2px solid rgba(16,18,24,.35); outline-offset: 1px; }
+          .clyra-welcome-pill__icon { display: grid; place-items: center; color: #5C6069; transition: color .28s ease, transform .45s cubic-bezier(.16,1,.3,1); }
+          .clyra-welcome-pill:hover .clyra-welcome-pill__icon { color: #15171C; transform: translateY(-1px) scale(1.06); }
+          .clyra-welcome-pill__icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+          .clyra-welcome-hotkeys__line { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 400; letter-spacing: -.006em; color: #8A919E; white-space: nowrap; }
+          .clyra-welcome-hotkeys__key { color: #5F636B; }
+          .clyra-welcome-hotkeys__dot { margin: 0 2px; color: #B4BAC4; }
+          .clyra-icon-ghost:hover { background: rgba(16,18,24,0.07); color: #1a1c20; }
+          .clyra-icon-ghost:active { background: rgba(16,18,24,0.11); }
+        `}</style>
+
       </div>
     </div>
   );
@@ -2705,6 +2862,7 @@ function iconGhostButtonStyle(size: number): CSSProperties {
     background: "transparent",
     cursor: "pointer",
     color: "#5F636B",
+    transition: "background .22s cubic-bezier(.22,1,.36,1), color .22s ease",
   };
 }
 

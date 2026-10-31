@@ -1,0 +1,122 @@
+[
+  {
+    "width": 238,
+    "scroll": 238,
+    "inputColor": "rgb(230, 230, 230)",
+    "footer": "rgb(32, 32, 32)",
+    "aiClipped": false,
+    "cards": [
+      {
+        "height": 186,
+        "width": 186,
+        "scroll": 186
+      },
+      {
+        "height": 186,
+        "width": 186,
+        "scroll": 186
+      },
+      {
+        "height": 186,
+        "width": 186,
+        "scroll": 186
+      }
+    ]
+  },
+  {
+    "width": 293,
+    "scroll": 293,
+    "inputColor": "rgb(230, 230, 230)",
+    "footer": "rgb(32, 32, 32)",
+    "aiClipped": false,
+    "cards": [
+      {
+        "height": 158,
+        "width": 241,
+        "scroll": 241
+      },
+      {
+        "height": 158,
+        "width": 241,
+        "scroll": 241
+      },
+      {
+        "height": 158,
+        "width": 241,
+        "scroll": 241
+      }
+    ]
+  },
+  {
+    "width": 340,
+    "scroll": 340,
+    "inputColor": "rgb(230, 230, 230)",
+    "footer": "rgb(32, 32, 32)",
+    "aiClipped": false,
+    "cards": [
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      }
+    ]
+  },
+  {
+    "width": 340,
+    "scroll": 340,
+    "inputColor": "rgb(230, 230, 230)",
+    "footer": "rgb(32, 32, 32)",
+    "aiClipped": false,
+    "cards": [
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      }
+    ]
+  },
+  {
+    "width": 340,
+    "scroll": 340,
+    "inputColor": "rgb(230, 230, 230)",
+    "footer": "rgb(32, 32, 32)",
+    "aiClipped": false,
+    "cards": [
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      },
+      {
+        "height": 158,
+        "width": 288,
+        "scroll": 288
+      }
+    ]
+  }
+]

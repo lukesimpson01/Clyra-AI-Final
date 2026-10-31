@@ -1,0 +1,48 @@
+{
+  "file": "/Users/lukesimpson/Downloads/Clyra-native-corridor-3D-verified.mp4",
+  "frames": [
+    {
+      "time": 1,
+      "meanAbsoluteRGB": 4.970715663580247,
+      "textRegionCorrelation": 0.9970761190735948,
+      "alignmentShiftPx": [
+        -0.3071645200252533,
+        0.08628169447183609
+      ]
+    },
+    {
+      "time": 2,
+      "meanAbsoluteRGB": 4.251123971193415,
+      "textRegionCorrelation": 0.9993782787392664,
+      "alignmentShiftPx": [
+        -0.0217863991856575,
+        0.08093183487653732
+      ]
+    },
+    {
+      "time": 3,
+      "meanAbsoluteRGB": 4.248607896090535,
+      "textRegionCorrelation": 0.9989326008155123,
+      "alignmentShiftPx": [
+        -0.03458305448293686,
+        0.07308230549097061
+      ]
+    },
+    {
+      "time": 4,
+      "meanAbsoluteRGB": 4.256332947530864,
+      "textRegionCorrelation": 0.9982538388707982,
+      "alignmentShiftPx": [
+        -0.03780017048120499,
+        0.14089152216911316
+      ]
+    }
+  ],
+  "probe": {
+    "width": 1080,
+    "height": 1920,
+    "avg_frame_rate": "30/1",
+    "duration": "6.200000",
+    "nb_frames": "186"
+  }
+}

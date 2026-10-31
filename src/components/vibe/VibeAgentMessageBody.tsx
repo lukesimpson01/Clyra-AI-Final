@@ -1,76 +1,34 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Brain } from "lucide-react";
 import {
   parseVibeAgentContent,
   sanitizeVibeAgentContent,
   type VibeParsedSegment,
 } from "@/lib/parseVibeAgentContent";
-import { extractCodeOutline } from "@/lib/extractCodeOutline";
 import { MarkdownMessageContent } from "@/components/MarkdownMessageContent";
-import { VibeThoughtPanel } from "./VibeThoughtPanel";
-import { VibeAnalysingBanner } from "./VibeAnalysingBanner";
-import { VibeMiniCodeBox } from "./VibeMiniCodeBox";
-import { VibeRunBlock } from "./VibeRunBlock";
-import { VibeTextLine } from "./VibeTextLine";
-import { VibeFinalSummary, type SummaryFile } from "./VibeFinalSummary";
-import { cn } from "@/lib/utils";
-
-type StoredVibeFlowState = {
-  activeStep: number;
-  hadLiveStream: boolean;
-};
-
-const vibeFlowStateByMessage = new Map<string, StoredVibeFlowState>();
-
-function getStoredFlowState(
-  messageId?: string,
-): StoredVibeFlowState | undefined {
-  return messageId ? vibeFlowStateByMessage.get(messageId) : undefined;
-}
-
-function patchStoredFlowState(
-  messageId: string | undefined,
-  patch: Partial<StoredVibeFlowState>,
-) {
-  if (!messageId) return;
-  const prev = vibeFlowStateByMessage.get(messageId) ?? {
-    activeStep: 0,
-    hadLiveStream: false,
-  };
-  vibeFlowStateByMessage.set(messageId, { ...prev, ...patch });
-}
-
-function findLastSegmentIndex(
-  segments: VibeParsedSegment[],
-  type: VibeParsedSegment["type"],
-) {
-  for (let i = segments.length - 1; i >= 0; i--) {
-    if (segments[i]?.type === type) return i;
-  }
-  return -1;
-}
+import {
+  ActivityDisclosure,
+  AssistantResponse,
+  CommandRow,
+  FileEditGroup,
+  FileReadGroup,
+  StatusLine,
+  useActivityDetail,
+  type FileChange,
+} from "@/components/chat/assistant";
 
 /**
- * Orchestrates the visible Cursor-style agent stream.
- *
- * - Parses streamed content into ordered segments.
- * - Plays them strictly one-by-one.
- * - After the full timeline, shows the Summary (typed for the latest assistant reply), then
- *   notifies the parent so the live preview panel can open with the parsed file map.
+ * The coding agent's turn, as one text transcript: its commentary in body text, and what it did as compact rows —
+ * the files it read, the files it wrote (with their real diffs), the commands it proposed. Everything shows as it
+ * arrives: no replay, no typing, no delays. The agent works on an in-memory project and executes nothing, so a
+ * command it writes is shown as a suggestion, never as run.
  */
 export function VibeAgentMessageBody({
   messageId,
   content,
   isStreaming,
-  fontSizeClass,
   isLastAssistant,
   onVibePreviewReady,
 }: {
@@ -79,315 +37,122 @@ export function VibeAgentMessageBody({
   isStreaming: boolean;
   fontSizeClass?: string;
   isLastAssistant?: boolean;
-  onVibePreviewReady?: (
-    messageId: string,
-    filesByPath: Record<string, string>,
-  ) => void;
+  onVibePreviewReady?: (messageId: string, filesByPath: Record<string, string>) => void;
 }) {
-  const safeContent = useMemo(
-    () => sanitizeVibeAgentContent(content),
-    [content],
-  );
+  const detail = useActivityDetail();
+  const safeContent = useMemo(() => sanitizeVibeAgentContent(content), [content]);
   const hasDelims = safeContent.includes("<<<VIBE_");
-  const segments = useMemo(
-    () => parseVibeAgentContent(safeContent),
-    [safeContent],
-  );
-  const fallbackMarkdown = !hasDelims && content.length > 0;
+  const segments = useMemo(() => parseVibeAgentContent(safeContent), [safeContent]);
+  /** this reply streamed while open (a reopened chat does not open the preview again by itself) */
+  const wasLive = useRef(isStreaming);
+  if (isStreaming) wasLive.current = true;
 
-  const isPlanMd = (seg: VibeParsedSegment) =>
-    seg.type === "code" && /\bplan\.md\b/i.test(seg.file);
-
-  const isTerminalThinking = (seg: VibeParsedSegment) => {
-    if (seg.type !== "thinking") return false;
-    const body = seg.body.trim().toUpperCase();
-    return (
-      body.startsWith("SHIPPED") ||
-      body.startsWith("SELF-CRITIQUE") ||
-      body.includes("PLAN.MD: COMPLETE")
-    );
-  };
-
-  const blocks: VibeParsedSegment[] = useMemo(() => {
-    const filtered = segments.filter((s) => {
-      if (s.type === "text") {
-        const text = s.body.trim();
-        if (!text) return false;
-        if (/^Done!\s+Here's what I built/i.test(text)) return false;
-        return true;
-      }
-      if (isPlanMd(s)) return false;
-      if (isTerminalThinking(s)) return false;
-      return true;
-    });
-    const lastCodeIndex = findLastSegmentIndex(filtered, "code");
-    const lastRunIndex = findLastSegmentIndex(filtered, "run");
-    const timeline =
-      !isStreaming && lastRunIndex > lastCodeIndex
-        ? filtered.filter(
-            (seg, i) => !(seg.type === "thinking" && i > lastRunIndex),
-          )
-        : filtered;
-    if (isStreaming || timeline.length === 0) return timeline;
-    return timeline.map((seg, i) => {
-      if (i !== timeline.length - 1) return seg;
-      if (seg.type === "text") return seg;
-      return { ...seg, complete: true } as VibeParsedSegment;
-    });
-  }, [segments, isStreaming]);
-
-  const storedAtMount = getStoredFlowState(messageId);
-  const [activeStep, setActiveStep] = useState(
-    () => storedAtMount?.activeStep ?? 0,
-  );
-  const advanceTimeoutRef = useRef<number | null>(null);
-  const previewSentRef = useRef(false);
-  /** True once this message has ever streamed; false for history/hydrated bubbles → show full timeline instantly. */
-  const streamStartedRef = useRef(
-    isStreaming || !!storedAtMount?.hadLiveStream,
-  );
-
-  useLayoutEffect(() => {
-    if (!isStreaming) return;
-    streamStartedRef.current = true;
-    patchStoredFlowState(messageId, { hadLiveStream: true });
-  }, [isStreaming, messageId]);
-
-  useEffect(() => {
-    const stored = getStoredFlowState(messageId);
-    setActiveStep(stored?.activeStep ?? 0);
-    streamStartedRef.current = isStreaming || !!stored?.hadLiveStream;
-    previewSentRef.current = false;
-    if (advanceTimeoutRef.current != null) {
-      window.clearTimeout(advanceTimeoutRef.current);
-      advanceTimeoutRef.current = null;
+  const blocks = useMemo(() => segments.filter((s) => {
+    if (s.type === "text") return !!s.body.trim() && !/^Done!\s+Here's what I built/i.test(s.body.trim());
+    if (s.type === "code" && /\bplan\.md\b/i.test(s.file)) return false;
+    if (s.type === "thinking") {
+      const body = s.body.trim().toUpperCase();
+      if (body.startsWith("SHIPPED") || body.startsWith("SELF-CRITIQUE") || body.includes("PLAN.MD: COMPLETE")) return false;
     }
-  }, [messageId, isStreaming]);
+    return true;
+  }), [segments]);
 
-  useEffect(() => {
-    patchStoredFlowState(messageId, {
-      activeStep,
-      hadLiveStream: streamStartedRef.current,
-    });
-  }, [activeStep, messageId]);
-
-  useEffect(
-    () => () => {
-      if (advanceTimeoutRef.current != null) {
-        window.clearTimeout(advanceTimeoutRef.current);
-        advanceTimeoutRef.current = null;
-      }
-    },
-    [],
-  );
-
-  const summaryFiles = useMemo<SummaryFile[]>(() => {
-    if (isStreaming) return [];
-    const byPath = new Map<string, SummaryFile>();
-    for (const seg of blocks) {
-      if (seg.type !== "code" || !seg.complete) continue;
-      if (!seg.body.trim()) continue;
-      if (isPlanMd(seg)) continue;
-      byPath.set(seg.file, {
-        path: seg.file,
-        added: seg.added,
-        removed: seg.removed,
-        exports: extractCodeOutline(seg.body),
-      });
-    }
-    return Array.from(byPath.values());
-  }, [blocks, isStreaming]);
-
+  /* the files as last written: what the live preview opens */
   const filesByPath = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const seg of blocks) {
-      if (
-        seg.type === "code" &&
-        seg.complete &&
-        seg.body.trim() &&
-        !isPlanMd(seg)
-      ) {
-        m[seg.file] = seg.body;
-      }
-    }
-    return m;
+    const files: Record<string, string> = {};
+    for (const seg of blocks) if (seg.type === "code" && seg.complete && seg.body.trim()) files[seg.file] = seg.body;
+    return files;
   }, [blocks]);
 
-  const handleSummaryPrinted = useCallback(() => {
-    if (!isLastAssistant || !onVibePreviewReady || !messageId) return;
-    if (Object.keys(filesByPath).length === 0) return;
-    if (previewSentRef.current) return;
-    previewSentRef.current = true;
-    onVibePreviewReady(messageId, filesByPath);
-  }, [isLastAssistant, onVibePreviewReady, messageId, filesByPath]);
-
-  const allStepsDone = activeStep >= blocks.length;
-  const isStaticHistory = !isStreaming && !streamStartedRef.current;
-  const archived = isStaticHistory || allStepsDone;
-  const showSummary =
-    summaryFiles.length > 0 &&
-    ((!isStreaming && allStepsDone) || isStaticHistory);
-
+  const sentRef = useRef(false);
   useEffect(() => {
-    if (!showSummary || isStaticHistory) return;
-    const id = window.setTimeout(handleSummaryPrinted, 420);
-    return () => window.clearTimeout(id);
-  }, [handleSummaryPrinted, isStaticHistory, showSummary]);
+    if (isStreaming || sentRef.current || !wasLive.current || !isLastAssistant || !onVibePreviewReady || !messageId) return;
+    if (!Object.keys(filesByPath).length) return;
+    sentRef.current = true;
+    onVibePreviewReady(messageId, filesByPath);
+  }, [isStreaming, isLastAssistant, onVibePreviewReady, messageId, filesByPath]);
 
-  if (fallbackMarkdown) {
+  if (!hasDelims && content.length > 0) {
     return (
-      <div className={cn("space-y-3", fontSizeClass)}>
-        {isStreaming ? (
-          <div
-            className={cn(
-              "whitespace-pre-wrap font-medium leading-relaxed",
-              fontSizeClass,
-            )}
-          >
-            {safeContent}
-          </div>
-        ) : (
-          <MarkdownMessageContent
-            content={safeContent}
-            codeHighlighting
-            codePresentation="soft"
-            suppressCodeBlocks
-          />
-        )}
-      </div>
+      <AssistantResponse enter={wasLive.current} streaming={isStreaming}>
+        <MarkdownMessageContent content={safeContent} codeHighlighting codePresentation="soft" />
+      </AssistantResponse>
     );
   }
 
+  /* consecutive steps of a kind become one group ("Read 4 files", "Edited 3 files") */
+  type Group =
+    | { kind: "thinking"; seg: Extract<VibeParsedSegment, { type: "thinking" }>; last: boolean }
+    | { kind: "read"; paths: string[]; running?: string }
+    | { kind: "edit"; changes: FileChange[] }
+    | { kind: "run"; seg: Extract<VibeParsedSegment, { type: "run" }> }
+    | { kind: "text"; body: string; last: boolean };
+  const groups: Group[] = [];
+  /* an earlier version of the same file, in this reply, is what a later write changed */
+  const versions: Record<string, string> = {};
+  /* paths as the user knows them, without the agent's sandbox folder */
+  const shown = (path: string) => path.replace(/^vibe-project\//, "");
+  blocks.forEach((seg, i) => {
+    const last = i === blocks.length - 1;
+    const prev = groups[groups.length - 1];
+    if (seg.type === "thinking") groups.push({ kind: "thinking", seg, last });
+    else if (seg.type === "analyze") {
+      const running = last && isStreaming && !seg.complete ? shown(seg.path) : undefined;
+      if (prev?.kind === "read" && !prev.running) { if (running) prev.running = running; else prev.paths.push(shown(seg.path)); }
+      else groups.push({ kind: "read", paths: running ? [] : [shown(seg.path)], running });
+    } else if (seg.type === "code") {
+      const before = versions[seg.file] ?? "";
+      const done = seg.complete || !isStreaming;
+      if (done) versions[seg.file] = seg.body;
+      const change: FileChange = { id: `${i}-${seg.file}`, path: shown(seg.file), before, after: seg.body, state: done ? "done" : "running" };
+      /* a file written again in the same group is one change: from its first state to its last */
+      const same = prev?.kind === "edit" ? prev.changes.find((c) => c.path === change.path) : undefined;
+      if (same) Object.assign(same, { after: change.after, state: change.state });
+      else if (prev?.kind === "edit") prev.changes.push(change);
+      else groups.push({ kind: "edit", changes: [change] });
+    } else if (seg.type === "run") groups.push({ kind: "run", seg });
+    else groups.push({ kind: "text", body: seg.body.trim(), last });
+  });
+
+  const nodes: ReactNode[] = groups.map((group, i) => {
+    const key = `${group.kind}-${i}`;
+    switch (group.kind) {
+      case "thinking":
+        if (group.last && isStreaming && !group.seg.complete) return <StatusLine key={key} label="Thinking" icon={<Brain />} />;
+        if (detail === "compact") return null;
+        return (
+          <ActivityDisclosure key={key} icon={<Brain />} label="Thought" defaultOpen={detail === "detailed"}>
+            <p className="clyra-ai-commentary" style={{ fontSize: 14, lineHeight: "20px", color: "var(--chat-secondary)" }}>{group.seg.body.trim()}</p>
+          </ActivityDisclosure>
+        );
+      case "read":
+        return detail === "compact" && !group.running ? null : <FileReadGroup key={key} paths={group.paths} running={group.running} />;
+      case "edit":
+        return <FileEditGroup key={key} changes={group.changes} />;
+      case "run": {
+        const lines = group.seg.body.split("\n");
+        const commandLine = lines.find((l) => l.trim().startsWith("$"));
+        const command = (commandLine ?? lines[0] ?? "command").replace(/^\s*\$\s*/, "").trim() || "command";
+        const note = lines.filter((l) => l !== commandLine).join("\n").trim();
+        return <CommandRow key={key} command={command} note={note || undefined} state="suggested" />;
+      }
+      case "text":
+        return (
+          <AssistantResponse key={key} enter={wasLive.current} streaming={isStreaming && group.last}>
+            <MarkdownMessageContent content={group.body} codeHighlighting codePresentation="soft" suppressCodeBlocks />
+          </AssistantResponse>
+        );
+    }
+  });
+
+  const written = Object.keys(filesByPath).length;
   return (
-    <div
-      className={cn(
-        "grid w-full max-w-[940px] gap-4 lg:grid-cols-[minmax(0,640px)]",
-        fontSizeClass,
-      )}
-    >
-      <div className="flex min-w-0 flex-col gap-3">
-        {blocks.map((seg, i) => {
-          if (!archived && i > activeStep) return null;
-          const isActive = !archived && i === activeStep;
-          const isLastSegment = i === blocks.length - 1;
-
-          const advance = () => {
-            if (advanceTimeoutRef.current != null) {
-              window.clearTimeout(advanceTimeoutRef.current);
-              advanceTimeoutRef.current = null;
-            }
-            const next = i + 1;
-            const prevType = blocks[i]?.type;
-            const prevSeg = blocks[i];
-            const nextSeg = blocks[next];
-            const pauseBeforeNarration =
-              nextSeg?.type === "text" &&
-              (prevType === "thinking" ||
-                prevType === "code" ||
-                prevType === "run" ||
-                prevType === "analyze");
-
-            const go = () => {
-              setActiveStep((s) => (s === i ? next : s));
-            };
-
-            // Code blocks: when segmentComplete flips true, dwell at least 800ms
-            const codeJustFinished =
-              prevSeg?.type === "code" &&
-              prevSeg?.complete &&
-              next < blocks.length;
-
-            if (pauseBeforeNarration && next < blocks.length) {
-              advanceTimeoutRef.current = window.setTimeout(() => {
-                advanceTimeoutRef.current = null;
-                go();
-              }, 120);
-            } else if (codeJustFinished) {
-              // Code block collapsed — dwell before next step
-              advanceTimeoutRef.current = window.setTimeout(() => {
-                advanceTimeoutRef.current = null;
-                go();
-              }, 1000);
-            } else {
-              go();
-            }
-          };
-
-          const key = `step-${i}-${seg.type}`;
-          switch (seg.type) {
-            case "thinking":
-              return (
-                <VibeThoughtPanel
-                  key={key}
-                  body={seg.body}
-                  complete={seg.complete}
-                  active={isActive}
-                  archived={archived}
-                  onCollapsed={archived ? undefined : advance}
-                />
-              );
-            case "analyze": {
-              return (
-                <VibeAnalysingBanner
-                  key={key}
-                  path={seg.path}
-                  active={isActive}
-                  archived={archived}
-                  onCompleted={archived ? undefined : advance}
-                />
-              );
-            }
-            case "code":
-              return (
-                <VibeMiniCodeBox
-                  key={key}
-                  file={seg.file}
-                  added={seg.added}
-                  removed={seg.removed}
-                  code={seg.body}
-                  segmentComplete={seg.complete}
-                  active={isActive}
-                  archived={archived}
-                  onCollapsed={archived ? undefined : advance}
-                />
-              );
-            case "run":
-              return (
-                <VibeRunBlock
-                  key={key}
-                  body={seg.body}
-                  segmentComplete={seg.complete}
-                  active={isActive}
-                  archived={archived}
-                  onCollapsed={archived ? undefined : advance}
-                />
-              );
-            case "text": {
-              const textComplete = !isLastSegment || !isStreaming;
-              return (
-                <VibeTextLine
-                  key={key}
-                  body={seg.body.trim()}
-                  complete={textComplete}
-                  active={isActive}
-                  archived={archived}
-                  onCompleted={archived ? undefined : advance}
-                />
-              );
-            }
-            default:
-              return null;
-          }
-        })}
-
-        {showSummary ? (
-          <VibeFinalSummary
-            files={summaryFiles}
-            skipTyping={isStaticHistory}
-            onFullyPrinted={isLastAssistant ? handleSummaryPrinted : undefined}
-          />
-        ) : null}
-      </div>
+    <div className="clyra-ai-stack">
+      {isStreaming && groups.length === 0 ? <StatusLine label="Thinking" icon={<Brain />} /> : null}
+      {nodes}
+      {!isStreaming && written > 1 && detail !== "compact" ? (
+        <p className="clyra-ai-note">Completed {written} file changes</p>
+      ) : null}
     </div>
   );
 }

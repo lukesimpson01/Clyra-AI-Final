@@ -1,0 +1,24 @@
+{
+  "before": {
+    "frames": 30,
+    "points": 48,
+    "medianMs": 1.5119930000000181,
+    "p95Ms": 5.222592999999989,
+    "maxErrorPx": 0.06049624685748604,
+    "observed": 480
+  },
+  "after": {
+    "frames": 30,
+    "points": 48,
+    "medianMs": 1.0271290000000022,
+    "p95Ms": 2.176870000000008,
+    "maxErrorPx": 0.06049624685748604,
+    "observed": 480
+  },
+  "identicalResults": true,
+  "workspaceBytes": 1176,
+  "peakRssMiB": 65.58984375,
+  "heapLimitMiB": [
+    "--max-old-space-size=128"
+  ]
+}
