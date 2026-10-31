@@ -91,6 +91,33 @@ export async function resolveDeviceLocation(): Promise<DeviceCoords | null> {
     void getDesktopLocation().then(settle);
     void getBrowserLocation().then(settle);
   });
-  if (precise) return precise;
-  return getIpLocation();
+  if (precise) { rememberLocation(precise); return precise; }
+  const ip = await getIpLocation();
+  if (ip) { rememberLocation(ip); return ip; }
+  return readRememberedLocation();
+}
+
+const LAST_KEY = "clyra_last_known_location";
+function rememberLocation(coords: DeviceCoords) {
+  try { localStorage.setItem(LAST_KEY, JSON.stringify(coords)); } catch { /* not remembered */ }
+}
+/** The last real fix this device produced: better than asking when every live source is unavailable. */
+function readRememberedLocation(): DeviceCoords | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_KEY) || "null") as DeviceCoords | null;
+    return parsed && Number.isFinite(parsed.lat) && Number.isFinite(parsed.lon) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The city named by this device's time zone ("Australia/Sydney" → "Sydney"): an approximate last resort. */
+export function timeZoneCity(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const city = zone?.split("/").pop()?.replace(/_/g, " ");
+    return city && !/^(UTC|GMT|Etc)$/i.test(city) ? city : null;
+  } catch {
+    return null;
+  }
 }

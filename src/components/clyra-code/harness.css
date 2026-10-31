@@ -1027,3 +1027,81 @@ button.dsh-leading { cursor: pointer; }
 .cxr[data-phase="complete"] .cxr-line { background: rgba(26, 28, 31, 0.12); }
 .cxr[data-phase="failed"] .cxr-line { background: rgba(209, 36, 47, 0.35); }
 @media (prefers-reduced-motion: reduce) { .cxr[data-phase="running"] .cxr-sheen { animation: none; opacity: .5; transform: none; width: 100%; } .cxr[data-phase="running"] .cxr-indicator::after { animation: none; } }
+
+/* ============================================================
+   Agent action presentation (clyra-agent-ui-demo): how activity rows, groups, cards and the run line LOOK.
+   Events, order and data are unchanged. Quiet 12.5px/400 status text, 17px thin-line icons with no status ticks,
+   one moving shimmer on the live verb, a hairline-bordered diff and terminal. Overrides the rules above.
+   ============================================================ */
+.cxa-group, .cxa-item { --cxa-ink: #262626; --cxa-dim: #737373; --cxa-faint: #a0a0a0; }
+.cxa-head, .cxa-row { gap: 10px; min-height: 29px; padding: 2px 0; font-size: 12.5px; line-height: 20px; font-weight: 400; letter-spacing: 0; transition: color 220ms ease; }
+.cxa-head:focus-visible, .cxa-row:focus-visible { outline: 2px solid #777; outline-offset: 3px; border-radius: 8px; }
+.cxa-icon, .cxa-kind { width: 17px; height: 17px; flex: none; margin: 0 2px; opacity: .82; color: #6c6c6c; transition: color 380ms ease, transform 430ms cubic-bezier(.22, 1, .36, 1); }
+.cxa-row:hover .cxa-kind, .cxa-head:hover .cxa-icon { color: #252525; transform: translate3d(0, -1px, 0); }
+.cxa-item[data-state="error"] .cxa-kind { color: #b3382f; opacity: 1; }
+.cxa-item[data-state="error"] .cxa-row { color: #b3382f; }
+.cxa-verb--live { font-size: 12.5px !important; font-weight: 400 !important; }
+.cxa-target--code { font-size: 12px; }
+.cxa-file { text-decoration: none; font-weight: 500; color: var(--cxa-ink); }
+.cxa-stats { font: 600 12px/18px ui-monospace, "SF Mono", Menlo, monospace; gap: 8px; margin-left: auto; }
+.cxa-add { color: #188038; }
+.cxa-del { color: #c44238; }
+.cxa-row:hover .cxa-add { color: #188038; }
+.cxa-row:hover .cxa-del { color: #c44238; }
+.cxa-outcome { font-size: 12px; }
+.cxa-chevron { color: #a0a0a0; }
+.cxa-item[data-state="running"] .cxa-row { color: var(--cxa-dim); }
+.cxa-timeline > .cxa-item:not(:last-child)::before { display: none; }
+.cxa-rows { gap: 8px; }
+.cxa-shimmer {
+  background-image: linear-gradient(110deg, #6e6e6e 8%, #646464 25%, #222 46%, #b9b9b9 59%, #656565 80%);
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+  animation: cxa-shimmer 1800ms linear infinite;
+}
+@keyframes cxa-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.cxa-body-inner { padding: 6px 0 8px 29px; }
+.cxa-output { border-radius: 12px; background: #fafafa; border: 1px solid #e9e9e9; font-size: 11px; }
+.cxa-pill { border-radius: 12px; font-weight: 450; }
+
+.cx-diff-card, .cx-term-card { border-color: #e9e9e9; border-radius: 18px; box-shadow: none; animation: none; }
+.cx-diff-head, .cx-term-head { height: 40px; padding: 0 14px; background: #fff; border-bottom-color: #ececec; }
+.cx-diff-path { font-weight: 500; color: #3c3c3c; }
+.cx-diff-stat { font-weight: 600; font-size: 11.5px; }
+.cx-diff-line[data-kind="add"] { background: #edf8f0; }
+.cx-diff-line[data-kind="del"] { background: #fff2f0; }
+.cx-diff-open { border: 0; background: transparent; border-radius: 9px; color: #737373; font-weight: 450; }
+.cx-diff-open:hover { background: #f2f2f2; color: #262626; }
+.cx-term-card { background: #fafafa; border-radius: 12px; }
+.cx-term-head { background: #fafafa; }
+
+/* the run line: what it is doing and for how long; no success tick, only failures and stops are marked */
+.cxr-top { font-size: 12.5px; gap: 9px; color: #737373; }
+.cxr-label { font-weight: 400; color: #737373; }
+.cxr[data-phase="complete"] .cxr-indicator { display: none; }
+.cxr[data-phase="running"] .cxr-label { color: #262626; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cxa-shimmer { animation: none; background: none; color: inherit; -webkit-text-fill-color: currentColor; }
+  .cxa-kind, .cxa-icon { transition: none; }
+  .cxa-row:hover .cxa-kind, .cxa-head:hover .cxa-icon { transform: none; }
+}
+
+/* Todo checklist: a white pill when folded, a white rounded card when open. Done circles are hollow rings with a
+   thin green tick — never a filled disc. */
+.dsh-todo {
+  background: #fff;
+  border: 1px solid #e9e9e9;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: border-radius 320ms cubic-bezier(.22, 1, .36, 1), box-shadow 220ms ease;
+}
+.dsh-todo[data-collapsed="true"] { border-radius: 999px; }
+.dsh-todo[data-collapsed="true"] .dsh-todo-body { padding: 5px 16px; }
+.dsh-todo[data-collapsed="false"], .dsh-todo:not([data-collapsed]) { border-radius: 18px; }
+.dsh-glyph-completed { color: #3f9f67; fill: none; }
+.dsh-glyph-completed circle, .dsh-glyph-completed path { fill: none; }
+.dsh-glyph-pending { color: #b5b5b5; }
+.dsh-glyph-progress { color: #3977e8; }
+.dsh-todo-item[data-status="completed"] .dsh-todo-content { color: #9a9a9a; text-decoration-color: #c4c4c4; }

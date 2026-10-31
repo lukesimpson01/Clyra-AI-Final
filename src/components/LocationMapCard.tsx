@@ -34,6 +34,27 @@ function formatCoords(lat: number, lon: number) {
   return `${latLabel}, ${lonLabel}`;
 }
 
+/** The interactive OpenStreetMap view of a place (marker included), with its attribution and a link out. */
+export function MapPanel({ lat, lon, title, height = 220, zoom = 0.02 }: { lat: number; lon: number; title: string; height?: number; zoom?: number }) {
+  const bbox = [lon - zoom, lat - zoom * 0.75, lon + zoom, lat + zoom * 0.75].join(",");
+  const embedSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`;
+  const openMapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+  return (
+    <div className="relative w-full overflow-hidden bg-slate-100" style={{ height }}>
+      <iframe title={`Map of ${title}`} src={embedSrc} className="h-full w-full border-0" loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+      <a
+        href={openMapsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="absolute bottom-9 left-3 flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[12px] font-medium text-slate-700 shadow-[0_2px_10px_rgba(15,23,42,0.12)] backdrop-blur transition-colors hover:bg-white"
+      >
+        <ExternalMapIcon />
+        Open in Maps
+      </a>
+    </div>
+  );
+}
+
 export function LocationMapCard({
   location,
   className,
@@ -49,52 +70,27 @@ export function LocationMapCard({
       : "Current location"
     : [name, region, country].filter(Boolean).join(", ");
 
-  const pad = 0.02;
-  const bbox = [lon - pad, lat - pad * 0.75, lon + pad, lat + pad * 0.75].join(",");
-  const embedSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`;
-  const openMapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-
   return (
     <div
       className={cn(
-        "my-2 w-full max-w-xl overflow-hidden rounded-[22px] border border-slate-200/80 bg-white/90 shadow-[0_18px_40px_rgba(15,23,42,0.05)]",
+        "my-2 w-full max-w-xl overflow-hidden rounded-[26px] border border-slate-200/70 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_18px_44px_-18px_rgba(15,23,42,0.18)]",
         className,
       )}
       data-invert-ignore
     >
-      <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-            <PinIcon />
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-slate-800">{place}</p>
-            {matchedFrom && !isCurrentLocation ? (
-              <p className="truncate text-[11.5px] font-medium text-slate-400">Matched from "{matchedFrom}"</p>
-            ) : (
-              <p className="text-[11.5px] font-medium text-slate-400">{formatCoords(lat, lon)}</p>
-            )}
-          </div>
+      <div className="flex items-center gap-3 px-5 pb-3 pt-4">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+          <PinIcon />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[15px] font-semibold tracking-[-0.015em] text-slate-900">{place}</p>
+          <p className="truncate text-[12px] text-slate-400">
+            {matchedFrom && !isCurrentLocation ? `Matched from “${matchedFrom}”` : formatCoords(lat, lon)}
+          </p>
         </div>
-        <a
-          href={openMapsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex shrink-0 items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-[12px] font-semibold text-slate-600 transition-colors hover:bg-slate-200"
-        >
-          <ExternalMapIcon />
-          Open in Maps
-        </a>
       </div>
-      <div className="h-[220px] w-full bg-slate-100">
-        <iframe
-          title={`Map of ${place}`}
-          src={embedSrc}
-          className="h-full w-full border-0"
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-        />
-      </div>
+      <MapPanel lat={lat} lon={lon} title={place} height={240} />
+      <p className="px-5 py-2 text-[10.5px] text-slate-400">© OpenStreetMap contributors</p>
     </div>
   );
 }

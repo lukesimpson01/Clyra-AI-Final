@@ -15,9 +15,24 @@ import {
   FileEditGroup,
   FileReadGroup,
   StatusLine,
+  ThoughtLine,
   useActivityDetail,
+  useThoughtSeconds,
   type FileChange,
 } from "@/components/chat/assistant";
+
+/** One of the agent's reasoning steps: live while it streams, then "Thought 4s" (measured here) opening onto its text. */
+function VibeThought({ body, live, detail }: { body: string; live: boolean; detail: "compact" | "normal" | "detailed" }) {
+  const seconds = useThoughtSeconds(live);
+  if (live) return <StatusLine label="Thinking" icon={<Brain />} />;
+  if (detail === "compact") return null;
+  if (!body) return <ThoughtLine seconds={seconds} />;
+  return (
+    <ActivityDisclosure icon={<Brain />} label={seconds ? `Thought ${seconds}s` : "Thought"} defaultOpen={detail === "detailed"}>
+      <p className="clyra-ai-commentary" style={{ fontSize: 13, lineHeight: "20px", color: "var(--chat-secondary)" }}>{body}</p>
+    </ActivityDisclosure>
+  );
+}
 
 /**
  * The coding agent's turn, as one text transcript: its commentary in body text, and what it did as compact rows —
@@ -118,13 +133,7 @@ export function VibeAgentMessageBody({
     const key = `${group.kind}-${i}`;
     switch (group.kind) {
       case "thinking":
-        if (group.last && isStreaming && !group.seg.complete) return <StatusLine key={key} label="Thinking" icon={<Brain />} />;
-        if (detail === "compact") return null;
-        return (
-          <ActivityDisclosure key={key} icon={<Brain />} label="Thought" defaultOpen={detail === "detailed"}>
-            <p className="clyra-ai-commentary" style={{ fontSize: 14, lineHeight: "20px", color: "var(--chat-secondary)" }}>{group.seg.body.trim()}</p>
-          </ActivityDisclosure>
-        );
+        return <VibeThought key={key} body={group.seg.body.trim()} live={group.last && isStreaming && !group.seg.complete} detail={detail} />;
       case "read":
         return detail === "compact" && !group.running ? null : <FileReadGroup key={key} paths={group.paths} running={group.running} />;
       case "edit":
@@ -145,11 +154,21 @@ export function VibeAgentMessageBody({
     }
   });
 
+  const lastGroup = groups[groups.length - 1];
+  const trailingIdle = Boolean(lastGroup) && (
+    (lastGroup.kind === "thinking" && !lastGroup.last) ||
+    (lastGroup.kind === "read" && !lastGroup.running) ||
+    (lastGroup.kind === "edit" && lastGroup.changes.every((change) => change.state === "done")) ||
+    lastGroup.kind === "run" ||
+    (lastGroup.kind === "thinking" && lastGroup.seg.complete)
+  );
   const written = Object.keys(filesByPath).length;
   return (
     <div className="clyra-ai-stack">
       {isStreaming && groups.length === 0 ? <StatusLine label="Thinking" icon={<Brain />} /> : null}
       {nodes}
+      {/* between steps (a file just finished, a command written) the agent is still generating: say so instead of leaving a gap */}
+      {isStreaming && groups.length > 0 && trailingIdle ? <StatusLine key="between-steps" label="Thinking" icon={<Brain />} /> : null}
       {!isStreaming && written > 1 && detail !== "compact" ? (
         <p className="clyra-ai-note">Completed {written} file changes</p>
       ) : null}

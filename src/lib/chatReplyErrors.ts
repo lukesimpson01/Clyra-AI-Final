@@ -3,6 +3,16 @@
  * (HTTP status, provider detail) stays in the console for diagnosis; it is
  * never written into the conversation.
  */
+/** True when the failure is an empty provider balance (waiting cannot fix it; topping up does). */
+export function isCreditsError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const status = Number(message.match(/API error: (\d{3})/)?.[1] ?? 0);
+  return (
+    status === 402 ||
+    /provider_credits_exhausted|insufficient(?:[_\s-]?(?:balance|quota|credit))|credit(?:s)?(?:\s+are)?\s+(?:exhausted|depleted)|billing(?:\s+hard)?\s+limit|payment required|exceeded your current quota/i.test(message)
+  );
+}
+
 export function chatReplyFailureText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const status = Number(message.match(/API error: (\d{3})/)?.[1] ?? 0);

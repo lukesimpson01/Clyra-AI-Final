@@ -70,6 +70,9 @@ if (embedParams.get("vibe_embed") === "1") {
       </StrictMode>,
     );
   });
+} else if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV && window.location.pathname === "/__dev/agent-actions") {
+  // Dev-only gallery of the assistant action presentation (dead-code-eliminated from production builds).
+  void import("./dev-fixtures/agent-actions/AgentActionsHarness.tsx").then((m) => root.render(<m.default />));
 } else if (window.location.pathname === "/preview") {
   const searchParams = new URLSearchParams(window.location.search);
   const theme = searchParams.get("theme");

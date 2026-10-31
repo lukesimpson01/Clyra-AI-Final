@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CircleAlert, Check } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { ShimmerText } from "./Shimmer";
 
 export type ActivityState = "queued" | "running" | "done" | "failed";
@@ -27,7 +27,7 @@ export function ActivityRow({
 }) {
   const mark =
     state === "failed" ? <CircleAlert />
-    : icon ?? (state === "done" ? <Check /> : state === "running" ? <span className="clyra-ai-row__pulse" /> : <span className="clyra-ai-row__dot" />);
+    : icon ?? (state === "running" ? <span className="clyra-ai-row__pulse" /> : <span className="clyra-ai-row__dot" />);
   return (
     <li className={`clyra-ai-row clyra-ai-row--${state}`} title={title}>
       <span className="clyra-ai-row__icon" aria-hidden>{mark}</span>

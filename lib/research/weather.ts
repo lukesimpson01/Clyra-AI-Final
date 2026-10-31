@@ -23,6 +23,8 @@ export type WeatherResult = {
   observedAt?: string;
   matchedFrom?: string;
   isCurrentLocation?: boolean;
+  lat?: number;
+  lon?: number;
   current: {
     tempC: number;
     feelsLikeC: number;
@@ -674,6 +676,8 @@ export async function fetchLiveWeather(
     timezone: forecast.timezone || place.timezone,
     observedAt: forecast.observedAt,
     matchedFrom,
+    lat: place.latitude,
+    lon: place.longitude,
     current: forecast.current,
     hourly: forecast.hourly,
     daily: forecast.daily,
@@ -711,6 +715,8 @@ export async function fetchLiveWeatherByCoords(
     timezone: forecast.timezone,
     observedAt: forecast.observedAt,
     isCurrentLocation: true,
+    lat,
+    lon,
     current: forecast.current,
     hourly: forecast.hourly,
     daily: forecast.daily,

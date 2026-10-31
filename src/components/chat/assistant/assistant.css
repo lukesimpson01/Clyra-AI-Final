@@ -461,100 +461,9 @@
 
 /* ───────────────────────── Web sources ───────────────────────── */
 
-.clyra-ai-source-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding-left: 22px; }
-.clyra-ai-source-favicon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  box-sizing: border-box;
-  border: 1px solid var(--chat-line);
-  border-radius: 10px;
-  background: var(--chat-white);
-  color: var(--chat-ink);
-  text-decoration: none;
-  overflow: hidden;
-  transition: background-color 120ms var(--chat-ease-standard);
-}
-.clyra-ai-source-favicon img { width: 18px; height: 18px; object-fit: contain; }
-a.clyra-ai-source-favicon:hover { background: var(--chat-mist); }
-.clyra-ai-source-favicon:focus-visible { outline: 2px solid var(--chat-ink); outline-offset: 1px; }
-.clyra-ai-source-favicon__fallback { font: 600 12px/1 var(--chat-font); color: var(--chat-secondary); }
-
-/* the grouped footer under an answer */
-.clyra-ai-sources { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.clyra-ai-sources__heading { margin: 0; font: 500 14px/20px var(--chat-font); color: var(--chat-ink); }
-.clyra-ai-source-stack { display: flex; align-items: center; padding: 0; gap: 0; min-height: 26px; }
-.clyra-ai-source-stack .clyra-ai-source-favicon + .clyra-ai-source-favicon { margin-left: -4px; }
-.clyra-ai-sources .clyra-ai-disclosure__trigger { gap: 10px; }
-.clyra-ai-sources__count { font: 400 14px/20px var(--chat-font); color: var(--chat-secondary); }
-.clyra-ai-sources .clyra-ai-disclosure__content { padding-left: 0; gap: 0; }
-
-.clyra-ai-source-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.clyra-ai-source-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  margin-left: -8px;
-  padding: 0 8px;
-  border-radius: var(--chat-radius);
-  color: var(--chat-ink);
-  text-decoration: none;
-  transition: background-color 120ms var(--chat-ease-standard);
-}
-.clyra-ai-source-item:hover { background: var(--chat-hover); }
-.clyra-ai-source-item__meta { display: flex; flex-direction: column; min-width: 0; }
-.clyra-ai-source-item__title { font: 400 14px/20px var(--chat-font); color: var(--chat-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clyra-ai-source-item__host { font: 400 12px/18px var(--chat-font); color: var(--chat-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clyra-ai-source-more { margin-left: 6px; font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
-
 /* ───────────────────────── Files, diffs, commands ───────────────────────── */
 
 .clyra-ai-file { font: 500 14px/20px var(--chat-font); color: var(--chat-ink); }
-.clyra-ai-diff,
-.clyra-ai-terminal {
-  margin: 6px 0 2px;
-  border: 1px solid var(--chat-line);
-  border-radius: var(--chat-radius);
-  background: var(--chat-mist);
-  overflow: hidden;
-}
-.clyra-ai-diff__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 32px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--chat-hairline-soft);
-  font: 500 14px/20px var(--chat-font);
-  color: var(--chat-ink);
-}
-.clyra-ai-diff__head small { font: 400 12px/18px var(--chat-font); color: var(--chat-muted); }
-.clyra-ai-diff__body,
-.clyra-ai-terminal__body {
-  margin: 0;
-  padding: 12px;
-  max-height: 220px;
-  overflow: auto;
-  font: 400 13px/20px var(--chat-mono);
-  color: var(--chat-ink);
-  white-space: pre;
-}
-.clyra-ai-diff__body[data-full="true"],
-.clyra-ai-terminal__body[data-full="true"] { max-height: none; }
-.clyra-ai-diff__body { padding: 8px 0; }
-.clyra-ai-diff__line { display: grid; grid-template-columns: 44px 16px max-content; padding-right: 12px; }
-.clyra-ai-diff__lines { display: inline-block; min-width: 100%; vertical-align: top; }
-.clyra-ai-diff__line[data-kind="add"] { background: #0000000a; }
-/* a new file is all additions: the "+" marks say so, without tinting every line */
-.clyra-ai-diff__body[data-new="true"] .clyra-ai-diff__line[data-kind="add"] { background: none; }
-.clyra-ai-diff__line[data-kind="del"] { background: #00000005; color: var(--chat-secondary); }
-.clyra-ai-diff__no { color: var(--chat-muted); text-align: right; padding-right: 10px; user-select: none; }
-.clyra-ai-diff__mark { color: var(--chat-secondary); user-select: none; }
 .clyra-ai-more {
   display: block;
   width: 100%;
@@ -625,14 +534,6 @@ a.clyra-ai-source-favicon:hover { background: var(--chat-mist); }
 .clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-scroll-frame {
   margin-bottom: 12px !important;
 }
-.clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__bar {
-  width: min(760px, calc(100% - 48px)) !important;
-  border-radius: 24px !important;
-  box-shadow:
-    0 1px 2px rgba(16, 18, 24, 0.04),
-    0 8px 22px -14px rgba(16, 18, 24, 0.24),
-    inset 0 0 0 1px rgba(16, 18, 24, 0.10) !important;
-}
 .clyra-conversation-inner {
   max-width: 768px;
   gap: 28px;
@@ -641,12 +542,6 @@ a.clyra-ai-source-favicon:hover { background: var(--chat-mist); }
 .clyra-assistant-column {
   --chat-content-width: 720px;
   gap: 14px;
-}
-.clyra-chat-page .clyra-chat-user-bubble {
-  max-width: min(84%, 560px) !important;
-  padding: 10px 14px !important;
-  border-radius: 18px !important;
-  background: #f4f4f4 !important;
 }
 .clyra-ai-actions {
   margin-top: 2px;
@@ -662,10 +557,6 @@ a.clyra-ai-source-favicon:hover { background: var(--chat-mist); }
 @media (max-width: 760px) {
   .clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__stage {
     padding: 14px 0 12px !important;
-  }
-  .clyra-chat-page .clyra-composer-shell[data-chat-state="conversation"] .clyra-composer-shell__bar {
-    width: calc(100% - 24px) !important;
-    border-radius: 22px !important;
   }
   .clyra-conversation-inner {
     gap: 24px;

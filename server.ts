@@ -3021,6 +3021,40 @@ async function startServer() {
     }
   };
 
+  /**
+   * Is the model provider usable right now? A one-token request through the same provider chain the chat uses, so
+   * the "out of credits" panel can hide itself the moment the account is topped up. Never exposes provider wording.
+   */
+  app.post("/api/chat/credit-status", async (_req, res) => {
+    try {
+      const { selectProviders } = await import("./lib/ai/model-capability-registry");
+      const candidates = selectProviders("fast-text").filter((provider) => provider.provider === "deepseek" || provider.provider === "ollama");
+      if (!candidates.length) { res.json({ ok: false, configured: false }); return; }
+      let exhausted = true;
+      for (const provider of candidates) {
+        const isDeepseek = provider.provider === "deepseek";
+        const url = isDeepseek ? `${provider.baseUrl}/chat/completions` : `${provider.baseUrl}/v1/chat/completions`;
+        try {
+          const attempt = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}) },
+            body: JSON.stringify({ model: provider.model, messages: [{ role: "user", content: "ok" }], max_tokens: 1, stream: false }),
+            signal: AbortSignal.timeout(12_000),
+          });
+          if (attempt.ok) { res.json({ ok: true }); return; }
+          const detail = await attempt.text().catch(() => "");
+          const out = attempt.status === 402 || /insufficient(?:[_\s-]?(?:balance|quota|credit))|credit(?:s)?(?:\s+are)?\s+(?:exhausted|depleted)|billing(?:\s+hard)?\s+limit|payment required|exceeded your current quota/i.test(detail);
+          if (!out) exhausted = false;
+        } catch {
+          exhausted = false;
+        }
+      }
+      res.json({ ok: false, configured: true, exhausted });
+    } catch {
+      res.json({ ok: false, configured: true, exhausted: false });
+    }
+  });
+
   app.post("/api/clyra/chat", handleClyraChat);
   app.post("/api/deepseek/chat", handleClyraChat);
   app.post("/api/openpencil/v1/chat/completions", handleClyraChat);

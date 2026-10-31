@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { chatReplyFailureText } from "./lib/chatReplyErrors";
+import { chatReplyFailureText, isCreditsError } from "./lib/chatReplyErrors";
+import { CreditsNotice } from "./components/chat/CreditsNotice";
 import { useNativeOcclusion } from "./lib/nativeOcclusion";
 import { WorkspaceCardPlaceholder, WorkspaceSlot, useWorkspacePortalNodes } from "./components/WorkspacePortal";
 import { preloadableLazy } from "./lib/preloadableLazy";
@@ -159,7 +160,10 @@ import {
   MessageActions,
   SearchSummary,
   SourcesFooter,
+  StatusLine,
+  ThoughtLine,
   WorkSummary,
+  useThoughtSeconds,
   type ActivityStep,
   type SourceView,
   type StatusKind,
@@ -170,7 +174,7 @@ import { requestVoiceCall } from "./components/voice/voiceCallTrigger";
 import { DictationController } from "./components/DictationController";
 import { ConnectivityIndicator } from "./components/ConnectivityIndicator";
 import { useConnectivity } from "./hooks/useConnectivity";
-import { resolveDeviceLocation } from "./hooks/useDeviceLocation";
+import { resolveDeviceLocation, timeZoneCity } from "./hooks/useDeviceLocation";
 import { VoiceWaveIcon } from "./components/voice/VoiceWaveIcon";
 import { VoiceWaveform } from "./components/voice/VoiceWaveform";
 import { VoicePcmCapturer } from "./lib/voicePcmCapture";
@@ -1522,6 +1526,10 @@ const SOFT_FAILURE_PREFIXES = [
   "Sorry, I've hit a rate limit",
   "Clyra's model account is out of credits",
 ];
+/** A reply that failed for lack of model credits: flagged when it happened, or recognised by its stored text in older chats. */
+function isCreditsFailureMessage(message: { failure?: string; content: string }): boolean {
+  return message.failure === "credits" || message.content.trim().startsWith("Clyra's model account is out of credits");
+}
 function isSoftFailureMessage(content: string): boolean {
   const trimmed = content.trim();
   return SOFT_FAILURE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
@@ -1827,6 +1835,7 @@ export const AnimatedMessage = ({
   searchQuery,
   harnessPhase,
   harnessSteps,
+  failure,
   weather,
   mapLocation,
   googleAction,
@@ -1889,6 +1898,7 @@ export const AnimatedMessage = ({
   mission?: MissionStatus;
   automation?: AutomationStatus;
   isLastAssistant?: boolean;
+  failure?: "credits";
   onVibePreviewReady?: (
     messageId: string,
     filesByPath: Record<string, string>,
@@ -1999,6 +2009,10 @@ export const AnimatedMessage = ({
   const shouldRenderMarkdown =
     markdownSupport && hasMarkdownStructure && !useDocumentUI;
   const showThinking = !isVibe && awaitingFirstAnswer;
+  /* how long the thinking row really ran, once it has: measured here, never assumed */
+  const thoughtSeconds = useThoughtSeconds(showThinking);
+  /* a plain conversation (no search, coding, maps, weather… turn): its only activity is the thinking row */
+  const basicThinking = !isVibe && (!thinkingMode || thinkingMode === "thinking");
   const showAnswer = content.length > 0 && !suppressVibeAnswerBody;
   const sourceViews = useMemo(() => {
     const fromSearch = searchSourcesToViews(searchSources, searchCitations);
@@ -2035,7 +2049,7 @@ export const AnimatedMessage = ({
     : thinkingMode === "spotify" ? spotifyAction || "Working with Clyra Music"
     : googleIsResearching ? googleAction || "Preparing the research scope"
     : thinkingMode === "google" ? googleAction || "Working in Google Workspace"
-    : harnessPhase || "Thinking";
+    : "Thinking";
   // Once the answer begins the live status gives way to a quiet, collapsed
   // record of the real work. It only exists when verified work happened.
   const completedActivity = useMemo(() => {
@@ -2048,11 +2062,11 @@ export const AnimatedMessage = ({
       return <SearchSummary sources={sourceViews} query={searchQuery} pagesRead={searchCitations?.length || undefined} />;
     }
     /* the effort loop's steps, once the answer is done ("Worked through 3 steps") */
-    if (harnessSteps?.length && !isStreaming) {
+    if (!basicThinking && harnessSteps?.length && !isStreaming) {
       return <WorkSummary label={`Worked through ${harnessSteps.length} step${harnessSteps.length === 1 ? "" : "s"}`} steps={harnessSteps} />;
     }
     return null;
-  }, [isVibe, showThinking, thinkingMode, sourceViews, searchQuery, googleActivity, isStreaming, searchSources, searchCitations, harnessSteps]);
+  }, [isVibe, showThinking, basicThinking, thinkingMode, sourceViews, searchQuery, googleActivity, isStreaming, searchSources, searchCitations, harnessSteps]);
 
   const responseEnter = wasLiveRef.current;
   const softFailure = !isStreaming && isSoftFailureMessage(content);
@@ -2150,9 +2164,28 @@ export const AnimatedMessage = ({
     </>
   );
 
+  if (!live && isCreditsFailureMessage({ failure, content })) {
+    return (
+      <div className="clyra-ai-stack">
+        <CreditsNotice
+          surface={isVibe ? "vibe" : "chat"}
+          onRecovered={() => window.dispatchEvent(new CustomEvent("clyra:credits-recovered", { detail: { messageId } }))}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="clyra-ai-stack">
-      {showThinking ? (
+      {basicThinking && (showThinking || thoughtSeconds) ? (
+        /* a plain conversation shows only this one row: it stays mounted and settles from "Thinking" into "Thought 4s" */
+        <StatusLine
+          key="basic-thinking"
+          label={showThinking ? "Thinking" : `Thought ${thoughtSeconds}s`}
+          icon={<Brain />}
+          finished={!showThinking}
+        />
+      ) : showThinking ? (
         <AssistantStatus
           kind={statusKind}
           label={statusLabel}
@@ -2161,7 +2194,14 @@ export const AnimatedMessage = ({
           steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
           note={memoryActivity}
         />
-      ) : completedActivity}
+      ) : (
+        <>
+          {!isVibe && !basicThinking && thoughtSeconds ? <ThoughtLine seconds={thoughtSeconds} /> : null}
+          {completedActivity}
+        </>
+      )}
+      {/* a Vibe turn that has started but has no text yet is thinking, and says so: never an empty gap */}
+      {isVibe && live && content.length === 0 ? <StatusLine key="vibe-thinking" label="Thinking" icon={<Brain />} /> : null}
       {youtubeVideoId ? <YoutubeScanEmbed videoId={youtubeVideoId} active={showYoutubeScan} /> : null}
       {weather ? <WeatherDiagramCard weather={weather} /> : null}
       {mapLocation ? <LocationMapCard location={mapLocation} /> : null}
@@ -2506,6 +2546,8 @@ export default function App() {
     isStreaming?: boolean;
     /** The person cancelled this reply before it finished. */
     stopped?: boolean;
+    /** The reply could not be made because the model account has no credits: shown as a notice, not as text. */
+    failure?: "credits";
     /** `vibe` keeps the expandable thought UI; normal chat uses the “Thinking:” line only. */
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
@@ -7959,6 +8001,17 @@ Please analyze the code you just wrote and fix this error.`;
             }
           }
 
+          let approximateLocation = false;
+          if (!weatherRequestBody) {
+            // every live source failed: the time zone still names a city; it is shown as approximate, never as a precise fix
+            const zoneCity = timeZoneCity();
+            if (zoneCity) {
+              weatherRequestBody = { location: zoneCity };
+              isCurrentLocationRequest = true;
+              approximateLocation = true;
+            }
+          }
+
           if (!weatherRequestBody) {
             setMessages((prev) =>
               prev.map((msg) =>
@@ -8021,6 +8074,9 @@ Please analyze the code you just wrote and fix this error.`;
                 ? String(payload.matchedFrom)
                 : undefined,
               isCurrentLocation: isCurrentLocationRequest,
+              approximate: approximateLocation || undefined,
+              lat: Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : undefined,
+              lon: Number.isFinite(Number(payload.lon)) ? Number(payload.lon) : undefined,
               current: {
                 tempC: Number(payload.current?.tempC ?? 0),
                 feelsLikeC: Number(payload.current?.feelsLikeC ?? payload.current?.tempC ?? 0),
@@ -8106,6 +8162,14 @@ Please analyze the code you just wrote and fix this error.`;
             const deviceCoords = await resolveDeviceLocation();
             if (deviceCoords) {
               mapsRequestBody = { lat: deviceCoords.lat, lon: deviceCoords.lon };
+              isCurrentLocationRequest = true;
+            }
+          }
+
+          if (!mapsRequestBody) {
+            const zoneCity = timeZoneCity();
+            if (zoneCity) {
+              mapsRequestBody = { location: zoneCity };
               isCurrentLocationRequest = true;
             }
           }
@@ -8867,6 +8931,7 @@ Please analyze the code you just wrote and fix this error.`;
                 ? {
                     ...msg,
                     content: chatReplyFailureText(error),
+                    failure: isCreditsError(error) ? ("credits" as const) : undefined,
                     isThinking: false,
                     isStreaming: false,
                   }
@@ -8890,6 +8955,7 @@ Please analyze the code you just wrote and fix this error.`;
               ? {
                   ...msg,
                   content: chatReplyFailureText(error),
+                  failure: isCreditsError(error) ? ("credits" as const) : undefined,
                   isThinking: false,
                   isStreaming: false,
                 }
@@ -9017,6 +9083,27 @@ Please analyze the code you just wrote and fix this error.`;
     window.setTimeout(() => URL.revokeObjectURL(href), 0);
     setToastMessage("Conversation exported as Markdown");
   }, [chats, currentChatId, messages]);
+
+  /* The model account was topped up while the "out of credits" notice was showing: the failed turn goes away and its
+     message returns to the composer, so the person is back at their last good message, ready to send again. */
+  const liveMessagesRef = useRef<Message[]>([]);
+  liveMessagesRef.current = messages;
+  useEffect(() => {
+    const onRecovered = (event: Event) => {
+      const id = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+      if (!id) return;
+      const current = liveMessagesRef.current;
+      const index = current.findIndex((message) => message.id === id && isCreditsFailureMessage(message));
+      if (index < 0) return;
+      const before = current[index - 1];
+      const restored = before?.role === "user" ? before.content : "";
+      setMessages((now) => now.filter((message) => message.id !== id && !(before?.role === "user" && message.id === before.id)));
+      if (restored) setValue(restored);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+    window.addEventListener("clyra:credits-recovered", onRecovered);
+    return () => window.removeEventListener("clyra:credits-recovered", onRecovered);
+  }, []);
 
   const startEditMessage = useCallback((message: Message) => {
     setEditingMessageId(message.id);
@@ -10184,6 +10271,7 @@ Please analyze the code you just wrote and fix this error.`;
                 onAutomationResume={(automation) => controlChatAutomation(message.id, automation, "resume")}
                 onAutomationRun={(automation) => controlChatAutomation(message.id, automation, "run")}
                 memoryActivity={message.memoryActivity}
+                failure={message.failure}
               />
               {message.spotifyRun ? <SpotifyRunTimeline run={message.spotifyRun} /> : null}
               {message.agentSteps?.length ? (

@@ -1,8 +1,8 @@
-import { Brain, Check, FileText, Globe, MapPin, Music2, Terminal } from "lucide-react";
+import { Brain, FileText, Globe, Layers, MapPin, Music2, Terminal } from "lucide-react";
 import { ActivityDisclosure } from "./Disclosure";
 import { ActivityRow, type ActivityState } from "./ActivityRow";
 import { StatusLine } from "./Shimmer";
-import { SourceList, SourceStack, SourceStrip, safeSources, type SourceView } from "./Sources";
+import { SourcesInline, SourceStrip, safeSources, type SourceView } from "./Sources";
 import { useActivityDetail } from "./detail";
 
 export type StatusKind = "thinking" | "coding" | "search" | "web" | "maps" | "spotify" | "work" | "file";
@@ -46,9 +46,8 @@ export function AssistantStatus({
     <div className="clyra-ai-status">
       {/* A live status should identify its kind at the left edge; reasoning
           uses the same explicit brain icon as the rest of the transcript. */}
-      <StatusLine label={label} icon={KIND_ICON[kind]} />
+      <StatusLine label={label} icon={KIND_ICON[kind]} trailing={<SourceStrip sources={sources.slice(0, 10)} />} />
       {query?.trim() ? <p className="clyra-ai-status__detail">Search: {query.trim()}</p> : null}
-      <SourceStrip sources={sources.slice(0, 10)} />
       <ActivitySteps steps={steps} />
       {note ? <p className="clyra-ai-status__detail">{note}</p> : null}
     </div>
@@ -85,27 +84,15 @@ export function SearchSummary({ sources, query, pagesRead }: { sources: SourceVi
       <ul className="clyra-ai-activity">
         {query?.trim() ? <ActivityRow icon={<Globe />} label={`Search: ${query.trim()}`} state="done" /> : null}
         {pagesRead ? <ActivityRow icon={<FileText />} label={`Read ${pagesRead} page${pagesRead === 1 ? "" : "s"}`} state="done" /> : null}
-        <ActivityRow icon={<Check />} label={`Consulted ${count} source${count === 1 ? "" : "s"}`} state="done" />
+        <ActivityRow icon={<Globe />} label={`Consulted ${count} source${count === 1 ? "" : "s"}`} state="done" />
       </ul>
     </ActivityDisclosure>
   );
 }
 
-/** "Sources" under a finished answer: up to five favicons and the count, opening onto the real list. */
+/** "Sources" under a finished answer: a pill that slides the real sources out as circular favicons. */
 export function SourcesFooter({ sources }: { sources: SourceView[]; query?: string }) {
-  const count = safeSources(sources).length;
-  if (!count) return null;
-  return (
-    <div className="clyra-ai-sources">
-      <p className="clyra-ai-sources__heading">Sources</p>
-      <ActivityDisclosure
-        leading={<SourceStack sources={sources} />}
-        label={<span className="clyra-ai-sources__count">{count} source{count === 1 ? "" : "s"}</span>}
-      >
-        <SourceList sources={sources} />
-      </ActivityDisclosure>
-    </div>
-  );
+  return <SourcesInline sources={sources} />;
 }
 
 /** Completed multi-step work (Google Workspace, app agents): the real steps, collapsed; a failure stays in sight. */
@@ -115,7 +102,7 @@ export function WorkSummary({ label, steps }: { label: string; steps: ActivitySt
   const failed = steps.filter((s) => s.state === "failed");
   if (detail === "compact") return failed.length ? <ActivitySteps steps={failed} /> : null;
   return (
-    <ActivityDisclosure icon={failed.length ? undefined : <Check />} label={failed.length ? `${label} · ${failed.length} failed` : label} defaultOpen={detail === "detailed"}>
+    <ActivityDisclosure icon={failed.length ? undefined : <Layers />} label={failed.length ? `${label} · ${failed.length} failed` : label} defaultOpen={detail === "detailed"}>
       <ActivitySteps steps={steps} />
     </ActivityDisclosure>
   );

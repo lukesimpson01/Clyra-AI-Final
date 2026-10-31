@@ -1,9 +1,11 @@
 import "./assistant.css";
+import "./agent-actions.css";
 
 export { AI_EASE, AI_DURATION } from "./motion";
 export { ShimmerText, StatusLine } from "./Shimmer";
+export { ThoughtLine, useThoughtSeconds } from "./Thought";
 export { ActivityDisclosure } from "./Disclosure";
-export { SourceStrip, SourceList, SourceFavicon, safeSources, type SourceView } from "./Sources";
+export { SourceStrip, SourcesInline, SourceFavicon, safeSources, type SourceView } from "./Sources";
 export { ActivityRow, type ActivityState } from "./ActivityRow";
 export { MessageActions } from "./MessageActions";
 export { ChatMenu, type MenuItem } from "./Menu";

@@ -9,7 +9,6 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpen,
-  Check,
   ChevronDown,
   Minus,
   Square,
@@ -98,15 +97,6 @@ export function activitySummary(actions: AgentAction[]) {
   if (!parts.length) return "Worked";
   const sentence = parts.join(", ");
   return sentence[0].toUpperCase() + sentence.slice(1);
-}
-
-/** The row's status on the timeline rail: a quiet check when done, a small turning arc while running, red when it failed. */
-function StatusNode({ state }: { state: "running" | "queued" | "done" | "failed" | "stopped" }) {
-  return (
-    <span className="cxa-node" data-state={state} aria-hidden>
-      {state === "done" ? <Check strokeWidth={2.4} /> : state === "failed" ? <X strokeWidth={2.4} /> : state === "stopped" ? <Minus strokeWidth={2.4} /> : null}
-    </span>
-  );
 }
 
 function formatDuration(ms: number) {
@@ -205,10 +195,9 @@ export const ActivityRow = memo(function ActivityRow({
         aria-expanded={hasBody ? open : undefined}
         onClick={() => { if (hasBody) setOpen((value) => !value); setSeen(true); }}
       >
-        <StatusNode state={running ? (action.status === "queued" ? "queued" : "running") : failed ? "failed" : action.status === "cancelled" ? "stopped" : "done"} />
-        <Icon className="cxa-kind" strokeWidth={1.75} aria-hidden />
+        <Icon className="cxa-kind" strokeWidth={1.65} aria-hidden />
         <span className="cxa-text">
-          <span className={cn("cxa-verb", live && !reduced && "cx-shine")}>{verb}</span>
+          <span className={cn("cxa-verb", live && !reduced && "cxa-shimmer")}>{verb}</span>
           {target ? (
             isFile && onOpenFile && !failed ? (
               <span
@@ -428,7 +417,7 @@ export function RunHeader({
   return (
     <div className="cxr" data-phase={phase} role="status" aria-live="polite">
       <div className="cxr-top">
-        <span className="cxr-indicator" aria-hidden>{live ? null : phase === "complete" ? <Check strokeWidth={2.6} /> : phase === "failed" ? <X strokeWidth={2.6} /> : <Minus strokeWidth={2.6} />}</span>
+        <span className="cxr-indicator" aria-hidden>{live || phase === "complete" ? null : phase === "failed" ? <X strokeWidth={2.6} /> : <Minus strokeWidth={2.6} />}</span>
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
             key={title}

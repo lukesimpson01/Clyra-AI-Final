@@ -9446,8 +9446,11 @@ body,
 /* Message bubbles — exact values from the Composer artboard's rowStyle/
    bubbleStyle/replyStyle. Kept last so it wins over the many older
    !important rules scattered earlier in this file for these same classes. */
+/* The 72% cap lives on the group (a child of the full-width turn), where the percentage is definite. On the bubble it
+   resolved against its own shrink-wrapped group and squeezed short messages like "hi" to one letter per line. */
+.clyra-chat-page .clyra-user-message-group { max-width: 72% !important; }
 .clyra-chat-page .clyra-chat-user-bubble {
-  max-width: 72% !important;
+  max-width: 100% !important;
   min-height: 0 !important;
   display: block !important;
   padding: 11px 16px !important;

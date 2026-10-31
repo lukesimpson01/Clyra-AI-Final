@@ -1,0 +1,502 @@
+/*
+ * Agent action presentation — thinking, tool rows, web sources, file edits, commands, reply actions, reply text.
+ *
+ * Ported from the clyra-agent-ui-demo component kit (INTEGRATION_GUIDE.md): only how an action LOOKS. What
+ * happens, in what order and with what data still comes from the host's real events. Scoped to the assistant
+ * column; the composer, bubbles, welcome screen and shell are not styled here.
+ *
+ * Language: white surfaces, hairline neutral borders, 400-weight 12.5px status text, 17px thin-line icons,
+ * one 220–560ms ease-out, green/red only inside a diff. Loaded after assistant.css, so equal-specificity rules
+ * here win and replace the earlier action styling.
+ */
+.clyra-chat-page,
+.clyra-chat-ui {
+  --act-ink: #171717;
+  --act-text: #737373;
+  --act-text-strong: #262626;
+  --act-icon: #6c6c6c;
+  --act-hairline: #eaeaea;
+  --act-card-line: #e9e9e9;
+  --act-ease: cubic-bezier(.22, 1, .36, 1);
+  --act-mono: var(--chat-mono, ui-monospace, "SFMono-Regular", Consolas, monospace);
+}
+
+@keyframes clyra-act-enter {
+  from { opacity: 0; transform: translate3d(0, 7px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes clyra-act-shimmer {
+  from { background-position: 100% 0; }
+  /* 100% → 0% keeps the 250%-wide gradient covering the text throughout */
+  to { background-position: 0% 0; }
+}
+@keyframes clyra-act-brain {
+  0%, 100% { opacity: .75; transform: scale(.97); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@keyframes clyra-act-dots {
+  0%, 72%, 100% { opacity: .32; transform: translate3d(0, 1px, 0) scale(.78); }
+  34% { opacity: 1; transform: translate3d(0, -3px, 0) scale(1.08); }
+  50% { opacity: .7; transform: translate3d(0, -1px, 0) scale(.98); }
+}
+@keyframes clyra-act-favicon {
+  0% { opacity: 0; transform: translate3d(-20px, 0, 0) scale(.8); }
+  70% { opacity: 1; }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* ───────────── Thinking and live status ("Thinking ···", "Searching the web") ───────────── */
+
+.clyra-ai-status { gap: 8px; }
+.clyra-ai-status__line { gap: 10px; min-height: 28px; animation: clyra-act-fade 260ms ease both; }
+.clyra-ai-status__icon { width: 18px; height: 18px; color: var(--act-icon); }
+.clyra-ai-status__icon svg { width: 18px; height: 18px; stroke-width: 1.65; opacity: .82; }
+.clyra-ai-status__line:not(.clyra-ai-status__line--finished) .clyra-ai-status__icon { animation: clyra-act-brain 2400ms ease-in-out infinite; }
+.clyra-ai-status__line--finished .clyra-ai-status__icon { color: #747474; animation: none; transition: color 300ms ease; }
+.clyra-ai-status__line--finished { animation: clyra-act-fade 220ms ease both; }
+@keyframes clyra-act-fade { from { opacity: 0; } to { opacity: 1; } }
+.clyra-ai-status__label,
+.clyra-activity-label { font: 400 12.5px/20px var(--chat-font); letter-spacing: 0; color: var(--act-text); }
+.clyra-ai-status__dots { gap: 5px; margin-left: 8px; }
+.clyra-ai-status__dots i {
+  width: 4.5px;
+  height: 4.5px;
+  background: #656565;
+  box-shadow: none;
+  animation: clyra-act-dots 1460ms cubic-bezier(.45, .12, .23, 1) infinite;
+}
+.clyra-ai-status__dots i:nth-child(2) { animation-delay: 125ms; }
+.clyra-ai-status__dots i:nth-child(3) { animation-delay: 250ms; }
+.clyra-ai-status__detail,
+.clyra-ai-query { font: 400 12.5px/20px var(--chat-font); color: var(--act-text); }
+
+/* the one moving highlight: only while the named work is running */
+.clyra-ai-shimmer,
+.clyra-active-shimmer {
+  font: 400 12.5px/20px var(--chat-font);
+  letter-spacing: 0;
+  background-image: linear-gradient(110deg, #6e6e6e 8%, #646464 25%, #222 46%, #b9b9b9 59%, #656565 80%);
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  animation: clyra-act-shimmer 1800ms linear infinite;
+}
+
+/* ───────────── Action rows ───────────── */
+
+.clyra-ai-activity { gap: 8px; }
+.clyra-ai-row {
+  gap: 10px;
+  min-height: 29px;
+  font: 400 12.5px/20px var(--chat-font);
+  letter-spacing: 0;
+  color: var(--act-text);
+  animation: clyra-act-enter 530ms var(--act-ease) both;
+}
+.clyra-ai-row__icon,
+.clyra-ai-action-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 21px;
+  height: 21px;
+  color: var(--act-icon);
+  transition: color 380ms ease, transform 430ms var(--act-ease);
+}
+.clyra-ai-row__icon svg,
+.clyra-ai-action-icon svg { width: 17px; height: 17px; stroke-width: 1.65; opacity: .82; }
+.clyra-ai-row:hover .clyra-ai-row__icon { color: #252525; transform: translate3d(0, -1px, 0); }
+.clyra-ai-row__label strong { font-weight: 500; }
+.clyra-ai-row__counts,
+.clyra-ai-row__meta { font: 450 12px/18px var(--act-mono); }
+.clyra-ai-row--queued .clyra-ai-row__label { color: #a0a0a0; }
+.clyra-ai-row--failed .clyra-ai-row__icon,
+.clyra-ai-row--failed .clyra-ai-row__label { color: #b3382f; }
+.clyra-ai-file { font: 500 12.5px/20px var(--chat-font); color: var(--act-text-strong); }
+.clyra-ai-commentary { font: 400 15.5px/1.68 var(--chat-font); letter-spacing: -.006em; }
+
+/* ───────────── Disclosures (a toggle row that opens an indented detail) ───────────── */
+
+.clyra-ai-disclosure__trigger {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  min-height: 29px;
+  margin-left: 0;
+  padding: 0;
+  gap: 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--act-text);
+  font: 400 12.5px/20px var(--chat-font);
+  letter-spacing: 0;
+  transition: color 220ms ease;
+}
+.clyra-ai-disclosure__trigger:hover { background: transparent; color: var(--act-text-strong); }
+.clyra-ai-disclosure__trigger:focus-visible { outline: 2px solid #777; outline-offset: 3px; }
+.clyra-ai-disclosure__icon { width: 21px; height: 21px; color: var(--act-icon); }
+.clyra-ai-disclosure__icon svg { width: 17px; height: 17px; stroke-width: 1.65; opacity: .82; }
+.clyra-ai-disclosure__chevron { margin-left: 0; color: #a0a0a0; }
+.clyra-ai-disclosure__meta { font: 450 12px/18px var(--act-mono); color: var(--act-text); }
+.clyra-ai-disclosure__meta + .clyra-ai-disclosure__chevron { margin-left: 2px; }
+.clyra-ai-disclosure__content {
+  margin: 5px 0 4px 10px;
+  padding: 2px 0 2px 20px;
+  border-left: 1px solid var(--act-hairline);
+  gap: 7px;
+}
+.clyra-ai-disclosure--failed .clyra-ai-disclosure__trigger { color: #b3382f; }
+
+/* ───────────── Web sources ───────────── */
+
+/* the pages a search is reading: small circles, one by one, gliding in beside the status text */
+.clyra-web-favicons { display: inline-flex; flex: none; align-items: center; margin-left: 6px; white-space: nowrap; }
+.clyra-web-favicon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 21px;
+  height: 21px;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .10);
+  background: #fff;
+  border-radius: 50%;
+  overflow: hidden;
+  animation: clyra-act-favicon 530ms cubic-bezier(.14, .83, .26, 1) both;
+  transform-origin: left center;
+}
+.clyra-web-favicon + .clyra-web-favicon { margin-left: -6px; }
+.clyra-web-favicon img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.clyra-web-favicon .clyra-ai-source-favicon__fallback { font: 600 11px/1 var(--chat-font); color: var(--act-text); }
+
+/* "Sources 5 ›" under a finished reply; the sources slide out sideways as circles */
+.clyra-sources-inline { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: 8px 0 0; }
+.clyra-sources-inline__trigger {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+  height: 30px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--act-card-line);
+  border-radius: 999px;
+  background: #fff;
+  font: 400 12px/18px var(--chat-font);
+  color: #68686e;
+  cursor: pointer;
+  transition: border-color 250ms ease, background 250ms ease;
+}
+.clyra-sources-inline__trigger:hover { background: #fafafb; border-color: #dedee3; }
+.clyra-sources-inline__trigger:focus-visible { outline: 2px solid #777; outline-offset: 2px; }
+.clyra-sources-inline__logos { display: inline-flex; align-items: center; }
+.clyra-sources-inline__logos .clyra-web-favicon { width: 18px; height: 18px; }
+.clyra-sources-inline__logos .clyra-web-favicon + .clyra-web-favicon { margin-left: -6px; }
+.clyra-sources-inline__count { font-size: 11px; color: #9b9ba1; font-variant-numeric: tabular-nums; }
+.clyra-sources-inline__chevron { width: 12px; height: 12px; color: #92939b; transition: transform 300ms var(--act-ease); }
+.clyra-sources-inline.is-open .clyra-sources-inline__chevron { transform: rotate(180deg); }
+.clyra-sources-inline__clip {
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  overflow: visible;
+  transition: max-width 430ms var(--act-ease), opacity 230ms ease, visibility 430ms;
+}
+.clyra-sources-inline.is-open .clyra-sources-inline__clip { max-width: min(560px, calc(100vw - 190px)); opacity: 1; visibility: visible; }
+.clyra-sources-inline__links {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  padding: 2px 3px;
+  transform: translateX(-11px);
+  opacity: .35;
+  transition: transform 430ms var(--act-ease), opacity 270ms ease;
+}
+.clyra-sources-inline.is-open .clyra-sources-inline__links { transform: none; opacity: 1; }
+.clyra-sources-inline__slot {
+  position: relative;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  opacity: 0;
+  transform: translateX(-7px);
+  transition: opacity 240ms ease, transform 380ms var(--act-ease);
+}
+.clyra-sources-inline.is-open .clyra-sources-inline__slot { opacity: 1; transform: none; transition-delay: calc(var(--source-index, 0) * 58ms); }
+.clyra-sources-inline__slot:hover,
+.clyra-sources-inline__slot:focus-within { z-index: 20; }
+.clyra-sources-inline__link {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 5px;
+  border: 1px solid #ececf0;
+  border-radius: 999px;
+  background: #fff;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+.clyra-sources-inline__link:hover,
+.clyra-sources-inline__link:focus-visible { background: #fafafb; border-color: #dfdfe4; }
+.clyra-sources-inline__link:focus-visible { outline: 2px solid #a5b8d3; outline-offset: 2px; }
+.clyra-sources-inline__favicon { display: grid; place-items: center; width: 20px; height: 20px; overflow: hidden; border-radius: 50%; }
+.clyra-sources-inline__favicon img { width: 100%; height: 100%; object-fit: cover; }
+.clyra-sources-inline__favicon .clyra-ai-source-favicon__fallback { font: 600 11px/1 var(--chat-font); color: var(--act-text); }
+.clyra-sources-inline__site {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  width: max-content;
+  max-width: 160px;
+  padding: 5px 9px;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid #e9e9ec;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(11, 12, 18, .055);
+  color: #555760;
+  font: 400 11px/18px var(--chat-font);
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 200ms var(--act-ease);
+}
+.clyra-sources-inline__slot:hover .clyra-sources-inline__site,
+.clyra-sources-inline__slot:focus-within .clyra-sources-inline__site { opacity: 1; transform: translate(-50%, 0); }
+@media (max-width: 550px) {
+  .clyra-sources-inline.is-open .clyra-sources-inline__clip { max-width: calc(100vw - 170px); overflow-x: auto; scrollbar-width: none; }
+  .clyra-sources-inline.is-open .clyra-sources-inline__clip::-webkit-scrollbar { display: none; }
+}
+
+/* ───────────── File edits ───────────── */
+
+.clyra-edit { width: min(100%, 640px); min-width: 0; margin: 3px 0; animation: clyra-act-enter 430ms var(--act-ease) both; }
+.clyra-edit__trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 31px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  font: 400 12.5px/21px var(--chat-font);
+  color: var(--act-text);
+  cursor: pointer;
+  transition: color 220ms ease;
+}
+.clyra-edit__trigger:hover { color: var(--act-text-strong); }
+.clyra-edit__trigger:focus-visible { outline: 2px solid #777; outline-offset: 3px; }
+.clyra-edit__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-edit__stats { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; flex: none; font: 600 12px/18px var(--act-mono); font-variant-numeric: tabular-nums; }
+.clyra-edit__arrow { width: 13px; height: 13px; flex: none; color: #969696; transition: transform 350ms var(--act-ease); }
+.clyra-edit.is-open .clyra-edit__arrow { transform: rotate(90deg); }
+.clyra-edit__expansion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 530ms var(--act-ease), opacity 400ms ease, visibility 530ms;
+}
+.clyra-edit.is-open .clyra-edit__expansion { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows 530ms var(--act-ease), opacity 400ms ease, visibility 0s; }
+.clyra-edit__inner { min-height: 0; overflow: hidden; }
+.clyra-edit__card { margin: 10px 0 9px; border: 1px solid var(--act-card-line); border-radius: 18px; background: #fff; overflow: hidden; }
+.clyra-edit__head { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 14px; border-bottom: 1px solid #ececec; }
+.clyra-edit__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 11.5px/18px var(--act-mono); color: #3c3c3c; }
+.clyra-edit__totals { display: flex; gap: 11px; font: 600 11.5px/18px var(--act-mono); font-variant-numeric: tabular-nums; }
+.clyra-edit__plus { color: #16803d; }
+.clyra-edit__minus { color: #bd4541; }
+.clyra-edit__open {
+  min-height: 26px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--act-text);
+  font: 450 12px/18px var(--chat-font);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.clyra-edit__open:hover { background: #f2f2f2; color: var(--act-text-strong); }
+.clyra-edit__viewport { max-height: 370px; overflow: auto; scrollbar-width: thin; }
+.clyra-edit__viewport[data-full="true"] { max-height: 70vh; }
+.clyra-edit__lines { display: inline-block; min-width: 100%; padding: 5px 0; vertical-align: top; }
+.clyra-edit__line { display: flex; align-items: baseline; gap: 11px; min-width: max-content; min-height: 20px; padding: 1px 14px 1px 9px; font: 400 11.5px/18px var(--act-mono); white-space: pre; }
+.clyra-edit__line.is-add { background: #edf8f0; }
+.clyra-edit__line.is-del { background: #fff2f0; }
+.clyra-edit__line.is-gap { color: #9a9a9a; }
+.clyra-edit__no { flex: none; width: 30px; text-align: right; color: #9a9a9a; user-select: none; }
+.clyra-edit__mark { flex: none; width: 9px; color: #939393; user-select: none; }
+.clyra-edit__text { color: #393939; }
+.clyra-edit__card .clyra-ai-more { margin: 0; padding: 8px 14px; border-top: 1px solid #ececec; width: 100%; text-align: left; }
+
+/* a count rolling into place: digits travel up a ten-digit column, the last one a beat later */
+.clyra-stat { display: inline-flex; align-items: center; gap: 1px; white-space: nowrap; }
+.clyra-stat--add { color: #188038; }
+.clyra-stat--del { color: #c44238; }
+.clyra-stat__sign { font: 600 13px/18px var(--act-mono); }
+.clyra-stat__window { position: relative; display: inline-block; width: 8px; height: 18px; line-height: 18px; overflow: hidden; }
+.clyra-stat__column { display: flex; flex-direction: column; transform: translate3d(0, 0, 0); transition: transform 760ms cubic-bezier(.15, .72, .18, 1); }
+.clyra-stat__column.is-secondary { transition-delay: 80ms; transition-duration: 850ms; }
+.clyra-stat__column span { height: 18px; min-height: 18px; line-height: 18px; text-align: center; }
+
+/* ───────────── Commands and terminal output ───────────── */
+
+.clyra-command { max-width: 600px; margin: 0; animation: clyra-act-enter 470ms var(--act-ease) both; }
+.clyra-command__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 2px 0 3px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--act-text);
+  font: 400 12.5px/19px var(--chat-font);
+  cursor: pointer;
+  transition: color 220ms ease;
+}
+.clyra-command__head:hover { color: var(--act-text-strong); }
+.clyra-command__head:focus-visible { outline: 2px solid #777; outline-offset: 3px; border-radius: 8px; }
+.clyra-command__label { flex: none; }
+.clyra-command__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  font: 400 12px/19px var(--act-mono);
+  color: #494949;
+}
+.clyra-command__chevron { width: 13px; height: 13px; margin-left: auto; flex: none; color: #a0a0a0; transition: transform 360ms var(--act-ease); }
+.clyra-command.is-open .clyra-command__chevron { transform: rotate(90deg); }
+.clyra-command.is-failed .clyra-command__label { color: #b3382f; }
+.clyra-command__shell {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 560ms var(--act-ease), opacity 420ms ease, visibility 560ms;
+}
+.clyra-command.is-open .clyra-command__shell { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows 560ms var(--act-ease), opacity 420ms ease, visibility 0s; }
+.clyra-command__clip { min-height: 0; overflow: hidden; }
+.clyra-terminal { padding: 13px 15px; border: 1px solid var(--act-card-line); border-radius: 12px; background: #fafafa; font: 400 11px/19px var(--act-mono); color: #626262; overflow-wrap: anywhere; }
+.clyra-terminal__bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #9a9a9a; font: 450 11px/18px var(--chat-font); }
+.clyra-terminal__copy { position: relative; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #858585; cursor: pointer; transition: background 190ms ease, color 190ms ease; }
+.clyra-terminal__copy svg { width: 14px; height: 14px; stroke-width: 1.7; }
+.clyra-terminal__copy:hover { background: #f0f0f0; color: #343434; }
+.clyra-terminal__copy:focus-visible { outline: 2px solid #777; outline-offset: 2px; }
+.clyra-terminal__command { margin-bottom: 7px; color: #242424; font-weight: 550; overflow-wrap: anywhere; }
+.clyra-terminal__output { max-height: 260px; overflow: auto; scrollbar-width: thin; }
+.clyra-terminal__line { white-space: pre-wrap; animation: clyra-act-enter 300ms var(--act-ease) both; }
+
+/* ───────────── Reply actions: icon-only Copy / Retry / More, monochrome with compact tooltips ───────────── */
+
+.clyra-ai-actions { gap: 2px; margin-left: -4px; animation: clyra-act-enter 470ms var(--act-ease) both; }
+.clyra-ai-action { width: 30px; height: 30px; border-radius: 12px; color: #858585; transition: background 220ms ease, color 220ms ease, transform 200ms var(--act-ease); }
+.clyra-ai-action svg { width: 17px; height: 17px; stroke-width: 1.65; }
+.clyra-ai-action:hover,
+.clyra-ai-action[aria-expanded="true"] { background: #f2f2f2; color: #343434; }
+.clyra-ai-action:active { transform: scale(.965); transition: transform 120ms ease; }
+.clyra-ai-action[data-tip]::after { background: var(--act-ink); border-radius: 6px; font-size: 11px; padding: 5px 8px; }
+
+/* ───────────── Reply text ───────────── */
+
+.clyra-ai-response,
+.clyra-assistant-prose {
+  font-size: 15.5px;
+  font-weight: 400;
+  line-height: 1.68;
+  letter-spacing: -.006em;
+}
+.clyra-ai-response p { margin: 0 0 20px; }
+.clyra-ai-response strong { font-weight: 550; }
+.clyra-ai-response li + li { margin-top: 8px; }
+.clyra-ai-response--live > :not(:first-child) { animation: clyra-act-enter 570ms var(--act-ease) both; }
+
+@media (max-width: 679px) {
+  .clyra-ai-response,
+  .clyra-assistant-prose { font-size: 15.25px; line-height: 1.67; }
+  .clyra-ai-row,
+  .clyra-ai-disclosure__trigger { gap: 8px; }
+  .clyra-ai-disclosure__content { margin-left: 9px; padding-left: 16px; }
+  .clyra-command__head { flex-wrap: wrap; }
+  .clyra-command__text { order: 3; flex: 1 0 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clyra-ai-status__line,
+  .clyra-ai-status__icon,
+  .clyra-ai-status__dots i,
+  .clyra-ai-row,
+  .clyra-web-favicon,
+  .clyra-edit,
+  .clyra-command,
+  .clyra-terminal__line,
+  .clyra-ai-actions,
+  .clyra-ai-response--live > * { animation: none !important; }
+  .clyra-ai-row__icon,
+  .clyra-edit__expansion,
+  .clyra-edit__arrow,
+  .clyra-command__shell,
+  .clyra-command__chevron,
+  .clyra-sources-inline__clip,
+  .clyra-sources-inline__links,
+  .clyra-sources-inline__slot,
+  .clyra-sources-inline__chevron,
+  .clyra-stat__column { transition: none !important; }
+}
+
+/* ───────────── Out of credits: replaces the reply, then hides itself once the account works again ───────────── */
+
+.clyra-credits {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  max-width: 560px;
+  box-sizing: border-box;
+  padding: 20px 22px;
+  border: 1px solid var(--act-card-line);
+  border-radius: 24px;
+  background: linear-gradient(180deg, #fbfcff 0%, #ffffff 70%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 18px 40px -22px rgba(30, 64, 175, .22);
+  animation: clyra-act-fade 320ms ease both;
+}
+.clyra-credits__icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 14px; background: #eef3ff; color: #3b6fe0; }
+.clyra-credits__icon svg { width: 20px; height: 20px; stroke-width: 1.7; }
+.clyra-credits__body { min-width: 0; }
+.clyra-credits__title { margin: 2px 0 0; font: 600 16px/22px var(--chat-font); letter-spacing: -.015em; color: #171717; }
+.clyra-credits__text { margin: 6px 0 0; font: 400 14px/21px var(--chat-font); color: #5d5d5d; }
+.clyra-credits__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.clyra-credits__primary,
+.clyra-credits__secondary {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px;
+  border: 0; border-radius: 12px; font: 500 13.5px/20px var(--chat-font); cursor: pointer; text-decoration: none;
+  transition: background 180ms ease, transform 160ms var(--act-ease), opacity 180ms ease;
+}
+.clyra-credits__primary { background: #171717; color: #fff; }
+.clyra-credits__primary:hover { background: #333; }
+.clyra-credits__secondary { background: #f2f2f2; color: #262626; }
+.clyra-credits__secondary:hover:not(:disabled) { background: #e9e9e9; }
+.clyra-credits__secondary:disabled { opacity: .7; cursor: default; }
+.clyra-credits__primary:active, .clyra-credits__secondary:active { transform: scale(.97); }
+.clyra-credits__primary:focus-visible, .clyra-credits__secondary:focus-visible { outline: 2px solid #3b6fe0; outline-offset: 2px; }
+.clyra-credits__primary svg, .clyra-credits__secondary svg { width: 15px; height: 15px; stroke-width: 1.8; }
+.clyra-credits__secondary svg.is-spinning { animation: clyra-credits-spin 900ms linear infinite; }
+.clyra-credits__status { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; font: 400 12px/18px var(--chat-font); color: #8f8f8f; }
+.clyra-credits__pulse { width: 6px; height: 6px; border-radius: 50%; background: #3b6fe0; animation: clyra-act-brain 2200ms ease-in-out infinite; }
+@keyframes clyra-credits-spin { to { transform: rotate(360deg); } }
+@media (max-width: 520px) { .clyra-credits { flex-direction: column; gap: 12px; padding: 18px; border-radius: 20px; } }
+@media (prefers-reduced-motion: reduce) { .clyra-credits, .clyra-credits__pulse, .clyra-credits__secondary svg.is-spinning { animation: none; } }

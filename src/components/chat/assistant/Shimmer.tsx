@@ -15,25 +15,31 @@ export function StatusLine({
   label,
   icon,
   shimmer = true,
+  finished = false,
+  trailing,
 }: {
   label: string;
   icon?: React.ReactNode;
   shimmer?: boolean;
+  /** the work is over: the same row settles into its quiet past-tense form (no shimmer, no dots) */
+  finished?: boolean;
+  /** beside the label, e.g. the favicons of the pages a search is reading */
+  trailing?: React.ReactNode;
 }) {
   const reduced = useReducedMotion();
-  const isThinking = label === "Thinking";
+  const isThinking = label === "Thinking" && !finished;
   return (
-    <div className="clyra-ai-status__line" role="status" aria-live="polite">
+    <div className={`clyra-ai-status__line${finished ? " clyra-ai-status__line--finished" : ""}`} role="status" aria-live="polite">
       {icon ? <span className="clyra-ai-status__icon" aria-hidden>{icon}</span> : <span className="clyra-ai-orb" aria-hidden />}
       <AnimatePresence mode="wait" initial={false}>
         <motion.span
           key={label}
           className="clyra-ai-status__label"
-          initial={reduced ? false : { opacity: 0, y: 5 }}
-          animate={{ opacity: 1, y: 0, transition: { duration: reduced ? 0 : AI_DURATION.statusIn, ease: AI_EASE } }}
-          exit={reduced ? undefined : { opacity: 0, y: -4, transition: { duration: AI_DURATION.statusOut, ease: [0.4, 0, 1, 1] } }}
+          initial={reduced ? false : { opacity: 0 }}
+          animate={{ opacity: 1, transition: { duration: reduced ? 0 : 0.22, ease: "easeOut" } }}
+          exit={reduced ? undefined : { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } }}
         >
-          {shimmer ? <ShimmerText>{label}</ShimmerText> : label}
+          {shimmer && !finished ? <ShimmerText>{label}</ShimmerText> : label}
           {isThinking ? (
             <span className="clyra-ai-status__dots" aria-hidden>
               <i />
@@ -43,6 +49,7 @@ export function StatusLine({
           ) : null}
         </motion.span>
       </AnimatePresence>
+      {trailing}
     </div>
   );
 }
