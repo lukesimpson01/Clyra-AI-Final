@@ -55,7 +55,7 @@ function Player({ clip }) {
       onLoadedMetadata={(e) => setLength(e.currentTarget.duration || 0)} onTimeUpdate={(e) => { if (!drag) setTime(e.currentTarget.currentTime); }}/>
     {!playing && <button type="button" className="acr-bigplay" aria-label="Play" onClick={toggle}><Play size={26} fill="currentColor"/></button>}
     <div className="acr-controls">
-      <div ref={track} className={`acr-scrub${drag ? ' is-drag' : ''}`} role="slider" tabIndex={0} aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(time)} aria-valuetext={`${stamp(time)} of ${stamp(length)}`}
+      <div ref={track} className={`acr-scrub${drag ? ' is-drag' : ''}`} role="slider" tabIndex={0} aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(time)} aria-valuetext={`${stamp(time)} of ${stamp(Math.round(length))}`}
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setDrag(true); const f = fraction(e); setTime(f * length); seekTo(f); }}
         onPointerMove={(e) => { const f = fraction(e); setHover(f); if (drag) { setTime(f * length); seekTo(f); } }}
         onPointerUp={() => setDrag(false)} onPointerLeave={() => setHover(null)}
@@ -65,7 +65,7 @@ function Player({ clip }) {
       </div>
       <div className="acr-bar">
         <button type="button" aria-label={playing ? 'Pause' : 'Play'} onClick={toggle}>{playing ? <Pause size={17} fill="currentColor"/> : <Play size={17} fill="currentColor"/>}</button>
-        <span className="acr-time">{stamp(time)} <small>/ {stamp(length)}</small></span><span className="acr-gap"/>
+        <span className="acr-time">{stamp(time)} <small>/ {stamp(Math.round(length))}</small></span><span className="acr-gap"/>
         <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted} onClick={() => setMuted((m) => !m)}>{muted ? <VolumeX size={17}/> : <Volume2 size={17}/>}</button>
         <button type="button" aria-label={full ? 'Exit fullscreen' : 'Fullscreen'} onClick={fullscreen}>{full ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
       </div>
@@ -130,6 +130,10 @@ export default function ClipResults({ clips, copies, titleOf, sourceTitle, momen
             <button type="button" className="acr-export" onClick={onProjects}><span><FolderOpen size={18}/></span><div><b>Find it in Projects</b><small>Every clip is saved there automatically</small></div><ChevronRight size={16}/></button>
           </>}
         </div>
+        <footer className="acr-dock">
+          <a className="acr-dl" href={downloadOf(clip)} download><Download size={16}/> Export MP4</a>
+          <button type="button" className="acr-ed" onClick={() => onEditor?.(clip)}><Clapperboard size={15}/> Edit</button>
+        </footer>
       </div>
     </div>
   </>;

@@ -77,8 +77,10 @@ function RangePicker({ duration, value, onChange, graph, frames, onSeek }) {
   </div>;
 }
 
-export default function AutoClipSourcePage({ onFile }) {
-  const [url, setUrl] = useState(''), [file, setFile] = useState(null), [over, setOver] = useState(false), [playing, setPlaying] = useState(false);
+/** `prefill`: { url, moment, count, length } from the brainstormer: the link is entered, read, and the studio opens with the
+ *  moment already typed. */
+export default function AutoClipSourcePage({ onFile, prefill = null }) {
+  const [url, setUrl] = useState(prefill?.url || ''), [file, setFile] = useState(null), [over, setOver] = useState(false), [playing, setPlaying] = useState(false);
   const [probe, setProbe] = useState(null), [probing, setProbing] = useState(false), [probeError, setProbeError] = useState('');
   const [fileUrl, setFileUrl] = useState(null), [fileDuration, setFileDuration] = useState(0), [range, setRange] = useState(null);
   const input = useRef(null), player = useRef(null), id = youtubeVideoId(url);
@@ -100,13 +102,15 @@ export default function AutoClipSourcePage({ onFile }) {
   const strip = useFileTimeline(file ? fileUrl : null, file ? fileDuration : 0);
   const graph = file ? strip.activity : probe?.heatmap || [];
   const chosen = !!file || !!id;
-  const ready = chosen && !probing && (!long || (range && range.end - range.start <= LIMIT + 1));
+  const ready = chosen && !probing && (!!file || !!probe || !!probeError) && (!long || (range && range.end - range.start <= LIMIT + 1));
   const meta = useMemo(() => ({ title: file ? file.name.replace(/\.[a-z0-9]{2,4}$/i, '') : probe?.title || '', channel: probe?.channel || '', duration, thumbnail: probe?.thumbnail || (id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : ''), range: long ? range : null }), [file, probe, duration, id, long, range]);
   const go = () => {
     if (!ready) return;
     if (file) { file.meta = meta; onFile(file); return; }
-    onFile({ name: probe?.title || url.trim(), type: 'youtube-link', url: url.trim(), meta });
+    onFile({ name: probe?.title || url.trim(), type: 'youtube-link', url: url.trim(), meta, ...(prefill ? { handoff: prefill } : {}) });
   };
+  const sent = useRef(false);
+  useEffect(() => { if (prefill?.url && ready && (probe || probeError) && !sent.current) { sent.current = true; go(); } }, [ready, probe, probeError]); // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (f) => { if (f && /^video\//.test(f.type || 'video/')) { setFile(f); setUrl(''); } };
   const clear = () => { setFile(null); setUrl(''); setProbe(null); setProbeError(''); };
 

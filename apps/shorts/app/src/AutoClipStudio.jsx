@@ -8,6 +8,7 @@ import { CAPTION_FONTS, loadCaptionFont } from './captionFonts.js';
 import { planStages, stageOfEvent, createProgress, etaText } from './clipProgress.js';
 import { clock } from './AutoClipSourcePage.jsx';
 import ClipResults, { clipKey } from './ClipResults.jsx';
+import { streamEvents } from './clipperStream.js';
 import { writeCopy } from './clipCopy.js';
 import { announceProject } from './projectThumb.js';
 
@@ -60,46 +61,6 @@ const facesOf = (clip) => { const all = clip.available_faces || []; return all.f
 const fileName = (output) => String(output).split(/[\\/]/).pop();
 const mediaOf = (output) => `/api/clipper/media/${encodeURIComponent(fileName(output))}`;
 const downloadOf = (output) => `/api/clipper/download/${encodeURIComponent(fileName(output))}`;
-
-/** Server-sent events from a clipper POST: each JSON event to `on`; an error event throws. The job runs on in Clyra
- *  whatever happens to this connection: a stream that drops is picked up where it left off
- *  (GET /api/clipper/jobs/:jobId/events?from=N), so no clip and no error is missed. `job` gets the job's id. */
-async function streamEvents(url, body, signal, on, job = () => {}) {
-  let jobId = null, seen = 0, attempts = 0, finished = false;
-  const read = async (response) => {
-    const reader = response.body.getReader(), decoder = new TextDecoder();
-    let buffer = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\n\n'); buffer = frames.pop() || '';
-      for (const frame of frames) {
-        const line = frame.split('\n').find((entry) => entry.startsWith('data: '));
-        if (!line) continue;
-        seen += 1;
-        let event; try { event = JSON.parse(line.slice(6)); } catch { continue; }
-        if (event.type === 'job' && event.jobId) { jobId = event.jobId; job(jobId); }
-        if (event.type === 'complete') finished = true;
-        if (event.type === 'error') { finished = true; throw new Error(String(event.message || 'The clipper failed.')); }
-        on(event);
-      }
-    }
-  };
-  const first = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal });
-  if (!first.ok || !first.body) { const detail = await first.json().catch(() => ({})); throw new Error(detail.error || `The clipper could not start (${first.status})`); }
-  let response = first;
-  for (;;) {
-    try { await read(response); return; }
-    catch (cause) {
-      if (finished || signal.aborted || cause?.name === 'AbortError' || !jobId || attempts >= 20) throw cause;
-      attempts += 1;
-      await new Promise((r) => setTimeout(r, Math.min(8000, 800 * attempts)));
-      response = await fetch(`/api/clipper/jobs/${encodeURIComponent(jobId)}/events?from=${seen}`, { signal }).catch((e) => { if (e?.name === 'AbortError') throw e; return null; });
-      if (!response?.ok || !response.body) { if (response?.status === 404) throw new Error('The clipper job ended while the connection was down. Generate again.'); response = { body: new ReadableStream({ start(c) { c.error(new TypeError('reconnecting')); } }) }; }
-    }
-  }
-}
 
 function Pills({ label, items, value, onChange }) {
   return <div className="ftl-pills acp-pills" role="group" aria-label={label}>{items.map(([key, text]) => <button key={String(key)} type="button" aria-pressed={value === key} className={value === key ? 'active' : ''} onClick={() => onChange(key)}>{text}</button>)}</div>;
@@ -162,12 +123,13 @@ export default function AutoClipStudio({ source, onBack, onEditor, onProjects })
   const sourceTitle = meta.title || (source.type === 'youtube-link' ? 'YouTube video' : String(source.name || 'Video').replace(/\.[a-z0-9]{2,4}$/i, ''));
   const [step, setStep] = useState(1);
   /* moments */
-  const [moment, setMoment] = useState('viral');
-  const [prompt, setPrompt] = useState('');
-  const [custom, setCustom] = useState(false);
+  const given = source.handoff || null;
+  const [moment, setMoment] = useState(given?.moment && MOMENT_NAME[given.moment] ? given.moment : 'viral');
+  const [prompt, setPrompt] = useState(given?.moment && !MOMENT_NAME[given.moment] ? String(given.moment).slice(0, 300) : '');
+  const [custom, setCustom] = useState(!!given?.moment && !MOMENT_NAME[given.moment]);
   /* the last step */
-  const [count, setCount] = useState(3);
-  const [length, setLength] = useState('Auto');
+  const [count, setCount] = useState(Math.min(20, Math.max(1, Number(given?.count) || 3)));
+  const [length, setLength] = useState(LENGTHS.some(([k]) => k === given?.length) ? given.length : 'Auto');
   const [aspect, setAspect] = useState('9:16');
   const [language, setLanguage] = useState('Auto detect');
   const [fillers, setFillers] = useState(false);

@@ -1,0 +1,21 @@
+/* Home: the tools on the left, the brainstormer prompt and the generation queue on the right. */
+.pd-layout{display:grid;grid-template-columns:minmax(0,1fr) 352px;gap:0;max-width:1840px;margin:0 auto;align-items:start}
+.pd-layout>.pd-main{max-width:none;margin:0;min-width:0}
+.pd-rail{position:sticky;top:12px;display:flex;flex-direction:column;gap:14px;padding:26px 34px 0 0;max-height:calc(100dvh - 96px);min-height:0}
+.pd-rail .qp{flex:1 1 auto;min-height:180px}
+.pd-ask{display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid #e6eaf1;border-radius:16px;background:linear-gradient(180deg,#fff,#f8faff)}
+.pd-ask-head{display:flex;align-items:center;gap:10px}
+.pd-ask-head>span{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:#efe8ff;color:#7a4bf0}
+.pd-ask-head b{display:block;font-size:13.5px;color:#101425}
+.pd-ask-head small{display:block;font-size:12px;color:#7a8499;margin-top:1px}
+.pd-ask form{position:relative}
+.pd-ask textarea{width:100%;resize:none;min-height:62px!important;margin:0!important;padding:10px 40px 10px 12px;border:1px solid #dde3ee;border-radius:12px;background:#fff;font:inherit;font-size:13px;line-height:1.45;color:#101425;outline:0;transition:border-color .15s,box-shadow .15s}
+.pd-ask textarea:focus{border-color:#8a5cf6;box-shadow:0 0 0 3px #8a5cf61a}
+.pd-ask form button{position:absolute;right:8px;bottom:8px;width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:#101425;color:#fff;transition:transform .15s,background .15s}
+.pd-ask form button:hover{background:#7a4bf0;transform:translateY(-1px)}
+.pd-ask-chips{display:flex;flex-direction:column;gap:6px}
+.pd-ask-chips button{text-align:left;padding:7px 10px;border-radius:10px;border:1px solid #e9edf5;background:#fff;font-size:12px;color:#40526e;transition:border-color .15s,background .15s}
+.pd-ask-chips button:hover{border-color:#cdb9fb;background:#faf7ff;color:#101425}
+.pd-ask textarea:focus-visible,.pd-ask button:focus-visible{outline:2px solid #8a5cf6;outline-offset:2px}
+@media (max-width:1180px){.pd-layout{grid-template-columns:minmax(0,1fr)}.pd-rail{position:static;order:-1;max-height:none;padding:16px 34px 0}.pd-layout>.pd-main{padding-top:14px}}
+@media (max-width:640px){.pd-rail{padding:12px 16px 0}}

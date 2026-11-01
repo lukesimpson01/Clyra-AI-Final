@@ -3,13 +3,14 @@ import { ArrowLeft, Check, ChevronRight, Import, Pause, Play, Plus, Search, Send
 import ClyraStudioPhone, { messageTimeline } from './ClyraStudioPhone.jsx';
 import ClyraStudioTheme from './ClyraStudioTheme.jsx';
 import { announceProject } from './projectThumb.js';
+import { peekHandoff, clearHandoff } from './handoff.js';
 import { fileToDataUrl } from './imageData.js';
 import ClyraStudioScript from './ClyraStudioScript.jsx';
 import './fake-text-workspace.css';
 import EmbedAddButton from './EmbedAddButton.jsx';
 
 const steps = ['Script', 'Theme', 'Video', 'Audio'];
-const gameplay = [
+export const gameplay = [
   { name: 'Subway-style', category: 'Subway', file: 'subway-01-60.mp4' },
   { name: 'Minecraft Parkour', category: 'Minecraft', file: 'minecraft-01-60.mp4' },
   { name: 'Driving', category: 'GTA', file: 'gta-01-60.mp4' },
@@ -22,7 +23,7 @@ const sampleMessages = [
   { id: 'sample-4', side: 'left', text: 'nothing much' },
 ];
 const defaultTheme = 'ios-dark';
-const defaultBackground = { zoom: 100, speed: 100, offsetX: 0, offsetY: 0, dim: 0, blur: 0, trim: 0, muted: true };
+export const defaultBackground = { zoom: 100, speed: 100, offsetX: 0, offsetY: 0, dim: 0, blur: 0, trim: 0, muted: true };
 const createMessage = (side, text = '', extra = {}) => ({ id: `ft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, side, text, ...extra });
 
 function Slider({ label, value, min, max, unit = '%', onChange }) {
@@ -36,7 +37,11 @@ function Button({ children, onClick, primary, danger, disabled }) {
 }
 
 /* `embed`: inside the advanced editor's sidebar (src/EmbedTool.jsx): the same menu, its state handed to `onState`. */
-export default function FakeTextWorkspace({ go, embed = false, initial = null, onState }) {
+export default function FakeTextWorkspace({ go, embed = false, initial: given = null, onState }) {
+  /* a script handed over by the brainstormer opens the workspace already filled in */
+  const [handed] = useState(() => (embed || given ? null : peekHandoff('fake-text')));
+  useEffect(() => { if (handed) clearHandoff(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = given ?? (handed ? { name: handed.name, messages: (handed.messages || []).map((m) => ({ id: `ft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, side: m.side === 'right' ? 'right' : 'left', text: String(m.text || '') })), theme: handed.theme, videoIndex: handed.videoIndex, background: handed.background } : null);
   const requested = new URLSearchParams(location.search).get('step');
   const [step, setStep] = useState(Math.max(0, ['script', 'theme', 'video', 'audio'].indexOf(requested)));
   const [name, setName] = useState(initial?.name ?? 'Unknown');
@@ -45,7 +50,7 @@ export default function FakeTextWorkspace({ go, embed = false, initial = null, o
   const [theme, setTheme] = useState(initial?.theme ?? defaultTheme);
   const [videoIndex, setVideoIndex] = useState(initial?.videoIndex ?? 0);
   const [uploadedVideo, setUploadedVideo] = useState('');
-  const [background, setBackground] = useState(defaultBackground);
+  const [background, setBackground] = useState({ ...defaultBackground, ...(initial?.background || {}) });
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [side, setSide] = useState('left');

@@ -32,7 +32,8 @@ const Field = ({ label, value, children }) => <div className="ftl2-field"><div><
 
 export default function FreeTool({ tool, upload, go }) {
   const [name, , Icon, action] = tool;
-  const multiple = !!upload?.multiple;
+  /* only the merger takes several files: the rest work on one, whatever the upload config allows */
+  const multiple = name === 'Video Merger';
   const [files, setFiles] = useState([]);
   const [urls, setUrls] = useState([]);
   const [meta, setMeta] = useState({}); // per file: { duration, width, height }
