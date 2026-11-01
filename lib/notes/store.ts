@@ -1,3 +1,4 @@
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 /* Clyra Notes data access.
 
    Everything the workspace can do goes through this module so the Express
@@ -176,6 +177,78 @@ function rebuildLinks(pageId: string, blocks: Block[]) {
 const PAGE_COLUMNS =
   "id,parent_id,kind,database_id,title,icon,cover,cover_offset,class_id,favorite,locked,full_width,text_size,font_style,colour_categories,sort,trashed_at,created_at,updated_at";
 
+/** Whether a page's lock needs a password to open (the hash itself never leaves the database). */
+const withLockInfo = (page: Record<string, unknown>) => {
+  const row = db.prepare("SELECT lock_hash FROM pages2 WHERE id=?").get(String(page.id)) as { lock_hash?: string | null } | undefined;
+  return { ...page, lock_has_password: Boolean(row?.lock_hash) };
+};
+
+const hashPassword = (password: string, salt: string) => scryptSync(password, salt, 32).toString("hex");
+
+export type LockKind = "pin6" | "pin8" | "password";
+
+/** What a passcode must satisfy before it is accepted: the server never trusts the form. */
+export function validatePasscode(password: string, kind: LockKind): string | null {
+  if (kind === "pin6") return /^\d{6}$/.test(password) ? null : "A 6-digit PIN must be exactly six numbers.";
+  if (kind === "pin8") return /^\d{8}$/.test(password) ? null : "An 8-digit PIN must be exactly eight numbers.";
+  if (password.length < 8) return "Use at least 8 characters.";
+  if (password.length > 128) return "That password is too long.";
+  return null;
+}
+
+/** Locks a page, optionally behind a PIN or password. An empty passcode is a plain lock. */
+export function lockPage(id: string, password = "", kind: LockKind = "password") {
+  const exists = db.prepare("SELECT 1 FROM pages2 WHERE id=?").get(id);
+  if (!exists) return null;
+  if (password) {
+    const problem = validatePasscode(password, kind);
+    if (problem) return { error: problem };
+    const salt = randomBytes(16).toString("hex");
+    db.prepare("UPDATE pages2 SET locked=1, lock_salt=?, lock_hash=?, lock_kind=?, updated_at=datetime('now') WHERE id=?").run(salt, hashPassword(password, salt), kind, id);
+  } else {
+    db.prepare("UPDATE pages2 SET locked=1, lock_salt=NULL, lock_hash=NULL, lock_kind=NULL, updated_at=datetime('now') WHERE id=?").run(id);
+  }
+  return getPage(id);
+}
+
+/* Wrong attempts are slowed down: after five misses a page refuses further tries for a growing wait, so a short PIN
+   cannot simply be guessed through. Kept in memory: a restart clears it, the stored hash is unaffected. */
+const attempts = new Map<string, { misses: number; until: number }>();
+export function lockWait(id: string) {
+  const entry = attempts.get(id);
+  return entry && entry.until > Date.now() ? Math.ceil((entry.until - Date.now()) / 1000) : 0;
+}
+
+/** True when the passcode is right, or the page has none. */
+export function checkPageLock(id: string, password = "") {
+  const row = db.prepare("SELECT lock_hash, lock_salt FROM pages2 WHERE id=?").get(id) as { lock_hash?: string | null; lock_salt?: string | null } | undefined;
+  if (!row) return false;
+  if (!row.lock_hash || !row.lock_salt) return true;
+  if (lockWait(id)) return false;
+  const given = Buffer.from(hashPassword(password, row.lock_salt), "hex");
+  const stored = Buffer.from(row.lock_hash, "hex");
+  const ok = given.length === stored.length && timingSafeEqual(given, stored);
+  if (ok) attempts.delete(id);
+  else {
+    const entry = attempts.get(id) ?? { misses: 0, until: 0 };
+    entry.misses += 1;
+    if (entry.misses >= 5) entry.until = Date.now() + Math.min(15 * 60_000, 15_000 * 2 ** (entry.misses - 5));
+    attempts.set(id, entry);
+  }
+  return ok;
+}
+
+export function unlockPage(id: string, password = "") {
+  const wait = lockWait(id);
+  if (wait) return { ok: false as const, error: `Too many attempts. Try again in ${wait}s.`, wait };
+  if (!checkPageLock(id, password)) {
+    const after = lockWait(id);
+    return { ok: false as const, error: after ? `Too many attempts. Try again in ${after}s.` : "That passcode is not right.", wait: after };
+  }
+  db.prepare("UPDATE pages2 SET locked=0, lock_salt=NULL, lock_hash=NULL, lock_kind=NULL, updated_at=datetime('now') WHERE id=?").run(id);
+  return { ok: true as const, page: getPage(id) };
+}
+
 export function listPages(includeTrashed = false) {
   return db
     .prepare(
@@ -184,11 +257,19 @@ export function listPages(includeTrashed = false) {
     .all() as Array<Record<string, unknown>>;
 }
 
-export function getPage(id: string): Record<string, unknown> | null {
+export function getPage(id: string, opts: { reveal?: boolean } = {}): Record<string, unknown> | null {
   const page = db.prepare(`SELECT ${PAGE_COLUMNS} FROM pages2 WHERE id=?`).get(id) as
     | Record<string, unknown>
     | undefined;
   if (!page) return null;
+  const lockRow = db.prepare("SELECT lock_hash, lock_kind FROM pages2 WHERE id=?").get(id) as { lock_hash?: string | null; lock_kind?: string | null } | undefined;
+  page.lock_has_password = Boolean(lockRow?.lock_hash);
+  page.lock_kind = lockRow?.lock_hash ? lockRow.lock_kind || "password" : null;
+  /* A page with a passcode leaves the server empty-handed until the passcode has been checked: no text, title, icon,
+     cover or history travels to the browser, so there is nothing to peek at behind the lock screen. */
+  if (page.locked && page.lock_has_password && !opts.reveal) {
+    return { ...page, title: "", icon: null, cover: null, blocks: [], backlinks: [], breadcrumb: [], database: null, values: null, versions: [], sealed: true };
+  }
   const backlinks = db
     .prepare(
       `SELECT DISTINCT p.id, p.title, p.icon FROM page_links l
@@ -262,6 +343,8 @@ export function createPage(input: Record<string, unknown> = {}) {
 export function updatePage(id: string, patch: Record<string, unknown>) {
   const current = db.prepare("SELECT * FROM pages2 WHERE id=?").get(id) as Record<string, unknown> | undefined;
   if (!current) return null;
+  // `locked` can only be turned off through unlockPage (which checks the password); on, through lockPage.
+  if ("locked" in patch) delete (patch as Record<string, unknown>).locked;
   const fields: Record<string, string> = {
     title: "title", icon: "icon", cover: "cover", coverOffset: "cover_offset",
     parentId: "parent_id", classId: "class_id", favorite: "favorite", locked: "locked",
@@ -567,6 +650,31 @@ export function pageMarkdown(pageId: string) {
   const page = db.prepare("SELECT title FROM pages2 WHERE id=?").get(pageId) as { title: string } | undefined;
   if (!page) return null;
   return `# ${page.title || "Untitled"}\n\n${blocksToMarkdown(blockTree(pageId))}\n`;
+}
+
+/**
+ * Adds markdown to an existing page where the caller says: the start, the end, or right after the first block whose
+ * text contains `afterText` (a heading, a sentence). Nothing is removed. Returns where it landed.
+ */
+export function insertMarkdown(pageId: string, markdown: string, where: { position?: "start" | "end" | "after"; afterText?: string } = {}) {
+  const page = db.prepare("SELECT title, locked FROM pages2 WHERE id=? AND trashed_at IS NULL").get(pageId) as { title: string; locked: number } | undefined;
+  if (!page) return { ok: false as const, error: "That page does not exist." };
+  if (page.locked) return { ok: false as const, error: "That page is locked, so nothing was added." };
+  const tree = blockTree(pageId);
+  const added = draftsToBlocks(markdownToBlocks(markdown), pageId);
+  if (!added.length) return { ok: false as const, error: "There was no content to add." };
+  let index = tree.length;
+  let landed = "the end of the page";
+  if (where.position === "start") { index = 0; landed = "the start of the page"; }
+  else if (where.position === "after" && where.afterText) {
+    const needle = where.afterText.trim().toLowerCase();
+    const found = tree.findIndex((block) => JSON.stringify(block).toLowerCase().includes(needle));
+    if (found >= 0) { index = found + 1; landed = `after “${where.afterText.slice(0, 60)}”`; }
+    else return { ok: false as const, error: `Nothing on the page matched “${where.afterText.slice(0, 60)}”, so nothing was added.` };
+  }
+  tree.splice(index, 0, ...added);
+  saveBlocks(pageId, tree);
+  return { ok: true as const, title: page.title || "Untitled", landed };
 }
 
 /** Permanently reset Notes' user-owned workspace while preserving schema and

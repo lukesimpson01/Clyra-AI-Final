@@ -5,12 +5,13 @@ import { api } from "./api.js";
 import {
   state, subscribe, emit, loadWorkspace, refreshPages, restoreSession, saveSession,
   openTab, closeTab, selectTab, activeTab, cycleTab, reopenTab, getPageMeta,
-  flushAll, flushPage, dropPage, withError, childrenOf,
+  flushAll, flushPage, dropPage, withError, childrenOf, isSealed,
 } from "./state.js";
 import { Sidebar, TabStrip, Toolbar } from "./shell.js";
 import { Rail } from "./rail.js";
 import { readPreference, prefOn } from "./preferences.js";
 import { PageView } from "./page-view.js";
+import { openLockDialog } from "./passcode.js";
 import { openSearch } from "./search.js";
 import { renderHome } from "./views/home.js";
 import { renderFlashcards } from "./views/flashcards.js";
@@ -123,8 +124,9 @@ class App {
   tabLabel(tab) {
     if (tab.kind === "page") {
       const page = getPageMeta(tab.pageId);
-      const emoji = page?.icon && !/^https?:|^\//.test(page.icon) ? page.icon : null;
-      return { title: page?.title || "New page", icon: page?.kind === "database" ? "table" : "page", emoji };
+      const sealed = isSealed(tab.pageId);
+      const emoji = !sealed && page?.icon && !/^https?:|^\//.test(page.icon) ? page.icon : null;
+      return { title: sealed ? "Locked page" : page?.title || "New page", icon: page?.kind === "database" ? "table" : "page", emoji };
     }
     return TAB_LABELS[tab.kind] || TAB_LABELS.home;
   }
@@ -258,6 +260,14 @@ class App {
   /* Clyra context is available wherever a page is open, not only after
      navigating to the separate Chat view. This opens the compact Chat rail
      with the page (and its outgoing links) already attached. */
+  /* Selected text in a page, handed to the chat panel. */
+  askWithSelection(text, mode = "add") {
+    if (!this.currentPageId()) return;
+    if (!this.railOpen()) this.toggleRail();
+    this.showRailPanel("chat");
+    setTimeout(() => window.dispatchEvent(new CustomEvent("clyra:notes-quote", { detail: { text, mode } })), 160);
+  }
+
   askAboutPage(page = null) {
     const pageId = page?.id ? String(page.id) : this.currentPageId();
     if (!pageId) { toast("Open a page first"); return; }
@@ -476,13 +486,7 @@ class App {
       { label: "Move to subject", icon: "book", onSelect: () => this.subjectPicker(page, anchor, refresh) },
       { type: "separator" },
       { label: "Export as Markdown", icon: "export", onSelect: () => this.exportPage(page) },
-      { label: page.locked ? "Unlock page" : "Lock page", icon: "lock", onSelect: async () => {
-        await withError(() => api.patch(`/api/notes/pages/${id}`, { locked: !page.locked }), "Could not change the lock");
-        dropPage(id);
-        await refresh();
-        this.currentKey = null;
-        this.renderSurface();
-      } },
+      { label: page.locked ? "Unlock page" : "Lock page", icon: "lock", onSelect: () => this.lockDialog(page, refresh) },
       { label: "Version history", icon: "history", onSelect: () => this.versionDialog(page) },
       { type: "separator" },
       { type: "label", label: "Layout" },
@@ -578,6 +582,18 @@ class App {
         state.expanded.add(String(parentId));
         await refresh();
         toast("Page moved");
+      },
+    });
+  }
+
+  /* Locking uses a PIN (6 or 8 digits, one box each) or a password, entered twice with a strength check. */
+  lockDialog(page, refresh) {
+    openLockDialog(page, {
+      onDone: async () => {
+        dropPage(page.id);
+        await refresh();
+        this.currentKey = null;
+        this.renderSurface();
       },
     });
   }

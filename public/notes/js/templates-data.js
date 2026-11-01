@@ -49,7 +49,7 @@ const table = (rows, options = {}) => b("table", "", {
   tint: options.tint || "gray",
 });
 
-export const TEMPLATE_CATEGORIES = ["Notes", "Study", "Planning", "Writing", "Research"];
+export const TEMPLATE_CATEGORIES = ["Notes", "Study", "Work", "Planning", "Writing", "Research", "Personal"];
 
 export const TEMPLATES = [
   {
@@ -807,4 +807,460 @@ export function templateBlocks(template) {
     children: walk(block.children || []),
   }));
   return walk(template.blocks());
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
+   Redesigned layouts.
+
+   The first catalogue was a set of outlines. These are finished pages: a banner that says what the page is for, the
+   things you fill in side by side (columns), real checklists you can tick (circle to-dos, not "☐" in a table), the
+   guidance folded into toggles so it never crowds the page, and a review at the end that closes the loop. Each also
+   ships an icon and a cover, so a new page does not arrive looking like a blank sheet with a title.
+   --------------------------------------------------------------------------------------------------------------- */
+const columns = (...cols) => b("columns", "", {}, cols.map((children) => b("column", "", {}, children)));
+const how = (text) => toggle("How to use this page", [p(text)]);
+const gradient = (a, c) => `linear-gradient(120deg, ${a} 0%, ${c} 100%)`;
+
+const UPGRADES = {
+  planner: {
+    blocks: () => [
+      callout("🗓️", "**Plan on Sunday, review on Friday.** A week you never look back on teaches you nothing about how to plan the next one.", "yellow"),
+      columns(
+        [h3("🎯 This week's goal"), objective("By Friday I will be able to…"), p("")],
+        [h3("📌 Must not slip"), todo(""), todo(""), todo("")],
+      ),
+      h2("The week"),
+      table([
+        ["Day", "Morning", "Afternoon", "Evening"],
+        ["Monday", "", "", ""], ["Tuesday", "", "", ""], ["Wednesday", "", "", ""], ["Thursday", "", "", ""],
+        ["Friday", "", "", ""], ["Saturday", "", "", ""], ["Sunday", "", "", ""],
+      ], { align: ["left", "left", "left", "left"], tint: "yellow" }),
+      h2("Deadlines and exams"),
+      table([["What", "Module", "Due", "Hours I need"], ["", "", "", ""], ["", "", "", ""]], { align: ["left", "left", "center", "center"] }),
+      h2("Daily wins"),
+      columns(
+        [h3("Mon – Wed"), todo(""), todo(""), todo("")],
+        [h3("Thu – Sun"), todo(""), todo(""), todo("")],
+      ),
+      divider(),
+      h2("Friday review"),
+      columns(
+        [h3("✅ What worked"), li(""), li("")],
+        [h3("🔁 What to change"), li(""), li("")],
+      ),
+      summary("The one thing I will do differently next week."),
+      how("Fill the goal first, then block the deadlines into the grid, then add only what still fits. Leave the review until Friday: it is the part that makes next week's plan better."),
+    ],
+  },
+  assignment: {
+    blocks: () => [
+      callout("📌", "Write the brief in your own words **before** you read anything else. Most lost marks answer a question that was not asked.", "blue"),
+      table([["Assignment", "Module", "Word count", "Due"], ["", "", "", ""]], { align: ["left", "left", "center", "center"], tint: "blue" }),
+      columns(
+        [h3("📝 The brief, in my words"), p("")],
+        [h3("🎓 What earns the marks"), table([["Criterion", "Weight"], ["", ""], ["", ""], ["", ""]], { align: ["left", "center"] })],
+      ),
+      quote("Paste the exact wording of the brief here so you can check your answer against it later."),
+      h2("Plan"),
+      todo("Read the brief and the marking criteria"),
+      todo("Gather and skim sources"),
+      todo("Outline the argument"),
+      todo("Write the first draft"),
+      todo("Edit for argument, then for style"),
+      todo("Proofread and check references"),
+      todo("Submit — and keep the receipt"),
+      h2("Sources"),
+      source("", "", "Article"), source("", "", "Book"),
+      toggle("Questions for my tutor", [li(""), li("")]),
+      toggle("Pre-submission check", [todo("Answers every part of the brief"), todo("Within the word count"), todo("Every claim has a source"), todo("References formatted correctly")]),
+      how("Fill the table at the top, rewrite the brief, then work down the plan. Tick each step as it is done so the page always shows what is left."),
+    ],
+  },
+  project: {
+    blocks: () => [
+      callout("🚀", "A project is finished when you can say so. **Write the finish line first**, then everything else is a route to it.", "green"),
+      columns(
+        [h3("🏁 Done means"), objective("This project is finished when…")],
+        [h3("📅 Key dates"), table([["Start", "Review", "Finish"], ["", "", ""]], { align: ["center", "center", "center"] })],
+      ),
+      h2("Scope"),
+      columns(
+        [h3("In"), li(""), li(""), li("")],
+        [h3("Out"), li(""), li(""), li("")],
+      ),
+      h2("Milestones"),
+      table([
+        ["Milestone", "Owner", "Date", "Status"],
+        ["", "", "", "Not started"],
+        ["", "", "", "In progress"],
+        ["", "", "", "Done"],
+      ], { align: ["left", "left", "center", "center"], tint: "green" }),
+      h2("Next actions"),
+      callout("🚧", "If you cannot name the next physical action, the project is **stalled**, not blocked.", "orange"),
+      todo(""), todo(""), todo(""),
+      h2("Risks"),
+      table([["Risk", "Likelihood", "Impact", "What I will do"], ["", "Low", "High", ""], ["", "", "", ""]], { align: ["left", "center", "center", "left"], tint: "red" }),
+      toggle("Decision log", [table([["Date", "Decision", "Why"], ["", "", ""]], { align: ["center", "left", "left"] })]),
+      how("Fill the finish line and scope first. Keep milestones short; keep the next actions list to three. Move finished actions out as you go."),
+    ],
+  },
+  meeting: {
+    blocks: () => [
+      table([["Date", "Time", "Where", "Chair", "Notes by"], ["", "", "", "", ""]], { align: ["center", "center", "left", "left", "left"], tint: "purple" }),
+      columns(
+        [h3("👥 Attending"), li(""), li(""), li("")],
+        [h3("🗒️ Agenda"), num(""), num(""), num("Any other business")],
+      ),
+      divider(),
+      h2("Discussion"),
+      toggle("Item 1", [p("")]),
+      toggle("Item 2", [p("")]),
+      h2("Decisions"),
+      callout("✅", "Only record what the group **actually agreed**. Everything else stays under Discussion.", "green"),
+      li(""), li(""),
+      h2("Actions"),
+      table([["Action", "Owner", "Due", "Status"], ["", "", "", "Open"], ["", "", "", "Open"], ["", "", "", "Open"]], { align: ["left", "left", "center", "center"], tint: "purple" }),
+      columns(
+        [h3("📅 Next meeting"), p("")],
+        [h3("📨 To send afterwards"), todo("Share these notes"), todo("Chase the actions")],
+      ),
+      how("Fill the header before the meeting, write decisions as they are made, and give every action an owner and a date before everyone leaves."),
+    ],
+  },
+  revision: {
+    blocks: () => [
+      callout("🎯", "Revision is **recall**, not re-reading. Every block below makes you pull something out of your head.", "red"),
+      columns(
+        [h3("📚 Exam"), table([["Module", "Date", "Weight"], ["", "", ""]], { align: ["left", "center", "center"] })],
+        [h3("⏳ Time I have"), p("Days left: "), p("Hours I can give it: ")],
+      ),
+      h2("Topics"),
+      table([["Topic", "Confidence (1–5)", "Revised", "Next review"], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""]], { align: ["left", "center", "center", "center"], tint: "red" }),
+      h2("Spaced review"),
+      columns(
+        [h3("Day 1"), todo("Learn it"), todo("Self-test")],
+        [h3("Day 3"), todo("Recall without notes"), todo("Fix gaps")],
+        [h3("Day 7"), todo("Past paper question"), todo("Mark it")],
+      ),
+      h2("Past papers"),
+      table([["Paper", "Score", "Marks lost on", "Fixed?"], ["", "", "", ""], ["", "", "", ""]], { align: ["left", "center", "left", "center"] }),
+      checklist("Ready for the exam", ["I can explain every topic without notes", "I have done at least three timed past papers", "I know where I lose marks and have fixed it", "Everything I need for the day is packed"]),
+      how("List every topic with an honest confidence score, revise the lowest first, and book each review on the day shown. Update the scores after every self-test."),
+    ],
+  },
+  lecture: {
+    blocks: () => [
+      callout("🎙️", "Spend **five minutes before** the lecture on the first two sections. Priming is worth an hour of re-reading.", "purple"),
+      table([["Module", "Lecturer", "Date", "Week"], ["", "", "", ""]], { align: ["left", "left", "center", "center"], tint: "purple" }),
+      columns(
+        [h3("🔭 Before"), objective("By the end I should be able to…"), li("What is this lecture about, in one sentence?")],
+        [h3("📖 Read first"), todo("Skim the slides or reading"), todo("Note three questions")],
+      ),
+      h2("During"),
+      p(""),
+      toggle("Key terms", [term("", "")]),
+      toggle("Examples worth keeping", [p("")]),
+      divider(),
+      h2("After"),
+      columns(
+        [h3("✍️ In my own words"), p("")],
+        [h3("❓ Still unclear"), li(""), li("")],
+      ),
+      summary("The one idea from today I would teach someone else."),
+      checklist("Close the loop", ["Rewrite the three main ideas from memory", "Turn the key terms into flashcards", "Book time to ask what is still unclear"]),
+    ],
+  },
+};
+
+const IDENTITY = {
+  blank: ["📄", ["#eef0f4", "#f7f8fa"]], lecture: ["🎙️", ["#e3e6fd", "#f1f2fe"]], cornell: ["🧭", ["#e3ecf9", "#f1f6fc"]],
+  class: ["🎓", ["#e6edfb", "#f3f6fd"]], textbook: ["📘", ["#e1ecf8", "#f0f6fc"]], meeting: ["👥", ["#ece3f7", "#f6f1fb"]],
+  "study-guide": ["🎯", ["#dff0e8", "#eff8f3"]], revision: ["🧠", ["#f9e3e0", "#fcf1ef"]], "flashcard-source": ["🗂️", ["#e3f0f2", "#f1f8f9"]],
+  practice: ["✏️", ["#f5e9d9", "#fbf4ea"]], planner: ["🗓️", ["#f7ecd2", "#fcf6e6"]], assignment: ["📌", ["#e0e8f8", "#f0f4fc"]],
+  project: ["🚀", ["#dcefea", "#eef8f5"]], essay: ["🖋️", ["#efe5dc", "#f7f2ed"]], reading: ["📖", ["#e8eedf", "#f3f7ee"]],
+  report: ["📊", ["#e3e9f2", "#f1f4f9"]], research: ["🔬", ["#e0eef0", "#eff7f8"]], lab: ["🧪", ["#e5eadf", "#f2f5ee"]], literature: ["📚", ["#ece2ea", "#f6f0f5"]],
+};
+for (const template of TEMPLATES) {
+  const upgrade = UPGRADES[template.id];
+  if (upgrade) Object.assign(template, upgrade);
+  const [emoji, [from, to]] = IDENTITY[template.id] || ["📄", ["#eef0f4", "#f7f8fa"]];
+  template.emoji = emoji;
+  template.cover = template.id === "blank" ? null : gradient(from, to);
+}
+
+
+/* ---------------------------------------------------------------------------------------------------------------
+   The second catalogue: working documents, formal and restrained. These are pages people actually keep open — they
+   open with guidance written as real prompts and a first example row, so a new page reads as a finished document
+   rather than empty boxes. Colour is left to the page: tables and callouts use the neutral tint.
+   --------------------------------------------------------------------------------------------------------------- */
+const note = (text) => callout("💡", text, "default");
+const grid = (head, rows, align) => table([head, ...rows], { align: align || head.map(() => "left"), tint: "default" });
+const blank = (n, make = li) => Array.from({ length: n }, () => make(""));
+const meta = (...pairs) => grid(pairs.map(([k]) => k), [pairs.map(([, v]) => v || "")]);
+
+const EXTRA = [
+  /* ---------------- Work ---------------- */
+  { id: "agenda", name: "Meeting agenda", emoji: "🗓️", category: "Work", icon: "page", desc: "A timed agenda with owners, sent before the meeting starts.", blocks: () => [
+    meta(["Date"], ["Time"], ["Location / link"], ["Facilitator"]),
+    h2("Purpose"), p("In one sentence: what must be true when this meeting ends?"),
+    h2("Agenda"),
+    grid(["Time", "Topic", "Owner", "Outcome needed"], [["5 min", "Context and goal", "", "Shared understanding"], ["20 min", "", "", "Decision"], ["10 min", "", "", "Actions agreed"]], ["left", "left", "left", "left"]),
+    h2("Pre-reads"), li("Link or attach anything people should read first"), li(""),
+    h2("Decisions"), li(""), h2("Actions"), grid(["Action", "Owner", "Due"], [["", "", ""], ["", "", ""]]),
+    how("Send it the day before. Every item needs an owner and an outcome — if you cannot name the outcome, it probably does not need a meeting."),
+  ]},
+  { id: "one-on-one", name: "1:1 meeting", emoji: "🤝", category: "Work", icon: "users", desc: "A running log for a recurring one-to-one: wins, blockers and follow-ups.", blocks: () => [
+    meta(["With"], ["Date"], ["Cadence"]),
+    columns([h3("Their topics"), li(""), li("")], [h3("My topics"), li(""), li("")]),
+    h2("How are things going?"), p("Workload, energy, anything in the way."),
+    h2("Wins since last time"), li(""), h2("Blockers"), li(""),
+    h2("Feedback"), columns([h3("For them"), p("")], [h3("For me"), p("")]),
+    h2("Follow-ups"), todo(""), todo(""),
+    toggle("Career and growth", [p("What do they want to learn or take on next?")]),
+  ]},
+  { id: "project-brief", name: "Project brief", emoji: "📋", category: "Work", icon: "page", desc: "Problem, goals, scope, owners and risks on a single page.", blocks: () => [
+    meta(["Project"], ["Owner"], ["Sponsor"], ["Start"], ["Target date"]),
+    h2("Problem"), p("What is wrong or missing today, and for whom?"),
+    h2("Goals"), num("The outcome we want, measurable where possible"), num(""),
+    h2("Non-goals"), li("What this project deliberately will not do"),
+    h2("Scope and deliverables"), grid(["Deliverable", "Owner", "Due", "Status"], [["", "", "", "Not started"], ["", "", "", "Not started"]], ["left", "left", "center", "center"]),
+    h2("Success measures"), grid(["Measure", "Today", "Target"], [["", "", ""]], ["left", "center", "center"]),
+    h2("Risks and dependencies"), grid(["Risk", "Impact", "Mitigation"], [["", "Medium", ""]]),
+    h2("Stakeholders"), grid(["Name", "Role", "Needs from this project"], [["", "", ""]]),
+  ]},
+  { id: "decision-record", name: "Decision record", emoji: "⚖️", category: "Work", icon: "page", desc: "Capture the options, the choice and the reasoning so it is never relitigated.", blocks: () => [
+    meta(["Decision"], ["Date"], ["Decider"], ["Status"]),
+    h2("Context"), p("What forced this decision now?"),
+    h2("Options considered"),
+    grid(["Option", "For", "Against", "Cost / effort"], [["A", "", "", ""], ["B", "", "", ""], ["Do nothing", "", "", ""]]),
+    h2("Decision"), callout("✅", "State the choice in one plain sentence.", "default"),
+    h2("Why"), p(""), h2("Consequences"), li("What changes because of this"), li("What we accept giving up"),
+    h2("Review date"), p("When will we check this was right?"),
+  ]},
+  { id: "status-report", name: "Weekly status report", emoji: "📈", category: "Work", icon: "page", desc: "What shipped, what is next and what needs help — readable in a minute.", blocks: () => [
+    meta(["Week of"], ["Author"], ["Overall"]),
+    callout("📌", "**Summary:** one sentence a busy reader can stop at.", "default"),
+    h2("Progress this week"), li(""), li(""),
+    h2("Planned for next week"), li(""), li(""),
+    h2("Metrics"), grid(["Metric", "Last week", "This week", "Target"], [["", "", "", ""]], ["left", "center", "center", "center"]),
+    h2("Risks and blockers"), grid(["Issue", "Owner", "Help needed"], [["", "", ""]]),
+    h2("Decisions needed"), todo(""),
+  ]},
+  { id: "okrs", name: "Goals and OKRs", emoji: "🎯", category: "Work", icon: "page", desc: "Objectives with measurable key results and honest weekly check-ins.", blocks: () => [
+    meta(["Period"], ["Team / owner"]),
+    h2("Objective 1"), p("An inspiring, qualitative outcome."),
+    grid(["Key result", "Start", "Target", "Now", "Confidence"], [["", "0", "", "", ""], ["", "0", "", "", ""], ["", "0", "", "", ""]], ["left", "center", "center", "center", "center"]),
+    h2("Objective 2"), p(""), grid(["Key result", "Start", "Target", "Now", "Confidence"], [["", "0", "", "", ""], ["", "0", "", "", ""]], ["left", "center", "center", "center", "center"]),
+    h2("Weekly check-ins"), toggle("Week 1", [p("What moved? What is at risk?")]), toggle("Week 2", [p("")]),
+    h2("Retrospective"), columns([h3("What worked"), li("")], [h3("What to change"), li("")]),
+  ]},
+  { id: "retrospective", name: "Retrospective", emoji: "🔁", category: "Work", icon: "page", desc: "Look back as a team and leave with a few changes you will really make.", blocks: () => [
+    meta(["Period"], ["Facilitator"], ["Attendees"]),
+    columns([h3("Went well"), li(""), li("")], [h3("Did not go well"), li(""), li("")], [h3("Ideas"), li(""), li("")]),
+    h2("Themes"), p("Group what came up. What is the pattern?"),
+    h2("Commitments"), grid(["Change we will make", "Owner", "By when"], [["", "", ""], ["", "", ""]]),
+    h2("Last time's commitments"), todo(""), todo(""),
+  ]},
+  { id: "client-call", name: "Client call notes", emoji: "📞", category: "Work", icon: "page", desc: "Needs, objections, commitments and the follow-up email, in order.", blocks: () => [
+    meta(["Client"], ["Contact"], ["Date"], ["Stage"]),
+    h2("Their situation"), p("What are they trying to achieve, and what is in the way?"),
+    h2("What they asked for"), li(""), h2("Objections and concerns"), li(""),
+    h2("What we promised"), grid(["Commitment", "Owner", "Date"], [["", "", ""]]),
+    h2("Next step"), callout("➡️", "Agree the next meeting before the call ends.", "default"),
+    toggle("Follow-up email draft", [p("Thanks for your time today. To recap…")]),
+  ]},
+  { id: "proposal", name: "Proposal", emoji: "📑", category: "Work", icon: "page", desc: "A persuasive, structured proposal from problem to price.", blocks: () => [
+    meta(["Prepared for"], ["Prepared by"], ["Date"], ["Valid until"]),
+    h2("Summary"), p("The problem, our approach and the outcome, in three sentences."),
+    h2("The problem"), p(""), h2("Our approach"), num(""), num(""), num(""),
+    h2("Timeline"), grid(["Phase", "What happens", "Duration"], [["1", "", ""], ["2", "", ""], ["3", "", ""]], ["center", "left", "center"]),
+    h2("Investment"), grid(["Item", "Detail", "Cost"], [["", "", ""], ["", "", ""], ["Total", "", ""]], ["left", "left", "right"]),
+    h2("Why us"), li(""), h2("Next steps"), todo("Approve proposal"), todo("Sign agreement"), todo("Kick-off call"),
+  ]},
+  { id: "sop", name: "Process / SOP", emoji: "🧾", category: "Work", icon: "page", desc: "A repeatable procedure anyone can follow without asking.", blocks: () => [
+    meta(["Process"], ["Owner"], ["Last reviewed"], ["Version"]),
+    h2("Purpose"), p("Why this process exists and when to use it."),
+    h2("Before you start"), todo("Access you need"), todo("Information to have to hand"),
+    h2("Steps"), num(""), num(""), num(""),
+    callout("⚠️", "Name the step people most often get wrong.", "default"),
+    h2("Done looks like"), li(""), h2("If something goes wrong"), p("Who to contact and what to try first."),
+    toggle("Change log", [grid(["Date", "Change", "By"], [["", "", ""]])]),
+  ]},
+  { id: "prd", name: "Product requirements", emoji: "🧩", category: "Work", icon: "page", desc: "Problem, users, requirements and open questions for a feature.", blocks: () => [
+    meta(["Feature"], ["Owner"], ["Status"], ["Target release"]),
+    h2("Background"), p("Why now? What evidence do we have?"),
+    h2("Users and jobs to be done"), grid(["User", "Job they are trying to do", "Today's pain"], [["", "", ""]]),
+    h2("Requirements"), grid(["#", "Requirement", "Priority"], [["1", "", "Must"], ["2", "", "Should"], ["3", "", "Could"]], ["center", "left", "center"]),
+    h2("Out of scope"), li(""), h2("Success metrics"), li(""),
+    h2("Open questions"), grid(["Question", "Owner", "Answer"], [["", "", ""]]),
+    h2("Launch plan"), todo("Design signed off"), todo("Build complete"), todo("QA passed"), todo("Announce"),
+  ]},
+  { id: "interview-scorecard", name: "Interview scorecard", emoji: "🧑‍💼", category: "Work", icon: "page", desc: "Score every candidate against the same criteria, then decide.", blocks: () => [
+    meta(["Candidate"], ["Role"], ["Interviewer"], ["Date"]),
+    h2("Criteria"), grid(["Criterion", "Score (1–5)", "Evidence"], [["Role skills", "", ""], ["Problem solving", "", ""], ["Communication", "", ""], ["Values / team fit", "", ""]], ["left", "center", "left"]),
+    h2("Strengths"), li(""), h2("Concerns"), li(""),
+    h2("Recommendation"), callout("🗳️", "Strong yes · Yes · No · Strong no — then one sentence of reasoning.", "default"),
+  ]},
+  { id: "job-tracker", name: "Job application tracker", emoji: "🧭", category: "Work", icon: "table", desc: "Every application, contact and next step in one table.", blocks: () => [
+    note("Update this table the moment anything changes — it is only useful if it is current."),
+    grid(["Company", "Role", "Applied", "Contact", "Stage", "Next step"], [["", "", "", "", "Applied", ""], ["", "", "", "", "Applied", ""], ["", "", "", "", "Applied", ""]], ["left", "left", "center", "left", "center", "left"]),
+    h2("Interview prep"), todo("Research the company"), todo("Prepare three stories"), todo("Questions to ask them"),
+    h2("Follow-ups"), todo(""),
+  ]},
+
+  /* ---------------- Study ---------------- */
+  { id: "seminar", name: "Seminar notes", emoji: "🗣️", category: "Study", icon: "page", desc: "Prepare, contribute and capture the discussion.", blocks: () => [
+    meta(["Module"], ["Topic"], ["Date"], ["Reading"]),
+    h2("Preparation"), li("Key argument of the reading"), li("One thing I disagree with"), li("One question to ask"),
+    h2("Discussion"), p(""), h2("Points I want to remember"), li(""),
+    h2("After"), summary("What did the group conclude, and what is still open?"),
+  ]},
+  { id: "timetable", name: "Study timetable", emoji: "⏱️", category: "Study", icon: "table", desc: "A realistic weekly timetable with fixed commitments and study blocks.", blocks: () => [
+    note("Block fixed commitments first, then place study around them. Leave one evening empty."),
+    grid(["Time", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], [["08:00", "", "", "", "", "", "", ""], ["10:00", "", "", "", "", "", "", ""], ["12:00", "", "", "", "", "", "", ""], ["14:00", "", "", "", "", "", "", ""], ["16:00", "", "", "", "", "", "", ""], ["18:00", "", "", "", "", "", "", ""]], ["left", "center", "center", "center", "center", "center", "center", "center"]),
+    h2("Weekly targets"), todo("Hours of focused study"), todo("Past paper attempts"),
+  ]},
+  { id: "glossary", name: "Glossary", emoji: "🔤", category: "Study", icon: "page", desc: "Terms, definitions and examples, ready to turn into flashcards.", blocks: () => [
+    note("One row per term. Write the definition in your own words, then add an example."),
+    grid(["Term", "Definition", "Example", "Related"], [["", "", "", ""], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""]]),
+  ]},
+  { id: "mistake-log", name: "Mistake log", emoji: "🧯", category: "Study", icon: "table", desc: "Track what you got wrong, why, and the fix — the fastest way to improve.", blocks: () => [
+    grid(["Date", "Question / topic", "What I did", "Why it was wrong", "The fix"], [["", "", "", "", ""], ["", "", "", "", ""], ["", "", "", "", ""]]),
+    h2("Patterns"), p("After ten entries: what keeps happening?"),
+  ]},
+  { id: "thesis-tracker", name: "Thesis tracker", emoji: "🎓", category: "Study", icon: "page", desc: "Chapters, word counts, supervisor feedback and deadlines.", blocks: () => [
+    meta(["Title"], ["Supervisor"], ["Deadline"]),
+    h2("Chapters"), grid(["Chapter", "Target words", "Written", "Status", "Feedback"], [["Introduction", "", "", "Not started", ""], ["Literature review", "", "", "Not started", ""], ["Methods", "", "", "Not started", ""], ["Results", "", "", "Not started", ""], ["Discussion", "", "", "Not started", ""]], ["left", "center", "center", "center", "left"]),
+    h2("Supervisor meetings"), toggle("Meeting 1", [p("Agreed actions:")]),
+    h2("Milestones"), todo("Proposal approved"), todo("Ethics approved"), todo("Draft submitted"), todo("Final submission"),
+  ]},
+  { id: "citations", name: "Citation log", emoji: "🔖", category: "Research", icon: "table", desc: "Every source with its reference, quote and why it matters.", blocks: () => [
+    grid(["Source", "Reference", "Key point / quote", "Page", "Used in"], [["", "", "", "", ""], ["", "", "", "", ""], ["", "", "", "", ""]]),
+  ]},
+
+  /* ---------------- Planning ---------------- */
+  { id: "weekly-review", name: "Weekly review", emoji: "🧹", category: "Planning", icon: "page", desc: "Close the week, clear the inbox and set up the next one.", blocks: () => [
+    meta(["Week of"]),
+    h2("Look back"), columns([h3("Wins"), li(""), li("")], [h3("Misses"), li(""), li("")]),
+    h2("Clear the decks"), todo("Empty inboxes"), todo("Review open tasks"), todo("Check the calendar for next week"),
+    h2("Next week"), num("Top priority"), num(""), num(""),
+    summary("One lesson from this week."),
+  ]},
+  { id: "daily-plan", name: "Daily plan", emoji: "☀️", category: "Planning", icon: "page", desc: "Three priorities, a time-blocked day and an end-of-day shutdown.", blocks: () => [
+    meta(["Date"], ["Energy (1–5)"]),
+    h2("Top three"), todo(""), todo(""), todo(""),
+    h2("Schedule"), grid(["Time", "Plan", "Actual"], [["09:00", "", ""], ["11:00", "", ""], ["13:00", "", ""], ["15:00", "", ""], ["17:00", "", ""]], ["left", "left", "left"]),
+    h2("Shutdown"), todo("Capture loose ends"), todo("Choose tomorrow's top three"),
+  ]},
+  { id: "goal-setting", name: "Goal setting", emoji: "🧗", category: "Planning", icon: "page", desc: "Turn an ambition into a measurable goal with milestones and habits.", blocks: () => [
+    h2("The goal"), objective("In one sentence, specific and measurable"),
+    h2("Why it matters"), p(""),
+    h2("Milestones"), grid(["Milestone", "Date", "Done"], [["", "", ""], ["", "", ""], ["", "", ""]], ["left", "center", "center"]),
+    h2("Weekly habits that get me there"), todo(""), todo(""),
+    h2("Obstacles and plans"), grid(["If this happens…", "I will…"], [["", ""]]),
+  ]},
+  { id: "budget", name: "Monthly budget", emoji: "💷", category: "Planning", icon: "table", desc: "Income, fixed costs, spending and savings for the month.", blocks: () => [
+    meta(["Month"], ["Total income"]),
+    h2("Fixed costs"), grid(["Item", "Planned", "Actual"], [["Rent", "", ""], ["Bills", "", ""], ["Transport", "", ""]], ["left", "right", "right"]),
+    h2("Spending"), grid(["Category", "Planned", "Actual"], [["Food", "", ""], ["Going out", "", ""], ["Other", "", ""]], ["left", "right", "right"]),
+    h2("Savings"), grid(["Goal", "Target", "Saved"], [["", "", ""]], ["left", "right", "right"]),
+    summary("What I will change next month."),
+  ]},
+  { id: "content-calendar", name: "Content calendar", emoji: "🗂️", category: "Planning", icon: "table", desc: "Plan what you publish, where and when.", blocks: () => [
+    grid(["Date", "Topic", "Format", "Channel", "Owner", "Status"], [["", "", "", "", "", "Idea"], ["", "", "", "", "", "Idea"], ["", "", "", "", "", "Idea"]], ["center", "left", "left", "left", "left", "center"]),
+    h2("Ideas backlog"), li(""), li(""),
+  ]},
+
+  /* ---------------- Writing ---------------- */
+  { id: "blog-post", name: "Blog post", emoji: "✍️", category: "Writing", icon: "page", desc: "From angle to outline to draft to publish checklist.", blocks: () => [
+    meta(["Working title"], ["Audience"], ["Target length"]),
+    h2("The angle"), p("What will the reader know or be able to do after reading?"),
+    h2("Outline"), num("Hook"), num(""), num(""), num("Conclusion and call to action"),
+    h2("Draft"), p(""),
+    h2("Before publishing"), todo("Headline tested against three alternatives"), todo("Facts and links checked"), todo("Read aloud once"), todo("Image and metadata added"),
+  ]},
+  { id: "cover-letter", name: "Cover letter", emoji: "✉️", category: "Writing", icon: "page", desc: "A tight three-paragraph letter with a checklist to tailor it.", blocks: () => [
+    meta(["Role"], ["Company"], ["Contact"]),
+    h2("Opening"), p("Why this role at this company, in two sentences."),
+    h2("Evidence"), p("Two achievements that match what they asked for, with numbers."),
+    h2("Close"), p("What you want to happen next."),
+    checklist("Tailoring", ["Names the company and role", "Mirrors the job description's language", "Under one page", "Proofread by someone else"]),
+  ]},
+
+  /* ---------------- Research ---------------- */
+  { id: "experiment-log", name: "Experiment log", emoji: "🧫", category: "Research", icon: "page", desc: "Hypothesis, method, results and what you will try next.", blocks: () => [
+    meta(["Experiment"], ["Date"], ["Owner"]),
+    h2("Hypothesis"), p("If we change X, then Y will happen, because Z."),
+    h2("Method"), num(""), num(""), h2("Variables"), grid(["Variable", "Type", "Value"], [["", "Independent", ""], ["", "Dependent", ""], ["", "Controlled", ""]]),
+    h2("Results"), p(""), h2("Interpretation"), p("Did the result support the hypothesis? What else could explain it?"),
+    h2("Next"), todo(""),
+  ]},
+  { id: "user-interview", name: "User interview", emoji: "🎙️", category: "Research", icon: "page", desc: "A discussion guide and a place for verbatim quotes and insights.", blocks: () => [
+    meta(["Participant"], ["Date"], ["Interviewer"]),
+    h2("Warm-up"), li("Tell me about your role"), h2("Core questions"), num("Walk me through the last time you…"), num("What was hardest about it?"), num("What did you do instead?"),
+    h2("Notable quotes"), quote("Paste verbatim quotes here."),
+    h2("Insights"), grid(["Observation", "Why it matters", "Confidence"], [["", "", ""]]),
+  ]},
+  { id: "swot", name: "SWOT analysis", emoji: "🧭", category: "Research", icon: "page", desc: "Strengths, weaknesses, opportunities and threats, with actions.", blocks: () => [
+    columns([h3("Strengths"), li(""), li("")], [h3("Weaknesses"), li(""), li("")]),
+    columns([h3("Opportunities"), li(""), li("")], [h3("Threats"), li(""), li("")]),
+    h2("So what?"), grid(["Action", "Addresses", "Owner"], [["", "", ""]]),
+  ]},
+  { id: "competitor-analysis", name: "Competitor analysis", emoji: "🔍", category: "Research", icon: "table", desc: "Compare alternatives side by side and find the gap.", blocks: () => [
+    grid(["", "Us", "Competitor A", "Competitor B"], [["Target customer", "", "", ""], ["Pricing", "", "", ""], ["Strengths", "", "", ""], ["Weaknesses", "", "", ""], ["Differentiator", "", "", ""]]),
+    h2("Where is the gap?"), p(""),
+  ]},
+
+  /* ---------------- Personal ---------------- */
+  { id: "journal", name: "Daily journal", emoji: "📔", category: "Personal", icon: "page", desc: "A calm daily page: gratitude, highlights and reflection.", blocks: () => [
+    meta(["Date"], ["Mood"]),
+    h2("Three things I am grateful for"), num(""), num(""), num(""),
+    h2("Highlight of the day"), p(""), h2("What I learned"), p(""), h2("Tomorrow"), todo("")
+  ]},
+  { id: "habit-tracker", name: "Habit tracker", emoji: "✅", category: "Personal", icon: "table", desc: "Seven days, every habit, at a glance.", blocks: () => [
+    grid(["Habit", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], [["", "", "", "", "", "", "", ""], ["", "", "", "", "", "", "", ""], ["", "", "", "", "", "", "", ""]], ["left", "center", "center", "center", "center", "center", "center", "center"]),
+    note("Mark a day with ✓. Never miss twice."), summary("What made the good days easy?"),
+  ]},
+  { id: "trip", name: "Trip itinerary", emoji: "🧳", category: "Personal", icon: "page", desc: "Bookings, day-by-day plan and a packing list.", blocks: () => [
+    meta(["Destination"], ["Dates"], ["Travellers"]),
+    h2("Bookings"), grid(["What", "Reference", "Date / time", "Cost"], [["Flights", "", "", ""], ["Stay", "", "", ""]]),
+    h2("Day by day"), toggle("Day 1", [li("Morning"), li("Afternoon"), li("Evening")]), toggle("Day 2", [li("")]),
+    h2("Packing"), todo("Passport and documents"), todo("Chargers"), todo("Medication"),
+  ]},
+  { id: "workout-log", name: "Workout log", emoji: "🏋️", category: "Personal", icon: "table", desc: "Sets, reps and weight, session by session.", blocks: () => [
+    meta(["Date"], ["Focus"]),
+    grid(["Exercise", "Set 1", "Set 2", "Set 3", "Notes"], [["", "", "", "", ""], ["", "", "", "", ""], ["", "", "", "", ""]], ["left", "center", "center", "center", "left"]),
+    summary("How did it feel? What to change next time."),
+  ]},
+  { id: "recipe", name: "Recipe", emoji: "🍳", category: "Personal", icon: "page", desc: "Ingredients, method and notes for next time.", blocks: () => [
+    meta(["Serves"], ["Prep"], ["Cook"]),
+    columns([h3("Ingredients"), li(""), li(""), li("")], [h3("Method"), num(""), num(""), num("")]),
+    h2("Notes"), p("What to change next time."),
+  ]},
+  { id: "book-notes", name: "Book notes", emoji: "📚", category: "Personal", icon: "page", desc: "The big ideas, quotes and what you will actually do differently.", blocks: () => [
+    meta(["Title"], ["Author"], ["Finished"], ["Rating"]),
+    h2("The book in one paragraph"), p(""),
+    h2("Big ideas"), num(""), num(""), num(""),
+    h2("Quotes"), quote(""), h2("What I will do differently"), todo(""), todo(""),
+  ]},
+];
+
+/* The restrained look: neutral tints and cover, one quiet icon. Applied to every template, the original catalogue
+   included, so the gallery reads as one family of documents rather than a box of colour swatches. */
+const SOFT = ["#f1f2f4", "#f8f8f9"];
+const neutral = (list) => list.map((block) => {
+  const props = { ...(block.props || {}) };
+  if (block.type === "table") props.tint = "default";
+  if (block.type === "callout") props.color = "default";
+  return { ...block, props, children: neutral(block.children || []) };
+});
+for (const entry of EXTRA) {
+  TEMPLATES.push({ accent: "#8a8f9c", ...entry });
+}
+for (const template of TEMPLATES) {
+  if (!template.cover || template.id !== "blank") template.cover = template.id === "blank" ? null : gradient(SOFT[0], SOFT[1]);
+  template.accent = "#5f6672";
+  const original = template.blocks;
+  template.blocks = () => neutral(original());
 }

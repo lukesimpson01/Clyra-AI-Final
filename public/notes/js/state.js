@@ -289,3 +289,10 @@ export async function withError(work, message) {
   try { return await work(); }
   catch (error) { toast(error?.message || message || "Something went wrong", "error"); return null; }
 }
+
+/* A page with a passcode keeps its name out of the tab strip and header until it has been opened this session. */
+export function isSealed(id) {
+  const meta = getPageMeta(id);
+  if (!meta?.locked) return false;
+  try { return sessionStorage.getItem(`clyra.notes.unlocked.${id}`) !== "1"; } catch { return true; }
+}

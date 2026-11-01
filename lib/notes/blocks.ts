@@ -185,7 +185,9 @@ export function markdownToBlocks(markdown: string): DraftBlock[] {
         rows.push(splitRow(lines[index]!.trim()));
         index += 1;
       }
-      append(draft("table", [], { rows, hasHeader: true }), indent);
+      // table cells hold plain text, so emphasis markers would show as literal asterisks
+      const plainCell = (cell: string) => cell.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/g, "$1").replace(/`([^`]+)`/g, "$1");
+      append(draft("table", [], { rows: rows.map((row) => row.map(plainCell)), hasHeader: true }), indent);
       continue;
     }
 

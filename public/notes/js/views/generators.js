@@ -42,7 +42,7 @@ function resolveSources(target) {
 async function generateCards(app, sources, target) {
   const preset = new Set((sources || []).map((source) => String(source.pageId)).filter(Boolean));
   const picker = notePicker({ selected: preset, onChange: () => syncPrimary() });
-  const countField = el("input", { class: "input", type: "number", min: "1", max: "40", value: "12" });
+  const countField = el("input", { class: "input", type: "number", min: "1", max: "100", value: "12" });
   const difficulty = el("select", { class: "select" },
     ["mixed difficulty", "easier recall", "harder application"].map((value) => el("option", { value, text: value })));
   const style = el("select", { class: "select" },
@@ -74,7 +74,7 @@ async function generateCards(app, sources, target) {
         loader.advance(1);
         const response = await api.post("/api/notes/ai/flashcards", {
           sources: chosen, deckId: target.deckId || null,
-          count: Number(countField.value) || 12,
+          count: Math.max(1, Math.min(100, Math.floor(Number(countField.value)) || 12)),
           difficulty: difficulty.value, style: style.value || undefined,
         });
         loader.advance(3);
@@ -175,7 +175,7 @@ async function saveMistakeCards(app, cards) {
 async function generateTest(app, sources) {
   const preset = new Set((sources || []).map((source) => String(source.pageId)).filter(Boolean));
   const picker = notePicker({ selected: preset, onChange: () => syncPrimary() });
-  const countField = el("input", { class: "input", type: "number", min: "1", max: "30", value: "10" });
+  const countField = el("input", { class: "input", type: "number", min: "1", max: "80", value: "10" });
   const difficulty = el("select", { class: "select" },
     ["mixed difficulty", "easier recall", "harder application"].map((value) => el("option", { value, text: value })));
   const timeField = el("input", { class: "input", type: "number", min: "0", max: "180", value: "0", placeholder: "0 = untimed" });
@@ -221,7 +221,7 @@ async function generateTest(app, sources) {
       run: async (loader) => {
         loader.advance(1);
         const questions = await api.post("/api/notes/ai/questions", {
-          sources: chosen, count: Number(countField.value) || 10, difficulty: difficulty.value, types,
+          sources: chosen, count: Math.max(1, Math.min(80, Math.floor(Number(countField.value)) || 10)), difficulty: difficulty.value, types,
         });
         if (!questions?.questions?.length) throw new Error("No questions were generated. Try notes with more content.");
         loader.advance(3);

@@ -733,6 +733,9 @@ export class Editor {
     const head = sliceSpans(block.text, 0, offset);
     const tail = sliceSpans(block.text, offset, spansLength(block.text));
     block.text = head;
+    /* The head keeps its DOM node unless it is rebuilt: without this, pressing Enter at the very start of a line left the
+       old text showing in the upper block while the same text was also moved into the new one, so it looked duplicated. */
+    block.__dirty = true;
     const carry = LIST_BLOCKS.has(block.type) ? block.type : HEADINGS.has(block.type) || block.type === "quote" || block.type === "callout" ? "text" : block.type;
     const next = makeBlock(carry === "code" ? "text" : carry, tail);
     next.props = propsFor(next.type, {});
@@ -1315,7 +1318,54 @@ export function inlineMarkdown(source) {
 /* Block chrome, embedded block renderers and drag behaviour. Defined on the
    prototype so the class above stays focused on the editing model. */
 Object.assign(Editor.prototype, {
+  /* Right-click: one menu with what a block can do, in the order Notion people expect — clipboard first, then the block,
+     then Clyra. Selected text adds its own formatting and "Add to chat" / "Ask Clyra" rows. */
+  openContextMenu(event) {
+    if (this.readOnly) return;
+    const node = event.target.closest?.(".block");
+    const block = node?.__block;
+    if (!block) return;
+    event.preventDefault();
+    const selection = window.getSelection();
+    const selectedText = selection && !selection.isCollapsed ? selection.toString() : "";
+    const line = this.lineOf(block.id);
+    const anchor = new DOMRect(event.clientX, event.clientY, 1, 1); // a rect, not an element: the menu opens at the pointer
+    const textual = isTextBlock(block);
+    const mark = (name) => () => { if (line) this.toggleMark(block, line, name); };
+    const items = [
+      selectedText ? { label: "Cut", icon: "duplicate", shortcut: `${mod}+X`, onSelect: () => { document.execCommand("cut"); } } : null,
+      selectedText ? { label: "Copy", icon: "duplicate", shortcut: `${mod}+C`, onSelect: () => { document.execCommand("copy"); } } : null,
+      { label: "Paste", icon: "duplicate", shortcut: `${mod}+V`, onSelect: async () => {
+        try { const text = await navigator.clipboard.readText(); line?.focus(); document.execCommand("insertText", false, text); }
+        catch { toast(`Press ${mod}+V to paste`); }
+      } },
+      { type: "separator" },
+      selectedText ? { label: "Bold", icon: "bold", shortcut: `${mod}+B`, onSelect: mark("b") } : null,
+      selectedText ? { label: "Italic", icon: "italic", shortcut: `${mod}+I`, onSelect: mark("i") } : null,
+      selectedText ? { label: "Underline", icon: "underline", shortcut: `${mod}+U`, onSelect: mark("u") } : null,
+      selectedText ? { label: "Strikethrough", icon: "strike", shortcut: `${mod}+Shift+S`, onSelect: mark("s") } : null,
+      selectedText ? { label: "Code", icon: "code", shortcut: `${mod}+E`, onSelect: mark("c") } : null,
+      selectedText ? { type: "separator" } : null,
+      textual ? { label: "Turn into", icon: "refresh", onSelect: () => this.turnIntoMenu(block, anchor) } : null,
+      { label: "Duplicate", icon: "duplicate", shortcut: `${mod}+D`, onSelect: () => this.duplicateBlock(block) },
+      { label: "Insert block below", icon: "plus", onSelect: () => { const fresh = this.blank(); this.insertAfter(block, fresh); this.render({ id: fresh.id, offset: 0 }); this.commit("insert", true); } },
+      { label: "Copy link to block", icon: "link", onSelect: () => { navigator.clipboard.writeText(`${location.origin}/notes#${this.page.id}:${block.id}`); toast("Block link copied"); } },
+      { label: "Move up", icon: "chevron_right", onSelect: () => this.shift(block, -1) },
+      { label: "Move down", icon: "chevron_right", onSelect: () => this.shift(block, 1) },
+      { type: "separator" },
+      state.aiConfigured && selectedText ? { label: "Add to chat", icon: "comment", onSelect: () => this.onAskClyra?.(selectedText, "add") } : null,
+      state.aiConfigured && selectedText ? { label: "Ask Clyra", icon: "sparkle", onSelect: () => this.onAskClyra?.(selectedText, "ask") } : null,
+      state.aiConfigured ? { label: "Ask AI about this", icon: "sparkle", onSelect: () => this.openAiComposer(block, { seedText: spansText(block.text) }) } : null,
+      state.aiConfigured ? { label: "Generate flashcards", icon: "cards", onSelect: () => this.generateFrom(block, "flashcards") } : null,
+      state.aiConfigured ? { label: "Generate questions", icon: "check_square", onSelect: () => this.generateFrom(block, "questions") } : null,
+      { type: "separator" },
+      { label: "Delete", icon: "trash", shortcut: "Del", danger: true, onSelect: () => this.deleteBlocks([block.id]) },
+    ].filter(Boolean);
+    menu(anchor, items, { align: "start" });
+  },
+
   bindGlobal() {
+    this.container.addEventListener("contextmenu", (event) => this.openContextMenu(event));
     this.container.addEventListener("mousedown", (event) => {
       if (event.target.closest(".text-line, .block-gutter, button, a, input, select, textarea, [contenteditable='true']")) return;
       /* A table, a chart or an image has no text line, so clicking its body
@@ -1604,7 +1654,7 @@ Object.assign(Editor.prototype, {
     if (!url) {
       append(wrapper, el("button", {
         class: "file-chip", type: "button",
-        onclick: (event) => this.mediaPrompt(block, event.currentTarget),
+        onclick: (event) => (block.type === "file" ? import("./file-menu.js").then((m) => m.openFileMenu(this, block)) : this.mediaPrompt(block, event.currentTarget)),
       }, icon(BLOCK_TYPES[block.type].icon, 18), `Add ${BLOCK_TYPES[block.type].label.toLowerCase()}`));
       return wrapper;
     }
@@ -1616,14 +1666,27 @@ Object.assign(Editor.prototype, {
         : el("video", { src: url, controls: true, preload: "metadata" }));
     } else if (block.type === "audio") append(wrapper, el("audio", { src: url, controls: true, preload: "metadata" }));
     else if (block.type === "pdf") append(wrapper, el("iframe", { class: "media-frame", src: url, loading: "lazy", title: block.props?.caption || "PDF", style: { aspectRatio: "3 / 4" } }));
-    else if (block.type === "embed") append(wrapper, el("iframe", { class: "media-frame", src: url, loading: "lazy", title: block.props?.caption || "Embed" }));
+    else if (block.type === "embed") {
+      if (block.props?.embeddable === false) {
+        append(wrapper, el("div", { class: "embed-card" },
+          el("div", { class: "embed-card-main" },
+            el("div", { class: "bookmark-title", text: block.props?.title || url }),
+            el("div", { class: "bookmark-url", text: url }),
+            el("div", { class: "embed-card-note", text: block.props?.reason || "This site does not allow itself to be shown inside other pages." })),
+          el("a", { class: "button", href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site")));
+      } else append(wrapper, el("iframe", { class: "media-frame", src: url, loading: "lazy", title: block.props?.caption || "Embed", referrerpolicy: "no-referrer" }));
+    }
     else if (block.type === "bookmark") {
       append(wrapper, el("a", { class: "bookmark", href: url, target: "_blank", rel: "noreferrer noopener" },
         el("div", {}, el("div", { class: "bookmark-title", text: block.props?.title || url }),
           el("div", { class: "bookmark-url", text: url }))));
     } else {
-      append(wrapper, el("a", { class: "file-chip", href: url, target: "_blank", rel: "noreferrer noopener" },
-        icon("file", 18), el("span", { text: block.props?.name || url.split("/").pop() }),
+      /* A file reads like a link to a page: its icon with a small arrow, and its name, underlined. Opens in a new tab. */
+      const name = block.props?.name || decodeURIComponent(url.split("/").pop() || "").replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "") || url;
+      append(wrapper, el("a", { class: "file-link", href: url, target: "_blank", rel: "noreferrer noopener", title: `Open ${name}` },
+        el("span", { class: "file-link-icon", "aria-hidden": "true" }, icon("file", 20),
+          fileArrow()),
+        el("span", { class: "file-link-name", text: name }),
         block.props?.size ? el("span", { class: "meta", text: formatBytes(block.props.size) }) : null));
     }
     if (block.type !== "bookmark" && block.type !== "file") {
@@ -1649,11 +1712,27 @@ Object.assign(Editor.prototype, {
       this.commit("media", true);
       entry.close("done");
     };
+    /* "/file" offers the files already in this workspace, newest first, before asking for a new upload. */
+    const existingFiles = el("div", { class: "field existing-files", hidden: true },
+      el("span", { class: "field-label", text: "Choose a file you already added" }));
+    if (block.type === "file") {
+      fetch("/api/notes/files").then((r) => r.json()).then(({ files }) => {
+        if (!files?.length) return;
+        const list = el("div", { class: "existing-files-list scroll" });
+        for (const file of files) {
+          list.append(el("button", { class: "existing-file", type: "button", onclick: () => apply({ url: file.url, name: file.name, size: file.size }) },
+            icon("file", 16), el("span", { class: "existing-file-name", text: file.name }), el("span", { class: "meta", text: formatBytes(file.size) })));
+        }
+        existingFiles.append(list);
+        existingFiles.hidden = false;
+      }).catch(() => undefined);
+    }
     entry = modal({
       title: `Add ${BLOCK_TYPES[block.type].label.toLowerCase()}`,
       width: 460,
       body: el("div", {},
         fileField ? el("label", { class: "field" }, el("span", { class: "field-label", text: "Upload a file" }), fileField) : null,
+        block.type === "file" ? existingFiles : null,
         el("label", { class: "field" }, el("span", { class: "field-label", text: "Or paste a link" }), urlField)),
       footer: [
         el("button", { class: "button", type: "button", onclick: () => entry.close("cancel") }, "Cancel"),
@@ -1674,6 +1753,16 @@ Object.assign(Editor.prototype, {
             }
             const url = urlField.value.trim();
             if (!url) { toast("Add a file or a link first", "error"); return; }
+            if (block.type === "embed") {
+              /* Ask first whether the site can be framed, so the block shows the site or an honest card, never an empty box. */
+              button.disabled = true;
+              button.textContent = "Checking…";
+              const check = await fetch(`/api/notes/embed-check?url=${encodeURIComponent(url)}`).then((r) => r.json()).catch(() => null);
+              button.disabled = false;
+              button.textContent = "Add";
+              apply({ url, title: check?.title || url, embeddable: check ? Boolean(check.embeddable) : true, reason: check?.reason });
+              return;
+            }
             apply({ url, title: url });
           },
         }, "Add"),
@@ -2359,6 +2448,25 @@ const formatChartNumber = (value) => Number.isInteger(value)
 
 /* Uploads stay inside the workspace: the file is written next to the
    database so notes and their attachments back up together. */
+/* the small up-right arrow on a file's icon (a real SVG node: HTML-created <svg> elements do not render) */
+function fileArrow() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "file-link-arrow");
+  svg.setAttribute("viewBox", "0 0 12 12");
+  svg.setAttribute("width", "11");
+  svg.setAttribute("height", "11");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M3 9 9 3M4.5 3H9v4.5");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.append(path);
+  return svg;
+}
+
 export async function uploadFile(file) {
   const MAX = 25 * 1024 * 1024;
   if (file.size > MAX) throw new Error(`${file.name} is larger than the 25 MB limit.`);

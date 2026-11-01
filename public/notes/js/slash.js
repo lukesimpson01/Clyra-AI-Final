@@ -1,6 +1,7 @@
 /* The slash command menu. Positioned under the caret, filtered as you type,
    and driven entirely from the block catalogue so it can never offer a block
    the editor cannot build. */
+import { openFileMenu } from "./file-menu.js";
 import { el, icon, matchScore, menu, position, pushLayer, toast } from "./dom.js";
 import { BLOCK_TYPES } from "./block-types.js";
 import { caretOffset, setCaret, spansText, sliceSpans, spansLength } from "./richtext.js";
@@ -52,6 +53,10 @@ function insertType(editor, block, type) {
   if (type === "link_to_page") { editor.onLinkPage?.(block); return; }
   if (type === "columns") { editor.splitIntoColumns(block); return; }
   editor.turnInto(block, type);
+  /* Media blocks ask for their file or address straight away, instead of leaving an empty chip to click. For "File" that
+     picker lists the files already in the workspace first. */
+  if (type === "file") setTimeout(() => openFileMenu(editor, block), 160);
+  else if (["image", "pdf", "video", "audio", "embed", "bookmark"].includes(type)) setTimeout(() => editor.mediaPrompt(block, null), 30);
   /* Blocks with no text of their own leave a fresh paragraph behind so the
      caret has somewhere to land. */
   if (["divider", "toc", "breadcrumb", "image", "video", "audio", "file", "pdf", "bookmark", "embed", "transcript", "source", "table", "chart"].includes(type)) {

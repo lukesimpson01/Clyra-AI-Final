@@ -299,6 +299,11 @@ export async function openNotesDb(): Promise<DB> {
   /* Additive migration for documents created before smart colour coding. */
   const pageColumns = new Set((db.prepare("PRAGMA table_info(pages2)").all() as Array<{ name: string }>).map((c) => c.name));
   if (!pageColumns.has("colour_categories")) db.exec("ALTER TABLE pages2 ADD COLUMN colour_categories TEXT NOT NULL DEFAULT '[]'");
+  /* Page locks can carry a password: only a salted scrypt hash is ever stored. */
+  if (!pageColumns.has("lock_hash")) db.exec("ALTER TABLE pages2 ADD COLUMN lock_hash TEXT");
+  if (!pageColumns.has("lock_salt")) db.exec("ALTER TABLE pages2 ADD COLUMN lock_salt TEXT");
+  /* "pin6" | "pin8" | "password": how the unlock screen should ask for it. */
+  if (!pageColumns.has("lock_kind")) db.exec("ALTER TABLE pages2 ADD COLUMN lock_kind TEXT");
   migrateLegacyPages(db);
   return db;
 }

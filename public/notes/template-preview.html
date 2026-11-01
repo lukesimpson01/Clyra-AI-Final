@@ -23,12 +23,16 @@
         margin: 0 0 14px; color: var(--text-primary);
       }
       #shot .editor-host { font-size: 16px; line-height: 1.55; }
+      /* the cover and icon a real page created from the template would carry */
+      #shot { padding-top: 0; }
+      #shot .shot-cover { height: 96px; margin: 0 -56px 0; }
+      #shot .shot-icon { font-size: 46px; line-height: 1; margin: -26px 0 8px; position: relative; }
       /* Hover-only chrome must not be captured mid-state. */
       #shot .block-gutter, #shot .table-actions, #shot .table-grip { display: none !important; }
     </style>
   </head>
   <body>
-    <div id="shot"><div class="shot-title"></div><div class="editor-host"></div></div>
+    <div id="shot"><div class="shot-cover"></div><div class="shot-icon"></div><div class="shot-title"></div><div class="editor-host"></div></div>
     <div id="layers"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script type="module">
@@ -40,6 +44,10 @@
 
       const template = TEMPLATES.find((entry) => entry.id === params.get("id")) || TEMPLATES[0];
       document.querySelector(".shot-title").textContent = template.name;
+      const cover = document.querySelector(".shot-cover");
+      if (template.cover) cover.style.background = template.cover; else cover.style.display = "none";
+      const iconNode = document.querySelector(".shot-icon");
+      if (template.emoji && template.id !== "blank") iconNode.textContent = template.emoji; else iconNode.style.display = "none";
       const page = { id: `preview-${template.id}`, title: template.name, blocks: templateBlocks(template), breadcrumb: [] };
       new Editor(document.querySelector(".editor-host"), { page, readOnly: true });
       /* The tool waits on this flag rather than a fixed delay. */

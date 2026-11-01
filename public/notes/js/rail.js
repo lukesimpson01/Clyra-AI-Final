@@ -85,7 +85,7 @@ export class Rail {
       const button = el("button", {
         class: `rail-tab${selected ? " selected" : ""}`, type: "button",
         role: "tab", "aria-selected": selected ? "true" : "false",
-        "aria-label": panel.label, title: `${panel.label}  ${panel.chord}`,
+        "aria-label": panel.label, "data-tip": `${panel.label} · ${panel.chord}`,
         onclick: () => this.show(panel.id),
       },
         el("span", { class: "rail-tab-icon" }, icon(panel.icon, 16)),

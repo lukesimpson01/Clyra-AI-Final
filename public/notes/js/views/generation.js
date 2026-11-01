@@ -88,10 +88,10 @@ const DWELL_MS = [1400, 4200, 9000, 12000];
 export function progressLoader({ title, stages, art }) {
   const rows = stages.map((stage) => {
     const text = el("span", { class: "check-text", text: stage });
+    /* An icon for what is being done, not a tick: the running step shimmers, finished ones go quiet. */
+    const kind = /read|transcript/i.test(stage) ? "page" : /writ|laying|adding/i.test(stage) ? "pencil" : /check|mark|duplicate|tidy/i.test(stage) ? "search" : "sparkle";
     const row = el("li", { class: "check-step", "data-state": "pending" },
-      el("span", { class: "check-dot", "aria-hidden": "true" },
-        el("span", { class: "check-spin" }),
-        el("span", { class: "check-mark" }, icon("check", 12))),
+      el("span", { class: "check-icon", "aria-hidden": "true" }, icon(kind, 16)),
       text);
     return { row, text };
   });
@@ -118,6 +118,7 @@ export function progressLoader({ title, stages, art }) {
       const stateName = position < index ? "done" : position === index ? "running" : "pending";
       entry.row.dataset.state = stateName;
       entry.text.classList.toggle("check-shine", stateName === "running");
+      entry.text.classList.toggle("shimmer-text", stateName === "running");
     });
   };
   paint();
@@ -149,7 +150,7 @@ export function progressLoader({ title, stages, art }) {
     },
     fail(message, { onRetry, onClose } = {}) {
       rows[Math.min(index, rows.length - 1)]?.row.setAttribute("data-state", "failed");
-      rows.forEach((entry) => entry.text.classList.remove("check-shine"));
+      rows.forEach((entry) => { entry.text.classList.remove("check-shine"); entry.text.classList.remove("shimmer-text"); });
       note.textContent = message;
       node.classList.add("failed");
       clear(actions);

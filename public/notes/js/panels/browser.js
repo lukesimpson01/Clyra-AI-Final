@@ -42,7 +42,7 @@ export function browserPanel(app) {
   const strip = el("div", { class: "wb-tabs" });
   const address = el("input", {
     class: "wb-address", type: "text", spellcheck: "false", autocomplete: "off",
-    placeholder: "Search Google or enter an address", "aria-label": "Address and search",
+    placeholder: "Search the web or enter an address", "aria-label": "Address and search",
   });
   /* Deliberately not sandboxed: the frame has to stay same-origin so the
      panel can read where a link took it. What makes that safe is the
@@ -67,7 +67,10 @@ export function browserPanel(app) {
     append(start,
       el("div", { class: "wb-start-mark" }, icon("embed", 22)),
       el("h3", { class: "wb-start-title", text: "Look something up" }),
-      el("p", { class: "wb-start-copy", text: "Type an address to read a page beside your notes. Searches open in Clyra Browser, where Google runs properly." }),
+      el("p", { class: "wb-start-copy", text: "Search the web or type an address to read a page beside your notes. Results open right here." }),
+      el("form", { class: "wb-start-search", onsubmit: (event) => { event.preventDefault(); const field = event.currentTarget.querySelector("input"); if (field.value.trim()) go(field.value); } },
+        icon("search", 15),
+        el("input", { class: "wb-start-input", type: "search", placeholder: "Search the web or enter an address", "aria-label": "Search the web or enter an address" })),
       el("div", { class: "wb-start-links" }, START_LINKS.map((link) =>
         el("button", { class: "vc-button", type: "button", onclick: () => go(link.url) },
           el("span", { class: "vc-icon" }, icon("bookmark", 14)),
@@ -127,7 +130,8 @@ export function browserPanel(app) {
 
   /* Google, matching the rest of Clyra. Same rule as the desktop resolver:
      whitespace means search before any domain matching is attempted. */
-  const searchUrl = (query) => `https://www.google.com/search?q=${encodeURIComponent(String(query).trim())}`;
+  /* DuckDuckGo's HTML results are server-rendered, so this panel's reader can actually show them (Google's are a script-only app). */
+  const searchUrl = (query) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(String(query).trim())}`;
 
   const toUrl = (value) => {
     if (/^https?:\/\//i.test(value)) return value;
@@ -139,7 +143,7 @@ export function browserPanel(app) {
     return searchUrl(value);
   };
 
-  const isSearch = (url) => /^https:\/\/www\.google\.com\/search\?/.test(url);
+  const isSearch = (url) => /^https:\/\/(?:www\.google\.com\/search|html\.duckduckgo\.com\/html\/)\?/.test(url);
 
   /* A Google results page is a JavaScript application, and this panel is a
      reader that strips scripts — Google serves it nothing but an "enable
@@ -170,11 +174,6 @@ export function browserPanel(app) {
     /* Web build: the reader cannot render a Google results page, and there is
        no server-rendered Google to fall back to, so a search opens a real
        window rather than silently going somewhere else. */
-    if (isSearch(url)) {
-      window.open(url, "_blank", "noopener");
-      address.value = "";
-      return;
-    }
     if (record && tab.url) { tab.history.push(tab.url); tab.future.length = 0; }
     tab.url = url;
     persist();

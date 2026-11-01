@@ -7,6 +7,7 @@ import type express from "express";
 import * as store from "./store";
 import * as ai from "./ai";
 import { runWebSearchResearch } from "../research/research-handlers";
+import { safeFetchUserUrl } from "../security/safe-fetch";
 import { blocksToMarkdown, markdownToBlocks, spanText, parseSpans, type Block } from "./blocks";
 import { registerNotesBrowseRoutes } from "./browse";
 import type { Rating } from "./fsrs";
@@ -273,6 +274,13 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.get("/api/notes/pages", wrap(() => store.listPages()));
   app.get("/api/notes/pages/:id", wrap((req) => store.getPage(req.params.id)));
   app.post("/api/notes/pages", wrap((req, res) => { res.status(201); return store.createPage(req.body); }));
+  app.post("/api/notes/pages/:id/lock", wrap((req) => store.lockPage(req.params.id, String(req.body?.password ?? ""), (["pin6", "pin8", "password"].includes(String(req.body?.kind)) ? String(req.body.kind) : "password") as store.LockKind)));
+  app.post("/api/notes/pages/:id/check-lock", wrap((req) => { const wait = store.lockWait(req.params.id); if (wait) return { ok: false, wait, message: `Too many attempts. Try again in ${wait}s.` }; const ok = store.checkPageLock(req.params.id, String(req.body?.password ?? "")); const after = ok ? 0 : store.lockWait(req.params.id); return { ok, wait: after, message: after ? `Too many attempts. Try again in ${after}s.` : undefined, page: ok ? store.getPage(req.params.id, { reveal: true }) : undefined }; }));
+  app.post("/api/notes/pages/:id/unlock", wrap((req, res) => {
+    const result = store.unlockPage(req.params.id, String(req.body?.password ?? ""));
+    if (!result.ok) res.status(403);
+    return result;
+  }));
   app.patch("/api/notes/pages/:id", wrap((req) => store.updatePage(req.params.id, req.body)));
   app.put("/api/notes/pages/:id/blocks", wrap((req) => store.saveBlocks(req.params.id, (req.body.blocks || []) as Block[])));
   app.post("/api/notes/pages/:id/move", wrap((req) => store.movePage(req.params.id, req.body.parentId ?? null, Number(req.body.index ?? 0))));
@@ -433,6 +441,37 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
     const stored = `${store.newId()}-${safe}`;
     await fsp.writeFile(path.join(directory, stored), body);
     return { url: `/notes-files/${encodeURIComponent(stored)}`, name: safe, size: body.length, type: String(req.query.type || "") };
+  }));
+
+  /* The files already uploaded to this workspace, newest first, so "/file" can offer them instead of only an upload. */
+  app.get("/api/notes/files", wrap(async () => {
+    const directory = path.join(process.cwd(), "data", "notes", "files");
+    const names = await fsp.readdir(directory).catch(() => [] as string[]);
+    const files = await Promise.all(names.filter((n) => !n.startsWith(".")).map(async (stored) => {
+      const stat = await fsp.stat(path.join(directory, stored)).catch(() => null);
+      if (!stat?.isFile()) return null;
+      return { url: `/notes-files/${encodeURIComponent(stored)}`, name: stored.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, ""), size: stat.size, modifiedAt: stat.mtimeMs };
+    }));
+    return { files: files.filter(Boolean).sort((a, b) => (b!.modifiedAt - a!.modifiedAt)).slice(0, 80) };
+  }));
+
+  /* Can this address be shown inside a page? Many sites forbid framing; asking first lets the editor show a real
+     card with an "Open" button instead of an empty box. Fetched through the SSRF-safe fetcher. */
+  app.get("/api/notes/embed-check", wrap(async (req) => {
+    const url = String(req.query.url || "");
+    if (!/^https?:\/\//i.test(url)) return { embeddable: false, reason: "Not a web address." };
+    try {
+      const response = await safeFetchUserUrl(url, { timeoutMs: 8_000, headers: { "user-agent": "Mozilla/5.0 Clyra" } });
+      const frameOptions = (response.headers.get("x-frame-options") || "").toLowerCase();
+      const csp = (response.headers.get("content-security-policy") || "").toLowerCase();
+      const ancestors = csp.match(/frame-ancestors([^;]*)/)?.[1]?.trim() ?? "";
+      const blocked = /deny|sameorigin/.test(frameOptions) || (ancestors && !/\*/.test(ancestors));
+      const html = /html/.test(response.headers.get("content-type") || "") ? (await response.text()).slice(0, 60_000) : "";
+      const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim().slice(0, 140);
+      return { embeddable: response.ok && !blocked, title, reason: blocked ? "This site does not allow itself to be shown inside other pages." : response.ok ? undefined : `The site answered ${response.status}.` };
+    } catch (error) {
+      return { embeddable: false, reason: error instanceof Error ? error.message : "The site could not be reached." };
+    }
   }));
 
   /* ---- import / export ---- */

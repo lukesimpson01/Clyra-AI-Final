@@ -123,6 +123,10 @@ const PATHS = {
   filter: "M4 6h16l-6 7v5l-4 2v-7L4 6Z",
   sort: "M7 5v14M7 19l-3-3M17 19V5M17 5l3 3",
   group: "M4.5 5.5h6v5h-6zM13.5 5.5h6v5h-6zM4.5 13.5h6v5h-6zM13.5 13.5h6v5h-6z",
+  shield: "M12 3.5 5 6v5.5c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-2.5ZM9.2 12.2l2 2 3.8-4",
+  key: "M14.5 9.5a4 4 0 1 1-1.2-2.8M13.3 8.7 20 15.4M17.5 12.6l2 2M15.2 14.9l1.8 1.8",
+  alert: "M12 8v5M12 16.5v.01M10.3 4.6 2.9 17.4A1.6 1.6 0 0 0 4.3 20h15.4a1.6 1.6 0 0 0 1.4-2.6L13.7 4.6a1.9 1.9 0 0 0-3.4 0Z",
+  grid: "M5 5h4v4H5zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4z",
   eye: "M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6ZM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z",
   eye_off: "M4 4l16 16M9.9 9.9A2.5 2.5 0 0 0 12 14.5c.7 0 1.4-.3 1.8-.8M6.5 7C4 8.7 2.5 12 2.5 12S6 18 12 18c1.5 0 2.8-.4 4-1M9.5 6.3A8 8 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-2.6 3.2",
   mic: "M12 3.5a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-5 0V6A2.5 2.5 0 0 1 12 3.5ZM6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6",
@@ -168,6 +172,7 @@ export const icon = (name, size = 16) => {
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
+  svg.dataset.icon = name;
   if (path) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", "path");
     node.setAttribute("d", path);

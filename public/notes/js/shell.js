@@ -3,7 +3,7 @@ import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog
 import { api } from "./api.js";
 import {
   state, childrenOf, hasChildren, getPageMeta, saveSession, refreshPages,
-  openTab, closeTab, selectTab, moveTab, activeTab, withError, dropPage,
+  openTab, closeTab, selectTab, moveTab, activeTab, withError, dropPage, isSealed,
 } from "./state.js";
 
 /* --------------------------------------------------------------- sidebar */
@@ -70,7 +70,8 @@ export class Sidebar {
         el("span", { class: "nav-icon" }, icon(iconName, 17)),
         el("span", { class: "nav-name" }, el("span", { class: "nav-name-text", text: label })),
       );
-      if (shortcut) button.title = `${label}  ${shortcut}`;
+      /* Pointing at a button names it in small text above; only choosing it opens its label. */
+      button.dataset.tip = shortcut ? `${label} · ${shortcut}` : label;
       if (kind === "inbox" && state.inbox.some((event) => !event.read_at)) button.classList.add("has-unread");
       return button;
     };
@@ -614,7 +615,7 @@ export class Toolbar {
         },
           el("span", { class: "page-icon", text: crumb.icon && !/^https?:|^\//.test(crumb.icon) ? crumb.icon : "" },
             crumb.icon ? null : icon("page", 14)),
-          el("span", { text: crumb.title || "New page" })));
+          el("span", { text: index === trail.length - 1 && isSealed(tab.pageId) ? "Locked page" : (crumb.title || "New page") })));
       });
       if (page?.locked) append(crumbs, tooltip(el("span", { class: "crumb" }, icon("lock", 14)), "This page is locked"));
       /* append() turns a null into the text "null", so nullable children are

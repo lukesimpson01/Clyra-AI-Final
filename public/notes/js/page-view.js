@@ -3,9 +3,10 @@ import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, mod, mo
 import { api } from "./api.js";
 import { Editor, makeBlock, uploadFile } from "./editor.js";
 import { plain } from "./richtext.js";
-import { state, loadPage, queueMetaSave, flushPage, getPageMeta, refreshPages, withError } from "./state.js";
+import { state, emit, loadPage, queueMetaSave, flushPage, getPageMeta, refreshPages, withError } from "./state.js";
 import { openSearch } from "./search.js";
 import { openColourLegend } from "./colour-coding.js";
+import { unlockForm } from "./passcode.js";
 
 const COVERS = [
   "linear-gradient(120deg, #d5e3f0 0%, #eef2f6 100%)",
@@ -52,8 +53,44 @@ export class PageView {
             el("button", { class: "button", type: "button", onclick: () => this.context.goHome() }, "Go home"))))));
   }
 
+  /* A page with a passcode shows nothing of itself — no title, icon, cover or text — until the passcode is entered
+     (once per session). */
+  drawLocked() {
+    const page = this.page;
+    const sessionKey = `clyra.notes.unlocked.${page.id}`;
+    try { sessionStorage.removeItem(sessionKey); } catch { /* optional */ }
+    const pin = page.lock_kind === "pin6" || page.lock_kind === "pin8";
+    const form = unlockForm({
+      kind: page.lock_kind || "password", submitLabel: "Unlock",
+      onSubmit: async (value) => {
+        const result = await api.post(`/api/notes/pages/${page.id}/check-lock`, { password: value });
+        if (result?.ok) {
+          try { sessionStorage.setItem(sessionKey, "1"); } catch { /* optional */ }
+          if (result.page) { this.page = result.page; state.open.set(String(page.id), result.page); }
+          emit("tabs");
+          screen.classList.add("is-opening");
+          setTimeout(() => this.draw(), 260);
+          return { ok: true };
+        }
+        return { ok: false, error: result?.message || "That passcode is not right." };
+      },
+    });
+    const screen = el("div", { class: "lock-screen" },
+      el("div", { class: "lock-hero lock-hero-large" }, el("span", { class: "lock-hero-rings", "aria-hidden": "true" }), el("span", { class: "lock-hero-badge" }, icon("lock", 28))),
+      el("div", { class: "lock-screen-title", text: "Locked" }),
+      el("div", { class: "lock-dialog-text", text: pin ? `Enter your ${page.lock_kind === "pin8" ? 8 : 6}-digit PIN to open this page.` : "Enter the password to open this page." }),
+      form.node,
+      el("div", { class: "lock-screen-foot" }, icon("shield", 13), "Protected on this device · wrong tries are rate-limited"));
+    clear(this.host);
+    this.host.append(el("div", { class: "page-scroll scroll lock-stage" }, screen));
+    setTimeout(() => form.focus?.(), 80);
+  }
+
   draw() {
     const page = this.page;
+    let unlockedHere = false;
+    try { unlockedHere = sessionStorage.getItem(`clyra.notes.unlocked.${page.id}`) === "1"; } catch { /* optional */ }
+    if (page.sealed || (page.locked && page.lock_has_password && !unlockedHere)) { this.drawLocked(); return; }
     clear(this.host);
     const canvas = el("div", { class: "page-canvas" });
     canvas.classList.toggle("full-width", Boolean(page.full_width));
@@ -84,6 +121,7 @@ export class PageView {
       onNavigate: (id, options) => this.context.openPage(id, options),
     });
     this.editor.onChange = () => this.syncQuickstart();
+    this.editor.onAskClyra = (text, mode) => this.context.askWithSelection?.(text, mode);
     this.editor.onGenerate = (kind, target) => this.context.generate(kind, target);
     this.editor.onCreateChildPage = (block) => this.createChildPage(block);
     this.editor.onLinkPage = (block) => this.linkPage(block);

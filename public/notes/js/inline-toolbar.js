@@ -49,6 +49,14 @@ export function openInlineToolbar({ editor, block, line, range }) {
         });
       },
     }, icon("sparkle", 15), "Ask AI") : null,
+    state.aiConfigured ? el("button", {
+      class: "text-button", type: "button", title: "Attach the selection to the Clyra chat",
+      onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "add"); },
+    }, icon("comment", 15), "Add to chat") : null,
+    state.aiConfigured ? el("button", {
+      class: "text-button", type: "button", title: "Ask Clyra about the selection",
+      onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "ask"); },
+    }, icon("comment", 15), "Ask Clyra") : null,
     state.aiConfigured ? el("div", { class: "sep" }) : null,
     dropdown(BLOCK_TYPES[block.type]?.label || "Text", "Turn into", (anchor) =>
       menu(anchor, TURN_INTO.map((type) => ({

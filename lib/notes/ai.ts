@@ -156,22 +156,45 @@ export type GeneratedCard = {
   type?: string; sourcePageId?: string; sourceBlockId?: string;
 };
 
+/* The model often returns fewer items than it was asked for when the number is large. So the request is made in rounds:
+   each round asks only for what is still missing (and is told what already exists), until the number the person typed is
+   reached or a round adds nothing. It never returns more than was asked for. */
+const MAX_CARDS = 100;
+const MAX_QUESTIONS = 80;
+
 export async function generateCards(
   context: ContextChunk[],
   options: { count?: number; difficulty?: string; style?: string; existing?: string[] } = {},
 ) {
-  const count = Math.min(60, Math.max(1, Number(options.count) || 12));
-  const avoid = options.existing?.length
-    ? `\n\nThe deck already contains these fronts. Do not repeat them or restate them in other words:\n${options.existing.slice(0, 120).map((front) => `- ${front}`).join("\n")}`
-    : "";
-  const result = await json<{ cards: GeneratedCard[] }>(
-    [
-      { role: "system", content: `${SYSTEM_GROUNDED}\n\nReturn JSON: {"cards":[{"front":"","back":"","hint":"","explanation":"","type":"basic|cloze|term|qa|concept","sourcePageId":"","sourceBlockId":""}]}. Each card tests one idea. Fronts must be answerable without seeing the card's own back. Cloze cards put the removed text in the back and mark it in the front with {{...}}.` },
-      { role: "user", content: `Write ${count} ${options.difficulty || "mixed difficulty"} flashcards${options.style ? ` in a ${options.style} style` : ""} from this material.${avoid}\n\n${renderContext(context)}` },
-    ],
-    "notes-ai-flashcards",
-  );
-  return (result.cards || []).filter((card) => card.front?.trim() && card.back?.trim()).slice(0, count);
+  const count = Math.min(MAX_CARDS, Math.max(1, Math.floor(Number(options.count)) || 12));
+  const made: GeneratedCard[] = [];
+  const seen = new Set((options.existing ?? []).map((front) => front.trim().toLowerCase()));
+  for (let round = 0; round < 4 && made.length < count; round += 1) {
+    const missing = count - made.length;
+    const batch = Math.min(missing, 40);
+    const known = [...(options.existing ?? []), ...made.map((card) => card.front)];
+    const avoid = known.length
+      ? `\n\nThe deck already contains these fronts. Do not repeat them or restate them in other words:\n${known.slice(-120).map((front) => `- ${front}`).join("\n")}`
+      : "";
+    const result = await json<{ cards: GeneratedCard[] }>(
+      [
+        { role: "system", content: `${SYSTEM_GROUNDED}\n\nReturn JSON: {"cards":[{"front":"","back":"","hint":"","explanation":"","type":"basic|cloze|term|qa|concept","sourcePageId":"","sourceBlockId":""}]}. Each card tests one idea. Fronts must be answerable without seeing the card's own back. Cloze cards put the removed text in the back and mark it in the front with {{...}}. Return exactly the number of cards asked for.` },
+        { role: "user", content: `Write exactly ${batch} ${options.difficulty || "mixed difficulty"} flashcards${options.style ? ` in a ${options.style} style` : ""} from this material.${avoid}\n\n${renderContext(context)}` },
+      ],
+      "notes-ai-flashcards",
+    );
+    let added = 0;
+    for (const card of result.cards || []) {
+      const key = card.front?.trim().toLowerCase();
+      if (!key || !card.back?.trim() || seen.has(key)) continue;
+      seen.add(key);
+      made.push(card);
+      added += 1;
+      if (made.length >= count) break;
+    }
+    if (!added) break; // the material has no more distinct ideas to test
+  }
+  return made.slice(0, count);
 }
 
 export type GeneratedQuestion = {
@@ -184,22 +207,38 @@ export async function generateQuestions(
   context: ContextChunk[],
   options: { count?: number; difficulty?: string; types?: string[]; topics?: string[] } = {},
 ) {
-  const count = Math.min(50, Math.max(1, Number(options.count) || 10));
+  const count = Math.min(MAX_QUESTIONS, Math.max(1, Math.floor(Number(options.count)) || 10));
   const types = options.types?.length
     ? options.types
     : ["multiple_choice", "true_false", "short_answer", "fill_blank"];
-  const result = await json<{ questions: GeneratedQuestion[] }>(
-    [
-      {
-        role: "system",
-        content: `${SYSTEM_GROUNDED}\n\nReturn JSON: {"questions":[{"type":"","prompt":"","choices":[],"answer":null,"explanation":"","topic":"","points":1,"sourcePageId":"","sourceBlockId":""}]}.
-Answer shapes by type — multiple_choice: the exact correct choice string; multiple_response: array of correct choice strings; true_false: "true" or "false"; short_answer, fill_blank, definition: an array of acceptable answers; matching: an object mapping each left item to its right item; essay: a model answer string. Only multiple_choice and multiple_response carry choices.`,
-      },
-      { role: "user", content: `Write ${count} ${options.difficulty || "mixed difficulty"} exam questions using these types: ${types.join(", ")}.${options.topics?.length ? ` Focus on: ${options.topics.join(", ")}.` : ""}\n\n${renderContext(context)}` },
-    ],
-    "notes-ai-questions",
-  );
-  return (result.questions || []).filter((question) => question.prompt?.trim()).slice(0, count);
+  const made: GeneratedQuestion[] = [];
+  const seen = new Set<string>();
+  for (let round = 0; round < 4 && made.length < count; round += 1) {
+    const batch = Math.min(count - made.length, 30);
+    const avoid = made.length ? `\n\nAlready written (do not repeat or rephrase):\n${made.slice(-80).map((item) => `- ${item.prompt}`).join("\n")}` : "";
+    const result = await json<{ questions: GeneratedQuestion[] }>(
+      [
+        {
+          role: "system",
+          content: `${SYSTEM_GROUNDED}\n\nReturn JSON: {"questions":[{"type":"","prompt":"","choices":[],"answer":null,"explanation":"","topic":"","points":1,"sourcePageId":"","sourceBlockId":""}]}.
+Answer shapes by type — multiple_choice: the exact correct choice string; multiple_response: array of correct choice strings; true_false: "true" or "false"; short_answer, fill_blank, definition: an array of acceptable answers; matching: an object mapping each left item to its right item; essay: a model answer string. Only multiple_choice and multiple_response carry choices. Return exactly the number of questions asked for.`,
+        },
+        { role: "user", content: `Write exactly ${batch} ${options.difficulty || "mixed difficulty"} exam questions using these types: ${types.join(", ")}.${options.topics?.length ? ` Focus on: ${options.topics.join(", ")}.` : ""}${avoid}\n\n${renderContext(context)}` },
+      ],
+      "notes-ai-questions",
+    );
+    let added = 0;
+    for (const question of result.questions || []) {
+      const key = question.prompt?.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      made.push(question);
+      added += 1;
+      if (made.length >= count) break;
+    }
+    if (!added) break;
+  }
+  return made.slice(0, count);
 }
 
 export type GeneratedDocument = { title: string; markdown: string };

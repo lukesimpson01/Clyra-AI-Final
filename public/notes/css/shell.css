@@ -582,3 +582,143 @@
 .is-leaving { pointer-events: none !important; opacity: 0 !important; translate: 0 4px; scale: 0.99;
   transition: opacity 150ms cubic-bezier(.4, 0, 1, 1), translate 170ms cubic-bezier(.4, 0, 1, 1), scale 170ms cubic-bezier(.4, 0, 1, 1); }
 .layer.is-leaving { translate: none; scale: none; }
+
+
+/* ---- page locks ---- */
+.lock-dialog { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.lock-dialog-icon { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto; border-radius: 14px; background: var(--surface-hover, #f1f1f1); color: var(--text-secondary, #555); }
+.lock-dialog-text { margin: 0; text-align: center; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary, #666); }
+.lock-note { min-height: 18px; text-align: center; font-size: 12.5px; color: var(--text-tertiary, #888); }
+.lock-note.is-error { color: #c0392b; }
+.lock-screen { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 320px; margin: 72px auto 24px; padding: 28px 24px; border: 1px solid var(--border-subtle, #ececec); border-radius: 20px; background: var(--surface, #fff); }
+.lock-screen .input { width: 100%; }
+.lock-screen-title { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.editor-host.is-covered { display: none; }
+
+
+/* ---- top buttons: a label opens on click (the selected one); pointing only shows a small name above ---- */
+.nav-item:hover:not(.selected) .nav-name, .nav-item:focus-visible:not(.selected) .nav-name { grid-template-columns: 0fr; }
+.nav-item:hover:not(.selected) .nav-name-text, .nav-item:focus-visible:not(.selected) .nav-name-text { padding: 0; }
+.sidebar-nav:has(.nav-item:hover) .nav-item.selected:not(:hover) .nav-name,
+.sidebar-nav:has(.nav-item:focus-visible) .nav-item.selected:not(:focus-visible) .nav-name { grid-template-columns: 1fr; }
+.sidebar-nav:has(.nav-item:hover) .nav-item.selected:not(:hover) .nav-name-text,
+.sidebar-nav:has(.nav-item:focus-visible) .nav-item.selected:not(:focus-visible) .nav-name-text { padding: 0 6px 0 5px; }
+.nav-item, .rail-tab { position: relative; }
+.nav-item[data-tip]::after, .rail-tab[data-tip]::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translate(-50%, 3px);
+  padding: 3px 7px; border-radius: 6px; background: var(--text-primary, #222); color: var(--surface, #fff);
+  font-size: 11px; font-weight: 450; line-height: 15px; white-space: nowrap; pointer-events: none; opacity: 0; z-index: 30;
+  transition: opacity 140ms ease, transform 160ms ease;
+}
+.nav-item[data-tip]:hover::after, .nav-item[data-tip]:focus-visible::after,
+.rail-tab[data-tip]:hover::after, .rail-tab[data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 280ms; }
+.nav-item.selected[data-tip]::after, .rail-tab.selected[data-tip]::after { display: none; }
+
+/* ---- the three dots: heavier and easier to see ---- */
+svg[data-icon="dots"] { stroke-width: 3.4; }
+
+
+/* ================= page locks: PIN boxes, password, strength ================= */
+.lock-hero { display: grid; place-items: center; margin-bottom: 4px; }
+.lock-hero-badge { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 18px; color: #3b6fe0; background: linear-gradient(160deg, #f4f7ff, #e6eeff); box-shadow: inset 0 0 0 1px rgba(59,111,224,.16), 0 10px 24px -14px rgba(59,111,224,.55); }
+.lock-title { margin: 2px 0 0; text-align: center; font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--text-primary, #1c1e22); }
+.lock-dialog { gap: 14px; }
+.lock-segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 12px; background: var(--background-subtle, #f1f2f4); }
+.lock-seg { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary, #666b73); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease; }
+.lock-seg.active { background: #fff; color: var(--text-primary, #1c1e22); box-shadow: 0 1px 2px rgba(15,23,42,.1), 0 0 0 1px rgba(15,23,42,.05); }
+.lock-pane { display: flex; flex-direction: column; gap: 10px; }
+.lock-pane[hidden] { display: none; }
+.lock-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary, #868b93); margin-top: 2px; }
+.lock-lengths { display: inline-flex; gap: 6px; align-self: center; }
+.lock-chip { height: 28px; padding: 0 12px; border: 1px solid var(--border-subtle, #e3e5e8); border-radius: 999px; background: #fff; color: var(--text-secondary, #666b73); font: inherit; font-size: 12.5px; cursor: pointer; transition: all 160ms ease; }
+.lock-chip.active { border-color: #3b6fe0; color: #2457c5; background: #f2f6ff; }
+.pin-boxes { display: flex; justify-content: center; gap: 8px; }
+.pin-boxes[data-length="8"] { gap: 6px; }
+.pin-box { width: 44px; height: 54px; padding: 0; text-align: center; font-size: 22px; font-weight: 600; letter-spacing: 0; border: 1.5px solid var(--border-subtle, #dfe2e6); border-radius: 13px; background: #fff; color: var(--text-primary, #1c1e22); caret-color: #3b6fe0; outline: none; transition: border-color 140ms ease, box-shadow 140ms ease, transform 160ms cubic-bezier(.22,1,.36,1), background 140ms ease; }
+.pin-boxes[data-length="8"] .pin-box { width: 36px; height: 48px; font-size: 19px; border-radius: 11px; }
+.pin-box:focus { border-color: #3b6fe0; box-shadow: 0 0 0 4px rgba(59,111,224,.15); transform: translateY(-1px); }
+.pin-box.filled { background: #f7f9fe; border-color: #b9c8ee; }
+.pin-boxes[data-state="ok"] .pin-box.filled { border-color: #3f9f67; background: #f4fbf7; }
+.pin-boxes[data-state="error"] .pin-box.filled { border-color: #d6574a; background: #fff6f5; }
+.pin-boxes.shake, .pw-field.shake { animation: lock-shake 380ms cubic-bezier(.36,.07,.19,.97) both; }
+.pin-boxes.shake .pin-box { border-color: #d6574a; background: #fff6f5; }
+@keyframes lock-shake { 10%,90% { transform: translateX(-2px); } 20%,80% { transform: translateX(4px); } 30%,50%,70% { transform: translateX(-6px); } 40%,60% { transform: translateX(6px); } }
+.pw-field { display: flex; flex-direction: column; gap: 4px; }
+.pw-row { position: relative; }
+.pw-input { width: 100%; height: 44px; padding: 0 44px 0 14px; box-sizing: border-box; border: 1.5px solid var(--border-subtle, #dfe2e6); border-radius: 12px; background: #fff; font: inherit; font-size: 15px; color: var(--text-primary, #1c1e22); outline: none; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.pw-input:focus { border-color: #3b6fe0; box-shadow: 0 0 0 4px rgba(59,111,224,.15); }
+.pw-input.is-ok { border-color: #3f9f67; } .pw-input.is-bad { border-color: #d6574a; }
+.pw-eye { position: absolute; right: 6px; top: 6px; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-tertiary, #868b93); cursor: pointer; }
+.pw-eye:hover { background: var(--background-hover, #f1f2f4); color: var(--text-primary, #1c1e22); }
+.pw-caps { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #b26b00; }
+.pw-caps[hidden] { display: none; }
+.pw-meter { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 4px; }
+.pw-meter-head { display: flex; align-items: center; gap: 10px; }
+.pw-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; flex: 1; }
+.pw-bars span { height: 5px; border-radius: 999px; background: var(--background-subtle, #e8eaed); transition: background 220ms ease; }
+.pw-meter[data-score="1"] .pw-bars span.on { background: #d6574a; } .pw-meter[data-score="2"] .pw-bars span.on { background: #e8923a; }
+.pw-meter[data-score="3"] .pw-bars span.on { background: #c9b32f; } .pw-meter[data-score="4"] .pw-bars span.on { background: #3f9f67; }
+.pw-strength-word { flex: none; min-width: 74px; text-align: right; font-size: 12px; font-weight: 500; color: var(--text-secondary, #666b73); }
+.pw-checks { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.pw-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-tertiary, #8a8f98); transition: color 180ms ease; }
+.pw-check-mark { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; border: 1.4px solid #cdd1d6; color: #fff; transition: all 200ms cubic-bezier(.22,1,.36,1); }
+.pw-check.ok { color: var(--text-secondary, #5b6068); }
+.pw-check.ok .pw-check-mark { background: #3f9f67; border-color: #3f9f67; }
+.lock-match { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 18px; font-size: 12.5px; color: var(--text-tertiary, #868b93); }
+.lock-match.ok { color: #2f8556; } .lock-match.bad { color: #c0392b; }
+.lock-match svg { color: currentColor; }
+.lock-fineprint { display: flex; gap: 7px; align-items: flex-start; margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-tertiary, #8a8f98); }
+.lock-fineprint svg { flex: none; margin-top: 2px; }
+.unlock-form { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.lock-screen { max-width: 380px; gap: 14px; padding: 32px 28px; }
+.lock-screen .pw-field, .lock-screen .unlock-form { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .pin-box, .pw-bars span, .pw-check-mark, .lock-seg, .lock-chip { transition: none; } .pin-boxes.shake, .pw-field.shake { animation: none; } }
+
+/* ================= premium lock screen + creation steps ================= */
+.lock-stage { display: grid; place-items: center; min-height: 100%; background: radial-gradient(ellipse 60% 42% at 50% 34%, rgba(59,111,224,.09), transparent 70%); }
+.lock-stage .lock-screen { position: relative; width: min(420px, calc(100% - 32px)); max-width: none; margin: 0 auto; padding: 38px 32px 24px; gap: 10px; border: 1px solid rgba(59,111,224,.14); border-radius: 28px; background: linear-gradient(180deg, #fff, #fafbfe); box-shadow: 0 1px 0 #fff inset, 0 30px 70px -34px rgba(32,56,120,.38), 0 2px 10px rgba(15,23,42,.05); animation: lock-rise 460ms cubic-bezier(.22,1,.36,1) both; transition: opacity 240ms ease, transform 260ms cubic-bezier(.22,1,.36,1), filter 240ms ease; }
+.lock-stage .lock-screen.is-opening { opacity: 0; transform: scale(1.03) translateY(-6px); filter: blur(3px); }
+@keyframes lock-rise { from { opacity: 0; transform: translateY(14px) scale(.98); } }
+.lock-hero-large { position: relative; width: 96px; height: 96px; margin-bottom: 6px; }
+.lock-hero-large .lock-hero-badge { width: 64px; height: 64px; border-radius: 22px; z-index: 1; }
+.lock-hero-rings { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(59,111,224,.18); }
+.lock-hero-rings::before, .lock-hero-rings::after { content: ""; position: absolute; inset: -14px; border-radius: 50%; border: 1px solid rgba(59,111,224,.1); animation: lock-ring 3.6s ease-out infinite; }
+.lock-hero-rings::after { animation-delay: 1.8s; }
+@keyframes lock-ring { from { transform: scale(.78); opacity: .9; } to { transform: scale(1.18); opacity: 0; } }
+.lock-stage .lock-screen-title { font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+.lock-stage .lock-dialog-text { max-width: 280px; margin-bottom: 8px; }
+.lock-stage .pin-box { width: 48px; height: 60px; font-size: 24px; border-radius: 15px; }
+.lock-stage .pin-boxes[data-length="8"] .pin-box { width: 37px; height: 52px; font-size: 20px; border-radius: 12px; }
+.lock-stage .pin-boxes { gap: 9px; }
+.lock-stage .pin-boxes[data-length="8"] { gap: 6px; }
+.lock-screen-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 14px; width: 100%; justify-content: center; border-top: 1px solid var(--border-subtle, #eceef1); font-size: 11.5px; color: var(--text-tertiary, #8a8f98); }
+.lock-hero-badge { background: linear-gradient(160deg, #5b8cf0, #2f5fd0); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 14px 28px -12px rgba(47,95,208,.7); }
+.lock-hero:not(.lock-hero-large) .lock-hero-badge { width: 56px; height: 56px; border-radius: 19px; }
+.lock-step-title { text-align: center; font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text-primary, #1c1e22); }
+.lock-step-title.swap { animation: lock-swap 320ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes lock-swap { from { opacity: 0; transform: translateY(6px); } }
+.lock-step-hint { text-align: center; font-size: 12.5px; color: var(--text-tertiary, #868b93); }
+.lock-pips { display: flex; justify-content: center; gap: 6px; }
+.lock-pips i { width: 22px; height: 4px; border-radius: 999px; background: #e3e7ee; transition: background 260ms ease, width 260ms cubic-bezier(.22,1,.36,1); }
+.lock-pips i.on { background: #3b6fe0; width: 30px; }
+.lock-dialog .pin-boxes { margin: 4px 0; }
+.pin-boxes.shake .pin-box { border-color: #d6574a; background: #fff1ef; color: #b53a2e; }
+.pw-field.shake .pw-input, .pw-input.is-bad { border-color: #d6574a; background: #fff6f5; }
+.lock-dialog .lock-match { min-height: 20px; }
+@media (max-width: 420px) { .lock-stage .pin-box { width: 40px; height: 52px; } .lock-stage .pin-boxes[data-length="8"] .pin-box { width: 31px; height: 46px; } }
+@media (prefers-reduced-motion: reduce) { .lock-hero-rings::before, .lock-hero-rings::after, .lock-stage .lock-screen, .lock-step-title.swap { animation: none; } }
+.lock-dialog { gap: 10px; }
+.lock-dialog .lock-hero-badge { width: 46px; height: 46px; border-radius: 16px; }
+.lock-dialog .lock-title { font-size: 16px; }
+.lock-dialog .lock-pane { gap: 8px; }
+.lock-dialog .pin-box { width: 42px; height: 52px; font-size: 21px; }
+.lock-dialog .pin-boxes[data-length="8"] .pin-box { width: 34px; height: 48px; font-size: 18px; }
+.lock-dialog .lock-fineprint { font-size: 11px; }
+.lock-dialog .pw-checks { grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.lock-dialog .pw-check { font-size: 12px; }
+@media (max-width: 460px) { .lock-dialog .pw-checks { grid-template-columns: 1fr; } }
+
+.lock-dialog.is-password .lock-hero { display: none; }
+.lock-dialog.is-password .lock-title { font-size: 15px; }
+.lock-dialog.is-password .lock-dialog-text { font-size: 12.5px; }
+.lock-dialog.is-password .pw-meter { gap: 6px; }

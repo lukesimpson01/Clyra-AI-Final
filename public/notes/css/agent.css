@@ -1,0 +1,40 @@
+/* The Notes chat's tool run: plan pill + real steps, in Clyra chat's quiet action language. */
+.ag-run { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.ag-steps { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ag-row { display: flex; align-items: center; gap: 9px; min-height: 28px; font-size: 12.5px; line-height: 20px; color: var(--text-secondary, #737373); animation: ag-fade 260ms ease both; }
+.ag-row-icon { display: grid; place-items: center; flex: none; width: 20px; height: 20px; color: var(--text-tertiary, #8a8a8a); }
+.ag-row-label { flex: 0 1 auto; min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-row.failed .ag-row-label, .ag-row.failed .ag-row-icon { color: #b3382f; }
+.ag-row-meta { margin-left: auto; min-width: 0; max-width: 46%; padding-left: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-tertiary, #9a9a9a); }
+.ag-favicons { display: inline-flex; margin-left: 4px; }
+.ag-favicon { display: grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--surface, #fff); border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.1); overflow: hidden; animation: ag-slide 520ms cubic-bezier(.14,.83,.26,1) both; }
+.ag-favicon + .ag-favicon { margin-left: -6px; }
+.ag-favicon img { width: 100%; height: 100%; object-fit: cover; }
+.ag-open { margin-left: auto; flex: none; height: 24px; padding: 0 10px; border: 1px solid var(--border-subtle, #e6e6e6); border-radius: 999px; background: var(--surface, #fff); color: var(--text-primary, #222); font: inherit; font-size: 12px; cursor: pointer; }
+.ag-open:hover { background: var(--surface-hover, #f4f4f4); }
+
+.ag-todo { max-width: 440px; border: 1px solid var(--border-subtle, #e8e8e8); border-radius: 999px; background: var(--surface, #fff); transition: border-radius 300ms cubic-bezier(.22,1,.36,1); }
+.ag-todo.is-open { border-radius: 18px; }
+.ag-todo-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 6px 14px; border: 0; background: transparent; border-radius: inherit; text-align: left; cursor: pointer; font: inherit; font-size: 13px; color: var(--text-primary, #222); }
+.ag-todo-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-todo-count { flex: none; font-size: 12px; color: var(--text-tertiary, #8f8f8f); font-variant-numeric: tabular-nums; }
+.ag-todo-head > svg:last-child { flex: none; color: var(--text-tertiary, #a0a0a0); transition: transform 280ms cubic-bezier(.22,1,.36,1); }
+.ag-todo.is-open .ag-todo-head > svg:last-child { transform: rotate(180deg); }
+.ag-todo-collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(.22,1,.36,1); }
+.ag-todo.is-open .ag-todo-collapse { grid-template-rows: 1fr; }
+.ag-todo-list { min-height: 0; overflow: hidden; margin: 0; padding: 0 14px; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.ag-todo.is-open .ag-todo-list { padding: 2px 14px 13px; }
+.ag-todo-item { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 20px; color: var(--text-secondary, #5d5d5d); }
+.ag-todo-item[data-status="in_progress"] { color: var(--text-primary, #171717); font-weight: 500; }
+.ag-todo-item[data-status="completed"] .ag-todo-text { color: #9a9a9a; text-decoration: line-through; text-decoration-color: #c4c4c4; }
+.ag-glyph { flex: none; }
+.ag-glyph-completed { color: #3f9f67; }
+.ag-glyph-pending { color: #b5b5b5; }
+.ag-glyph-in_progress { color: #3977e8; }
+.ag-spinner { flex: none; box-sizing: border-box; width: 14px; height: 14px; border: 1.5px solid #cfd9f5; border-top-color: #3977e8; border-radius: 50%; animation: ag-spin 800ms linear infinite; }
+@keyframes ag-spin { to { transform: rotate(360deg); } }
+@keyframes ag-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ag-slide { 0% { opacity: 0; transform: translate3d(-18px, 0, 0) scale(.8); } 100% { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ag-row, .ag-favicon, .ag-spinner { animation: none; } .ag-todo, .ag-todo-collapse { transition: none; } }
+
+.chat-chip-quote { max-width: 220px; font-style: italic; }

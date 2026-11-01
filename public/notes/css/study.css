@@ -1310,3 +1310,20 @@
 .lecture-caption:not(:empty), .lecture-caption.busy { max-height: 22px; opacity: 1; padding: 2px 0 2px; }
 .lecture-caption.busy::after { content: " · transcribing"; color: #a3a6ad; }
 @media (prefers-reduced-motion: reduce) { .lecture-strip, .lecture-dot { animation: none; } }
+
+/* ---- notes browser start screen: a real search box ---- */
+.wb-start-search { display: flex; align-items: center; gap: 8px; width: min(100%, 360px); height: 40px; margin: 6px auto 14px; padding: 0 14px; border: 1px solid var(--border-subtle, #e6e6e6); border-radius: 999px; background: var(--surface, #fff); color: var(--text-tertiary, #888); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.wb-start-search:focus-within { border-color: #3977f6; box-shadow: 0 0 0 3px rgba(57, 119, 246, .14); }
+.wb-start-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 14px; color: var(--text-primary, #222); }
+
+
+/* ---- generation steps: icons + shimmer, no checklist ticks ---- */
+.check-icon { display: grid; place-items: center; flex: none; width: 20px; height: 20px; color: var(--text-tertiary, #8a8f98); transition: color 240ms ease, transform 300ms cubic-bezier(.22,1,.36,1); }
+.check-step[data-state="running"] .check-icon { color: #3977f6; animation: check-icon-pulse 1.6s ease-in-out infinite; }
+.check-step[data-state="done"] .check-icon { color: var(--text-tertiary, #9aa0a8); }
+.check-step[data-state="done"] .check-text { color: var(--text-secondary, #6b7078); }
+.check-step[data-state="failed"] .check-icon { color: var(--danger, #c0392b); }
+.check-step .check-dot { display: none; }
+.check-step[data-state="running"] .check-text.check-shine { background: none; }
+@keyframes check-icon-pulse { 0%, 100% { opacity: .65; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .check-step[data-state="running"] .check-icon { animation: none; } }

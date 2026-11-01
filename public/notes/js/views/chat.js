@@ -11,6 +11,7 @@ import { state, withError, refreshPages } from "../state.js";
 import { formatRelative } from "../app.js";
 import { renderMarkdown } from "../ai-composer.js";
 import { openSearch } from "../search.js";
+import { streamAgent, renderAgentRun } from "../agent-run.js";
 
 const SUGGESTIONS = [
   "Summarise what I wrote this week",
@@ -26,6 +27,8 @@ export function renderChat(host, app, options = {}) {
   let messages = [];
   let sources = [];
   let busy = false;
+  let askAbort = null;
+  let quotes = [];
   let chatId = null;
   let chats = [];
   let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
@@ -206,6 +209,18 @@ export function renderChat(host, app, options = {}) {
 
   const onNewChat = () => startChat();
   window.addEventListener("clyra:new-chat", onNewChat);
+  /* Text selected in a page: "Add to chat" attaches it as context; "Ask Clyra" attaches it and starts the question. */
+  const onQuote = (event) => {
+    const { text, mode } = event.detail || {};
+    if (!text?.trim()) return;
+    const quote = text.trim().replace(/\s+/g, " ").slice(0, 1500);
+    if (!quotes.includes(quote)) quotes.push(quote);
+    paintSources();
+    if (mode === "ask" && !input.value.trim()) { input.value = "Explain this: "; grow(); syncSend(); }
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  };
+  window.addEventListener("clyra:notes-quote", onQuote);
 
   const addSource = () => openSearch({
     title: "Add context",
@@ -220,6 +235,13 @@ export function renderChat(host, app, options = {}) {
 
   const paintSources = () => {
     clear(chips);
+    for (const quote of quotes) {
+      chips.append(el("span", { class: "chat-chip chat-chip-quote", title: quote }, icon("comment", 13), `\u201C${quote.slice(0, 38)}${quote.length > 38 ? "\u2026" : ""}\u201D`,
+        el("button", {
+          class: "chat-chip-remove", type: "button", "aria-label": "Remove selection",
+          onclick: () => { quotes = quotes.filter((candidate) => candidate !== quote); paintSources(); },
+        }, icon("close", 10))));
+    }
     for (const source of sources) {
       chips.append(el("span", { class: "chat-chip" },
         icon("page", 13), source.title,
@@ -301,12 +323,21 @@ export function renderChat(host, app, options = {}) {
         append(body, el("div", { class: "ai-error", text: message.error }),
           el("button", { class: "ai-action", type: "button", onclick: () => ask(message) }, "Retry"));
       } else if (message.pending) {
+        /* What is shown is what is happening: the plan and each tool call as it runs, then the answer as it streams. */
+        message.runState = message.runState || {};
         append(body,
-          message.steps ? actionList(message.steps, message.stepIndex ?? 0) : null,
-          message.searching ? workRow(`Searching the web for "${message.searching}"`, "search") : null,
-          !message.steps && !message.searching ? workRow("Reading your notes", "think") : null);
+          renderAgentRun(message.run, { live: true, onOpenNote: (id) => app.openPage(id), state: message.runState }),
+          message.text ? el("div", { class: "chat-stream", html: renderMarkdown(message.text) }) : null,
+          !message.run?.todos.length && !message.run?.steps.length && !message.text ? workRow("Thinking", "think") : null);
       } else {
-        revealAnswer(body, message.text, !message.restored);
+        if (message.run) {
+          message.runState = message.runState || {};
+          const view = renderAgentRun(message.run, { live: false, onOpenNote: (id) => app.openPage(id), state: message.runState });
+          if (view) body.append(view);
+        }
+        const answerHost = el("div", { class: "chat-answer-text" });
+        body.append(answerHost);
+        revealAnswer(answerHost, message.text, !message.restored);
         if (message.searched) {
           body.append(el("div", { class: "ai-searched" }, icon("search", 12), `Searched the web for "${message.searched}"`));
         }
@@ -324,7 +355,7 @@ export function renderChat(host, app, options = {}) {
           const citation = (message.citations || []).find((entry) => String(entry.index) === cite.dataset.index);
           if (citation?.pageId) app.openPage(citation.pageId, { blockId: citation.blockId });
         });
-        body.innerHTML = linkCitations(body.innerHTML, message.citations || []);
+        if (message.citations?.length) answerHost.innerHTML = linkCitations(answerHost.innerHTML, message.citations);
       }
       thread.append(el("div", { class: "chat-column chat-row assistant" }, wrapper));
     }
@@ -346,33 +377,62 @@ export function renderChat(host, app, options = {}) {
     syncSend();
     paint();
 
-    /* The step list is driven by what actually happens: it only claims to be
-       searching once the server says it searched. */
-    const stages = sources.length
-      ? ["Reading the pages you attached", "Working out the answer", "Writing it up"]
-      : ["Reading your notes", "Working out the answer", "Writing it up"];
-    answer.steps = stages;
-    paint();
-    const ticker = setInterval(() => {
-      if (answer.stepIndex < stages.length - 1) { answer.stepIndex += 1; paint(); }
-    }, 1600);
-
+    const controller = new AbortController();
+    askAbort = controller;
+    answer.run = { todos: [], steps: [] };
+    answer.text = "";
+    let roundText = "";
+    let finished = false;
+    const history = messages
+      .filter((m) => m !== answer && (m.role === "user" || (m.role === "assistant" && m.text && !m.error)))
+      .slice(-12)
+      .map((m) => ({ role: m.role, content: String(m.text).slice(0, 6000) }));
+    /* A retry re-sends the same question without duplicating it. */
+    const last = history[history.length - 1];
+    const quoted = quotes.length ? `\n\nSelected text from the page:\n${quotes.map((q) => `> ${q}`).join("\n")}` : "";
+    if (!(last && last.role === "user" && last.content === question)) history.push({ role: "user", content: question + quoted });
+    else if (quoted) last.content = question + quoted;
+    quotes = [];
+    paintSources();
+    const pageIds = [...new Set([...sources.map((source) => source.pageId), ...(app.currentPageId?.() ? [String(app.currentPageId())] : [])])];
     try {
-      const attached = sources.map((source) => ({ pageId: source.pageId }));
-      const result = await api.post("/api/notes/ai/ask", { question, sources: attached });
-      clearInterval(ticker);
-      answer.pending = false;
-      answer.text = result.text;
-      answer.sources = result.sources || [];
-      answer.citations = result.citations || [];
-      answer.searched = result.searched || null;
-      await remember({ role: "assistant", text: answer.text, sources: answer.sources, citations: answer.citations, searched: answer.searched });
-      loadChats();
+      await streamAgent({
+        messages: history,
+        notes: { pageIds, currentPageId: app.currentPageId?.() ? String(app.currentPageId()) : null },
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === "todos") answer.run.todos = event.items;
+          else if (event.type === "step") {
+            roundText = ""; answer.text = ""; // words before a tool call were commentary on that step
+            const index = answer.run.steps.findIndex((step) => step.id === event.id);
+            if (index >= 0) answer.run.steps[index] = event; else answer.run.steps.push(event);
+          } else if (event.type === "text") { roundText += event.text; answer.text = roundText; }
+          else if (event.type === "done") {
+            finished = true;
+            answer.pending = false;
+            answer.text = event.text;
+            answer.sources = (event.citations || []).map((c) => ({ pageId: "", title: c.title || c.host, url: c.url }));
+            answer.citations = [];
+            answer.searched = answer.run.steps.find((step) => step.tool === "web_search")?.query || null;
+          } else if (event.type === "error") {
+            finished = true;
+            answer.pending = false;
+            answer.error = event.code === "credits" ? "Clyra's model account is out of credits. Add credits, then press Retry." : event.code === "cancelled" ? "Stopped." : event.message || "Clyra couldn't finish this reply.";
+          }
+          paint();
+        },
+      });
+      if (!finished) { answer.pending = false; if (!answer.text) answer.error = "Clyra couldn't finish this reply."; }
+      if (!answer.error) {
+        await remember({ role: "assistant", text: answer.text, sources: answer.sources, citations: [], searched: answer.searched });
+        loadChats();
+        refreshPages?.();
+      }
     } catch (error) {
-      clearInterval(ticker);
       answer.pending = false;
-      answer.error = error.message;
+      answer.error = controller.signal.aborted ? "Stopped." : error.message;
     } finally {
+      askAbort = null;
       busy = false;
       syncSend();
       paint();
@@ -429,7 +489,7 @@ export function renderChat(host, app, options = {}) {
         source.pageId && !seen.has(source.pageId) && seen.add(source.pageId));
       paintSources();
     },
-    destroy() { window.removeEventListener("clyra:new-chat", onNewChat); },
+    destroy() { window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); },
   };
 }
 

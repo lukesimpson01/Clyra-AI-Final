@@ -128,6 +128,8 @@ export function openTemplates(app, parentId) {
       () => api.post("/api/notes/pages", {
         parentId: parentId || null,
         title: template.id === "blank" ? "" : template.name,
+        icon: template.id === "blank" ? undefined : template.emoji,
+        cover: template.cover || undefined,
         blocks: templateBlocks(template),
       }),
       "Could not create the page",
