@@ -1246,6 +1246,66 @@ const EXTRA = [
   ]},
 ];
 
+/* ---------------------------------------------------------------------------------------------------------------
+   Notion's top templates, by group. Notion sorts its gallery into Work, Life and School; each of ours now sits in the same
+   group as the Notion template it corresponds to (Cornell Notes, Class Notes, Student Planner, Meeting Notes, Project
+   Tracker, Habit Tracker, Budget...), and the use cases Notion leads with that we lacked are added below in the same
+   shape: a short banner, the things you fill in side by side, and a tracker you can keep editing.
+   --------------------------------------------------------------------------------------------------------------- */
+const NOTION = [
+  { id: "student-dashboard", name: "Student dashboard", emoji: "🎓", category: "Study", icon: "book",
+    desc: "Classes, deadlines and this week's tasks on one page, like Notion's Student Life.", blocks: () => [
+      callout("🎓", "Open this first each day. **Classes** on the left, **what is due** on the right, everything else underneath.", "default"),
+      columns(
+        [h3("📚 Classes"), table([["Class", "Day / time", "Room"], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], { align: ["left", "left", "left"] })],
+        [h3("✅ This week"), todo(""), todo(""), todo(""), todo(""), todo("")]),
+      h2("Assignments"),
+      table([["Assignment", "Class", "Due", "Status"], ["", "", "", "Not started"], ["", "", "", "Not started"], ["", "", "", "Not started"]], { align: ["left", "left", "center", "center"] }),
+      h2("Exams"),
+      table([["Exam", "Date", "Topics", "Revised"], ["", "", "", ""], ["", "", "", ""]], { align: ["left", "center", "left", "center"] }),
+      toggle("Term goals", [todo(""), todo(""), todo("")]),
+      toggle("Useful links", [li(""), li("")]),
+    ] },
+  { id: "applications", name: "School applications tracker", emoji: "📮", category: "Planning", icon: "template",
+    desc: "Deadlines, essays and recommendations for every application.", blocks: () => [
+      callout("📮", "One row per application. Work backwards from the deadline: **essay draft two weeks out**, recommendations asked **a month out**.", "default"),
+      table([["School", "Deadline", "Essay", "Recommendations", "Status"], ["", "", "Not started", "0 / 2", "Researching"], ["", "", "Not started", "0 / 2", "Researching"], ["", "", "Not started", "0 / 2", "Researching"]], { align: ["left", "center", "center", "center", "center"] }),
+      h2("Essay drafts"), toggle("Personal statement", [p("")]), toggle("Why this school", [p("")]),
+      checklist("Every application", ["Transcript requested", "Test scores sent", "Recommendations confirmed", "Fee paid", "Submitted and confirmation saved"]),
+    ] },
+  { id: "roadmap", name: "Roadmap", emoji: "🗺️", category: "Work", icon: "template",
+    desc: "Now, next and later, with the reason behind each bet.", blocks: () => [
+      callout("🗺️", "A roadmap is a set of **bets with reasons**, not a promise of dates. Keep Now small.", "default"),
+      columns(
+        [h3("Now"), todo(""), todo(""), todo("")],
+        [h3("Next"), todo(""), todo(""), todo("")],
+        [h3("Later"), li(""), li(""), li("")]),
+      h2("Initiatives"),
+      table([["Initiative", "Why it matters", "Owner", "Quarter", "Status"], ["", "", "", "", "Planned"], ["", "", "", "", "Planned"], ["", "", "", "", "Planned"]], { align: ["left", "left", "left", "center", "center"] }),
+      h2("Not doing"), li(""), li(""),
+    ] },
+  { id: "task-tracker", name: "Task tracker", emoji: "✅", category: "Work", icon: "check_square",
+    desc: "To do, doing and done on one board, with a backlog beneath.", blocks: () => [
+      columns([h3("To do"), todo(""), todo(""), todo("")], [h3("Doing"), todo(""), todo("")], [h3("Done"), todo("", true)]),
+      h2("Backlog"),
+      table([["Task", "Owner", "Priority", "Due"], ["", "", "Medium", ""], ["", "", "Medium", ""], ["", "", "Medium", ""], ["", "", "Medium", ""]], { align: ["left", "left", "center", "center"] }),
+      toggle("How to use this board", [p("Move a task between columns by dragging its handle. Keep Doing to three items or fewer.")]),
+    ] },
+  { id: "reading-list", name: "Reading list", emoji: "📖", category: "Personal", icon: "book",
+    desc: "What you are reading, what is next and what you thought.", blocks: () => [
+      columns([h3("📖 Reading now"), todo(""), todo("")], [h3("⏭️ Up next"), li(""), li(""), li("")]),
+      h2("Library"),
+      table([["Title", "Author", "Status", "Rating", "Takeaway"], ["", "", "To read", "", ""], ["", "", "To read", "", ""], ["", "", "To read", "", ""], ["", "", "To read", "", ""]], { align: ["left", "left", "center", "center", "left"] }),
+    ] },
+];
+TEMPLATES.push(...NOTION.map((entry) => ({ accent: "#8a8f9c", ...entry })));
+
+/* Notion's three groups. A template belongs to the group of the Notion template it matches. */
+export const TEMPLATE_GROUPS = ["Work", "Life", "School"];
+const LIFE = new Set(["journal", "habit-tracker", "trip", "workout-log", "recipe", "book-notes", "reading-list", "weekly-review", "daily-plan", "goal-setting", "budget"]);
+const WORK = new Set(["meeting", "agenda", "one-on-one", "project", "project-brief", "decision-record", "status-report", "okrs", "retrospective", "client-call", "proposal", "sop", "prd", "interview-scorecard", "job-tracker", "content-calendar", "blog-post", "cover-letter", "user-interview", "swot", "competitor-analysis", "roadmap", "task-tracker", "report"]);
+export const templateGroup = (template) => (LIFE.has(template.id) ? "Life" : WORK.has(template.id) || template.category === "Work" ? "Work" : "School");
+
 /* The restrained look: neutral tints and cover, one quiet icon. Applied to every template, the original catalogue
    included, so the gallery reads as one family of documents rather than a box of colour swatches. */
 const SOFT = ["#f1f2f4", "#f8f8f9"];

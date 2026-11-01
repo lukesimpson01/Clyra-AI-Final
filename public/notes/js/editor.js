@@ -2070,7 +2070,10 @@ Object.assign(Editor.prototype, {
           oninput: (event) => { rows[rowIndex][columnIndex] = event.currentTarget.textContent; save(); },
           onkeydown: (event) => this.onTableCellKey(event, block, rows, rowIndex, columnIndex, table),
         });
-        node.textContent = cell;
+        /* markdown markers written by a model or pasted in are formatting, not text: show the words, not the asterisks */
+        const clean = typeof cell === "string" ? cell.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?![*\w])/g, "$1$2").replace(/`([^`]+)`/g, "$1") : cell;
+        if (clean !== cell) rows[rowIndex][columnIndex] = clean;
+        node.textContent = clean;
         tr.append(node);
       });
       table.append(tr);

@@ -1,0 +1,106 @@
+/* Notion's design language over the whole Notes app.
+
+   Every number here was measured on the running Notion desktop app (7.39): the 270 px sidebar on #f9f8f7, 30 px rows
+   with a 6 px radius, a 44 px top bar, 16 px / 24 px text, a 40 px / 48 px page title in a 720 px column, and the
+   quiet secondary colour #5f5e59. Loaded last, so it can be removed to return to the previous look. */
+
+:root {
+  --text-secondary: #5f5e59;
+  --radius-row: 6px;
+  --row-height: 30px;
+}
+
+/* ---- sidebar ---- */
+.sidebar-search-field {
+  display: flex; align-items: center; gap: 8px; width: calc(100% - 20px); height: 32px; margin: 2px 10px 6px;
+  padding: 0 8px 0 10px; border: 1px solid var(--border-medium); border-radius: 8px; background: transparent;
+  color: var(--text-tertiary); font: 400 14px/1 var(--font-ui); text-align: left; cursor: pointer;
+  transition: background var(--duration-hover) var(--ease), border-color var(--duration-hover) var(--ease);
+}
+.sidebar-search-field:hover { background: var(--background-hover); border-color: var(--border-strong); }
+.sidebar-search-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sidebar-search-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-search-key { font: 500 11px/1 var(--font-ui); color: var(--text-tertiary); background: var(--background-selected); padding: 3px 6px; border-radius: 4px; }
+.rail-row, .sidebar-section .tree-row { border-radius: var(--radius-row); }
+.sidebar-section > .section-title, .sidebar-section-title { font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--text-tertiary); }
+
+/* ---- top bar ---- */
+.visibility-chip { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); }
+.visibility-chip svg { opacity: .8; }
+.toolbar-actions .text-button { height: 28px; padding: 0 8px; border-radius: var(--radius-row); font-size: 14px; color: var(--text-secondary); }
+.toolbar-actions .text-button:hover { background: var(--background-hover); color: var(--text-primary); }
+
+/* ---- page ---- */
+.page-canvas { font-size: 16px; }
+.page-canvas .text-line { line-height: 1.5; }
+
+/* ---- AI chat: Notion's landing ---- */
+.chat-view.landing { justify-content: center; padding-bottom: 8vh; }
+.chat-view.landing .chat-thread { flex: none; padding: 0; overflow: visible; }
+.chat-view.landing .chat-intro { padding-top: 0; }
+.chat-view.landing .chat-title { font-size: 40px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 18px 0 30px; }
+.chat-view.landing .chat-composer { width: 100%; max-width: 800px; margin: 0 auto; padding: 0 28px; }
+.chat-actions-row { display: none; }
+.chat-view.landing .chat-actions-row:not([hidden]) { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px; max-width: 800px; margin: 22px auto 0; padding: 0 28px; }
+.chat-action-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 999px;
+  font: 500 14px/1 var(--font-ui); color: var(--text-secondary); background: transparent;
+  transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease);
+  animation: chat-chip-in .45s var(--ease-out) both;
+}
+.chat-action-chip:nth-child(2) { animation-delay: 40ms; } .chat-action-chip:nth-child(3) { animation-delay: 80ms; }
+.chat-action-chip:nth-child(4) { animation-delay: 120ms; } .chat-action-chip:nth-child(5) { animation-delay: 160ms; }
+.chat-action-chip:hover { background: var(--background-hover); color: var(--text-primary); }
+.chat-action-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@keyframes chat-chip-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .chat-action-chip { animation: none; } }
+
+/* ---- Templates: Notion's Marketplace ---- */
+.template-modal.notion-gallery .modal-title, .template-modal.notion-gallery .modal-header { display: none; }
+.nm-layout { display: flex; flex-direction: column; height: min(78vh, 760px); min-height: 0; }
+.nm-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 36px 6px; }
+.nm-tabs { display: flex; gap: 22px; }
+.nm-tab { font: 700 26px/1.2 var(--font-ui); letter-spacing: -0.02em; color: var(--text-tertiary); padding: 2px 0; transition: color var(--duration-hover) var(--ease); }
+.nm-tab:hover { color: var(--text-secondary); }
+.nm-tab.active { color: var(--text-primary); }
+.nm-search { width: 240px; height: 34px; padding: 0 12px; border: 1px solid var(--border-medium); border-radius: 8px; background: var(--background-input); font: 400 14px var(--font-ui); color: var(--text-primary); outline: 0; }
+.nm-search:focus { background: var(--background-main); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.nm-main { flex: 1; min-height: 0; padding: 14px 36px 32px; overflow-y: auto; }
+.nm-heading { margin: 10px 0 18px; font: 700 20px/1.3 var(--font-ui); letter-spacing: -0.01em; color: var(--text-primary); }
+.nm-features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 30px; }
+.nm-feature { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 22px 22px 20px; border-radius: 18px; background: var(--nm-tint, var(--background-subtle)); border: 1px solid var(--border-soft); animation: nm-in .4s var(--ease-out) both; }
+.nm-eyebrow { font: 600 13px/1 var(--font-ui); color: var(--text-secondary); }
+.nm-feature-title { margin: 6px 0 0; font: 700 26px/1.15 var(--font-ui); letter-spacing: -0.02em; color: var(--text-primary); }
+.nm-feature-text { margin: 0; font: 400 14px/1.5 var(--font-ui); color: var(--text-secondary); }
+.nm-feature-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.nm-pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; background: rgba(255,255,255,.7); font: 500 13px var(--font-ui); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border-soft); transition: background var(--duration-hover) var(--ease); }
+.nm-pill:hover { background: #fff; }
+.nm-explore { margin-top: auto; height: 30px; padding: 0 12px; border-radius: 8px; background: var(--text-primary); color: var(--background-main); font: 600 13px var(--font-ui); transition: opacity var(--duration-hover) var(--ease); }
+.nm-explore:hover { opacity: .85; }
+.nm-section { margin-bottom: 30px; }
+.nm-section-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+.nm-section-title { margin: 0; font: 700 18px/1.3 var(--font-ui); letter-spacing: -0.01em; color: var(--text-primary); }
+.nm-section-text { margin: 2px 0 0; font: 400 14px/1.4 var(--font-ui); color: var(--text-secondary); }
+.nm-see-all { font: 500 14px var(--font-ui); color: var(--text-secondary); padding: 4px 8px; border-radius: 6px; }
+.nm-see-all:hover { background: var(--background-hover); color: var(--text-primary); }
+.nm-row, .nm-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.nm-card { display: flex; flex-direction: column; text-align: left; border-radius: 14px; background: var(--background-main); border: 1px solid var(--border-soft); overflow: hidden; animation: nm-in .4s var(--ease-out) both; transition: border-color var(--duration-hover) var(--ease), box-shadow var(--duration-menu) var(--ease), transform var(--duration-menu) var(--ease); }
+.nm-card:hover { border-color: var(--border-strong); box-shadow: 0 6px 20px rgba(15,15,15,.08); transform: translateY(-2px); }
+.nm-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nm-art { position: relative; display: block; aspect-ratio: 4 / 3; background: var(--background-subtle); overflow: hidden; border-bottom: 1px solid var(--border-soft); }
+.nm-art .tpl-preview { position: absolute; inset: 0; }
+.nm-use { position: absolute; left: 50%; bottom: 12px; transform: translate(-50%, 8px); padding: 6px 12px; border-radius: 999px; background: var(--text-primary); color: var(--background-main); font: 600 12.5px var(--font-ui); opacity: 0; transition: opacity var(--duration-menu) var(--ease), transform var(--duration-menu) var(--ease); }
+.nm-card:hover .nm-use, .nm-card:focus-visible .nm-use { opacity: 1; transform: translate(-50%, 0); }
+.nm-meta { display: flex; flex-direction: column; gap: 3px; padding: 11px 14px 14px; }
+.nm-name { display: flex; align-items: center; gap: 7px; font: 600 14px/1.3 var(--font-ui); color: var(--text-primary); }
+.nm-emoji { font-size: 15px; }
+.nm-desc { font: 400 12.5px/1.45 var(--font-ui); color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nm-blank { display: flex; justify-content: center; padding-top: 6px; }
+.nm-blank-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 8px; font: 500 14px var(--font-ui); color: var(--text-secondary); }
+.nm-blank-btn:hover { background: var(--background-hover); color: var(--text-primary); }
+@keyframes nm-in { from { opacity: 0; transform: translateY(8px); } }
+@media (max-width: 980px) { .nm-features { grid-template-columns: 1fr; } .nm-row, .nm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .nm-top { flex-direction: column; align-items: stretch; padding: 18px 20px 4px; } .nm-tab { font-size: 22px; } .nm-main { padding: 12px 20px 24px; } }
+@media (prefers-reduced-motion: reduce) { .nm-feature, .nm-card { animation: none; } }
+
+/* ---- columns: each column takes an equal share, as Notion's do ---- */
+.columns > .block { flex: 1 1 0; min-width: 0; }

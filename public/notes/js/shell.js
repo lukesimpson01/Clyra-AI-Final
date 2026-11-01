@@ -21,7 +21,7 @@ export class Sidebar {
     /* Content lives in a fixed-width inner shell so collapsing the sidebar
        slides it away rather than squeezing every row as the track shrinks. */
     this.host.append(
-      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildNav(), this.body, this.buildFooter()),
+      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), this.buildNav(), this.body, this.buildFooter()),
       this.buildResizer(),
     );
     this.renderBody();
@@ -38,6 +38,14 @@ export class Sidebar {
         icon("chevron_down", 13)),
       iconButton("panel", "Hide sidebar", () => this.context.toggleSidebar(), { shortcut: `${mod}+\\` }),
     );
+  }
+
+  /* Notion's first row: one field that both searches and asks. It opens the same palette as the search icon. */
+  buildSearchField() {
+    return el("button", {
+      class: "sidebar-search-field", type: "button", "aria-label": "Search or ask",
+      onclick: () => this.context.openSearch(),
+    }, icon("search", 15), el("span", { class: "sidebar-search-label", text: "Search or ask" }), el("kbd", { class: "sidebar-search-key", text: `${mod}K` }));
   }
 
   workspaceMenu(anchor) {
@@ -622,8 +630,12 @@ export class Toolbar {
          filtered rather than passed straight through. */
       append(actions, ...[
         el("span", { class: "save-state", text: this.saveLabel() }),
+        /* who can see it, as Notion's top bar says it: a lock and "Private", opening the same access menu as Share */
+        el("button", { class: "text-button visibility-chip", type: "button", "aria-label": "Page access: private", onclick: (event) => this.context.shareMenu(page, event.currentTarget) },
+          icon("lock", 14), el("span", { text: "Private" }), icon("chevron_down", 12)),
         el("button", { class: "text-button", type: "button", onclick: () => this.context.askAboutPage(page) }, "Ask Clyra"),
         el("button", { class: "text-button", type: "button", onclick: (event) => this.context.shareMenu(page, event.currentTarget) }, "Share"),
+        iconButton("link", "Copy link", () => { navigator.clipboard?.writeText(`${location.origin}/notes#${page.id}`); toast("Link copied"); }),
         this.favoriteButton(page),
         iconButton("dots", "Page settings", (event) => this.context.pageMenu(page, event.currentTarget)),
       ].filter(Boolean));

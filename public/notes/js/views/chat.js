@@ -13,11 +13,16 @@ import { renderMarkdown } from "../ai-composer.js";
 import { openSearch } from "../search.js";
 import { streamAgent, renderAgentRun } from "../agent-run.js";
 
-const SUGGESTIONS = [
-  "Summarise what I wrote this week",
-  "Which topics have I not revised recently?",
-  "Explain the hardest idea in my notes",
+/* Quick actions under the composer, as Notion's chat has them: each is a real task for the agent, which can read the
+   notes, create pages and answer with sources, not a canned reply. */
+const ACTIONS = [
+  { icon: "cards", label: "Make flashcards", prompt: "Make flashcards from my most recently edited note and save them as a new deck." },
+  { icon: "check_square", label: "Practice test", prompt: "Write a 10 question practice test from my most recently edited note, with an answer key at the end, and save it as a new page." },
+  { icon: "book", label: "Study guide", prompt: "Create a study guide page from my most recently edited note: key terms, the main ideas and likely exam questions." },
+  { icon: "search", label: "Research", prompt: "Research this on the web and write it up as a new note with sources: " },
+  { icon: "calendar", label: "Plan my week", prompt: "Look at my notes and build a realistic study plan for the next 7 days as a new page." },
 ];
+const SUGGESTIONS = ACTIONS.map((a) => a.prompt);
 
 /* `compact` is the rail's chat: same thread, same composer, no history
    column and no room for one. Everything else behaves identically, so there
@@ -64,8 +69,15 @@ export function renderChat(host, app, options = {}) {
       iconButton("plus", "New chat", () => startChat(), { size: 15 })),
     historyList);
 
+  /* Notion-style quick actions: one row of chips beneath the composer while the page is empty. */
+  const actionRow = el("div", { class: "chat-actions-row", role: "group", "aria-label": "Quick actions" }, ACTIONS.map((action) =>
+    el("button", {
+      class: "chat-action-chip", type: "button",
+      onclick: () => { input.value = action.prompt; grow(); syncSend(); if (action.prompt.endsWith(": ")) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } else ask(); },
+    }, icon(action.icon, 15), action.label)));
+  const chatView = el("div", { class: "chat-view" }, thread, composer, compact ? null : actionRow);
   const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}${compact ? " compact" : ""}` },
-    el("div", { class: "chat-view" }, thread, composer),
+    chatView,
     compact ? null : history);
   host.append(layout);
 
@@ -277,6 +289,9 @@ export function renderChat(host, app, options = {}) {
 
   const paint = () => {
     clear(thread);
+    /* an empty chat is a landing: the heading and the composer sit together in the middle, as in Notion */
+    chatView.classList.toggle("landing", Boolean(state.aiConfigured) && !messages.length && !compact);
+    actionRow.hidden = !chatView.classList.contains("landing");
     if (!state.aiConfigured) {
       thread.append(el("div", { class: "chat-column chat-intro" },
         el("h1", { class: "chat-title", text: "AI is not configured" }),
@@ -287,13 +302,13 @@ export function renderChat(host, app, options = {}) {
     if (!messages.length) {
       thread.append(el("div", { class: "chat-column chat-intro" },
         el("span", { class: "chat-intro-mark" }, bloub(34)),
-        el("h1", { class: "chat-title", text: "Ask about your notes" }),
-        el("p", { class: "chat-lead" },
+        el("h1", { class: "chat-title", text: compact ? "Ask about your notes" : "How can I help you today?" }),
+        compact ? el("p", { class: "chat-lead" },
           el("span", { text: "Type " }),
           el("kbd", { class: "chat-lead-key", text: "@" }),
-          el("span", { text: " to reference one note or several, so answers stay grounded in your own material." })),
-        el("div", { class: "chat-suggestions" }, SUGGESTIONS.map((suggestion) =>
-          el("button", { class: "chip", type: "button", onclick: () => { input.value = suggestion; grow(); syncSend(); ask(); } }, suggestion)))));
+          el("span", { text: " to reference one note or several, so answers stay grounded in your own material." })) : null,
+        compact ? el("div", { class: "chat-suggestions" }, SUGGESTIONS.slice(0, 3).map((suggestion) =>
+          el("button", { class: "chip", type: "button", onclick: () => { input.value = suggestion; grow(); syncSend(); ask(); } }, suggestion))) : null));
       return;
     }
     for (const message of messages) {
