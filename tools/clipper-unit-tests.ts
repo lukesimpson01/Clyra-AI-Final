@@ -4,7 +4,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const probe = String.raw`
-import importlib.util, json, os, pathlib, tempfile, sys
+import importlib.util, json, os, pathlib, re, tempfile, sys
 
 root = pathlib.Path(${JSON.stringify(root)})
 spec = importlib.util.spec_from_file_location("clipper_pipeline", root / "clipper-pipeline.py")
@@ -404,6 +404,18 @@ with tempfile.TemporaryDirectory() as temporary_dir:
     glow_path = pathlib.Path(temporary_dir) / "glow.ass"
     module.write_styled_subtitles(glow_path, semantic_words, 0.0, 6.0, {"mode": "word", "font": "Sora", "fill": "#ffff1a", "animation": "Glow", "sizePct": 9})
     glow_captions = glow_path.read_text()
+    # fast speech: words 50 ms apart must still never put two captions on screen at once
+    fast_words = [{"word": f"W{i}", "start": 1.0 + i * 0.05, "end": 1.0 + i * 0.05 + 0.04} for i in range(12)]
+    fast_path = pathlib.Path(temporary_dir) / "fast.ass"
+    for fast_mode in ("lines", "word"):
+        module.write_styled_subtitles(fast_path, fast_words, 0.0, 6.0, {"mode": fast_mode, "animation": "Pop", "sizePct": 8})
+        fast_spans = []
+        for fast_line in fast_path.read_text().splitlines():
+            fast_match = re.match(r"Dialogue: 1,(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+),", fast_line)
+            if fast_match:
+                g = [int(v) for v in fast_match.groups()]
+                fast_spans.append((g[0] * 360000 + g[1] * 6000 + g[2] * 100 + g[3], g[4] * 360000 + g[5] * 6000 + g[6] * 100 + g[7]))
+        fast_overlaps = sum(1 for a, b in zip(fast_spans, fast_spans[1:]) if b[0] < a[1])
     phrase_beats = module.phrase_highlight_beats(semantic_words, 0.0, 6.0)
     _, custom_position_override = module.subtitle_override("bottom", 38, 71)
 
@@ -524,6 +536,7 @@ print(json.dumps({
     "styledCaptions": styled_captions,
     "styledCount": styled_count,
     "glowCaptions": glow_captions,
+    "fastOverlaps": fast_overlaps,
     "phraseBeats": phrase_beats,
     "customPositionOverride": custom_position_override,
     "flagTrue": flag_true,
@@ -652,6 +665,7 @@ const payload = JSON.parse(output.trim()) as {
   styledCaptions: string;
   styledCount: number;
   glowCaptions: string;
+  fastOverlaps: number;
   phraseBeats: Array<[number, number, string]>;
   customPositionOverride: string;
   flagTrue: boolean;
@@ -893,6 +907,7 @@ assert(payload.styledCaptions.includes("\\1c&H001AD3F2"), "the lines style light
 assert(payload.styledCaptions.includes("\\fscx75\\fscy75\\t("), "Pop animates each line in");
 assert(/\\pos\(540,1344\)/.test(payload.styledCaptions), "the caption sits at its height (70% of 1920)");
 assert(!payload.styledCaptions.includes("\\alpha&HFF&"), "a line shows all its words together; only the spoken one changes colour");
+assert.equal(payload.fastOverlaps, 0, "fast speech never puts two caption lines on screen at once");
 assert(payload.glowCaptions.includes("Dialogue: 0,") && payload.glowCaptions.includes("\\blur") && payload.glowCaptions.includes("Dialogue: 1,"), "Glow draws a soft layer under crisp text");
 for (let index = 0; index < payload.phraseBeats.length - 1; index += 1) {
   assert(

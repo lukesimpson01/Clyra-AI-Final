@@ -2331,7 +2331,7 @@ def write_styled_subtitles(path, words, clip_start, clip_end, caption, position=
 
     def line(layer, start_s, end_s, style_name, text):
         start_cs = max(0, round(start_s * 100))
-        end_cs = max(start_cs + 2, round(end_s * 100))
+        end_cs = max(start_cs + 1, round(end_s * 100))
         return f"Dialogue: {layer},{ass_time_cs(start_cs)},{ass_time_cs(end_cs)},{style_name},,0,0,0,,{text}\n"
 
     events = []
@@ -2347,11 +2347,14 @@ def write_styled_subtitles(path, words, clip_start, clip_end, caption, position=
             colour = active_c if active != fill else fill_c
             beats.append((start, end, f"{{\\1c{colour}}}{word_text(word['word'])}", True, word_text(word["word"])))
     else:
-        for group in _caption_groups(clip_words):
+        groups = _caption_groups(clip_words)
+        for group_index, group in enumerate(groups):
+            # a line holds a moment after its last word, but never into the next line (two would draw at once)
+            following = groups[group_index + 1][0]["start"] if group_index + 1 < len(groups) else float("inf")
             for index, word in enumerate(group):
                 nxt = group[index + 1] if index + 1 < len(group) else None
                 start = word["start"] - clip_start
-                end = (nxt["start"] if nxt else word["end"] + 0.3) - clip_start
+                end = (nxt["start"] if nxt else min(word["end"] + 0.3, following)) - clip_start
                 parts = []
                 for other_index, other in enumerate(group):
                     colour = active_c if other_index == index else fill_c
@@ -2359,6 +2362,10 @@ def write_styled_subtitles(path, words, clip_start, clip_end, caption, position=
                     parts.append(f"{{\\1c{colour}{hidden}}}{word_text(other['word'])}")
                 beats.append((start, max(start + 0.12, end), " ".join(parts), index == 0, " ".join(word_text(o["word"]) for o in group)))
 
+    # one caption on screen at a time: a beat ends where the next begins (a held minimum must not run into fast speech)
+    beats.sort(key=lambda beat: beat[0])
+    beats = [(start, min(end, beats[i + 1][0]) if i + 1 < len(beats) and beats[i + 1][0] > start else end, text, first, plain)
+             for i, (start, end, text, first, plain) in enumerate(beats)]
     for start, end, text, first, plain in beats:
         duration_ms = max(1, round((end - start) * 1000))
         if animation == "typewriter" and mode == "word":
