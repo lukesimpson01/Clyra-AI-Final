@@ -1579,12 +1579,13 @@ def _detect_scenes_from_frames(
     """Histogram / frame-diff scene cuts on already-extracted proxy frames."""
     if not frames:
         return []
+    import cv2
     cuts = [0.0]
     prev_gray = None
     prev_hist = None
     for time_s, path in frames:
         rgb = _load_rgb(path)
-        gray = np.mean(rgb, axis=2).astype(np.float32)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
         hist = _frame_hist(rgb)
         is_cut = False
         if prev_hist is not None:
@@ -2585,6 +2586,7 @@ def _analyse_proxy_stream(
     previous_gray: Optional[np.ndarray] = None
     previous_boxes: List[List[float]] = []
     last_detection_index = -10_000
+    pose_calls, last_bodies = 0, None
     last_motion = 0.0
     frames: List[Tuple[float, str]] = []
     proxy_w = proxy_h = None
@@ -2671,7 +2673,16 @@ def _analyse_proxy_stream(
                     # working in packaged workers where MediaPipe is absent.
                     if not detections and detector is not None:
                         detections = _detect_mediapipe(detector, rgb, int(round(time_s * 1000)))
-                    bodies = _detect_pose_mediapipe(pose_detector, rgb, int(round(time_s * 1000))) if pose_detector is not None else []
+                    # Body pose refines where a face sits in the body. A body moves little in 0.2 s, so in balanced mode every
+                    # second detection reuses the last pose instead of running the (slowest) pose model again.
+                    pose_calls += 1
+                    if pose_detector is None:
+                        bodies = []
+                    elif tracking_quality in {"balanced", "low_memory"} and pose_calls % 2 == 0 and last_bodies is not None:
+                        bodies = last_bodies
+                    else:
+                        bodies = _detect_pose_mediapipe(pose_detector, rgb, int(round(time_s * 1000)))
+                        last_bodies = bodies
                     detections = _attach_bodies_to_faces(detections, bodies)
                     if not detections and bodies:
                         detections = _body_only_detections(bodies)

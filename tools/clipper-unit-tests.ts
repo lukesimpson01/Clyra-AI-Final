@@ -892,8 +892,8 @@ assert.equal(payload.directedMethod[0]?.section_ordinal, 3, "the requested ordin
 assert.equal(payload.directedMethod[0]?.query_directed, true, "directed sections cannot be displaced by generic virality ranking");
 assert(payload.directedMethod[0]!.start <= 0.47 && payload.directedMethod[0]!.end < 10.0, "the third-method section begins at its heading and ends before the fourth method");
 assert(payload.directedMethod[0]!.transcript.toLowerCase().includes("third method"), "directed selection contains the matched spoken evidence");
-assert.equal(payload.premiumEncoding[payload.premiumEncoding.indexOf("-crf") + 1], "16", "premium export keeps a high-quality CRF");
-assert.equal(payload.premiumEncoding[payload.premiumEncoding.indexOf("-preset") + 1], "veryfast", "premium export encodes quickly: veryfast at CRF 16 matches medium on a phone in under half the time");
+assert.equal(payload.premiumEncoding[payload.premiumEncoding.indexOf("-crf") + 1], "18", "premium export keeps a high-quality CRF");
+assert.equal(payload.premiumEncoding[payload.premiumEncoding.indexOf("-preset") + 1], "superfast", "premium export encodes quickly: superfast at CRF 18 matches medium on a phone in well under half the time");
 assert.equal(payload.masterEncoding[payload.masterEncoding.indexOf("-crf") + 1], "12", "master export exposes a higher-detail option");
 assert.equal(payload.sourceFillLandscape, true, "wide sources use a sharp foreground over a blurred portrait fill");
 assert.equal(payload.sourceFillPortraitSar, false, "non-square-pixel portrait sources do not receive landscape fill treatment");

@@ -26,6 +26,31 @@ async function readJson(req) {
   return JSON.parse(data || '{}');
 }
 
+/** A text story written by Clyra's own chat model: a hook in the first two messages, escalation, a twist, and the way people
+ *  really text. Null when no model is connected, so the template writer below answers instead. */
+async function aiStory({ topic, tone, count }) {
+  const base = process.env.CLYRA_SERVER;
+  const subject = String(topic || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 200);
+  if (!base || !subject) return null;
+  const number = Math.max(6, Math.min(24, Number(count) || 12));
+  const style = String(tone || 'Funny').slice(0, 24);
+  const system = `You write fake text-message stories for TikTok, Reels and Shorts, shown as a chat over gameplay. Reply with JSON only: {"contact": string, "messages": [{"side": "left" | "right", "text": string}]}.
+- Exactly ${number} messages. "right" is the viewer (the one receiving the story) and "left" is the contact named in "contact" (a first name or a relationship such as Mom, Jake, Unknown number).
+- Message 1 and 2 are the hook: something that makes a viewer stay, a question, a confession, a threat or an obvious oddity. Never open with a greeting alone.
+- Real texting: short, mostly lowercase, little punctuation, the odd typo or abbreviation, one thought per message, some one-word replies. Messages under 140 characters.
+- Escalate every two or three messages with a new detail, then land a twist or cliffhanger in the last two messages. No explaining the plot in narration; it is only the chat.
+- Tone: ${style}. Keep it safe for work: no slurs, no graphic violence, nothing sexual.`;
+  const response = await fetch(new URL('/api/deepseek/chat', base), { method: 'POST', signal: AbortSignal.timeout(60_000),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.CLYRA_BRIDGE_TOKEN || ''}` },
+    body: JSON.stringify({ model: 'deepseek-v4-pro', stream: false, max_tokens: 2400, temperature: 0.9, thinking: { type: 'disabled' }, messages: [{ role: 'system', content: system }, { role: 'user', content: `The story: ${subject}` }] }) });
+  if (!response.ok) return null;
+  const content = String((await response.json())?.choices?.[0]?.message?.content || '').replace(/```(?:json)?/gi, '');
+  const data = JSON.parse(content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1));
+  const messages = (Array.isArray(data.messages) ? data.messages : []).filter(m => m && String(m.text || '').trim()).slice(0, 40).map(m => ({ side: m.side === 'right' ? 'right' : 'left', text: String(m.text).trim().slice(0, 240) }));
+  if (messages.length < 4) return null;
+  return { engine: 'clyra-ai', modelConnected: true, contact: String(data.contact || '').trim().slice(0, 30), messages };
+}
+
 function makeStory({ topic, tone, count }) {
   const subject = String(topic || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 120);
   if (!subject) throw new Error('Add a topic for the story.');
@@ -245,6 +270,7 @@ function prepareStorySpec(raw, files, id) {
     : /^\/media\/fake-text-gameplay\/[a-z0-9-]+\.mp4$/.test(libraryVideo) ? libraryVideo : '';
   const source = raw.background || {};
   return {
+    sounds: raw.sounds !== false,
     name: String(raw.name || 'Unknown').slice(0, 35),
     theme: validThemes.has(raw.theme) ? raw.theme : 'ios-dark',
     messages,
@@ -263,7 +289,7 @@ function prepareStorySpec(raw, files, id) {
   };
 }
 
-async function runStoryRender(job) {
+async function runStoryRenderFrames(job) {
   let browser;
   try {
     job.state = 'rendering';
@@ -311,6 +337,126 @@ async function runStoryRender(job) {
     await browser?.close().catch(() => undefined);
     setTimeout(() => { storyRenders.delete(job.id); void rm(job.directory, { recursive: true, force: true }); }, 60 * 60 * 1000).unref();
   }
+}
+
+/* ---- Fake Text story, fast path ----------------------------------------------------------------------------------
+   The chat only changes when a message arrives, so only those moments are captured: the phone's chat layer alone, on a
+   transparent page at 4.2x pixel density (a sharp 1080x1920 overlay), skipping the gameplay video. One ffmpeg pass then
+   lays that overlay over the gameplay with the same zoom, offset, dim, blur, speed and trim the live preview uses. A
+   48 s story takes tens of seconds instead of the quarter hour of one screenshot per frame. */
+const STORY_W = 1080, STORY_H = 1920, STORY_FPS = 30;
+const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
+
+function storyBackgroundPath(job) {
+  const url = String(job.spec.videoUrl || '');
+  const upload = url.match(/\/media\/(\d+)$/);
+  if (upload) return job.files[Number(upload[1])]?.path || null;
+  const library = url.match(/^\/media\/fake-text-gameplay\/([a-z0-9-]+\.mp4)$/);
+  return library ? join(PUBLIC_DIR, 'media', 'fake-text-gameplay', library[1]) : null;
+}
+
+/** The ffmpeg filter chain that gives the gameplay the preview's look: the same loop, speed, trim, zoom, offset, dim, blur. */
+function storyBackgroundFilters(background, density) {
+  const speed = Math.max(0.5, Math.min(2, (Number(background.speed) || 100) / 100)), trim = Math.max(0, Number(background.trim) || 0);
+  const zoom = Math.max(1, (Number(background.zoom) || 100) / 100), dim = Math.max(0, Math.min(0.9, (Number(background.dim) || 0) / 100)), blur = Math.max(0, Number(background.blur) || 0);
+  const offX = (Number(background.offsetX) || 0) / 100, offY = (Number(background.offsetY) || 0) / 100;
+  const chain = [`setpts=PTS/${speed.toFixed(4)}`, `trim=start=${(trim / speed).toFixed(3)}`, 'setpts=PTS-STARTPTS', `fps=${STORY_FPS}`, `scale=${STORY_W}:${STORY_H}:force_original_aspect_ratio=increase:flags=bicubic`, `crop=${STORY_W}:${STORY_H}`];
+  if (zoom > 1.0001 || offX || offY) {
+    const x = Math.max(0, Math.min(STORY_W * (zoom - 1), STORY_W * (zoom - 1) / 2 - offX * STORY_W)), y = Math.max(0, Math.min(STORY_H * (zoom - 1), STORY_H * (zoom - 1) / 2 - offY * STORY_H));
+    chain.push(`scale=iw*${zoom.toFixed(4)}:ih*${zoom.toFixed(4)}:flags=bicubic`, `crop=${STORY_W}:${STORY_H}:${x.toFixed(1)}:${y.toFixed(1)}`);
+  }
+  /* CSS brightness(k) scales the picture toward black; on YUV that is luma times k and chroma pulled toward neutral, with no RGB round-trip */
+  if (dim > 0) { const k = (1 - dim).toFixed(3); chain.push(`format=yuv420p,lutyuv=y=val*${k}:u=128+(val-128)*${k}:v=128+(val-128)*${k}`); }
+  if (blur > 0) chain.push(`gblur=sigma=${(blur * density).toFixed(2)}`);
+  return chain.join(',');
+}
+
+/** A soft pop for every message, placed where it appears: a rising blip for one you send, a two-note ding for one you receive.
+ *  Returns the ffmpeg inputs and the audio graph that mixes them, or null when there are no messages to sound. */
+function storySoundGraph(job, cues, total, firstInput) {
+  const lines = job.spec.messages.filter(m => m.text?.trim() || m.imageUrl);
+  const sent = [], received = [];
+  cues.forEach((cue, i) => (lines[i]?.side === 'right' ? sent : received).push(Math.round(cue.appearAt)));
+  if (!sent.length && !received.length) return null;
+  const inputs = [], graph = []; let index = firstInput; const labels = [];
+  const add = (expression, times, tag) => {
+    if (!times.length) return;
+    inputs.push('-f', 'lavfi', '-i', `aevalsrc=${expression}:d=0.4:s=44100`);
+    const source = `[${index++}:a]`;
+    const copies = times.map((_, k) => `${tag}${k}`);
+    graph.push(times.length > 1 ? `${source}asplit=${times.length}${copies.map(c => `[${c}]`).join('')}` : `${source}anull[${copies[0]}]`);
+    times.forEach((t, k) => { graph.push(`[${copies[k]}]adelay=${t}|${t}[${tag}d${k}]`); labels.push(`[${tag}d${k}]`); });
+  };
+  add("'0.5*sin(2*PI*(620+1500*t)*t)*exp(-22*t)'", sent, 's');
+  add("'(0.4*sin(2*PI*1568*t)*exp(-13*t)+0.34*sin(2*PI*2093*(t-0.07))*exp(-11*(t-0.07))*gte(t,0.07))'", received, 'r');
+  graph.push(`${labels.join('')}amix=inputs=${labels.length}:normalize=0:dropout_transition=0,volume=0.9,apad=whole_dur=${(total / 1000).toFixed(3)}[a]`);
+  return { inputs, graph: graph.join(';') };
+}
+
+async function renderStoryFast(job) {
+  let browser;
+  try {
+    job.state = 'rendering'; job.message = 'Opening the live preview'; job.progress = 1;
+    const background = job.spec.background || {}, density = STORY_W / 256;
+    const bgPath = storyBackgroundPath(job);
+    const { chromium } = await import('playwright');
+    browser = await chromium.launch({ headless: true, args: ['--hide-scrollbars', '--force-color-profile=srgb'] });
+    const page = await browser.newPage({ viewport: { width: 256, height: 454 }, deviceScaleFactor: density });
+    await page.goto(`${job.origin}/?frameTextRender=${encodeURIComponent(job.id)}&overlay=1`, { waitUntil: 'load', timeout: 60_000 });
+    await page.waitForFunction(() => window.__frameTextReady === true && !!window.__frameTextTimeline, undefined, { timeout: 60_000 });
+    await page.addStyleTag({ content: 'html,body,#root,.cs-root,.cs-root .csp-stage,.cs-root .phone,.csp-render-root,.csp-render-root .csp-stage{background:transparent!important}' });
+    const timeline = await page.evaluate(() => window.__frameTextTimeline);
+    const total = Math.max(1000, job.durationMs);
+    /* the moments the chat can look different: the start, and just after each message arrives */
+    const probes = [0];
+    for (const cue of timeline.cues) for (const offset of [1, 120, 300]) if (cue.appearAt + offset < total) probes.push(Math.round(cue.appearAt + offset));
+    const frames = []; let last = '';
+    for (const [n, t] of [...new Set(probes)].sort((a, b) => a - b).entries()) {
+      await page.evaluate(value => window.__frameSetTextTime(value), t);
+      const signature = await page.evaluate(() => { const phone = document.querySelector('.csp-render-root .phone'), chat = document.querySelector('#chatMessages'); return phone.innerHTML + '|' + (chat ? getComputedStyle(chat).marginTop + getComputedStyle(chat).transform : ''); });
+      if (signature !== last) {
+        last = signature;
+        const png = await page.locator('.csp-render-root .phone').screenshot({ type: 'png', omitBackground: true, animations: 'disabled', timeout: 20_000 });
+        const file = join(job.directory, `overlay-${String(frames.length).padStart(4, '0')}.png`);
+        await writeFile(file, png); frames.push({ t, file });
+      }
+      job.progress = Math.min(35, 1 + Math.round(n / Math.max(1, probes.length) * 34)); job.message = 'Capturing the chat';
+    }
+    console.log(`[story] captured ${frames.length} overlay frames from ${new Set(probes).size} probes`);
+    await browser.close(); browser = null;
+    /* hold each overlay until the next one appears */
+    const lines = [];
+    frames.forEach((frame, i) => { const until = i + 1 < frames.length ? frames[i + 1].t : total; lines.push(`file '${frame.file.replaceAll("'", "'\\''")}'`, `duration ${Math.max(0.001, (until - frame.t) / 1000).toFixed(3)}`); });
+    lines.push(`file '${frames.at(-1).file.replaceAll("'", "'\\''")}'`);
+    const list = join(job.directory, 'overlay.txt'); await writeFile(list, lines.join('\n'));
+    const output = join(job.directory, 'story.mp4');
+    const source = bgPath ? ['-stream_loop', '-1', '-i', bgPath] : ['-f', 'lavfi', '-i', `color=c=0x00ff00:s=${STORY_W}x${STORY_H}:r=${STORY_FPS}`];
+    const bg = bgPath ? storyBackgroundFilters(background, density) : 'null';
+    const sound = job.spec.sounds ? storySoundGraph(job, timeline.cues, total, 2) : null;
+    const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y', ...source, '-f', 'concat', '-safe', '0', '-i', list, ...(sound ? sound.inputs : []),
+      '-filter_complex', `[0:v]${bg}[bg];[1:v]scale=${STORY_W}:${STORY_H}:flags=bicubic,format=yuva420p,fps=${STORY_FPS}[ov];[bg][ov]overlay=0:0:format=yuv420,format=yuv420p[v]${sound ? `;${sound.graph}` : ''}`,
+      '-map', '[v]', ...(sound ? ['-map', '[a]', '-c:a', 'aac', '-b:a', '160k'] : []), '-t', (total / 1000).toFixed(3), '-r', String(STORY_FPS), '-c:v', 'libx264', '-preset', 'superfast', '-crf', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', output];
+    job.message = 'Laying the chat over the gameplay';
+    await new Promise((resolve, reject) => {
+      const encoder = spawn('ffmpeg', args); let diagnostics = '';
+      encoder.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk.toString()).slice(-3000); });
+      encoder.stdout.on('data', chunk => { const m = [...chunk.toString().matchAll(/out_time_(?:us|ms)=(\d+)/g)].at(-1); if (m) job.progress = Math.min(99, 35 + Math.round(Number(m[1]) / 1000 / total * 64)); });
+      encoder.on('error', reject);
+      encoder.on('close', code => code === 0 ? resolve() : reject(new Error(diagnostics.trim().split('\n').at(-1) || `FFmpeg exited with ${code}`)));
+    });
+    const details = await stat(output);
+    if (!details.size) throw new Error('The MP4 export was empty.');
+    job.result = { path: output, size: details.size, name: 'fake-text-story.mp4', type: 'video/mp4' };
+    job.state = 'complete'; job.progress = 100; job.message = 'Your 1080p MP4 is ready';
+    setTimeout(() => { storyRenders.delete(job.id); void rm(job.directory, { recursive: true, force: true }); }, 60 * 60 * 1000).unref();
+    return true;
+  } finally { await browser?.close().catch(() => undefined); }
+}
+
+async function runStoryRender(job) {
+  try { if (process.env.FRAME_STORY_LEGACY !== '1' && await renderStoryFast(job)) return; }
+  catch (error) { console.warn(`[story] fast render failed (${error.message}); using the frame-by-frame renderer`); job.progress = 0; job.message = 'Switching to the frame-by-frame renderer'; }
+  await runStoryRenderFrames(job);
 }
 
 async function runWyrRender(job) {
@@ -633,8 +779,10 @@ export async function localApi(req, res, next) {
     return json(res, 404, { error: 'Unknown render resource.' });
   }
   if (pathname.endsWith('/story/ai-writer') && req.method === 'POST') {
-    try { return json(res, 200, makeStory(await readJson(req))); }
-    catch (error) { return json(res, 400, { error: error.message }); }
+    try {
+      const request = await readJson(req);
+      return json(res, 200, (await aiStory(request).catch(() => null)) || makeStory(request));
+    } catch (error) { return json(res, 400, { error: error.message }); }
   }
   if (pathname.endsWith('/media/process') && req.method === 'POST') {
     const directory = await mkdtemp(join(tmpdir(), 'frame-process-'));

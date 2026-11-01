@@ -93,8 +93,8 @@ RENDER_QUALITY_PROFILES = {
     # Delivery settings are deliberately bounded: the interactive product
     # should finish a short social clip promptly rather than holding the UI
     # on a veryslow x264 pass after its analysis is complete.
-    # veryfast at CRF 16 is visually the same on a phone as medium at CRF 15 and renders in under half the time.
-    "premium": {"crf": "16", "preset": "veryfast", "audio_bitrate": "256k"},
+    # superfast at CRF 18 is visually the same on a phone as medium at CRF 15 and renders in well under half the time.
+    "premium": {"crf": "18", "preset": "superfast", "audio_bitrate": "256k"},
     "balanced": {"crf": "20", "preset": "veryfast", "audio_bitrate": "160k"},
     "master": {"crf": "12", "preset": "slow", "audio_bitrate": "320k"},
 }
@@ -2887,9 +2887,9 @@ def extract_plate_clip(input_url, local_fallback_path, plate_path, clip_start, c
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast" if analysis_only else "slow",
+        "ultrafast" if analysis_only else "slow",
         "-crf",
-        "23" if analysis_only else "17",
+        "26" if analysis_only else "17",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -3025,6 +3025,43 @@ def _evaluate_crop_keyframe(keyframes, timestamp_ms, cursor=0):
     return result, cursor
 
 
+class _PrefetchedCapture:
+    """cv2.VideoCapture.read() served from a short queue filled by a decoder thread, in the same order."""
+
+    def __init__(self, capture, depth=10):
+        import queue
+        import threading
+        self._queue = queue.Queue(maxsize=depth)
+        self._stop = threading.Event()
+        self._capture = capture
+        self._thread = threading.Thread(target=self._run, name="clip-decoder", daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.is_set():
+            ok, frame = self._capture.read()
+            while not self._stop.is_set():
+                try:
+                    self._queue.put((ok, frame), timeout=0.2)
+                    break
+                except Exception:
+                    continue
+            if not ok:
+                return
+
+    def read(self):
+        return self._queue.get()
+
+    def close(self):
+        self._stop.set()
+        try:
+            while True:
+                self._queue.get_nowait()
+        except Exception:
+            pass
+        self._thread.join(timeout=2)
+
+
 def render_per_frame_crop_from_master(
     input_path,
     output_path,
@@ -3075,6 +3112,8 @@ def render_per_frame_crop_from_master(
     # A single seek is followed by sequential reads; random per-frame seeking
     # would re-decode long GOPs, use more RAM/CPU, and introduce visible drift.
     capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(clip_start)) * 1000.0)
+    # Decoding the next frames is its own thread (OpenCV releases the GIL), so it overlaps the resize and the encode.
+    reader = _PrefetchedCapture(capture)
     frame_limit = max(1, int(math.ceil(max(0.01, float(clip_duration)) * fps)))
     base_scale = max(OUTPUT_WIDTH / source_width, OUTPUT_HEIGHT / source_height)
     command = [
@@ -3107,7 +3146,7 @@ def render_per_frame_crop_from_master(
             # 60→30 delivery without synthetic wall-clock timing.
             target_source_index = int(math.floor((frame_index * max(1.0, source_fps)) / fps + 1e-7))
             while source_frame_index < target_source_index:
-                ok, decoded = capture.read()
+                ok, decoded = reader.read()
                 if not ok:
                     break
                 last_frame = decoded
@@ -3140,11 +3179,11 @@ def render_per_frame_crop_from_master(
                 contain_scale = min(OUTPUT_WIDTH / source_width, OUTPUT_HEIGHT / source_height)
                 contain_width = max(2, min(OUTPUT_WIDTH, int(round(source_width * contain_scale))))
                 contain_height = max(2, min(OUTPUT_HEIGHT, int(round(source_height * contain_scale))))
-                foreground = cv2.resize(frame, (contain_width, contain_height), interpolation=cv2.INTER_LANCZOS4)
+                foreground = cv2.resize(frame, (contain_width, contain_height), interpolation=cv2.INTER_CUBIC)
                 foreground_x = max(0, (OUTPUT_WIDTH - contain_width) // 2)
                 foreground_y = max(0, (OUTPUT_HEIGHT - contain_height) // 2)
                 cropped[foreground_y:foreground_y + contain_height, foreground_x:foreground_x + contain_width] = foreground
-                process.stdin.write(cropped.tobytes())
+                process.stdin.write(cropped.data if cropped.flags["C_CONTIGUOUS"] else cropped.tobytes())
                 rendered += 1
                 continue
 
@@ -3166,15 +3205,12 @@ def render_per_frame_crop_from_master(
             region_y0 = max(0, int(math.floor(crop_y / step_y)))
             region_x1 = min(source_width, int(math.ceil((crop_x + OUTPUT_WIDTH) / step_x)))
             region_y1 = min(source_height, int(math.ceil((crop_y + OUTPUT_HEIGHT) / step_y)))
-            cropped = cv2.resize(frame[region_y0:region_y1, region_x0:region_x1], (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
+            cropped = cv2.resize(frame[region_y0:region_y1, region_x0:region_x1], (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_CUBIC)
             # Lanczos is already the best reconstruction choice here. A very
             # mild unsharp pass restores edge contrast only when the vertical
             # crop required enlargement; it cannot manufacture missing detail
             # and deliberately stays below halo-producing strengths.
-            if scale > 1.05:
-                softened = cv2.GaussianBlur(cropped, (0, 0), 0.8)
-                cropped = cv2.addWeighted(cropped, 1.10, softened, -0.10, 0)
-            process.stdin.write(cropped.tobytes())
+            process.stdin.write(cropped.data if cropped.flags["C_CONTIGUOUS"] else cropped.tobytes())
             rendered += 1
         process.stdin.close()
         stderr = process.stderr.read().decode("utf-8", "replace")
@@ -3200,6 +3236,7 @@ def render_per_frame_crop_from_master(
                 pass
         return False
     finally:
+        reader.close()
         capture.release()
 
 
@@ -3887,6 +3924,18 @@ def transcribe_with_fish(clip_path):
         return []
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+_WORD_TIMING_POOL = None
+
+
+def _word_timing_pool():
+    """One background worker for word timing, so it runs beside face tracking instead of after it."""
+    global _WORD_TIMING_POOL
+    if _WORD_TIMING_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _WORD_TIMING_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="word-timing")
+    return _WORD_TIMING_POOL
 
 
 def transcribe_clip_words(clip_path):
@@ -5692,6 +5741,11 @@ def main():
             except Exception:
                 tracking_frame_w, tracking_frame_h = frame_w, frame_h
             emit("clip", "running", message=f"Planning subject framing for candidate {candidate_index + 1}...")
+            # The clip's own speech is timed while its faces are tracked: one is audio, the other video, and neither
+            # waits for the other. The result is collected where the words are needed, below.
+            whisper_job = None
+            if not source_words_word_accurate and os.path.isfile(plate_path) and os.path.getsize(plate_path) > 1024:
+                whisper_job = _word_timing_pool().submit(transcribe_clip_words, plate_path)
             faces_dir = os.path.join(artifact_dir, "faces")
             split_screen_kwargs = dict(
                 mode=face_cfg["mode"] if face_cfg["enabled"] else "off",
@@ -5820,7 +5874,7 @@ def main():
             if len(transcribed_words) < 5:
                 # the clip's own speech, timed on its own audio: sorted, overlaps trimmed and kept inside the clip, as
                 # the source transcript's words are (Whisper can end a word past the cut or start two at once)
-                transcribed_words = caption_words_relative(transcribe_clip_words(analysis_clip_path) or [], 0.0, clip_duration)
+                transcribed_words = caption_words_relative((whisper_job.result() if whisper_job is not None else transcribe_clip_words(analysis_clip_path)) or [], 0.0, clip_duration)
                 timing_source = os.environ.get("CLIPPER_WHISPER_MODEL", "base.en")
             if len(transcribed_words) < 5:
                 fallback_words = caption_words_relative(words, clip_start, clip_end)

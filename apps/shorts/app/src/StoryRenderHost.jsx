@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
-import ClyraStudioPhone from './ClyraStudioPhone.jsx';
+import ClyraStudioPhone, { messageTimeline } from './ClyraStudioPhone.jsx';
 
 // The export page mounts the exact same preview component used in the editor.
 // A local frame worker advances its clock and captures the resulting DOM at 60 fps.
@@ -8,6 +8,8 @@ export default function StoryRenderHost({ id }) {
   const [spec, setSpec] = useState(null);
   const [time, setTime] = useState(0);
   const [error, setError] = useState('');
+  /* `overlay=1`: the chat layer alone, for a renderer that lays it over the gameplay itself */
+  const overlayOnly = new URLSearchParams(location.search).get('overlay') === '1';
 
   useEffect(() => {
     let live = true;
@@ -40,8 +42,10 @@ export default function StoryRenderHost({ id }) {
       })));
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     };
+    /* the moments the chat changes, so a renderer can capture only those */
+    window.__frameTextTimeline = messageTimeline(spec.messages);
     document.fonts.ready.then(() => { window.__frameTextReady = true; });
-    return () => { delete window.__frameSetTextTime; delete window.__frameTextReady; };
+    return () => { delete window.__frameSetTextTime; delete window.__frameTextReady; delete window.__frameTextTimeline; };
   }, [spec]);
 
   if (error) return <p role="alert">{error}</p>;
@@ -51,8 +55,8 @@ export default function StoryRenderHost({ id }) {
     name={spec.name}
     messages={spec.messages}
     theme={spec.theme}
-    videoUrl={spec.videoUrl}
-    posterUrl={spec.posterUrl}
+    videoUrl={overlayOnly ? '' : spec.videoUrl}
+    posterUrl={overlayOnly ? '' : spec.posterUrl}
     background={spec.background}
     time={time}
     setTime={() => {}}

@@ -125,7 +125,7 @@ async function runFakeText(job, resume = false) {
     const messages = p.messages.map((m, i) => ({ id: `q-${i}`, side: m.side === 'right' ? 'right' : 'left', text: String(m.text || '') }));
     const timeline = messageTimeline(messages);
     const libraryUrl = `/media/fake-text-gameplay/${(gameplay[p.videoIndex] || gameplay[0]).file}`;
-    const spec = { name: p.name, theme: p.theme, messages, background: { ...defaultBackground, ...p.background }, durationMs: timeline.duration, videoUrl: libraryUrl, posterUrl: libraryUrl.replace('-60.mp4', '.jpg') };
+    const spec = { name: p.name, theme: p.theme, sounds: true, messages, background: { ...defaultBackground, ...p.background }, durationMs: timeline.duration, videoUrl: libraryUrl, posterUrl: libraryUrl.replace('-60.mp4', '.jpg') };
     let created = { id: job.renderId };
     if (!resume) {
       const form = new FormData(); form.append('spec', JSON.stringify(spec));
