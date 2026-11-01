@@ -6,6 +6,7 @@ Whisper word timestamps generated from the exact clipped audio/video file, then
 burned onto that same file so words line up with the final MP4.
 """
 
+import glob
 import hashlib
 import html
 import json
@@ -1774,7 +1775,135 @@ def _download_public_source_master_module(url, job_dir, max_height=1080):
     return require_source_master_quality(selected, max_height=max_height)
 
 
+def _json3_caption_words(path):
+    """Timed words from a YouTube json3 caption track: speech-recognition tracks carry each word's own offset, a
+    hand-made track one line per event (its words spread across the line's time)."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            events = json.load(handle).get("events") or []
+    except Exception:
+        return []
+    words, seen = [], set()
+    clean = lambda text: re.sub(r"[\u200b-\u200f\u2060\ufeff]", "", str(text or ""))
+    spoken = lambda token: bool(re.search(r"\w", token)) and not token.startswith("[")
+    for event in events:
+        start_ms = float(event.get("tStartMs") or 0)
+        end_ms = start_ms + float(event.get("dDurationMs") or 0)
+        segs = [{**seg, "utf8": clean(seg.get("utf8"))} for seg in (event.get("segs") or [])]
+        segs = [seg for seg in segs if seg["utf8"].strip()]
+        if not segs:
+            continue
+        # styled tracks repeat each line in more than one window at the same moment: keep it once
+        key = (round(start_ms), " ".join(seg["utf8"].strip() for seg in segs))
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(segs) > 1 or "tOffsetMs" in segs[0]:
+            for index, seg in enumerate(segs):
+                at = start_ms + float(seg.get("tOffsetMs") or 0)
+                nxt = start_ms + float(segs[index + 1].get("tOffsetMs") or 0) if index + 1 < len(segs) else end_ms
+                for token in str(seg["utf8"]).split():
+                    if spoken(token):
+                        words.append({"word": token, "start": at / 1000.0, "end": max(at + 80, nxt) / 1000.0})
+        else:
+            tokens = [token for token in " ".join(seg["utf8"] for seg in segs).split() if spoken(token)]
+            step = (end_ms - start_ms) / max(1, len(tokens))
+            for index, token in enumerate(tokens):
+                words.append({"word": token, "start": (start_ms + index * step) / 1000.0, "end": (start_ms + (index + 1) * step) / 1000.0})
+    words.sort(key=lambda row: row["start"])
+    return words
+
+
+def fetch_public_details_cli(url, job_dir, language="en"):
+    """The public video's title, length and its own timed captions (YouTube's speech track), in one quick call.
+
+    The captions stand in for a full-length Whisper pass when the source is chosen: the moments are found on them,
+    and each finished clip's words are still aligned to its own audio. Returns (title, duration, words); any part
+    may be empty when the platform offers none."""
+    command = resolve_ytdlp_cli_command()
+    if not command:
+        return "", 0.0, []
+    lang = re.sub(r"[^a-z-]", "", str(language or "en").lower())[:8] or "en"
+    if lang == "auto":
+        lang = "en"
+    title_path, duration_path = os.path.join(job_dir, "source-title.txt"), os.path.join(job_dir, "source-duration.txt")
+    args = [
+        *command, "--no-playlist", "--no-warnings", "--skip-download",
+        "--write-auto-subs", "--write-subs", "--sub-langs", f"{lang}.*,{lang},{lang}-orig", "--sub-format", "json3",
+        "--print-to-file", "%(title)s", title_path, "--print-to-file", "%(duration)s", duration_path,
+        "-o", os.path.join(job_dir, "details.%(ext)s"),
+    ]
+    node_path = shutil.which("node")
+    if node_path:
+        args.extend(["--no-js-runtimes", "--js-runtimes", f"node:{node_path}", "--remote-components", "ejs:npm"])
+    args.append(url)
+    try:
+        subprocess.run(args, check=False, capture_output=True, text=True, timeout=120)
+    except Exception:
+        return "", 0.0, []
+    def read(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read().strip().splitlines()[-1].strip()
+        except Exception:
+            return ""
+    title = read(title_path)
+    try:
+        duration = float(read(duration_path) or 0)
+    except ValueError:
+        duration = 0.0
+    tracks = sorted(
+        (os.path.join(job_dir, name) for name in os.listdir(job_dir) if name.startswith("details.") and name.endswith(".json3")),
+        key=lambda path: (".orig" not in path and "-orig" not in path, len(path)),
+    )
+    words = []
+    for track in tracks:
+        words = _json3_caption_words(track)
+        if len(words) >= 20:
+            break
+    return title, duration, words
+
+
+SOURCE_MASTER_CACHE_KEEP = 3
+
+
+def _source_master_cache_path(url, max_height):
+    key = hashlib.sha1(f"{str(url).strip()}|{int(max_height)}".encode()).hexdigest()[:20]
+    return os.path.join(TMP_ROOT, "source-masters", key, "source-master.mp4")
+
+
+def _place(src, dest):
+    """`src` at `dest` without copying when the disk allows (a hard link), else copied."""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.exists(dest):
+        os.remove(dest)
+    try:
+        os.link(src, dest)
+    except OSError:
+        shutil.copy2(src, dest)
+
+
 def download_public_source_master(url, job_dir, max_height=1080):
+    """A durable public source master for this job: the last few are kept per link, so a second run of the same video
+    starts at once and does not ask the platform for it again (which also keeps clear of its rate limits)."""
+    cached = _source_master_cache_path(url, max_height)
+    if os.path.isfile(cached) and os.path.getsize(cached) > 8_192:
+        dest = os.path.join(job_dir, "source-master.mp4")
+        _place(cached, dest)
+        os.utime(cached)
+        return require_source_master_quality(dest, max_height=max_height)
+    master = _download_public_source_master_fresh(url, job_dir, max_height=max_height)
+    try:
+        _place(master, cached)
+        roots = sorted((os.path.dirname(path) for path in glob.glob(os.path.join(TMP_ROOT, "source-masters", "*", "source-master.mp4"))), key=os.path.getmtime, reverse=True)
+        for old in roots[SOURCE_MASTER_CACHE_KEEP:]:
+            shutil.rmtree(old, ignore_errors=True)
+    except Exception:
+        pass
+    return master
+
+
+def _download_public_source_master_fresh(url, job_dir, max_height=1080):
     """Download and verify a durable public source master for this job."""
     cli_command = resolve_ytdlp_cli_command()
     if cli_command:
@@ -2047,7 +2176,18 @@ def phrase_highlight_beats(words, clip_start, clip_end, active_color="#FFD54A"):
     return beats
 
 
-def write_subtitles(path, words, clip_start, clip_end, font, font_size, color, position, style="word", caption_x=None, caption_y=None):
+def caption_style_of(cfg, meta=None):
+    """The caption style a run asked for (or the one its clip was made with): a dict, or None for the classic look."""
+    for value in ((cfg or {}).get("caption"), (meta or {}).get("caption") if isinstance(meta, dict) else None):
+        if isinstance(value, dict) and value:
+            return value
+    return None
+
+
+def write_subtitles(path, words, clip_start, clip_end, font, font_size, color, position, style="word", caption_x=None, caption_y=None, caption=None):
+    # A caption style chosen in the clipper (the advanced editor's presets and animations) draws through its own writer
+    if isinstance(caption, dict) and caption:
+        return write_styled_subtitles(path, words, clip_start, clip_end, caption, position, caption_x, caption_y)
     alignment, override = subtitle_override(position, caption_x, caption_y)
     style = str(style or "word").strip().lower()
     beats = phrase_highlight_beats(words, clip_start, clip_end) if style in {"phrase", "phrase-highlight", "active-phrase"} else subtitle_beats(words, clip_start, clip_end)
@@ -2068,6 +2208,180 @@ def write_subtitles(path, words, clip_start, clip_end, font, font_size, color, p
         handle.write("Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n")
         for start_cs, end_cs, word in beats:
             handle.write(f"Dialogue: 0,{ass_time_cs(start_cs)},{ass_time_cs(end_cs)},Word,,0,0,0,,{override}{word}\n")
+    return len(beats)
+
+
+CAPTION_ANIMATIONS = {"none", "pop", "bounce", "fade", "slide up", "slide down", "zoom", "rise", "blur in", "spin in", "typewriter", "shake", "glow"}
+
+
+def _ass_colour(value, default="#FFFFFF", alpha=None):
+    """#rgb, #rrggbb or rgba(r,g,b,a) as ASS &HAABBGGRR (alpha 00 is opaque)."""
+    text = str(value or default).strip()
+    rgba = re.fullmatch(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)", text)
+    if rgba:
+        r, g, b = (max(0, min(255, int(rgba.group(i)))) for i in (1, 2, 3))
+        a = float(rgba.group(4)) if rgba.group(4) is not None else 1.0
+    else:
+        hexv = text.lstrip("#")
+        if re.fullmatch(r"[0-9a-fA-F]{3}", hexv):
+            hexv = "".join(c * 2 for c in hexv)
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", hexv):
+            hexv = default.lstrip("#")
+        r, g, b, a = int(hexv[0:2], 16), int(hexv[2:4], 16), int(hexv[4:6], 16), 1.0
+    if alpha is not None:
+        a = alpha
+    return f"&H{round((1 - max(0.0, min(1.0, a))) * 255):02X}{b:02X}{g:02X}{r:02X}"
+
+
+def _caption_font(family):
+    """The first family of a CSS font stack, as libass looks it up."""
+    first = str(family or "Arial").split(",")[0].strip().strip("'\"")
+    return first or "Arial"
+
+
+def _caption_groups(words, max_words=4, pause=0.5):
+    """Readable lines of up to four words, broken on a pause."""
+    groups, current = [], []
+    for index, word in enumerate(words):
+        current.append(word)
+        nxt = words[index + 1] if index + 1 < len(words) else None
+        if nxt is None or len(current) >= max_words or (nxt["start"] - word["end"]) >= pause:
+            groups.append(current)
+            current = []
+    return groups
+
+
+def _entry_tags(animation, x, y, text_len, duration_ms):
+    """Override tags that animate a caption in at the start of its line (positions are absolute, 1080x1920)."""
+    a = str(animation or "none").strip().lower()
+    pos = f"\\pos({x},{y})"
+    if a == "pop":
+        return pos + "\\fscx75\\fscy75\\t(0,110,\\fscx106\\fscy106)\\t(110,170,\\fscx100\\fscy100)"
+    if a == "bounce":
+        return pos + "\\fscx55\\fscy55\\t(0,120,\\fscx115\\fscy115)\\t(120,200,\\fscx94\\fscy94)\\t(200,260,\\fscx100\\fscy100)"
+    if a == "fade":
+        return pos + "\\fad(140,60)"
+    if a == "slide up":
+        return f"\\move({x},{y + 70},{x},{y},0,170)\\fad(80,0)"
+    if a == "slide down":
+        return f"\\move({x},{y - 70},{x},{y},0,170)\\fad(80,0)"
+    if a == "zoom":
+        return pos + "\\fscx160\\fscy160\\alpha&HFF&\\t(0,150,\\fscx100\\fscy100\\alpha&H00&)"
+    if a == "rise":
+        return f"\\move({x},{y + 30},{x},{y},0,220)\\fad(160,0)"
+    if a == "blur in":
+        return pos + "\\blur14\\alpha&H80&\\t(0,180,\\blur0\\alpha&H00&)"
+    if a == "spin in":
+        return pos + "\\frz-35\\fscx70\\fscy70\\t(0,180,\\frz0\\fscx100\\fscy100)"
+    if a == "shake":
+        return pos + "\\t(0,40,\\frz3)\\t(40,80,\\frz-3)\\t(80,120,\\frz2)\\t(120,160,\\frz0)"
+    return pos
+
+
+def write_styled_subtitles(path, words, clip_start, clip_end, caption, position="bottom", caption_x=None, caption_y=None):
+    """Captions in a style from the advanced editor's catalog, burned with ASS.
+
+    ``caption``: mode ("word": one word at a time, "lines": up to four words with the spoken one lit), font, weight,
+    italic, upper, fill, active (the lit word's colour), stroke + strokeW (em), box [colour, pad em], glow [colour, px],
+    shadow [colour, px], animation (one of CAPTION_ANIMATIONS), sizePct (font size, % of the frame's width) and yPct
+    (the caption's centre, % from the top). The style's look and its entry animation match the editor's preview.
+    """
+    clip_words = normalise_caption_words(words, clip_start, clip_end)
+    mode = "lines" if str(caption.get("mode") or "word").lower().startswith("line") else "word"
+    size = round(OUTPUT_WIDTH * max(3.0, min(14.0, float(caption.get("sizePct") or 7.4))) / 100.0)
+    font = _caption_font(caption.get("font"))
+    bold = -1 if int(caption.get("weight") or 800) >= 600 else 0
+    italic = -1 if caption.get("italic") else 0
+    upper = bool(caption.get("upper"))
+    fill = caption.get("fill") or "#FFFFFF"
+    active = caption.get("active") or fill
+    stroke = caption.get("stroke")
+    stroke_w = float(caption.get("strokeW") or 0) * size if stroke else 0.0
+    box = caption.get("box") if isinstance(caption.get("box"), (list, tuple)) and len(caption.get("box")) == 2 else None
+    shadow = caption.get("shadow") if isinstance(caption.get("shadow"), (list, tuple)) and len(caption.get("shadow")) == 2 else None
+    glow = caption.get("glow") if isinstance(caption.get("glow"), (list, tuple)) and len(caption.get("glow")) == 2 else None
+    animation = str(caption.get("animation") or "none").strip().lower()
+    if animation not in CAPTION_ANIMATIONS:
+        animation = "none"
+    if animation == "glow" and not glow:
+        glow = [active, 18]
+    try:
+        y = round(OUTPUT_HEIGHT * max(0.08, min(0.92, float(caption.get("yPct")) / 100.0)))
+    except (TypeError, ValueError):
+        y = {"top": 380, "center": 960, "centre": 960}.get(str(position or "bottom").lower(), 1500)
+    try:
+        y = round(OUTPUT_HEIGHT * max(0.08, min(0.92, float(caption_y) / 100.0))) if caption_y is not None else y
+    except (TypeError, ValueError):
+        pass
+    try:
+        x = round(OUTPUT_WIDTH * max(0.12, min(0.88, float(caption_x) / 100.0))) if caption_x is not None else OUTPUT_WIDTH // 2
+    except (TypeError, ValueError):
+        x = OUTPUT_WIDTH // 2
+
+    if box:
+        border_style, outline, outline_colour = 3, max(4.0, float(box[1]) * size), _ass_colour(box[0], "#000000")
+        back_colour = outline_colour
+    else:
+        border_style, outline, outline_colour = 1, stroke_w, _ass_colour(stroke or "#000000")
+        back_colour = _ass_colour(shadow[0], "#000000") if shadow else "&H80000000"
+    shadow_depth = round(float(shadow[1]) / 6.0, 1) if shadow and not box else 0
+
+    def word_text(value):
+        return ass_text(str(value).upper() if upper else str(value))
+
+    def line(layer, start_s, end_s, style_name, text):
+        start_cs = max(0, round(start_s * 100))
+        end_cs = max(start_cs + 2, round(end_s * 100))
+        return f"Dialogue: {layer},{ass_time_cs(start_cs)},{ass_time_cs(end_cs)},{style_name},,0,0,0,,{text}\n"
+
+    events = []
+    fill_c, active_c = _ass_colour(fill), _ass_colour(active)
+    # (start, end, text without tags, animated?) for each beat
+    beats = []
+    if mode == "word":
+        for index, word in enumerate(clip_words):
+            nxt = clip_words[index + 1] if index + 1 < len(clip_words) else None
+            end = min(nxt["start"], word["end"] + 0.35) if nxt else word["end"] + 0.35
+            start = word["start"] - clip_start
+            end = max(start + 0.12, end - clip_start)
+            colour = active_c if active != fill else fill_c
+            beats.append((start, end, f"{{\\1c{colour}}}{word_text(word['word'])}", True, word_text(word["word"])))
+    else:
+        for group in _caption_groups(clip_words):
+            for index, word in enumerate(group):
+                nxt = group[index + 1] if index + 1 < len(group) else None
+                start = word["start"] - clip_start
+                end = (nxt["start"] if nxt else word["end"] + 0.3) - clip_start
+                parts = []
+                for other_index, other in enumerate(group):
+                    colour = active_c if other_index == index else fill_c
+                    hidden = "\\alpha&HFF&" if animation == "typewriter" and other_index > index else ""  # the whole line shows; only the spoken word changes colour
+                    parts.append(f"{{\\1c{colour}{hidden}}}{word_text(other['word'])}")
+                beats.append((start, max(start + 0.12, end), " ".join(parts), index == 0, " ".join(word_text(o["word"]) for o in group)))
+
+    for start, end, text, first, plain in beats:
+        duration_ms = max(1, round((end - start) * 1000))
+        if animation == "typewriter" and mode == "word":
+            step = max(12, min(45, duration_ms // max(1, len(plain))))
+            letters = "".join(f"{{\\alpha&HFF&\\t({i * step},{i * step + 1},\\alpha&H00&)}}{ass_text(ch)}" for i, ch in enumerate(plain))
+            text = f"{{\\1c{active_c if active != fill else fill_c}}}{letters}"
+            tags = f"\\pos({x},{y})"
+        else:
+            tags = _entry_tags(animation if first and animation not in {"typewriter", "glow"} else "none", x, y, len(plain), duration_ms)
+        if glow:
+            glow_px = max(3.0, float(glow[1]) / 3.0)
+            events.append(line(0, start, end, "Glow", f"{{\\an5{tags}\\blur{glow_px * 1.6:.1f}\\bord{glow_px:.1f}\\3c{_ass_colour(glow[0])}\\3a&H78&\\1a&HFF&}}{plain}"))
+        events.append(line(1, start, end, "Caption", f"{{\\an5{tags}\\q2}}{text}"))
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("[Script Info]\n")
+        handle.write(f"ScriptType: v4.00+\nPlayResX: {OUTPUT_WIDTH}\nPlayResY: {OUTPUT_HEIGHT}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n")
+        handle.write("\n[V4+ Styles]\n")
+        handle.write("Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n")
+        handle.write(f"Style: Caption,{font},{size},{fill_c},{fill_c},{outline_colour},{back_colour},{bold},{italic},0,0,100,100,0,0,{border_style},{outline:.1f},{shadow_depth},5,60,60,60,1\n")
+        handle.write(f"Style: Glow,{font},{size},&HFF000000,&HFF000000,&H00FFFFFF,&HFF000000,{bold},{italic},0,0,100,100,0,0,1,0,0,5,60,60,60,1\n")
+        handle.write("\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n")
+        handle.writelines(events)
     return len(beats)
 
 
@@ -3767,6 +4081,7 @@ def export_subtitled_clip(cfg):
             subtitle_style,
             caption_x,
             caption_y,
+            caption=caption_style_of(cfg, meta),
         )
     emit("subtitles", "complete", message=f"{subtitle_count} caption beats styled for export", word_count=subtitle_count, overall=10)
 
@@ -4194,6 +4509,7 @@ def refine_clip(cfg):
             subtitle_style,
             render_caption_x,
             render_caption_y,
+            caption=caption_style_of(cfg, meta),
         )
 
     output_name = str(cfg.get("output_name") or meta.get("output_name") or f"{os.path.basename(artifact_dir)}-refined.mp4")
@@ -4323,6 +4639,7 @@ def refine_clip(cfg):
             "caption_x": caption_x,
             "caption_y": caption_y,
             "subtitle_style": subtitle_style,
+            "caption": caption_style_of(cfg, meta),
             "active_colour": "#FFD54A",
             "canvas_width": OUTPUT_WIDTH,
             "canvas_height": OUTPUT_HEIGHT,
@@ -4406,6 +4723,68 @@ def scan_people_cli(cfg):
     )
 
 
+def probe_source_cli(cfg):
+    """A source's title, length and picture before any work starts (the clipper's source page checks the length)."""
+    url = str(cfg.get("url") or "").strip()
+    path = str(cfg.get("source") or "").strip()
+    if path and os.path.isfile(path):
+        title = os.path.splitext(os.path.basename(path))[0]
+        print(json.dumps({"type": "probe", "title": title, "duration": round(probe_duration(path), 3)}), flush=True)
+        return
+    if not re.match(r"^https?://", url):
+        fail("A public video link or an uploaded video is required")
+    command = resolve_ytdlp_cli_command()
+    if not command:
+        fail("The video downloader is not installed")
+    args = [*command, "--no-playlist", "--no-warnings", "--skip-download", "--print", "%(title)s\t%(duration)s\t%(thumbnail)s\t%(channel)s\t%(heatmap)j"]
+    node_path = shutil.which("node")
+    if node_path:
+        args.extend(["--no-js-runtimes", "--js-runtimes", f"node:{node_path}", "--remote-components", "ejs:npm"])
+    result = subprocess.run([*args, url], capture_output=True, text=True, timeout=90)
+    line = (result.stdout or "").strip().splitlines()[-1:] or [""]
+    parts = line[0].split("\t")
+    if result.returncode != 0 or len(parts) < 2:
+        fail(((result.stderr or "").strip().splitlines() or ["This video could not be read"])[-1][:300])
+    try:
+        duration = float(parts[1])
+    except ValueError:
+        duration = 0.0
+    heatmap = []
+    try:
+        raw = json.loads(parts[4]) if len(parts) > 4 else None
+        # YouTube's "most replayed" curve: where people watch again, the source page's mini graph
+        heatmap = [round(float(row.get("value") or 0), 3) for row in (raw or []) if isinstance(row, dict)]
+    except (ValueError, TypeError):
+        heatmap = []
+    print(json.dumps({"type": "probe", "title": parts[0], "duration": duration, "thumbnail": parts[2] if len(parts) > 2 else "",
+                      "channel": parts[3] if len(parts) > 3 else "", "heatmap": heatmap}), flush=True)
+
+
+def transcribe_source_cli(cfg):
+    """Timed words for part of a video with the clipper's own speech-to-text (Fish Audio, else local Whisper): the
+    advanced editor's auto captions use this, so both write the same words."""
+    path = str(cfg.get("source") or "").strip()
+    if not path or not os.path.isfile(path):
+        fail("A local video or sound is required for transcription")
+    start = max(0.0, float(cfg.get("start") or 0))
+    duration = float(cfg.get("duration") or 0)
+    work = tempfile.mkdtemp(prefix="clyra-transcribe-", dir=TMP_ROOT if os.path.isdir(TMP_ROOT) else None)
+    try:
+        emit("transcribe", "running", message="Reading the speech...", overall=10)
+        audio = os.path.join(work, "speech.wav")
+        args = ["-ss", f"{start:.3f}", "-i", path]
+        if duration > 0:
+            args += ["-t", f"{duration:.3f}"]
+        run_ffmpeg([*args, "-vn", "-ac", "1", "-ar", "16000", audio], timeout=600)
+        words = transcribe_clip_words(audio)
+        out = [{"word": str(w.get("word") or "").strip(), "start": round(float(w.get("start") or 0) + start, 3), "end": round(float(w.get("end") or 0) + start, 3)}
+               for w in (words or []) if str(w.get("word") or "").strip()]
+        emit("transcribe", "complete", message=f"{len(out)} words", overall=100)
+        print(json.dumps({"type": "transcript", "words": out, "backend": STT_BACKEND}), flush=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def main():
     global OUTPUT_WIDTH, OUTPUT_HEIGHT, TMP_ROOT, OUTPUT_DIR
     if len(sys.argv) < 2:
@@ -4425,6 +4804,26 @@ def main():
             refine_clip(cfg)
         except PipelineCancelled:
             emit("cancelled", "cancelled", message="Refine cancelled; saved clip artifacts were left intact")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            fail(f"{type(exc).__name__}: {exc}")
+        return
+
+    if sys.argv[1].strip() in {"--probe", "probe"}:
+        cfg = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+        try:
+            probe_source_cli(cfg)
+        except Exception as exc:
+            fail(f"{type(exc).__name__}: {exc}")
+        return
+
+    if sys.argv[1].strip() in {"--transcribe", "transcribe"}:
+        cfg = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+        try:
+            transcribe_source_cli(cfg)
+        except PipelineCancelled:
+            emit("cancelled", "cancelled", message="Transcription cancelled")
         except SystemExit:
             raise
         except Exception as exc:
@@ -4555,6 +4954,10 @@ def main():
                 # neutral source-derived fallback instead of dereferencing an
                 # uninitialised local later in cache/artifact construction.
                 title = os.path.splitext(os.path.basename(source))[0].replace("-", " ").replace("_", " ").strip() or "Imported public video"
+                emit("captions", "running", message="Reading the video's title and captions...")
+                public_title, _public_duration, public_words = fetch_public_details_cli(requested_source_identity, job_tmp, cfg.get("language") or "en")
+                if public_title:
+                    title = public_title
                 try:
                     duration = probe_duration(source)
                 except Exception:
@@ -4577,7 +4980,14 @@ def main():
                     ]
                     source_words_word_accurate = bool(words)
                     emit("captions", "running", message=f"Reusing {len(words)} cached timed transcript words.")
+                elif len(public_words) >= 20:
+                    # the platform's own timed captions: moments are found on these; each clip's words are aligned
+                    # to its own audio later, so no full-length transcription pass is needed
+                    words = public_words
+                    source_words_word_accurate = False
+                    emit("captions", "running", message=f"Using the video's own captions ({len(words)} words).")
                 else:
+                    emit("captions", "running", message="Transcribing the speech...")
                     words = transcribe_clip_words(source)
                     source_words_word_accurate = True
 
@@ -5385,7 +5795,9 @@ def main():
                 if transcribed_words:
                     timing_source = "source transcript"
             if len(transcribed_words) < 5:
-                transcribed_words = transcribe_clip_words(analysis_clip_path)
+                # the clip's own speech, timed on its own audio: sorted, overlaps trimmed and kept inside the clip, as
+                # the source transcript's words are (Whisper can end a word past the cut or start two at once)
+                transcribed_words = caption_words_relative(transcribe_clip_words(analysis_clip_path) or [], 0.0, clip_duration)
                 timing_source = os.environ.get("CLIPPER_WHISPER_MODEL", "base.en")
             if len(transcribed_words) < 5:
                 fallback_words = caption_words_relative(words, clip_start, clip_end)
@@ -5457,6 +5869,7 @@ def main():
                     subtitle_style,
                     render_caption_x,
                     render_caption_y,
+                    caption=caption_style_of(cfg, None),
                 )
                 # An SRT sidecar next to the artifact: platforms and editors
                 # consume this as text, so it is phrase-grouped rather than
@@ -5591,6 +6004,7 @@ def main():
                     "text_colour": text_color,
                     "position": position,
                     "subtitle_style": subtitle_style,
+                    "caption": caption_style_of(cfg),
                     "captions_enabled": candidate_captions_enabled,
                     "caption_position": effective_caption_position,
                     "caption_x": caption_x,

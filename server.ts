@@ -6156,6 +6156,8 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
       caption_x: body.captionX ?? body.caption_x,
       caption_y: body.captionY ?? body.caption_y,
       subtitle_style: body.subtitleStyle || body.subtitle_style,
+      // A caption style from the clipper (the advanced editor's presets and animations); the clip's own when absent.
+      caption: body.caption && typeof body.caption === "object" ? body.caption : undefined,
       captions_enabled: body.captionsEnabled ?? body.captions_enabled ?? true,
       caption_collision_mode: body.captionCollisionMode || body.caption_collision_mode || "auto",
       render_quality: body.renderQuality || body.render_quality || "premium",
@@ -6170,6 +6172,32 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
       sfx_tracks: body.sfxTracks || body.sfx_tracks || body.sfxClips || body.sfx_clips || [],
     };
     spawnClipperPipeline(["--refine", JSON.stringify(cfg)], res, "Refining crop and captions...");
+  });
+
+  // A public link's title, length, picture and "most replayed" curve before any work starts: the clipper's source
+  // page shows the video and asks for a part of anything longer than an hour.
+  app.post("/api/clipper/probe", (req, res) => {
+    const url = String(req.body?.url || "").trim();
+    if (!/^https?:\/\//i.test(url)) {
+      res.status(400).json({ error: "A public video link is required" });
+      return;
+    }
+    const proc = spawn("python3", [clyraResourcePath("clipper-pipeline.py"), "--probe", JSON.stringify({ url })], {
+      cwd: clyraResourcePath(),
+      env: { ...process.env, PATH: `${process.env.PATH || ""}:${path.join(homedir(), "bin")}` },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "", err = "";
+    proc.stdout.on("data", (chunk) => { out += String(chunk); });
+    proc.stderr.on("data", (chunk) => { err = `${err}${chunk}`.slice(-2_000); });
+    const timer = setTimeout(() => proc.kill("SIGTERM"), 95_000);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      const events = out.trim().split("\n").map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+      const probe = events.find((e) => e.type === "probe"), failure = events.find((e) => e.type === "error");
+      if (probe) res.json({ ok: true, ...probe });
+      else res.status(422).json({ error: failure?.message || err.trim().split("\n").at(-1) || "This video could not be read" });
+    });
   });
 
   // Lightweight people scan for the create-wizard person picker (local upload only).

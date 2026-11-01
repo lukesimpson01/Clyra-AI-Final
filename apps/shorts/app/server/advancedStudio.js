@@ -30,6 +30,21 @@ async function startChatHost() {
 let studioClient = null;
 const loadStudioClient = () => (studioClient ??= import(pathToFileURL(join(dirname(STUDIO_BIN), '..', 'studio', 'client.mjs')).href));
 
+/* A finished AI clip opened in the editor: fetched from Clyra's clipper (the file it made), kept in the project and laid
+   on its Video line, so the person polishes the clip itself. */
+async function bringClip(folder, clip) {
+  const file = String(clip).split(/[\\/]/).pop();
+  if (!/^[\w .()-]+\.mp4$/i.test(file)) throw new Error('Which clip? A clipper output name is required.');
+  const base = process.env.CLYRA_SERVER;
+  if (!base) throw new Error('Clips come from Clyra: open Shorts from Clyra to edit a clip.');
+  const answer = await fetch(new URL(`/api/clipper/download/${encodeURIComponent(file)}`, base), { headers: { authorization: `Bearer ${process.env.CLYRA_BRIDGE_TOKEN || ''}` } });
+  if (!answer.ok) throw new Error(`The clip could not be fetched (${answer.status}).`);
+  await mkdir(join(folder, 'assets'), { recursive: true });
+  await writeFile(join(folder, 'assets', file), Buffer.from(await answer.arrayBuffer()));
+  const id = file.replace(/\.mp4$/i, '').replace(/[^\w-]+/g, '-');
+  await writeFile(join(folder, 'film.html'), `<meta name="viewport" content="width=1080, height=1920">\n\n<section>\n  <video id="${id}" src="assets/${file}"></video>\n</section>\n`);
+}
+
 async function projectFolder(name) {
   const folder = join(PROJECTS, safe(name));
   await mkdir(folder, { recursive: true });
@@ -38,10 +53,11 @@ async function projectFolder(name) {
   return folder;
 }
 
-export async function startAdvancedStudio({ name } = {}) {
+export async function startAdvancedStudio({ name, clip } = {}) {
   void startChatHost().catch(() => {});
   if (!existsSync(STUDIO_BIN)) throw new Error('The advanced editor is not installed next to FRAME (expected ../openfilm). Run `pnpm install` there first.');
   const folder = await projectFolder(name);
+  if (clip) await bringClip(folder, clip);
   try {
     const { openInStudio } = await loadStudioClient();
     const { url } = await openInStudio(folder, { fallback: 0, now: false, say: () => {} });

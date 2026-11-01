@@ -111,8 +111,12 @@ TRACKING_FPS_BY_QUALITY = {
     # observations. This avoids decoding every output frame on 4 GB machines
     # while keeping movement continuous at final render cadence.
     "low_memory": 12.0,
-    "balanced": 60.0,
-    "high_quality": 60.0,
+    # Balanced observes 15 fps (half a 30 fps master) and lets the same flow
+    # interpolation carry the crop between observations: framing is the
+    # slowest step of a clip, and detecting every frame doubled it for a path
+    # the smoother would have produced anyway.
+    "balanced": 15.0,
+    "high_quality": 30.0,
     "gpu": 60.0,
 }
 MAX_DYNAMIC_ZOOM = 1.20

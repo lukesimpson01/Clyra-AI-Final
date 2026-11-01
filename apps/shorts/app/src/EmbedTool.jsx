@@ -54,11 +54,16 @@ export default function EmbedTool({ tool }) {
   );
 }
 
-/* AutoClip in the editor's Tools tab: the home tool's source page and clip settings, as they are. "Polish and
-   export" hands the source video to the editor, which puts it on the Video line (a YouTube link stays a link: nothing
-   is downloaded from YouTube). */
+/* AutoClip in the editor's Tools tab: the home tool's source page, settings and run, as they are. "Open in editor"
+   hands the finished clip itself to the editor, which puts it on the Video line. */
 function EmbedAutoClip({ tool }) {
   const [file, setFile] = useState(null);
-  const send = () => window.parent?.postMessage({ type: 'shorts-embed-media', tool, file: file instanceof File ? file : null, link: file?.type === 'youtube-link' ? file.url : null }, '*');
+  const send = async (clip) => {
+    if (!clip?.output) return;
+    const name = String(clip.output).split(/[\\/]/).pop();
+    const blob = await fetch(`/api/clipper/download/${encodeURIComponent(name)}`).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+    if (!blob) return;
+    window.parent?.postMessage({ type: 'shorts-embed-media', tool, file: new File([blob], name, { type: 'video/mp4' }), link: null }, '*');
+  };
   return file ? <AutoClipStudio source={file} onBack={() => setFile(null)} onEditor={send} /> : <AutoClipSourcePage onFile={setFile} />;
 }

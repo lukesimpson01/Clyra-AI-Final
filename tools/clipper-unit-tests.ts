@@ -393,6 +393,17 @@ with tempfile.TemporaryDirectory() as temporary_dir:
         "phrase-highlight",
     )
     phrase_captions = phrase_path.read_text()
+    # The clipper's caption styles (the advanced editor's catalog) burn through their own writer.
+    styled_path = pathlib.Path(temporary_dir) / "styled.ass"
+    styled_count = module.write_subtitles(
+        styled_path, semantic_words, 0.0, 6.0, "Arial", 56, "#FFFFFF", "bottom", "word", None, None,
+        caption={"mode": "lines", "font": "'Arial Black', sans-serif", "weight": 900, "fill": "#fff", "active": "#f2d31a",
+                 "stroke": "#000", "strokeW": 0.11, "animation": "Pop", "sizePct": 8, "yPct": 70, "upper": True},
+    )
+    styled_captions = styled_path.read_text()
+    glow_path = pathlib.Path(temporary_dir) / "glow.ass"
+    module.write_styled_subtitles(glow_path, semantic_words, 0.0, 6.0, {"mode": "word", "font": "Sora", "fill": "#ffff1a", "animation": "Glow", "sizePct": 9})
+    glow_captions = glow_path.read_text()
     phrase_beats = module.phrase_highlight_beats(semantic_words, 0.0, 6.0)
     _, custom_position_override = module.subtitle_override("bottom", 38, 71)
 
@@ -510,6 +521,9 @@ print(json.dumps({
     "atomicStagingLeftovers": len(atomic_staging_leftovers),
     "phraseCaptionCount": phrase_caption_count,
     "phraseCaptions": phrase_captions,
+    "styledCaptions": styled_captions,
+    "styledCount": styled_count,
+    "glowCaptions": glow_captions,
     "phraseBeats": phrase_beats,
     "customPositionOverride": custom_position_override,
     "flagTrue": flag_true,
@@ -635,6 +649,9 @@ const payload = JSON.parse(output.trim()) as {
   atomicStagingLeftovers: number;
   phraseCaptionCount: number;
   phraseCaptions: string;
+  styledCaptions: string;
+  styledCount: number;
+  glowCaptions: string;
   phraseBeats: Array<[number, number, string]>;
   customPositionOverride: string;
   flagTrue: boolean;
@@ -731,7 +748,7 @@ assert.equal(payload.faceCfg.personMode || payload.faceCfg.sceneMode, "strict", 
 assert.equal(payload.faceFlex.personMode || payload.faceFlex.sceneMode, "flexible", "flexible scene mode is normalised");
 assert.equal(payload.faceAuto.reframeMode, "auto", "auto reframe intent is preserved");
 assert.equal(payload.faceAuto.speakerMode, "auto", "automatic speaker selection is explicit");
-assert.equal(payload.faceAuto.analysisFps, 60, "balanced tracking plans a native per-frame 60fps-capable path");
+assert.equal(payload.faceAuto.analysisFps, 15, "balanced tracking observes 15 fps and interpolates the crop between observations");
 assert.equal(payload.faceLowPower.trackingQuality, "low_memory", "low_power is a supported explicit 8 GB profile alias");
 assert.equal(payload.faceLowPower.analysisFps, 12, "low-memory profile uses a bounded sparse proxy cadence");
 assert.equal(payload.faceLocked.reframeMode, "locked_subject", "locked crop keeps a dedicated composition mode");
@@ -871,6 +888,12 @@ assert.equal(payload.atomicStagingLeftovers, 0, "atomic artifact writes clean up
 assert(payload.phraseCaptionCount > 0, "phrase-highlight subtitles produce timed caption beats");
 assert(payload.phraseCaptions.includes("Here is the") && payload.phraseCaptions.includes("answer."), "phrase-highlight captions keep multiple words visible together");
 assert(payload.phraseCaptions.includes("\\c&H"), "phrase-highlight captions mark the active word without moving the phrase");
+assert(payload.styledCount > 0 && payload.styledCaptions.includes("Style: Caption,Arial Black,86,"), "a clipper caption style burns in its own font at its size (8% of 1080 wide)");
+assert(payload.styledCaptions.includes("\\1c&H001AD3F2"), "the lines style lights the spoken word in its active colour (#f2d31a)");
+assert(payload.styledCaptions.includes("\\fscx75\\fscy75\\t("), "Pop animates each line in");
+assert(/\\pos\(540,1344\)/.test(payload.styledCaptions), "the caption sits at its height (70% of 1920)");
+assert(!payload.styledCaptions.includes("\\alpha&HFF&"), "a line shows all its words together; only the spoken one changes colour");
+assert(payload.glowCaptions.includes("Dialogue: 0,") && payload.glowCaptions.includes("\\blur") && payload.glowCaptions.includes("Dialogue: 1,"), "Glow draws a soft layer under crisp text");
 for (let index = 0; index < payload.phraseBeats.length - 1; index += 1) {
   assert(
     payload.phraseBeats[index][1] <= payload.phraseBeats[index + 1][0],

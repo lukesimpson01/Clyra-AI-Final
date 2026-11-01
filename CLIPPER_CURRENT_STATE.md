@@ -91,3 +91,20 @@ away from 8 GB CPU machines. Clyra still needs commercially approved
 active-speaker and ReID adapters, a production deep verifier with approved
 weights, semantic frame/vector retrieval models, formal EDL migrations and
 preview/export PTS conformance fixtures before those features can be claimed.
+
+## Shorts AI Clipper (2026-11-01)
+
+- **UI** (`apps/shorts/app/src/AutoClipStudio.jsx`, `AutoClipSourcePage.jsx`, `autoclip-studio-v3.css`): the Fake Text
+  story's workspace (step bar, editor card, live 9:16 preview). Steps: Source → Moments → Captions → Framing. The same
+  components run on the home page and inside the advanced editor's Tools tab (`/embed/auto-clip`).
+- **Moments**: nine presets the scorer knows (`keyword_set`: viral, funny, shocking, reaction, dramatic, angry, sad,
+  inspirational, action) or a typed description (custom keyword search); clip count, length, aspect ratio, language,
+  filler removal, lead-in, and "only part of the video" (`source_start_seconds` / `source_duration_seconds`).
+- **Captions**: the advanced editor's whole catalog (`frame/subtitle-styles.js`: 16 Word presets, 16 Lines styles, 13
+  animations), previewed live and burned by `write_styled_subtitles` (ASS: per-word active colour, stroke, box, glow,
+  shadow, uppercase/italic, and Pop/Bounce/Fade/Slide/Zoom/Rise/Blur/Spin/Typewriter/Shake/Glow entry animations).
+  The style travels as `config.caption`, is saved in the clip's meta and is honoured by `/api/clipper/rerender`.
+- **Pick a face**: clips render clean first; each clip's `available_faces` are shown; the chosen face is followed
+  (`faceTracking.selectedPersonId`) and the captions burned in a rerender per clip.
+- YouTube import needs the bundled `.clyra/bin/yt-dlp` with Python 3.10+ (`~/.local/bin/python3.11` here); the
+  system Python 3.9 yt-dlp fails with "The page needs to be reloaded".
