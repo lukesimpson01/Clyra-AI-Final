@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, Download, Film, Maximize2, Minus, Pause, Play, Plus, ScanFace, Sparkles, Wand2, X, Youtube } from 'lucide-react';
+import { AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignVerticalJustifyStart, ArrowLeft, Check, ChevronDown, ChevronRight, Film, Maximize2, Minus, Palette, Pause, PenLine, Play, Plus, ScanFace, Sparkles, Type, Wand2, X, Youtube } from 'lucide-react';
 import './story-wizard.css';
 import './fake-text-workspace.css';
 import './autoclip-studio-v3.css';
-import { SUB_ANIMATIONS, WORD_IDS, LINE_IDS, captionStyle, captionPayload, captionCss } from './subtitleStyles.js';
+import { SUB_ANIMATIONS, WORD_IDS, LINE_IDS, captionStyle, customStyle, captionPayload, captionCss } from './subtitleStyles.js';
+import { CAPTION_FONTS, loadCaptionFont } from './captionFonts.js';
 import { planStages, stageOfEvent, createProgress, etaText } from './clipProgress.js';
 import { clock } from './AutoClipSourcePage.jsx';
+import ClipResults, { clipKey } from './ClipResults.jsx';
+import { writeCopy } from './clipCopy.js';
+import { announceProject } from './projectThumb.js';
 
 /* AI clipper: the Fake Text story's workspace (steps, an editor card, a live 9:16 preview), the advanced editor's caption
    catalog, and Clyra's clipper behind it (server/localApi.js relays /api/clipper/* to Clyra). The last step asks how
@@ -29,7 +33,10 @@ const LENGTHS = [['Auto', 45], ['< 30s', 25], ['30–60s', 45], ['60–90s', 75]
 const QUICK_COUNTS = [1, 2, 3, 5, 10];
 const ASPECTS = ['9:16', '1:1', '16:9'];
 const LANGUAGES = ['Auto detect', 'English', 'Spanish', 'French', 'German', 'Portuguese', 'Italian', 'Japanese', 'Korean', 'Hindi'];
-const PLACES = [['Top', 22], ['Middle', 50], ['Bottom', 72]];
+/* Low sits above the app's own buttons and description on TikTok, Reels and Shorts */
+const PLACES = [['Top', 22, AlignVerticalJustifyStart], ['Center', 50, AlignVerticalJustifyCenter], ['Low', 72, AlignVerticalJustifyEnd]];
+const CAPTION_TABS = [['style', 'Style', Sparkles], ['font', 'Font', Type], ['colors', 'Colours', Palette], ['place', 'Place & motion', AlignVerticalJustifyCenter]];
+const SWATCHES = ['#ffffff', '#f2d31a', '#ffdd00', '#a6f24a', '#22e5e5', '#4bd8f4', '#1d5cff', '#fb73d4', '#e0222a', '#ff8a00', '#000000'];
 /* every animation of the editor's catalog but Bounce, which reads as a glitch on a caption that changes word by word */
 const ANIMATIONS = SUB_ANIMATIONS.filter((a) => a !== 'Bounce');
 const SAMPLE = 'I GAVE AWAY ONE MILLION DOLLARS TO THIS GUY';
@@ -47,12 +54,6 @@ function clipTitle(clip, i, sourceTitle) {
   const raw = String(clip.title || '').trim();
   if (raw && !/^[0-9a-f]{8}[ -]?[0-9a-f]{4}/i.test(raw) && !/^source master\b/i.test(raw)) return raw;
   return `${sourceTitle || 'Clip'} · Moment ${clip.rank || i + 1}`;
-}
-/* the clipper's reason is a scoring note: keep its plain sentence */
-function clipNote(clip) {
-  const text = String(clip.reason || '').replace(/^\s*\d+\s*[-–—:]+\s*/, '').replace(/\s*Timeline evidence:.*$/is, '').trim();
-  if (!text || /needs |prompt-relevant|cleaner ending/i.test(text)) return '';
-  return text.length > 110 ? `${text.slice(0, 108)}…` : text;
 }
 /* faces worth asking about: seen often and surely (a mask, a QR code or a dark blur seen once is not a person) */
 const facesOf = (clip) => { const all = clip.available_faces || []; return all.filter((f, i) => i === 0 || ((f.confidence ?? 1) >= 0.6 && (f.bboxSamples?.length ?? 4) >= 4)); };
@@ -111,13 +112,13 @@ function Section({ title, aside, children }) {
 }
 
 /** The caption as the clip will show it: one word at a time, or three to four together with only the spoken one lit. */
-function CaptionPreview({ mode, id, animation, sizePct, yPct, width, word }) {
-  const style = captionStyle(mode, id), words = SAMPLE.split(' ');
+function CaptionPreview({ mode, style, animation, sizePct, yPct, width, word }) {
+  const words = SAMPLE.split(' ');
   const group = Math.floor(word / 4) * 4;
   const shown = mode === 'Lines' ? words.slice(group, group + 4) : [words[word % words.length]];
   const active = mode === 'Lines' ? word - group : 0, px = width * sizePct / 100;
   const anim = `acp-a-${String(animation).toLowerCase().replace(/\s+/g, '-')}`;
-  return <div className={`acp-cap ${anim}`} key={`${mode}-${id}-${animation}-${mode === 'Lines' ? group : word}`} style={{ top: `${yPct}%` }}>
+  return <div className={`acp-cap ${anim}`} key={`${mode}-${animation}-${mode === 'Lines' ? group : word}`} style={{ top: `${yPct}%` }}>
     <span className="acp-cap-line" style={style.box ? { background: style.box[0], borderRadius: px * 0.2, padding: `${px * style.box[1] * 0.2}px ${px * style.box[1] * 1.3}px` } : undefined}>
       {shown.map((w, i) => <React.Fragment key={i}><span className={mode === 'Lines' && animation === 'Typewriter' && i > active ? 'acp-cap-wait' : ''} style={captionCss(style, px, i === active)}>{w}</span>{i < shown.length - 1 ? ' ' : ''}</React.Fragment>)}
     </span>
@@ -156,13 +157,14 @@ function Checklist({ items, live }) {
   </section>;
 }
 
-export default function AutoClipStudio({ source, onBack, onEditor }) {
+export default function AutoClipStudio({ source, onBack, onEditor, onProjects }) {
   const meta = source.meta || {};
   const sourceTitle = meta.title || (source.type === 'youtube-link' ? 'YouTube video' : String(source.name || 'Video').replace(/\.[a-z0-9]{2,4}$/i, ''));
   const [step, setStep] = useState(1);
   /* moments */
   const [moment, setMoment] = useState('viral');
   const [prompt, setPrompt] = useState('');
+  const [custom, setCustom] = useState(false);
   /* the last step */
   const [count, setCount] = useState(3);
   const [length, setLength] = useState('Auto');
@@ -177,6 +179,11 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
   const [animation, setAnimation] = useState('Pop');
   const [sizePct, setSizePct] = useState(8.5);
   const [yPct, setYPct] = useState(72);
+  const [font, setFont] = useState(null);
+  const [upper, setUpper] = useState(null);
+  const [customColors, setCustomColors] = useState(false);
+  const [colors, setColors] = useState({ text: '#ffffff', spoken: '#f2d31a', outline: '#000000' });
+  const [capTab, setCapTab] = useState('style');
   /* framing */
   const [tracking, setTracking] = useState('auto');
   const [motion, setMotion] = useState('smooth');
@@ -191,7 +198,8 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
   const [full, setFull] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [word, setWord] = useState(0);
-  const [copied, setCopied] = useState('');
+  const [copies, setCopies] = useState({});
+  const saved = useRef(new Set()), writing = useRef(new Set());
   const [tick, setTick] = useState(0);
   const abort = useRef(null), sourceUrl = useRef(null), previewBox = useRef(null), jobRef = useRef(null), model = useRef(null), startedAt = useRef(0);
   const [previewW, setPreviewW] = useState(240);
@@ -225,9 +233,14 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
   }, [phase]);
 
   const yt = source.type === 'youtube-link' ? youtubeId(source.url) : null;
-  const caption = useMemo(() => captionPayload({ mode, id: styleId, animation, sizePct, yPct }), [mode, styleId, animation, sizePct, yPct]);
+  const look = { font, upper, colors: customColors ? colors : null };
+  const caption = useMemo(() => captionPayload({ mode, id: styleId, animation, sizePct, yPct, ...look }), [mode, styleId, animation, sizePct, yPct, font, upper, customColors, colors]); // eslint-disable-line react-hooks/exhaustive-deps
+  const previewStyle = customStyle(mode, styleId, look);
+  useEffect(() => { if (font) void loadCaptionFont(font); }, [font]);
+  useEffect(() => { if (capTab === 'font') CAPTION_FONTS.forEach((f) => void loadCaptionFont(f.name)); }, [capTab]);
   const picking = tracking === 'pick';
-  const momentText = prompt.trim() || MOMENT_NAME[moment] || 'the best moments';
+  const ask = custom ? prompt.trim() : '';
+  const momentText = ask || MOMENT_NAME[moment] || 'the best moments';
   const range = meta.range;
   const workDuration = range ? range.end - range.start : meta.duration || 600;
   const faceTracking = (selectedPersonId) => ({ enabled: tracking !== 'off', mode: motion, allowZoom: zoom, smartReframe: true, reframeMode: 'auto', speakerMode: 'auto', trackingQuality: 'balanced', ...(selectedPersonId ? { selectedPersonId } : {}) });
@@ -251,7 +264,7 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
     setSnap(model.current.snapshot(Date.now()));
     setPhase('running'); setClips([]); setFaces({}); setError(''); setServerMessage('');
     const config = {
-      moment_type: prompt.trim() || moment, clip_duration: seconds, clip_count: count, aspect_ratio: aspect, render_quality: 'premium',
+      moment_type: ask || moment, clip_duration: seconds, clip_count: count, aspect_ratio: aspect, render_quality: 'premium',
       language: language === 'Auto detect' ? 'auto' : language, remove_fillers: fillers, lead_in: lead ? 2 : 0, clip_name: 'clip',
       ...(range ? { source_start_seconds: Math.floor(range.start), source_duration_seconds: Math.ceil(range.end - range.start) } : {}),
       /* picking a face: clean clips first; the captions go on with the face, after the pick */
@@ -313,9 +326,32 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
     }
   };
 
+  /* each finished clip gets its post written (title, caption, hashtags), then is saved to Projects under that title */
+  const write = async (clip, again = false) => {
+    const key = clipKey(clip);
+    if (writing.current.has(key) && !again) return;
+    writing.current.add(key);
+    if (again) setCopies((m) => { const n = { ...m }; delete n[key]; return n; });
+    const result = await writeCopy({ clip, sourceTitle, channel: meta.channel, moment: ask || moment }).catch(() => null);
+    writing.current.delete(key);
+    if (result) setCopies((m) => ({ ...m, [key]: result }));
+  };
+  useEffect(() => {
+    if (phase !== 'done') return;
+    for (const clip of clips) if (!copies[clipKey(clip)]) void write(clip);
+  }, [phase, clips]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (phase !== 'done') return;
+    clips.forEach((clip, i) => {
+      const key = clipKey(clip), tag = `${key}|${clip.output}`;
+      if (!copies[key] || saved.current.has(tag)) return;
+      saved.current.add(tag);
+      announceProject({ name: copies[key].title || clipTitle(clip, i, sourceTitle), tool: '/create/auto-clip', source: mediaOf(clip.output), duration: Number.parseFloat(clip.clip_duration) || null, video: mediaOf(clip.output) });
+    });
+  }, [phase, clips, copies]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Cancel stops the job in Clyra too (a dropped connection alone never does) */
   const cancel = () => { const id = jobRef.current; if (id) void fetch(`/api/clipper/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => {}); jobRef.current = null; abort.current?.abort(); };
-  const copy = async (text, key) => { try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 1400); } catch { /* clipboard refused */ } };
   const sourceLabel = sourceTitle;
 
   /* ---------- the run, filling the page ---------- */
@@ -344,7 +380,7 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
         out.push('Rendering in 1080 × 1920');
       } else if (id === 'source') out.push(`Getting “${sourceTitle}”`, meta.channel ? `${meta.channel} · ${clock(meta.duration || 0)} of video` : `${clock(workDuration)} of video to look through`, range ? `Only ${clock(range.start)} – ${clock(range.end)}, the part you picked` : 'Keeping the original quality for the final clips');
       else if (id === 'speech') out.push(`Reading every word said in “${sourceTitle}”`, source.type === 'youtube-link' ? 'Using the video’s own captions when it has them' : 'Turning the speech into timed words', 'Words are timed to the audio again for each clip');
-      else if (id === 'moments') out.push(`Looking for ${prompt.trim() ? `“${prompt.trim()}”` : momentText.toLowerCase()}`, `Weighing hooks, pacing and endings for ${count} clip${count === 1 ? '' : 's'}`, 'Checking the audio for laughs, shouts and silence');
+      else if (id === 'moments') out.push(`Looking for ${ask ? `“${ask}”` : momentText.toLowerCase()}`, `Weighing hooks, pacing and endings for ${count} clip${count === 1 ? '' : 's'}`, 'Checking the audio for laughs, shouts and silence');
       else if (id.startsWith('frame')) out.push(picking ? `Scanning the faces in clip ${clipNo}` : tracking === 'off' ? `Cutting clip ${clipNo}` : `Keeping whoever speaks in frame in clip ${clipNo}`, picking ? 'You choose who to follow next' : zoom && tracking !== 'off' ? 'A gentle punch-in on the face' : `${aspect} framing`);
       else if (id.startsWith('words')) out.push(`Timing each word in clip ${clipNo}`);
       else if (id.startsWith('render')) out.push(`Rendering clip ${clipNo} in 1080 × 1920`, captions && !picking ? `Burning in ${mode === 'Lines' ? 'line' : 'word'} style ${styleId} with ${animation.toLowerCase()}` : 'Clean, ready for captions');
@@ -374,21 +410,9 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
   }
 
   /* ---------- results ---------- */
-  if (phase === 'done') return <div className="ftl-root acp-root">
-    <header className="acp-top"><button type="button" className="acp-back" aria-label="Back to settings" onClick={() => setPhase('setup')}><ArrowLeft size={17}/></button><div><h2>{clips.length ? `${clips.length} clip${clips.length === 1 ? '' : 's'} ready` : 'No clips this time'}</h2><small>From {sourceLabel} · {momentText}</small></div><button type="button" className="ftl-btn" onClick={() => { setPhase('setup'); setStep(4); }}>Adjust settings</button><button type="button" className="sw-next acp-cta" onClick={generate}><Wand2 size={15}/> Generate again</button></header>
-    {error && <div className="ftl-error" role="alert"><span>{error}</span><button type="button" aria-label="Dismiss" onClick={() => setError('')}><X size={14}/></button></div>}
-    {clips.length ? <div className="acp-results">{[...clips].sort((a, b) => (b.virality_score ?? 0) - (a.virality_score ?? 0)).map((clip, i) => <article key={clip.output} className="acp-result">
-      <div className="acp-result-video"><video src={`${mediaOf(clip.output)}${clip._v ? `?v=${clip._v}` : ''}`} muted loop playsInline preload="metadata" onMouseEnter={(e) => void e.currentTarget.play().catch(() => {})} onMouseLeave={(e) => e.currentTarget.pause()}/>
-        {clip.virality_score != null && <span className="acp-score" title="Virality score"><Sparkles size={11}/>{Number(clip.virality_score).toFixed(1)}</span>}
-        <span className="acp-len">{clip.clip_duration}</span></div>
-      <div className="acp-result-body">
-        <strong>{clipTitle(clip, i, sourceTitle)}</strong>
-        <small className="acp-range-label">{clip.source_start && clip.source_end ? `${clip.source_start} – ${clip.source_end} in the video` : ''}</small>
-        {clipNote(clip) && <p>{clipNote(clip)}</p>}
-        {clip.caption && <button type="button" className="acp-caption-copy" onClick={() => copy(`${clip.caption}\n\n${clip.hashtags || ''}`.trim(), clip.output)}><Copy size={12}/>{copied === clip.output ? 'Copied' : 'Copy caption and hashtags'}</button>}
-        <div className="acp-result-actions"><a className="ftl-btn" href={downloadOf(clip.output)} download><Download size={13}/> Download</a><button type="button" className="ftl-btn primary" onClick={() => onEditor?.(clip)}>Open in editor <ChevronRight size={13}/></button></div>
-      </div>
-    </article>)}</div> : <div className="acp-empty"><Film size={28}/><p>The clipper finished without a clip for these settings. Try another moment, a longer length or the whole video.</p><button type="button" className="sw-next" onClick={() => setPhase('setup')}>Change settings</button></div>}
+  if (phase === 'done') return <div className="ftl-root acp-root acp-results-root">
+    <ClipResults clips={clips} copies={copies} titleOf={(clip, i) => clipTitle(clip, i, sourceTitle)} sourceTitle={sourceLabel} momentText={momentText} error={error} setError={setError}
+      onAdjust={() => setPhase('setup')} onAgain={generate} onEditor={onEditor} onProjects={onProjects} onRewrite={(clip) => void write(clip, true)}/>
   </div>;
 
   /* ---------- pick a face ---------- */
@@ -410,12 +434,12 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
   const backdrop = yt ? <img className="acp-stage-bg" src={meta.thumbnail || `https://i.ytimg.com/vi/${yt}/hqdefault.jpg`} alt="" onError={(e) => { if (!e.currentTarget.src.includes('hqdefault')) e.currentTarget.src = `https://i.ytimg.com/vi/${yt}/hqdefault.jpg`; }}/> : sourceUrl.current ? <video className="acp-stage-bg" src={sourceUrl.current} autoPlay muted loop playsInline onLoadedMetadata={(e) => { if (range) e.currentTarget.currentTime = range.start; }}/> : <div className="acp-stage-bg acp-stage-empty"/>;
   const stageView = (big = false) => <div className={`acp-stage ${aspect === '1:1' ? 'square' : aspect === '16:9' ? 'wide' : ''} ${big ? 'big' : ''}`} ref={big ? undefined : previewBox}>
     {backdrop}
-    {captions && <CaptionPreview mode={mode} id={styleId} animation={animation} sizePct={sizePct} yPct={yPct} width={big ? Math.min(innerHeight * 0.5, 540) : previewW} word={word}/>}
+    {captions && <CaptionPreview mode={mode} style={previewStyle} animation={animation} sizePct={sizePct} yPct={yPct} width={big ? Math.min(innerHeight * 0.5, 540) : previewW} word={word}/>}
     {picking && <div className="acp-face-hint"><ScanFace size={13}/> You pick the face after the clips are found</div>}
   </div>;
   const summary = [
     ['Moments', momentText],
-    ['Captions', captions ? `${mode === 'Lines' ? '3–4 words' : 'One word'} · style ${styleId} · ${animation}` : 'Off'],
+    ['Captions', captions ? `${mode === 'Lines' ? '3–4 words' : 'One word'} · ${font || `style ${styleId}`} · ${PLACES.find(([, v]) => v === yPct)?.[0] ?? `${yPct}%`} · ${animation}` : 'Off'],
     ['Framing', tracking === 'pick' ? 'You pick a face' : tracking === 'off' ? 'Centred, no tracking' : 'Follows whoever speaks'],
     ['Part', range ? `${clock(range.start)} – ${clock(range.end)}` : meta.duration ? `All ${clock(meta.duration)}` : 'The whole video'],
   ];
@@ -427,19 +451,39 @@ export default function AutoClipStudio({ source, onBack, onEditor }) {
       <section className="ftl-editor">
         <div className="ftl-panel-header"><strong>{['Source', 'Find moments', 'Captions', 'Framing', 'Ready to generate'][step]}</strong><span/><button type="button" className="acp-source-chip" onClick={onBack} title="Choose a different video">{yt ? <Youtube size={15} fill="#ff0033" color="#ff0033"/> : <Film size={14}/>}<span>{sourceLabel}</span></button></div>
         <div className="ftl-panel-body" key={step}>
-          {step === 1 && <>
-            <Section title="WHAT TO CLIP"><div className="acp-moments" role="radiogroup" aria-label="Moments to find">{MOMENTS.map(([key, name, hint]) => <button key={key} type="button" role="radio" aria-checked={!prompt.trim() && moment === key} className={!prompt.trim() && moment === key ? 'active' : ''} onClick={() => { setMoment(key); setPrompt(''); }}><b>{name}</b><small>{hint}</small></button>)}</div></Section>
-            <Section title="OR DESCRIBE A MOMENT" aside={<small className="acp-count">{prompt.length}/300</small>}><div className="ftl-message-pill acp-prompt"><Sparkles size={14}/><textarea maxLength={300} rows={1} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. when he opens the vault, the final challenge, the funniest fail"/></div><p className="acp-muted">A description searches the whole video for that moment instead of a preset.</p></Section>
-          </>}
+          {step === 1 && <div className="acp-moment-list" role="radiogroup" aria-label="Moments to find">
+            {MOMENTS.map(([key, name, hint]) => { const on = !custom && moment === key; return <button key={key} type="button" role="radio" aria-checked={on} className={on ? 'active' : ''} onClick={() => { setMoment(key); setCustom(false); }}><span className="acp-moment-text"><b>{name}</b><small>{hint}</small></span><i aria-hidden>{on && <Check size={11} strokeWidth={3}/>}</i></button>; })}
+            <label className={`acp-moment-custom${custom ? ' active' : ''}`} onClick={() => setCustom(true)}><PenLine size={15} aria-hidden/><input aria-label="Describe your own moment" maxLength={300} value={prompt} onFocus={() => setCustom(true)} onChange={(e) => { setPrompt(e.target.value); setCustom(true); }} placeholder="Describe your own: when he opens the vault, the funniest fail…"/><i aria-hidden>{custom && <Check size={11} strokeWidth={3}/>}</i></label>
+          </div>}
           {step === 2 && <>
             <Toggle label="Captions" hint="Timed to every word that is said" on={captions} onChange={setCaptions}/>
             {captions && <>
-              <Section title="HOW THE WORDS SHOW"><Pills label="Caption mode" items={[['Lines', '3–4 words, the spoken one lit'], ['Word', 'One word at a time']]} value={mode} onChange={setMode}/></Section>
-              <div className="acp-styles" role="radiogroup" aria-label="Caption style">{(mode === 'Lines' ? LINE_IDS : WORD_IDS).map((id) => { const st = captionStyle(mode, id); return <button key={id} type="button" role="radio" aria-checked={styleId === id} className={styleId === id ? 'active' : ''} onClick={() => setStyleId(id)} title={`Style ${id}`}>
-                <span className="acp-style-swatch">{mode === 'Lines' ? <span style={st.box ? { background: st.box[0], borderRadius: 4, padding: '1px 6px' } : undefined}><span style={captionCss(st, 14, false)}>Aa </span><span style={captionCss(st, 14, true)}>Bb</span></span> : <span style={captionCss(st, 16, false)}>Aa</span>}</span></button>; })}</div>
-              <Section title="ANIMATION"><Pills label="Caption animation" items={ANIMATIONS.map((a) => [a, a])} value={animation} onChange={setAnimation}/></Section>
-              <Section title="POSITION"><Pills label="Caption position" items={PLACES.map(([k, v]) => [v, k])} value={PLACES.find(([, v]) => v === yPct)?.[1] ?? null} onChange={setYPct}/></Section>
-              <div className="ftl-slider-grid"><label className="ftl-slider"><span>Size <b>{sizePct.toFixed(1)}%</b></span><input type="range" min="4" max="13" step="0.1" value={sizePct} onChange={(e) => setSizePct(Number(e.target.value))} aria-label="Caption size"/></label><label className="ftl-slider"><span>Height <b>{yPct}%</b></span><input type="range" min="10" max="90" value={yPct} onChange={(e) => setYPct(Number(e.target.value))} aria-label="Caption height"/></label></div>
+              <div className="acp-mode" role="radiogroup" aria-label="How the words show">{[['Word', 'One word', 'A single word at a time'], ['Lines', '3–4 words', 'A short line, the spoken word lit']].map(([key, name, hint]) => <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? 'active' : ''} onClick={() => setMode(key)}><b>{name}</b><small>{hint}</small></button>)}</div>
+              <div className="acp-tabs" role="tablist" aria-label="Caption settings">{CAPTION_TABS.map(([key, name, Icon]) => <button key={key} type="button" role="tab" aria-selected={capTab === key} className={capTab === key ? 'active' : ''} onClick={() => setCapTab(key)}><Icon size={13}/>{name}</button>)}</div>
+              <div className="acp-tab-body" role="tabpanel" key={capTab}>
+                {capTab === 'style' && <div className="acp-styles" role="radiogroup" aria-label="Caption style">{(mode === 'Lines' ? LINE_IDS : WORD_IDS).map((id) => { const st = customStyle(mode, id, look); return <button key={id} type="button" role="radio" aria-checked={styleId === id} aria-label={`Style ${id}`} className={styleId === id ? 'active' : ''} onClick={() => setStyleId(id)}>
+                  <span className="acp-style-swatch">{mode === 'Lines' ? <span style={st.box ? { background: st.box[0], borderRadius: 4, padding: '1px 6px' } : undefined}><span style={captionCss(st, 14, false)}>Aa </span><span style={captionCss(st, 14, true)}>Bb</span></span> : <span style={captionCss(st, 16, false)}>Aa</span>}</span></button>; })}</div>}
+                {capTab === 'font' && <>
+                  <div className="acp-fonts" role="radiogroup" aria-label="Font">
+                    <button type="button" role="radio" aria-checked={!font} className={!font ? 'active' : ''} onClick={() => setFont(null)}><span style={{ fontFamily: captionStyle(mode, styleId).font, fontWeight: captionStyle(mode, styleId).weight }}>Aa</span><small>Style’s own</small></button>
+                    {CAPTION_FONTS.map((f) => <button key={f.id} type="button" role="radio" aria-checked={font === f.name} className={font === f.name ? 'active' : ''} onClick={() => setFont(f.name)} title={f.name}><span style={{ fontFamily: `'${f.name}', sans-serif` }}>Aa</span><small>{f.name}</small></button>)}
+                  </div>
+                  <div className="acp-inline-row"><span>Case</span><Pills label="Letter case" items={[[null, 'As styled'], [false, 'Aa'], [true, 'AA']]} value={upper} onChange={setUpper}/><label className="ftl-slider acp-size"><span>Size <b>{sizePct.toFixed(1)}%</b></span><input type="range" min="4" max="13" step="0.1" value={sizePct} onChange={(e) => setSizePct(Number(e.target.value))} aria-label="Caption size"/></label></div>
+                </>}
+                {capTab === 'colors' && <>
+                  <Toggle label="Custom colours" hint="Your own colours over the style’s" on={customColors} onChange={setCustomColors}/>
+                  <div className={`acp-colors${customColors ? '' : ' is-off'}`}>{[['text', 'Text', 'Every word'], ['spoken', mode === 'Lines' ? 'Spoken word' : 'Word', mode === 'Lines' ? 'The word being said' : 'The word on screen'], ['outline', 'Outline', 'The edge around each letter']].map(([key, name, hint]) => <div key={key} className="acp-color">
+                    <label className="acp-color-well" style={{ background: colors[key] }}><input type="color" aria-label={`${name} colour`} disabled={!customColors} value={colors[key]} onChange={(e) => setColors((c) => ({ ...c, [key]: e.target.value }))}/></label>
+                    <span><b>{name}</b><small>{hint}</small></span>
+                    <div className="acp-swatches">{SWATCHES.map((c) => <button key={c} type="button" disabled={!customColors} aria-label={`${name} ${c}`} aria-pressed={colors[key] === c} className={colors[key] === c ? 'active' : ''} style={{ background: c }} onClick={() => setColors((v) => ({ ...v, [key]: c }))}/>)}</div>
+                  </div>)}</div>
+                </>}
+                {capTab === 'place' && <>
+                  <Section title="POSITION"><div className="acp-places" role="radiogroup" aria-label="Caption position">{PLACES.map(([name, v, Icon]) => <button key={name} type="button" role="radio" aria-checked={yPct === v} className={yPct === v ? 'active' : ''} onClick={() => setYPct(v)}><span className="acp-place-mini" aria-hidden><i style={{ top: `${v}%` }}/></span><Icon size={14}/>{name}</button>)}</div>
+                    <label className="ftl-slider acp-height"><span>Fine-tune height <b>{yPct}%</b></span><input type="range" min="10" max="90" value={yPct} onChange={(e) => setYPct(Number(e.target.value))} aria-label="Caption height"/></label></Section>
+                  <Section title="ANIMATION"><Pills label="Caption animation" items={ANIMATIONS.map((a) => [a, a])} value={animation} onChange={setAnimation}/></Section>
+                </>}
+              </div>
             </>}
           </>}
           {step === 3 && <>

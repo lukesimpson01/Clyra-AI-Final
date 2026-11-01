@@ -21,9 +21,21 @@ export function captionStyle(mode, id) {
   return { font: WORD_FONT, weight: 800, italic: false, upper: false, fill, active: fill, stroke: edge, strokeW: 0.09, box: null, glow: null, shadow: ['rgba(0,0,0,.45)', 12] };
 }
 
+/** A style with the person's own choices over it, as the editor's Text and Colors tabs allow: `font` (a bundled family,
+ *  null keeps the style's), `upper` (null keeps the style's) and `colors` ({ text, spoken, outline }, or null). */
+export function customStyle(mode, id, { font = null, upper = null, colors = null } = {}) {
+  const st = captionStyle(mode, id);
+  return {
+    ...st,
+    ...(font ? { font: `'${font}', ${st.font}` } : {}),
+    ...(upper != null ? { upper } : {}),
+    ...(colors ? { fill: colors.text, active: colors.spoken, stroke: colors.outline, strokeW: st.strokeW || 0.08, glow: st.glow ? [colors.spoken, st.glow[1]] : null } : {}),
+  };
+}
+
 /** The burn-in description sent with a run (sizePct: of the frame's width; yPct: the caption's centre from the top). */
-export function captionPayload({ mode, id, animation, sizePct, yPct }) {
-  return { mode: mode === 'Lines' ? 'lines' : 'word', presetId: id, ...captionStyle(mode, id), animation, sizePct, yPct };
+export function captionPayload({ mode, id, animation, sizePct, yPct, font = null, upper = null, colors = null }) {
+  return { mode: mode === 'Lines' ? 'lines' : 'word', presetId: id, ...customStyle(mode, id, { font, upper, colors }), animation, sizePct, yPct };
 }
 
 /** Inline CSS for a word drawn in a style, at a font size in px (the preview's own scale). */

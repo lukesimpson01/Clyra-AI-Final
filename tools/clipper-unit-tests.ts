@@ -762,9 +762,9 @@ assert.equal(payload.faceCfg.personMode || payload.faceCfg.sceneMode, "strict", 
 assert.equal(payload.faceFlex.personMode || payload.faceFlex.sceneMode, "flexible", "flexible scene mode is normalised");
 assert.equal(payload.faceAuto.reframeMode, "auto", "auto reframe intent is preserved");
 assert.equal(payload.faceAuto.speakerMode, "auto", "automatic speaker selection is explicit");
-assert.equal(payload.faceAuto.analysisFps, 15, "balanced tracking observes 15 fps and interpolates the crop between observations");
+assert.equal(payload.faceAuto.analysisFps, 10, "balanced tracking observes 10 fps and interpolates the crop between observations");
 assert.equal(payload.faceLowPower.trackingQuality, "low_memory", "low_power is a supported explicit 8 GB profile alias");
-assert.equal(payload.faceLowPower.analysisFps, 12, "low-memory profile uses a bounded sparse proxy cadence");
+assert.equal(payload.faceLowPower.analysisFps, 8, "low-memory profile uses a bounded sparse proxy cadence");
 assert.equal(payload.faceLocked.reframeMode, "locked_subject", "locked crop keeps a dedicated composition mode");
 assert.equal(payload.faceLocked.enabled, true, "locked crop still uses face analysis to frame the person once");
 assert.equal(payload.faceLocked.allowZoom, false, "locked crop never adds dynamic zoom after composition is set");

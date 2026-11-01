@@ -97,9 +97,25 @@ export async function listAdvancedProjects() {
   const out = [];
   for (const name of names) {
     const st = await stat(join(PROJECTS, name)).catch(() => null);
-    if (st?.isDirectory()) out.push({ name, modified: st.mtimeMs, poster: existsSync(join(PROJECTS, name, '.film', 'cache', 'film-poster.jpg')) });
+    if (!st?.isDirectory()) continue;
+    const timing = JSON.parse(await readFile(join(PROJECTS, name, '.film', 'cache', 'film-duration.json'), 'utf8').catch(() => '{}') || '{}');
+    out.push({ name, modified: st.mtimeMs, poster: existsSync(join(PROJECTS, name, '.film', 'cache', 'film-poster.jpg')), duration: Number(timing.duration) || null, preview: !!(await advancedPreview(name)) });
   }
   return out.sort((a, b) => b.modified - a.modified);
+}
+
+/** The video a project's card plays on hover: the longest-running video the film is made from (its largest file in
+ *  assets/), or null for a film with no footage. */
+export async function advancedPreview(name) {
+  if (!name || /[\\/]|\.\./.test(name)) return null;
+  const dir = join(PROJECTS, name, 'assets');
+  let best = null;
+  for (const file of await readdir(dir).catch(() => [])) {
+    if (!/\.(mp4|m4v|mov|webm)$/i.test(file)) continue;
+    const st = await stat(join(dir, file)).catch(() => null);
+    if (st?.isFile() && (!best || st.size > best.size)) best = { path: join(dir, file), size: st.size, mimeType: /\.webm$/i.test(file) ? 'video/webm' : /\.mov$/i.test(file) ? 'video/quicktime' : 'video/mp4' };
+  }
+  return best;
 }
 
 /** A project's card picture: the poster the editor drew of its film (the editor's projects list shows the same). */

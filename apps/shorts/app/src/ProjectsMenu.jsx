@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, LayoutGrid, List, FolderPlus, Plus, MoreHorizontal, Folder, FolderOpen, ChevronLeft, SlidersHorizontal, Film, MessagesSquare, MessageSquareQuote, Scale, Clapperboard, Scissors, Wand2, Check, X, SearchX, FolderInput } from 'lucide-react';
+import { Search, LayoutGrid, List, FolderPlus, Plus, MoreHorizontal, Folder, FolderOpen, ChevronLeft, SlidersHorizontal, Film, MessagesSquare, MessageSquareQuote, Scale, Clapperboard, Scissors, Wand2, Check, X, SearchX, FolderInput, Sparkles, Mic, Image as ImageIcon, Wrench, Search as FindIcon } from 'lucide-react';
 import './projects-menu.css';
 
 /* Projects, for every tool: the layout of the advanced editor's projects menu (search, sort, grid or list, folders,
@@ -8,12 +8,24 @@ import './projects-menu.css';
 const KEY = 'shorts-project-folders';
 const loadFolders = () => { try { return JSON.parse(localStorage.getItem(KEY)) ?? { folders: [], assign: {} }; } catch { return { folders: [], assign: {} }; } };
 const saveFolders = (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* preference only */ } };
-const TOOL = {
-  '/editor/advanced': ['Advanced editor', Clapperboard, '#4568ee'], '/create/text-video': ['Fake text', MessagesSquare, '#0a84ff'],
-  '/create/reddit-video': ['Reddit', MessageSquareQuote, '#ff5a1f'], '/create/would-you-rather': ['Would you rather', Scale, '#e8443a'],
-  '/create/auto-clip': ['AutoClip', Scissors, '#14a37f'], default: ['Tool', Wand2, '#6b7280'],
-};
-const toolOf = (p) => TOOL[p.tool] ?? (/reddit/i.test(p.name) ? TOOL['/create/reddit-video'] : /text|chat/i.test(p.name) ? TOOL['/create/text-video'] : /rather/i.test(p.name) ? TOOL['/create/would-you-rather'] : TOOL.default);
+/* every tool that makes a video, in the order the filter shows them: how a project says it came from one (the page it was
+   made on, or its name for the older ones) */
+const TOOLS = [
+  { id: 'autoclip', name: 'AutoClip', Icon: Scissors, color: '#14a37f', test: (p) => /\/create\/auto-clip/.test(p.tool) },
+  { id: 'advanced', name: 'Advanced editor', Icon: Clapperboard, color: '#4568ee', test: (p) => /\/editor/.test(p.tool) },
+  { id: 'text', name: 'Fake text', Icon: MessagesSquare, color: '#0a84ff', test: (p) => /text-video/.test(p.tool) || (!p.tool && /text|chat/i.test(p.name)) },
+  { id: 'wyr', name: 'Would you rather', Icon: Scale, color: '#e8443a', test: (p) => /would-you-rather/.test(p.tool) || /rather/i.test(p.name) },
+  { id: 'moments', name: 'Find moments', Icon: FindIcon, color: '#8a5cf6', test: (p) => /find-moments|clip-cutter/.test(p.tool) },
+  { id: 'aiedit', name: 'AI video editor', Icon: Wand2, color: '#d9528f', test: (p) => /ai-edit/.test(p.tool) },
+  { id: 'voice', name: 'Voiceovers', Icon: Mic, color: '#e0852b', test: (p) => /voiceover/.test(p.tool) },
+  { id: 'images', name: 'AI images', Icon: ImageIcon, color: '#2aa6c9', test: (p) => /\/tools\/(images|icon)/.test(p.tool) },
+  { id: 'free', name: 'Free tools', Icon: Wrench, color: '#6b7a99', test: (p) => /\/tools\/free/.test(p.tool) },
+  { id: 'reddit', name: 'Reddit', Icon: MessageSquareQuote, color: '#ff5a1f', legacy: true, test: (p) => /reddit/.test(p.tool) || /reddit/i.test(p.name) },
+];
+const OTHER = { id: 'other', name: 'Other', Icon: Sparkles, color: '#6b7280' };
+const kindOf = (p) => TOOLS.find((t) => t.test({ ...p, tool: p.tool || '' })) ?? OTHER;
+const toolOf = (p) => { const k = kindOf(p); return [k.name, k.Icon, k.color]; };
+const clock = (seconds) => { const s = Math.max(0, Math.round(seconds)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`; };
 const SORTS = ['Last updated', 'Name', 'Tool'];
 
 export default function ProjectsMenu({ projects, setProjects, go, onCreate }) {
@@ -23,6 +35,7 @@ export default function ProjectsMenu({ projects, setProjects, go, onCreate }) {
   const [q, setQ] = useState(''), [sort, setSort] = useState('Last updated'), [sortOpen, setSortOpen] = useState(false);
   const [folder, setFolder] = useState(null), [menu, setMenu] = useState(null), [renaming, setRenaming] = useState(null);
   const [dragOver, setDragOver] = useState(null), [dragFolder, setDragFolder] = useState(null);
+  const [kind, setKind] = useState('all'), [hover, setHover] = useState(null);
   useEffect(() => { fetch('/api/advanced/projects').then((r) => r.ok ? r.json() : { projects: [] }).then((d) => setAdvanced(d.projects || [])).catch(() => {}); }, []);
   useEffect(() => saveFolders(store), [store]);
   useEffect(() => { try { localStorage.setItem('shorts-projects-view', view); } catch { /* */ } }, [view]);
@@ -30,10 +43,12 @@ export default function ProjectsMenu({ projects, setProjects, go, onCreate }) {
 
   const all = useMemo(() => [
     ...projects.map((p) => ({ ...p, key: `p:${p.id}`, modified: Number(p.id) || 0 })),
-    ...advanced.map((a) => ({ key: `a:${a.name}`, id: a.name, name: a.name, tool: '/editor/advanced', created: new Date(a.modified).toLocaleDateString(), modified: a.modified, advanced: true, thumb: a.poster ? `/api/advanced/poster?name=${encodeURIComponent(a.name)}&v=${Math.round(a.modified)}` : null })),
+    ...advanced.map((a) => ({ key: `a:${a.name}`, id: a.name, name: a.name, tool: '/editor/advanced', created: new Date(a.modified).toLocaleDateString(), modified: a.modified, advanced: true, duration: a.duration, video: a.preview ? `/api/advanced/preview?name=${encodeURIComponent(a.name)}` : null, thumb: a.poster ? `/api/advanced/poster?name=${encodeURIComponent(a.name)}&v=${Math.round(a.modified)}` : null })),
   ], [projects, advanced]);
   const inFolder = (p) => store.assign[p.key] ?? null;
-  const shown = all.filter((p) => (folder ? inFolder(p) === folder : q ? true : !inFolder(p)) && p.name.toLowerCase().includes(q.toLowerCase()))
+  const counts = useMemo(() => { const c = {}; for (const p of all) { const id = kindOf(p).id; c[id] = (c[id] || 0) + 1; } return c; }, [all]);
+  const chips = [...TOOLS.filter((t) => !t.legacy || counts[t.id]), ...(counts.other ? [OTHER] : [])];
+  const shown = all.filter((p) => (kind === 'all' || kindOf(p).id === kind) && (folder ? inFolder(p) === folder : q || kind !== 'all' ? true : !inFolder(p)) && p.name.toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => sort === 'Name' ? a.name.localeCompare(b.name) : sort === 'Tool' ? toolOf(a)[0].localeCompare(toolOf(b)[0]) : b.modified - a.modified);
   const folders = store.folders;
   const current = folders.find((f) => f.id === folder);
@@ -90,12 +105,17 @@ export default function ProjectsMenu({ projects, setProjects, go, onCreate }) {
         </div>
       </header>
 
+      <div className="pm-filters" role="group" aria-label="Filter by tool">
+        <button type="button" aria-pressed={kind === 'all'} className={kind === 'all' ? 'on' : ''} onClick={() => setKind('all')}>All<small>{all.length}</small></button>
+        {chips.map(({ id, name, Icon, color }) => <button key={id} type="button" aria-pressed={kind === id} className={`${kind === id ? 'on' : ''}${counts[id] ? '' : ' none'}`} style={{ '--tool': color }} onClick={() => setKind(kind === id ? 'all' : id)}><Icon size={13} strokeWidth={2} />{name}<small>{counts[id] || 0}</small></button>)}
+      </div>
+
       <section className={`pm-items ${view}`} aria-label="Projects">
-        {!current && view === 'grid' ? (
+        {!current && kind === 'all' && view === 'grid' ? (
           <button className="pm-new" onClick={onCreate}><span><Plus size={18} /></span>New project</button>
         ) : null}
         {/* folders as the editor's projects list has them: a card like a project's, its face the covers of what it holds */}
-        {!current && !q ? folders.map((f) => {
+        {!current && !q && kind === 'all' ? folders.map((f) => {
           const inside = all.filter((p) => inFolder(p) === f.id).sort((x, y) => y.modified - x.modified);
           const covers = inside.slice(0, 4);
           return (
@@ -127,10 +147,13 @@ export default function ProjectsMenu({ projects, setProjects, go, onCreate }) {
           return (
             <article key={p.key} className="pm-card" draggable onDragStart={(e) => { e.dataTransfer.setData('text/shorts-project', p.key); e.dataTransfer.effectAllowed = 'move'; }}
               onDoubleClick={() => open(p)}>
-              <button className={`pm-thumb ${p.thumb ? 'has-img' : ''}`} style={{ '--tool': color }} onClick={() => open(p)} aria-label={`Open ${p.name}`}>
+              <button className={`pm-thumb ${p.thumb ? 'has-img' : ''}${hover === p.key ? ' is-playing' : ''}`} style={{ '--tool': color }} onClick={() => open(p)} aria-label={`Open ${p.name}`}
+                onMouseEnter={() => p.video && setHover(p.key)} onMouseLeave={() => setHover((v) => (v === p.key ? null : v))} onFocus={() => p.video && setHover(p.key)} onBlur={() => setHover((v) => (v === p.key ? null : v))}>
                 {p.thumb ? <><img className="pm-thumb-bg" src={p.thumb} alt="" aria-hidden="true" /><img className="pm-thumb-img" src={p.thumb} alt="" loading="lazy" onError={(e) => { e.currentTarget.closest('.pm-thumb')?.classList.remove('has-img'); }} />
                   <span className="pm-thumb-badge"><Icon size={12} strokeWidth={2} /></span></> : null}
                 <Icon className="pm-thumb-icon" size={view === 'grid' ? 30 : 18} strokeWidth={1.6} />
+                {hover === p.key && p.video ? <video className="pm-thumb-video" src={p.video} muted loop playsInline autoPlay preload="auto" aria-hidden="true" onPlaying={(e) => e.currentTarget.classList.add('ready')} /> : null}
+                {p.duration ? <span className="pm-thumb-time">{clock(p.duration)}</span> : null}
               </button>
               <div className="pm-meta">
                 <div className="pm-name"><Name kind="project" id={p.key} value={p.name} />

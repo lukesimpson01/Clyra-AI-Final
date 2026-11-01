@@ -96,3 +96,25 @@
 .pm-count.glass { color: #fff; background: #0008; border-color: transparent; backdrop-filter: blur(6px); }
 .pm-items.list .pm-folder-face { width: 64px; flex: none; border-radius: 9px; }
 .pm-items.list .pm-count { display: none; }
+
+
+/* filter by tool: a chip for every tool, with how many projects each holds */
+.pm-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 18px; }
+.pm-filters button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid #e7e9ee; background: #fff; color: #4b5563; font-size: 12.5px; font-weight: 500; transition: background .18s, border-color .18s, color .18s, box-shadow .18s; }
+.pm-filters button svg { color: var(--tool, #6b7280); }
+.pm-filters button small { font-size: 11px; font-variant-numeric: tabular-nums; color: #9aa1ad; }
+.pm-filters button:hover { background: #f6f7f9; border-color: #d9dde5; }
+.pm-filters button.none { color: #a3aab6; }
+.pm-filters button.on { background: #111827; border-color: #111827; color: #fff; box-shadow: 0 4px 12px #11182722; }
+.pm-filters button.on svg { color: #fff; }
+.pm-filters button.on small { color: #ffffffb0; }
+.pm-filters button:focus-visible { outline: 2px solid #4568ee; outline-offset: 2px; }
+
+/* the card's picture plays the video while the pointer is on it, and gives the thumbnail back when it leaves */
+.pm-thumb-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #0d0f14; opacity: 0; transition: opacity .25s; }
+.pm-thumb-video.ready { opacity: 1; }
+.pm-thumb-time { position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 2px 7px; border-radius: 7px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: #fff; background: #000a; backdrop-filter: blur(6px); pointer-events: none; }
+.pm-items.list .pm-thumb-time { right: 4px; bottom: 4px; padding: 1px 5px; font-size: 9.5px; }
+.pm-thumb.is-playing .pm-thumb-badge { opacity: 0; }
+.pm-thumb-badge { transition: opacity .2s; }
+@media (prefers-reduced-motion: reduce) { .pm-thumb-video { transition: none; } }

@@ -2,9 +2,10 @@
    A tool says a video is done with announceProject(); the app (main.jsx) makes the project and its thumbnail. */
 const W = 270, H = 480;
 
-/** Tell the app a tool finished a video. `source`: the video's URL, its Blob, or a playing <video> element. */
-export function announceProject({ name, tool = location.pathname, source }) {
-  window.dispatchEvent(new CustomEvent('shorts-project', { detail: { name, tool, source } }));
+/** Tell the app a tool finished a video. `source`: the video's URL, its Blob, or a playing <video> element. `duration`
+ *  (seconds) and `video` (a URL the card plays on hover) are optional. */
+export function announceProject({ name, tool = location.pathname, source, duration, video }) {
+  window.dispatchEvent(new CustomEvent('shorts-project', { detail: { name, tool, source, duration, video } }));
 }
 
 /** A small 9:16 JPEG (data URL) of the video at `at` seconds (or the element's current frame), or null. */

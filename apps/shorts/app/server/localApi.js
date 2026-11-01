@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
-import { startAdvancedStudio, listAdvancedProjects, advancedPoster, warmAdvancedStudio } from './advancedStudio.js';
+import { startAdvancedStudio, listAdvancedProjects, advancedPoster, advancedPreview, warmAdvancedStudio } from './advancedStudio.js';
 import { recordingIssue } from '../../openfilm/packages/openfilm/src/recording-identity.mjs';
 
 /* the advanced editor starts with this server, so opening it from the app is immediate */
@@ -149,16 +149,23 @@ async function processMedia(fields, files, directory) {
   const level = Math.max(25, Math.min(200, Number(fields.level) || 100));
   switch (tool) {
     case 'Audio Balancer': args.push('-i', input, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-vn', '-c:a', 'libmp3lame', '-q:a', '2', output); break;
-    case 'Video Compressor': args.push('-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-c:a', 'aac', '-b:a', '128k', output); break;
+    case 'Video Compressor': args.push('-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', { small: '35', balanced: '30', high: '25' }[fields.quality] || '30', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output); break;
     case 'MP3 Converter': args.push('-i', input, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', output); break;
     case 'Video Trimmer': {
       const start = Math.max(0, Number(fields.start) || 0), end = Number(fields.end);
       if (!Number.isFinite(end) || end <= start) throw new Error('Choose an end time after the start time.');
       args.push('-ss', String(start), '-i', input, '-t', String(end - start), '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', output); break;
     }
-    case 'Aspect Ratio Converter': args.push('-i', input, '-vf', `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2`, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', output); break;
-    case 'Video to GIF': args.push('-i', input, '-t', '15', '-vf', 'fps=12,scale=480:-1:flags=lanczos', '-loop', '0', output); break;
-    case 'Video Speed Changer': args.push('-i', input, '-filter:v', `setpts=${(100 / level).toFixed(4)}*PTS`, '-filter:a', `atempo=${(level / 100).toFixed(4)}`, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', output); break;
+    case 'Aspect Ratio Converter': {
+      /* fit keeps the whole picture with bars; fill crops to the frame's centre */
+      const frame = fields.fit === 'fill' ? `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}` : `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2`;
+      args.push('-i', input, '-vf', frame, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', output); break;
+    }
+    case 'Video to GIF': {
+      const from = Math.max(0, Number(fields.start) || 0), length = Math.max(1, Math.min(15, Number(fields.length) || 15)), width = [360, 480, 640].includes(Number(fields.width)) ? Number(fields.width) : 480;
+      args.push('-ss', String(from), '-t', String(length), '-i', input, '-vf', `fps=12,scale=${width}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, '-loop', '0', output); break;
+    }
+    case 'Video Speed Changer': args.push('-i', input, '-filter:v', `setpts=${(100 / level).toFixed(4)}*PTS`, '-filter:a', level < 50 ? `atempo=0.5,atempo=${(level / 50).toFixed(4)}` : `atempo=${(level / 100).toFixed(4)}`, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', output); break;
     case 'Volume Booster': args.push('-i', input, '-af', `volume=${(level / 100).toFixed(2)}`, ...(outputExt === 'mp3' ? ['-vn', '-c:a', 'libmp3lame'] : ['-c:v', 'copy', '-c:a', 'aac']), output); break;
     case 'Video Merger': {
       if (files.length < 2) throw new Error('Select at least two videos to merge.');
@@ -496,6 +503,11 @@ export async function localApi(req, res, next) {
     if (!jpeg) return json(res, 404, { error: 'no poster yet' });
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=30', 'content-length': jpeg.length });
     return res.end(jpeg);
+  }
+  if (pathname.endsWith('/advanced/preview') && req.method === 'GET') {
+    const file = await advancedPreview(new URL(req.originalUrl || req.url || '/', 'http://localhost').searchParams.get('name'));
+    if (!file) return json(res, 404, { error: 'no footage in this project' });
+    return sendStoryMedia(req, res, file);
   }
   if (pathname.endsWith('/advanced/start') && req.method === 'POST') {
     try { return json(res, 200, await startAdvancedStudio(await readJson(req))); }

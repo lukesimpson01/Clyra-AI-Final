@@ -106,16 +106,16 @@ MAX_OCCLUSION_S = 0.40
 ACTIVE_SPEAKER_SWITCH_HOLD_MS = 1100
 ACTIVE_SPEAKER_SWITCH_MARGIN = 0.18
 TRACKING_FPS_BY_QUALITY = {
-    # Eco analysis deliberately samples a proxy at 12 fps; forward/backward
+    # Eco analysis deliberately samples a proxy at 8 fps; forward/backward
     # optical flow and the crop interpolator fill the trajectory between
     # observations. This avoids decoding every output frame on 4 GB machines
     # while keeping movement continuous at final render cadence.
-    "low_memory": 12.0,
-    # Balanced observes 15 fps (half a 30 fps master) and lets the same flow
-    # interpolation carry the crop between observations: framing is the
-    # slowest step of a clip, and detecting every frame doubled it for a path
-    # the smoother would have produced anyway.
-    "balanced": 15.0,
+    "low_memory": 8.0,
+    # Balanced observes 10 fps and lets the same flow interpolation carry the
+    # crop between observations: framing (face landmarks per observed frame)
+    # is the slowest step of a clip, and a speaker's face does not move in
+    # 100 ms in a way the smoother would not have produced anyway.
+    "balanced": 10.0,
     "high_quality": 30.0,
     "gpu": 60.0,
 }
