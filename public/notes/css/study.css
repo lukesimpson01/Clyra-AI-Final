@@ -1327,3 +1327,8 @@
 .check-step[data-state="running"] .check-text.check-shine { background: none; }
 @keyframes check-icon-pulse { 0%, 100% { opacity: .65; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.08); } }
 @media (prefers-reduced-motion: reduce) { .check-step[data-state="running"] .check-icon { animation: none; } }
+
+/* the gallery as a workspace page: fills the area where notes are shown */
+.template-modal.appstore.as-view { position: static; width: 100%; max-width: none; height: 100%; border-radius: 0; box-shadow: none; background: var(--background-main); display: block; }
+.template-modal.appstore.as-view .as-layout { height: 100%; }
+.template-modal.appstore.as-view .as-main { padding: 28px 40px 48px; }

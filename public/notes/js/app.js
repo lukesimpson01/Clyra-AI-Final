@@ -21,7 +21,7 @@ import { renderWelcome } from "./views/welcome.js";
 import { renderInbox } from "./views/inbox.js";
 import { renderLibrary } from "./views/library.js";
 import { openTrash } from "./views/trash.js";
-import { openTemplates } from "./views/templates.js";
+import { renderTemplatesView } from "./views/templates.js";
 import { openImport } from "./views/import.js";
 import { openCourses, openSettings } from "./views/settings.js";
 import { runGenerator } from "./views/generators.js";
@@ -29,6 +29,7 @@ import { runGenerator } from "./views/generators.js";
 const TAB_LABELS = {
   home: { title: "Home", icon: "home" },
   welcome: { title: "Welcome", icon: "sparkle" },
+  templates: { title: "Templates", icon: "template" },
   chat: { title: "AI chat", icon: "sparkle" },
   flashcards: { title: "Flashcards", icon: "cards" },
   tests: { title: "Practice tests", icon: "check_square" },
@@ -131,7 +132,7 @@ class App {
       return;
     }
     const renderers = {
-      home: renderHome, welcome: renderWelcome, chat: renderChat, flashcards: renderFlashcards,
+      home: renderHome, welcome: renderWelcome, templates: (surface, app) => renderTemplatesView(surface, app, activeTab()?.parentId), chat: renderChat, flashcards: renderFlashcards,
       tests: renderTests, inbox: renderInbox, library: renderLibrary,
     };
     const render = renderers[tab.kind] || renderHome;
@@ -469,7 +470,7 @@ class App {
     this.repaintChrome();
   }
 
-  openTemplates(parentId) { openTemplates(this, parentId); }
+  openTemplates(parentId) { this.openView({ kind: "templates", parentId: parentId || null }); }
   openImport(parentId) { openImport(this, parentId); }
 
   /* slash menu entries for importing from other tools open the same import screen */

@@ -55,6 +55,7 @@ export function renderChat(host, app, options = {}) {
   let busy = false;
   let askAbort = null;
   let quotes = [];
+  let files = [];
   let chatId = null;
   let agentId = null;
   let reviewMode = false;
@@ -83,6 +84,7 @@ export function renderChat(host, app, options = {}) {
     ...MODELS.map((m) => ({ label: m.label, hint: m.hint, checked: m.id === modelId, class: "model-row", onSelect: () => { modelId = m.id; try { localStorage.setItem(MODEL_KEY, m.id); } catch { /* storage off */ } paintModel(); } })),
   ], { class: "model-menu", side: "top", align: "end" }));
   const plusButton = iconButton("plus", "Add context", () => menu(plusButton, [
+    { label: "Add photos & files", icon: "file", hint: "Text, Markdown, CSV, code", onSelect: () => pickFiles() },
     { label: "Add a note", icon: "page", onSelect: () => addSource() },
     { label: "Research the web", icon: "search", onSelect: () => { if (!input.value.trim()) input.value = "Research this on the web and write it up with sources: "; grow(); syncSend(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); } },
     { label: "Web browser", icon: "embed", hint: "Open beside the page", onSelect: () => app.showRailPanel ? (app.railOpen?.() || app.toggleRail?.(), app.showRailPanel("browser")) : null },
@@ -404,6 +406,23 @@ export function renderChat(host, app, options = {}) {
   };
   window.addEventListener("clyra:notes-quote", onQuote);
 
+  /* Files are read in the browser and sent as context; only text-like files can be read by the model. */
+  const pickFiles = () => {
+    const input_ = el("input", { type: "file", multiple: "true", accept: ".txt,.md,.markdown,.csv,.tsv,.json,.html,.xml,.yaml,.yml,.js,.ts,.py,.java,.c,.cpp,.go,.rs,.sql,.css,text/*,image/*", style: { display: "none" } });
+    input_.addEventListener("change", async () => {
+      for (const file of [...input_.files]) {
+        if (file.type.startsWith("image/")) { toast("Clyra reads text files. Pictures need a model that can see them."); continue; }
+        if (file.size > 300_000) { toast(`${file.name} is too large (limit 300 KB)`); continue; }
+        try { files.push({ name: file.name, text: (await file.text()).slice(0, 12_000) }); } catch { toast(`Could not read ${file.name}`); }
+      }
+      paintSources();
+      input.focus();
+      input_.remove();
+    });
+    document.body.append(input_);
+    input_.click();
+  };
+
   const addSource = () => openSearch({
     title: "Add context",
     onSelect: (page) => {
@@ -423,6 +442,10 @@ export function renderChat(host, app, options = {}) {
           class: "chat-chip-remove", type: "button", "aria-label": "Remove selection",
           onclick: () => { quotes = quotes.filter((candidate) => candidate !== quote); paintSources(); },
         }, icon("close", 10))));
+    }
+    for (const file of files) {
+      chips.append(el("span", { class: "chat-chip chat-chip-file", title: file.name }, icon("file", 13), file.name.length > 26 ? `${file.name.slice(0, 24)}\u2026` : file.name,
+        el("button", { class: "chat-chip-remove", type: "button", "aria-label": `Remove ${file.name}`, onclick: () => { files = files.filter((candidate) => candidate !== file); paintSources(); } }, icon("close", 10))));
     }
     for (const source of sources) {
       chips.append(el("span", { class: "chat-chip" },
@@ -493,8 +516,8 @@ export function renderChat(host, app, options = {}) {
            the pages under the bubble means scrolling back through a thread
            still tells you which notes each answer was read from. */
         thread.append(el("div", { class: "chat-column chat-row user" },
-          message.sources?.length
-            ? el("div", { class: "chat-ctx-chips" }, message.sources.map((source) =>
+          message.sources?.length || message.fileNames?.length
+            ? el("div", { class: "chat-ctx-chips" }, ...(message.fileNames || []).map((name) => el("span", { class: "chat-ctx-chip", title: name }, icon("file", 13), el("span", { text: name }))), ...(message.sources || []).map((source) =>
                 el("button", {
                   class: "chat-ctx-chip", type: "button", title: source.title || "Note",
                   onclick: () => source.pageId && app.openPage(source.pageId),
@@ -575,7 +598,7 @@ export function renderChat(host, app, options = {}) {
     const question = retryOf?.question ?? input.value.trim();
     if (!question) return;
     const attachedNow = sources.map((source) => ({ pageId: source.pageId, title: source.title }));
-    if (!retryOf) { messages.push({ role: "user", text: question, sources: attachedNow, at: Date.now() }); input.value = ""; grow(); }
+    if (!retryOf) { messages.push({ role: "user", text: question, sources: attachedNow, fileNames: files.map((file) => file.name), at: Date.now() }); input.value = ""; grow(); }
     await ensureChat();
     if (!retryOf) await remember({ role: "user", text: question, sources: attachedNow });
     const answer = retryOf || { role: "assistant", question, sources: [...sources] };
@@ -597,10 +620,12 @@ export function renderChat(host, app, options = {}) {
       .map((m) => ({ role: m.role, content: String(m.text).slice(0, 6000) }));
     /* A retry re-sends the same question without duplicating it. */
     const last = history[history.length - 1];
-    const quoted = quotes.length ? `\n\nSelected text from the page:\n${quotes.map((q) => `> ${q}`).join("\n")}` : "";
+    const quoted = (quotes.length ? `\n\nSelected text from the page:\n${quotes.map((q) => `> ${q}`).join("\n")}` : "")
+      + files.map((file) => `\n\nAttached file "${file.name}":\n${file.text}`).join("");
     if (!(last && last.role === "user" && last.content === question)) history.push({ role: "user", content: question + quoted });
     else if (quoted) last.content = question + quoted;
     quotes = [];
+    files = [];
     paintSources();
     const pageIds = [...new Set([...sources.map((source) => source.pageId), ...(app.currentPageId?.() ? [String(app.currentPageId())] : [])])];
     try {

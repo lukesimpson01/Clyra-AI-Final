@@ -656,7 +656,7 @@ export class Toolbar {
     clear(this.host);
     const tab = activeTab();
     /* the AI chat carries its own header, as Notion's full-screen chat does */
-    this.host.hidden = tab?.kind === "chat";
+    this.host.hidden = tab?.kind === "chat" || tab?.kind === "welcome";
     const crumbs = el("div", { class: "breadcrumbs" });
     const actions = el("div", { class: "toolbar-actions" });
 

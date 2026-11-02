@@ -112,7 +112,12 @@ function appIcon(template, size = 44) {
     : icon(template.icon || "page", Math.round(size * 0.46)));
 }
 
-export function openTemplates(app, parentId) {
+/* The gallery as a page of the workspace, where notes are shown, rather than a pop-up over one. */
+export function renderTemplatesView(host, app, parentId) {
+  return openTemplates(app, parentId, { host });
+}
+
+export function openTemplates(app, parentId, { host = null } = {}) {
   let entry;
   let category = "All";
   let query = "";
@@ -244,14 +249,14 @@ export function openTemplates(app, parentId) {
 
   search.addEventListener("input", () => { query = search.value; paint(); });
 
-  entry = modal({
-    title: "Templates",
-    width: 1120,
-    className: "template-modal appstore",
-    body: el("div", { class: "template-layout as-layout" },
-      el("aside", { class: "template-side as-side" }, search, rail),
-      main),
-  });
+  const layout = el("div", { class: "template-layout as-layout" }, el("aside", { class: "template-side as-side" }, search, rail), main);
+  if (host) {
+    /* in the workspace: the same page, filling the area, with nothing to close */
+    entry = { close() {} };
+    host.append(el("div", { class: "template-modal appstore as-view" }, layout));
+  } else {
+    entry = modal({ title: "Templates", width: 1120, className: "template-modal appstore", body: layout });
+  }
   paintRail();
   paint();
   queueMicrotask(() => search.focus());

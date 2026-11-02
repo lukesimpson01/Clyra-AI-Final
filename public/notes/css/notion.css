@@ -345,3 +345,15 @@
 .ai-preset-group { text-transform: none; letter-spacing: 0; }
 .as-icon .as-emoji { line-height: 1; filter: none; }
 .template-modal.appstore .as-icon { background: color-mix(in srgb, var(--tpl-accent, #2383e2) 14%, #fff); color: var(--tpl-accent, #2383e2); }
+
+/* ---- the AI bar on a blank line, as Notion's current one: a single slim row (mascot, prompt, send) ---- */
+.ai-composer:not(.has-selection-bar) .ai-composer-input:not(.has-selection) { flex-direction: row; align-items: center; gap: 10px; padding: 8px 10px 8px 10px; }
+.ai-composer .ai-composer-input:not(.has-selection) .ai-field { flex: 1; align-items: center; min-width: 0; }
+.ai-composer .ai-composer-input:not(.has-selection) .ai-avatar { width: 28px; height: 28px; margin: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(42, 28, 0, .1); display: grid; place-items: center; }
+.ai-composer .ai-composer-input:not(.has-selection) .ai-controls { min-height: 0; flex: none; }
+.ai-composer .ai-composer-input:not(.has-selection) .ai-context,
+.ai-composer .ai-composer-input:not(.has-selection) .ai-hint,
+.ai-composer .ai-composer-input:not(.has-selection) .ai-action-spacer { display: none; }
+.ai-composer .ai-composer-input:not(.has-selection) textarea { min-height: 28px; line-height: 28px; padding: 0; }
+.ai-composer .ai-send { width: 26px; height: 26px; border-radius: 50%; }
+.ai-composer .ai-send[disabled] { background: #e6e5e1; color: #fff; box-shadow: none; }
