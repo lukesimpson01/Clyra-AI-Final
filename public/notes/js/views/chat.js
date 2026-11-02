@@ -5,13 +5,14 @@
    gradient reveal on the assistant's reply, and the same shimmer-with-mark
    treatment for work in progress. Answers stay grounded in the pages the
    student attaches with @. */
-import { el, clear, icon, iconButton, bloub, toast, append, menu, confirmDialog } from "../dom.js";
+import { el, clear, icon, iconButton, bloub, toast, append, menu, modal, confirmDialog } from "../dom.js";
 import { api } from "../api.js";
 import { state, withError, refreshPages } from "../state.js";
 import { formatRelative } from "../app.js";
 import { renderMarkdown } from "../ai-composer.js";
 import { openSearch } from "../search.js";
 import { streamAgent, renderAgentRun } from "../agent-run.js";
+import { instructionsFor, listAgents, getAgent, deleteAgent, openPersonalize, openAgentEditor } from "../chat-extras.js";
 
 /* Quick actions under the composer, as Notion's chat has them: each is a real task for the agent, which can read the
    notes, create pages and answer with sources, not a canned reply. */
@@ -39,6 +40,9 @@ const MODELS = [
   { id: "thorough", label: "Thorough", hint: "More careful on long notes and hard questions.", model: "deepseek-v4-pro" },
 ];
 const MODEL_KEY = "clyra-notes:chat-model";
+const AUTOPAGE_KEY = "clyra-notes:chat-autopage";
+export const autoPageOn = () => { try { return localStorage.getItem(AUTOPAGE_KEY) !== "0"; } catch { return true; } };
+const clock = (when) => new Date(when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 /* `compact` is the rail's chat: same thread, same composer, no history
    column and no room for one. Everything else behaves identically, so there
@@ -51,12 +55,14 @@ export function renderChat(host, app, options = {}) {
   let askAbort = null;
   let quotes = [];
   let chatId = null;
+  let agentId = null;
   let chats = [];
   let modelId = (() => { try { const saved = localStorage.getItem(MODEL_KEY); return MODELS.some((m) => m.id === saved) ? saved : "auto"; } catch { return "auto"; } })();
   let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
 
   const thread = el("div", { class: "chat-thread scroll" });
   const historyList = el("div", { class: "chat-history-list scroll" });
+  const agentList = el("div", { class: "chat-agent-list" });
   const chips = el("div", { class: "chat-sources" });
   /* The placeholder teaches the one thing the composer can do that a plain
      chat box cannot: attach notes. Naming the key is what makes it
@@ -80,12 +86,27 @@ export function renderChat(host, app, options = {}) {
     { label: "Ask about a selection", icon: "comment", hint: "Select text in a page first", onSelect: () => toast("Select text in a page, then choose Ask Clyra") },
   ], { side: "top" }), { size: 16, className: "chat-at" });
 
+  /* What Clyra may look at: a real switch for reading the open page, and a plain statement of what it can and cannot do. */
+  const shieldButton = iconButton("shield", "What Clyra can use", () => menu(shieldButton, [
+    { type: "label", label: "Clyra can use" },
+    { label: "Read this page", icon: "page", switch: true, checked: autoPageOn(), keepOpen: true, onSelect: () => {
+      const next = !autoPageOn();
+      try { localStorage.setItem(AUTOPAGE_KEY, next ? "1" : "0"); } catch { /* storage off */ }
+      if (!next) { sources = sources.filter((source) => source.manual); paintSources(); } else app.reattachChatContext?.();
+    } },
+    { label: "Search your notes", icon: "search", disabled: true, hint: "Always on" },
+    { label: "Search the web", icon: "link", disabled: true, hint: "When a question needs it" },
+    { type: "separator" },
+    { label: "It never edits a page on its own", icon: "lock", disabled: true, hint: "You choose Insert or Create page" },
+  ], { side: "top" }), { size: 16, className: "chat-at" });
+
   /* Chat's composer shape: the prompt on top, a control row beneath — add context on the left, the model and send on the right. */
   const composer = el("div", { class: "chat-composer" },
     el("div", { class: "chat-bar" },
       el("div", { class: "chat-bar-field" }, input),
       el("div", { class: "chat-bar-controls" },
         plusButton,
+        shieldButton,
         chips,
         el("span", { class: "chat-bar-hint" }, "Type ", el("kbd", { text: "@" }), " to reference a note"),
         el("span", { class: "chat-bar-spacer" }),
@@ -97,17 +118,80 @@ export function renderChat(host, app, options = {}) {
     el("div", { class: "chat-history-head" },
       el("span", { class: "chat-history-title", text: "Chats" }),
       iconButton("plus", "New chat", () => startChat(), { size: 15 })),
-    historyList);
-
+    historyList,
+    el("div", { class: "chat-history-head chat-agents-head" }, el("span", { class: "chat-history-title", text: "Agents" }), iconButton("plus", "New agent", () => openAgentEditor(null, (saved) => startChat(saved.id)), { size: 15 })),
+    agentList);
   /* Notion-style quick actions: one row of chips beneath the composer while the page is empty. */
   const actionRow = el("div", { class: "chat-actions-row", role: "group", "aria-label": "Quick actions" }, ACTIONS.map((action) =>
     el("button", {
       class: "chat-action-chip", type: "button",
       onclick: () => { input.value = action.prompt; grow(); syncSend(); if (action.prompt.endsWith(": ")) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } else ask(); },
     }, icon(action.icon, 15), action.label)));
-  const panelHead = compact ? el("div", { class: "chat-panel-head" },
-    el("span", { class: "chat-panel-title" }, bloub(18), el("span", { text: "New AI chat" })),
-    iconButton("plus", "New chat", () => startChat(), { size: 15 })) : null;
+  /* The header, as Notion's AI panel has it: the chat's name with a switcher for other chats and agents, then new chat,
+     export and the more menu. */
+  const headTitle = el("button", { class: "chat-head-title", type: "button", "aria-haspopup": "menu", "aria-label": "Switch chat or agent" });
+  const currentChat = () => chats.find((chat) => chat.id === chatId) || null;
+  const paintHead = () => {
+    clear(headTitle);
+    const agent = agentId ? getAgent(agentId) : null;
+    const title = currentChat()?.title || agent?.name || "New AI chat";
+    headTitle.append(agent?.emoji ? el("span", { class: "chat-head-emoji", text: agent.emoji }) : bloub(18), el("span", { class: "chat-head-name", text: title }), icon("chevron_down", 12));
+  };
+  const transcript = () => messages.filter((m) => m.text && !m.error).map((m) => `${m.role === "user" ? "You" : "Clyra"}: ${m.text}`).join("\n\n");
+  const markdownFile = () => `# ${currentChat()?.title || "Chat with Clyra"}\n\n${messages.filter((m) => m.text && !m.error).map((m) => (m.role === "user" ? `**You**\n\n${m.text}` : `**Clyra**\n\n${m.text}`)).join("\n\n---\n\n")}\n`;
+  const renameChatPrompt = () => {
+    const chat = currentChat();
+    if (!chat) { toast("Send a message first"); return; }
+    const input_ = el("input", { class: "extras-input", value: chat.title || "", "aria-label": "Chat name" });
+    const save = el("button", { class: "button primary", type: "button" }, "Rename");
+    const cancel = el("button", { class: "button", type: "button" }, "Cancel");
+    const entry = modal({ title: "Rename chat", width: 420, body: el("div", { class: "extras-body" }, input_), footer: [cancel, save] });
+    cancel.addEventListener("click", () => entry.close("cancel"));
+    const commit = async () => { const value = input_.value.trim(); if (!value) return; entry.close("save"); chat.title = value; await withError(() => api.patch(`/api/notes/chats/${chat.id}`, { title: value }), "Could not rename"); loadChats(); };
+    save.addEventListener("click", commit);
+    input_.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } });
+    input_.select();
+  };
+  headTitle.addEventListener("click", () => {
+    const agents = listAgents();
+    menu(headTitle, [
+      { type: "label", label: "Chats" },
+      ...(chats.length ? chats.slice(0, 8).map((chat) => ({ label: chat.title || "New chat", icon: "comment", checked: chat.id === chatId, hint: formatRelative(chat.updated_at), onSelect: () => openChat(chat.id) })) : [{ label: "No chats yet", disabled: true }]),
+      { type: "separator" },
+      { type: "label", label: "Agents" },
+      ...agents.map((agent) => ({ label: agent.name, icon: agent.emoji || "sparkle", checked: agent.id === agentId, onSelect: () => startChat(agent.id) })),
+      { label: "New agent\u2026", icon: "plus", onSelect: () => openAgentEditor(null, (saved) => startChat(saved.id)) },
+    ], { class: "chat-switch-menu" });
+  });
+  const exportButton = iconButton("export", "Export chat", () => menu(exportButton, [
+    { label: "Copy as text", icon: "duplicate", onSelect: () => { if (!messages.length) { toast("Nothing to copy yet"); return; } navigator.clipboard.writeText(transcript()); toast("Chat copied"); } },
+    { label: "Download as Markdown", icon: "export", onSelect: () => {
+      if (!messages.length) { toast("Nothing to export yet"); return; }
+      const url = URL.createObjectURL(new Blob([markdownFile()], { type: "text/markdown" }));
+      const link = el("a", { href: url, download: `${(currentChat()?.title || "chat").replace(/[^\w -]+/g, "").trim() || "chat"}.md` });
+      document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } },
+  ], { align: "end" }), { size: 15 });
+  const moreButton = iconButton("dots", "More", () => {
+    const chat = currentChat();
+    const agent = agentId ? getAgent(agentId) : null;
+    menu(moreButton, [
+      { label: "Rename", icon: "pencil", disabled: !chat, onSelect: renameChatPrompt },
+      { label: "Personalize", icon: "sparkle", onSelect: () => openPersonalize() },
+      agent ? { label: `Edit ${agent.name}`, icon: "pencil", onSelect: () => openAgentEditor(agent, () => paintHead()) } : null,
+      agent ? { label: `Delete ${agent.name}`, icon: "trash", danger: true, onSelect: async () => { if (await confirmDialog({ title: "Delete agent", message: `"${agent.name}" is removed from this device. Chats made with it stay.`, confirmLabel: "Delete agent" })) { deleteAgent(agent.id); agentId = null; paintHead(); paintHistory(); } } } : null,
+      { type: "separator" },
+      { label: "Delete chat", icon: "trash", danger: true, disabled: !chat, onSelect: () => chat && removeChat(chat) },
+      chat ? { type: "separator" } : null,
+      chat ? { label: `Last updated ${formatRelative(chat.updated_at)}`, disabled: true } : null,
+    ].filter(Boolean), { align: "end" });
+  }, { size: 15 });
+  const panelHead = el("div", { class: "chat-panel-head" },
+    headTitle,
+    el("span", { class: "chat-head-spacer" }),
+    iconButton("plus", "New chat", () => startChat(), { size: 15 }),
+    exportButton,
+    moreButton);
   const chatView = el("div", { class: "chat-view" }, panelHead, thread, composer, compact ? null : actionRow);
   const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}${compact ? " compact" : ""}` },
     chatView,
@@ -122,12 +206,24 @@ export function renderChat(host, app, options = {}) {
   };
 
   const loadChats = async () => {
-    if (compact) return;
     chats = (await withError(() => api.get("/api/notes/chats"), "Could not load your chats")) || [];
     paintHistory();
+    paintHead();
+  };
+
+  const paintAgents = () => {
+    clear(agentList);
+    const agents = listAgents();
+    if (!agents.length) agentList.append(el("div", { class: "chat-history-empty", text: "Agents are chats with their own instructions." }));
+    for (const agent of agents) {
+      agentList.append(el("button", { class: `chat-agent-row${agent.id === agentId ? " active" : ""}`, type: "button", onclick: () => startChat(agent.id) },
+        el("span", { class: "chat-agent-emoji", text: agent.emoji || "\u2728" }), el("span", { class: "chat-agent-name", text: agent.name })));
+    }
   };
 
   const paintHistory = () => {
+    paintAgents();
+    if (compact) return;
     clear(historyList);
     if (!chats.length) {
       historyList.append(el("div", { class: "chat-history-empty", text: "No chats yet." }));
@@ -196,6 +292,7 @@ export function renderChat(host, app, options = {}) {
     const chat = await withError(() => api.get(`/api/notes/chats/${id}`), "Could not open that chat");
     if (!chat) return;
     chatId = id;
+    agentId = null;
     messages = (chat.messages || []).map((row) => ({
       role: row.role,
       text: row.text,
@@ -208,13 +305,17 @@ export function renderChat(host, app, options = {}) {
     /* A reopened thread should not replay its reveal animations. */
     paint();
     paintHistory();
+    paintHead();
   };
 
-  const startChat = () => {
+  const startChat = (withAgent = null) => {
     chatId = null;
+    agentId = typeof withAgent === "string" ? withAgent : null;
+    paintHead();
     messages = [];
     sources = [];
     paintSources();
+    if (compact && autoPageOn()) queueMicrotask(() => app.reattachChatContext?.());
     paint();
     paintHistory();
     input.focus();
@@ -335,7 +436,7 @@ export function renderChat(host, app, options = {}) {
     if (!messages.length) {
       thread.append(el("div", { class: "chat-column chat-intro" },
         el("span", { class: "chat-intro-mark" }, bloub(34)),
-        el("h1", { class: "chat-title", text: compact ? "Ask about your notes" : "How can I help you today?" }),
+        el("h1", { class: "chat-title", text: "How can I help you today?" }),
         compact ? el("p", { class: "chat-lead" },
           el("span", { text: "Type " }),
           el("kbd", { class: "chat-lead-key", text: "@" }),
@@ -344,27 +445,25 @@ export function renderChat(host, app, options = {}) {
           el("button", { class: "chat-suggest-row", type: "button", onclick: () => { input.value = task.prompt; grow(); syncSend(); ask(); } }, icon(task.icon, 16), el("span", { text: task.label })))) : null));
       return;
     }
+    thread.append(el("div", { class: "chat-stamp", text: `${agentId && getAgent(agentId) ? getAgent(agentId).name : "Clyra"} \u00B7 ${clock(messages[0].at || Date.now())}` }));
     for (const message of messages) {
       if (message.role === "user") {
         /* What a question was grounded in belongs with the question. Listing
            the pages under the bubble means scrolling back through a thread
            still tells you which notes each answer was read from. */
         thread.append(el("div", { class: "chat-column chat-row user" },
-          el("div", { class: "chat-bubble", text: message.text }),
           message.sources?.length
-            ? el("ul", { class: "chat-bubble-sources" }, message.sources.map((source) =>
-                el("li", { class: "chat-bubble-source" },
-                  el("span", { class: "chat-bubble-bullet" }, icon("page", 11)),
-                  el("button", {
-                    class: "chat-bubble-source-name", type: "button",
-                    onclick: () => source.pageId && app.openPage(source.pageId),
-                  }, source.title || "Note"))))
-            : null));
+            ? el("div", { class: "chat-ctx-chips" }, message.sources.map((source) =>
+                el("button", {
+                  class: "chat-ctx-chip", type: "button", title: source.title || "Note",
+                  onclick: () => source.pageId && app.openPage(source.pageId),
+                }, icon("page", 13), el("span", { text: source.title || "Note" }))))
+            : null,
+          el("div", { class: "chat-bubble", text: message.text })));
         continue;
       }
       const body = el("div", { class: "chat-answer" });
       const wrapper = el("div", { class: "chat-assistant" },
-        el("span", { class: "chat-assistant-mark" }, bloub(22)),
         el("div", { class: "chat-assistant-body" }, body));
 
       if (message.error) {
@@ -389,9 +488,18 @@ export function renderChat(host, app, options = {}) {
         if (message.searched) {
           body.append(el("div", { class: "ai-searched" }, icon("search", 12), `Searched the web for "${message.searched}"`));
         }
-        body.append(el("div", { class: "chat-actions" },
-          el("button", { class: "ai-action", type: "button", onclick: () => insertIntoPage(message) }, icon("plus", 14), "Insert into page"),
-          el("button", { class: "ai-action", type: "button", onclick: () => createPageFrom(message) }, icon("page", 14), "Create page")));
+        const feedback = (value) => { message.feedback = message.feedback === value ? null : value; if (message.feedback) toast(value === "up" ? "Glad that helped" : "Thanks, noted"); paint(); };
+        const tool = (name, label, onClick, on = false) => {
+          const button = iconButton(name, label, onClick, { size: 15, className: `chat-tool${on ? " on" : ""}` });
+          return button;
+        };
+        body.append(el("div", { class: "chat-actions", role: "group", "aria-label": "Reply actions" },
+          tool("duplicate", "Copy", () => { navigator.clipboard.writeText(message.text); toast("Copied"); }),
+          tool("plus", "Insert into page", () => insertIntoPage(message)),
+          tool("page", "Create page", () => createPageFrom(message)),
+          tool("thumb_up", "Good answer", () => feedback("up"), message.feedback === "up"),
+          tool("thumb_down", "Not helpful", () => feedback("down"), message.feedback === "down"),
+          tool("refresh", "Try again", () => ask(message))));
         if (message.sources?.length) {
           body.append(el("div", { class: "chat-refs" }, message.sources.map((source) =>
             el("button", { class: "chat-ref", type: "button", onclick: () => source.pageId && app.openPage(source.pageId) },
@@ -415,7 +523,7 @@ export function renderChat(host, app, options = {}) {
     const question = retryOf?.question ?? input.value.trim();
     if (!question) return;
     const attachedNow = sources.map((source) => ({ pageId: source.pageId, title: source.title }));
-    if (!retryOf) { messages.push({ role: "user", text: question, sources: attachedNow }); input.value = ""; grow(); }
+    if (!retryOf) { messages.push({ role: "user", text: question, sources: attachedNow, at: Date.now() }); input.value = ""; grow(); }
     await ensureChat();
     if (!retryOf) await remember({ role: "user", text: question, sources: attachedNow });
     const answer = retryOf || { role: "assistant", question, sources: [...sources] };
@@ -447,6 +555,7 @@ export function renderChat(host, app, options = {}) {
       await streamAgent({
         messages: history,
         model: MODELS.find((m) => m.id === modelId)?.model,
+        instructions: instructionsFor(agentId),
         notes: { pageIds, currentPageId: app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {

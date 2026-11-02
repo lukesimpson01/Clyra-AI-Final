@@ -3,11 +3,11 @@
 import { el, icon, append } from "./dom.js";
 
 /* Streams /api/chat/agent. Resolves when the stream ends. */
-export async function streamAgent({ messages, notes, model, signal, onEvent }) {
+export async function streamAgent({ messages, notes, model, instructions, signal, onEvent }) {
   const response = await fetch("/api/chat/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ messages, notes, model }),
+    body: JSON.stringify({ messages, notes, model, instructions }),
     signal,
   });
   if (!response.ok || !response.body) throw new Error(`Chat API error: ${response.status}`);

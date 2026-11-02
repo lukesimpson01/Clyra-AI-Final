@@ -228,3 +228,63 @@
   background-size: 11px; background-repeat: no-repeat; background-position: center; pointer-events: none; content: "";
 }
 @media (prefers-reduced-motion: reduce) { .comment-tool, .comment-send { transition: none; } }
+
+/* ---- AI chat, the way Notion lays it out: header, stamp, chips over the bubble, plain replies, a row of small tools ---- */
+.chat-panel-head { display: flex; align-items: center; gap: 2px; min-height: 44px; padding: 6px 10px 6px 12px; }
+.chat-view:not(.landing) .chat-panel-head, .chat-view.landing .chat-panel-head { flex: none; }
+.chat-head-spacer { flex: 1; }
+.chat-head-title {
+  display: inline-flex; align-items: center; gap: 8px; max-width: min(60%, 360px); height: 30px; padding: 0 8px; margin-left: -8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text, #1f2024); font: 600 14px/1 inherit; cursor: pointer; transition: background-color 120ms ease;
+}
+.chat-head-title:hover { background: var(--hover, rgba(55, 53, 47, .08)); }
+.chat-head-title:focus-visible { outline: 2px solid var(--accent, #2383e2); outline-offset: 1px; }
+.chat-head-title svg:last-child { flex: none; color: var(--text-tertiary, #8b8f97); }
+.chat-head-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-head-emoji { font-size: 16px; line-height: 1; }
+.chat-switch-menu { min-width: 280px; max-width: 360px; }
+.chat-switch-menu .menu-item .m-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chat-stamp { margin: 6px auto 14px; text-align: center; font-size: 12px; color: var(--text-tertiary, #8b8f97); }
+.chat-row.user { align-items: flex-end; gap: 6px; }
+.chat-ctx-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: min(80%, 620px); }
+.chat-ctx-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px; height: 26px; padding: 0 10px; border: 1px solid var(--border, rgba(55, 53, 47, .12)); border-radius: 13px;
+  background: var(--surface, #fff); color: var(--text-secondary, #5f636b); font: 400 12.5px/1 inherit; cursor: pointer;
+}
+.chat-ctx-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-ctx-chip:hover { color: var(--text, #1f2024); background: var(--hover, rgba(55, 53, 47, .06)); }
+.chat-bubble { border: 0; background: var(--hover, rgba(55, 53, 47, .07)); border-radius: 18px; font-weight: 400; }
+.chat-assistant { display: block; }
+.chat-assistant-mark { display: none; }
+.chat-actions { gap: 2px; margin-top: 8px; }
+.chat-tool { color: var(--text-tertiary, #8b8f97); }
+.chat-tool:hover { color: var(--text, #1f2024); }
+.chat-tool.on { color: var(--accent, #2383e2); }
+
+.chat-agents-head { margin-top: 8px; }
+.chat-agent-list { display: flex; flex-direction: column; gap: 1px; padding: 0 6px 10px; }
+.chat-agent-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text, #1f2024); font: 400 13.5px/1.3 inherit; text-align: left; cursor: pointer; transition: background-color 120ms ease;
+}
+.chat-agent-row:hover, .chat-agent-row.active { background: var(--hover, rgba(55, 53, 47, .08)); }
+.chat-agent-emoji { width: 18px; text-align: center; }
+.chat-agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-chat .chat-agent-list { display: none; }
+
+.extras-body { display: flex; flex-direction: column; gap: 10px; }
+.extras-lead { margin: 0; font-size: 13.5px; color: var(--text-secondary, #5f636b); line-height: 1.45; }
+.extras-row { display: flex; gap: 8px; }
+.extras-input, .extras-field {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-strong, rgba(55, 53, 47, .2)); border-radius: 8px; background: var(--surface, #fff);
+  color: var(--text, #1f2024); font: 400 14px/1.45 inherit;
+}
+.extras-field { resize: vertical; min-height: 110px; }
+.extras-emoji { width: 56px; flex: none; text-align: center; }
+.extras-input:focus, .extras-field:focus { outline: 2px solid var(--accent, #2383e2); outline-offset: -1px; border-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .chat-head-title, .chat-agent-row { transition: none; } }
+.chat-view { position: relative; }
+.chat-view.landing .chat-panel-head { position: absolute; top: 0; left: 0; right: 0; z-index: 1; }
+.chat-layout:not(.compact) .chat-history-list { flex: 0 1 auto; max-height: 58%; }
+.chat-layout:not(.compact) .chat-agent-list { flex: 1; min-height: 0; overflow-y: auto; }

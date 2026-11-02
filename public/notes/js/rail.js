@@ -14,7 +14,7 @@ import { readPreference, writePreference } from "./preferences.js";
 import { calculatorPanel } from "./panels/calculator.js";
 import { browserPanel } from "./panels/browser.js";
 import { commentsPanel } from "./panels/comments.js";
-import { renderChat } from "./views/chat.js";
+import { renderChat, autoPageOn } from "./views/chat.js";
 
 /* Each tool carries its own shortcut. They are real bindings, not labels:
    the chord opens the rail on that tool from anywhere in the workspace. */
@@ -176,6 +176,7 @@ export class Rail {
     return {
       node,
       focus: () => view?.focus?.(),
+      reattach() { attachedFor = null; return this.refresh(); },
       refresh: async () => {
         if (view && builtWithAi !== state.aiConfigured) {
           view.destroy?.();
@@ -190,6 +191,7 @@ export class Rail {
         const pageId = this.context.currentPageId?.();
         if (!pageId || pageId === attachedFor) return;
         attachedFor = pageId;
+        if (!autoPageOn()) { view.setSources?.([]); return; }
         const page = state.pageById.get(String(pageId));
         const links = await api.get(`/api/notes/pages/${pageId}/links`).catch(() => null);
         view.setSources?.([

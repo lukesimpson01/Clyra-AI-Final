@@ -277,6 +277,9 @@ class App {
     setTimeout(() => window.dispatchEvent(new CustomEvent("clyra:notes-quote", { detail: { text, mode } })), 160);
   }
 
+  /* The chat panel's "Read this page" switch was turned back on: attach the open page again. */
+  reattachChatContext() { this.rail?.panels.get("chat")?.reattach?.(); }
+
   /* Comment on one block: open the Comments panel with that block already chosen. */
   commentOnBlock(blockId, quote = "") {
     if (!this.currentPageId()) return;
