@@ -71,40 +71,38 @@ export function renderWelcome(host, app) {
   const railKey = (key) => chord(key, { shift: true, ctrl: true });
   const tool = (id, panel, label, key) => [id, label, { run: () => openRail(panel), keys: `⌃ ⇧ ${key.toUpperCase()}` }];
 
-  /* The slash menu, played on a loop: a line, a "/", the real list narrowing as you type, a block appearing. No page needed. */
+  /* The slash menu, played on a loop: the "/" key is pressed, the real list opens, the highlight moves down and one block is chosen.
+     Nothing is typed. */
   const slashDemo = async (stage) => {
-    const LIST = [["Text", "text"], ["Heading 1", "h1"], ["Heading 2", "h2"], ["Bulleted list", "list"], ["To-do list", "check_square"], ["Toggle list", "chevron_right"], ["Quote", "quote"], ["Callout", "comment"], ["Table", "table"], ["Code", "code"], ["Divider", "minus"], ["Image", "image"], ["Database", "table"], ["Brainstorm", "target"], ["AI block", "sparkle"]];
-    const SHOWS = [{ query: "quote", pick: "Quote", type: "quote", text: "A line worth remembering." }, { query: "head", pick: "Heading 1", type: "h1", text: "Meeting notes" }, { query: "todo", pick: "To-do list", type: "todo", text: "Send the update" }];
+    const LIST = [["Text", "text"], ["Heading 1", "h1"], ["Heading 2", "h2"], ["Bulleted list", "list"], ["To-do list", "check_square"], ["Toggle list", "chevron_right"], ["Quote", "quote"], ["Callout", "comment"], ["Table", "table"], ["Code", "code"]];
+    const SHOWS = [{ downs: 2, type: "h2", text: "Heading" }, { downs: 4, type: "todo", text: "Task" }, { downs: 6, type: "quote", text: "A quote" }];
     const line = el("div", { class: "wl-sd-line" });
     const menuNode = el("div", { class: "wl-sd-menu", hidden: true });
-    stage.append(el("div", { class: "wl-sd" }, el("div", { class: "wl-sd-card" }, line, menuNode), el("p", { class: "wl-sd-cap", text: "Type / on any line" })));
+    const key = el("kbd", { class: "wl-sd-key", text: "/" });
+    stage.append(el("div", { class: "wl-sd" }, el("div", { class: "wl-sd-card" }, line, menuNode), el("p", { class: "wl-sd-cap" }, "Press ", key, " on any line")));
     let alive = true;
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const rows = (query, active) => {
+    const rows = (active) => {
       clear(menuNode);
-      const shown = LIST.filter(([name]) => !query || name.toLowerCase().includes(query)).slice(0, 7);
-      shown.forEach(([name, glyph], i) => menuNode.append(el("div", { class: `wl-sd-row${name === active || (!active && i === 0) ? " on" : ""}` }, icon(glyph, 16), el("span", { text: name }))));
-      return shown;
+      LIST.slice(0, 8).forEach(([name, glyph]) => menuNode.append(el("div", { class: `wl-sd-row${name === active ? " on" : ""}` }, icon(glyph, 16), el("span", { text: name }))));
     };
-    const type = async (target, text, speed = 55) => { for (const char of text) { if (!alive) return; target.textContent += char; await sleep(speed); } };
     const play = async () => {
       for (let round = 0; alive; round = (round + 1) % SHOWS.length) {
         const show = SHOWS[round];
         clear(line); line.className = "wl-sd-line";
         const body = el("span", { class: "wl-sd-text" }); line.append(body, el("i", { class: "wl-sd-caret" }));
-        await sleep(700); if (!alive) return;
-        await type(body, "/", 0);
-        menuNode.hidden = false; menuNode.classList.remove("out"); rows("", null);
-        await sleep(1100);
-        for (let n = 1; n <= show.query.length; n += 1) { if (!alive) return; body.textContent = `/${show.query.slice(0, n)}`; rows(show.query.slice(0, n), null); await sleep(260); }
-        await sleep(500); if (!alive) return;
-        menuNode.querySelector(".wl-sd-row")?.classList.add("hit");
-        await sleep(350);
-        menuNode.classList.add("out"); await sleep(180); menuNode.hidden = true;
-        body.textContent = ""; line.classList.add(`as-${show.type}`);
+        await sleep(900); if (!alive) return;
+        key.classList.add("down"); body.textContent = "/"; await sleep(160); key.classList.remove("down");
+        menuNode.hidden = false; menuNode.classList.remove("out"); rows(LIST[0][0]);
+        await sleep(1000);
+        for (let step = 1; step <= show.downs; step += 1) { if (!alive) return; rows(LIST[step][0]); await sleep(480); }
+        await sleep(350); if (!alive) return;
+        menuNode.querySelector(".wl-sd-row.on")?.classList.add("hit");
+        await sleep(380);
+        menuNode.classList.add("out"); await sleep(200); menuNode.hidden = true;
+        body.textContent = show.text; line.classList.add(`as-${show.type}`, "made");
         if (show.type === "todo") line.prepend(el("span", { class: "wl-sd-box" }));
-        await type(body, show.text, 45);
-        await sleep(1900);
+        await sleep(2000);
         line.classList.add("fade"); await sleep(450);
       }
     };
@@ -154,8 +152,8 @@ export function renderWelcome(host, app) {
       tips: ["Type a few letters, then Enter.", "What you use most rises to Recent.", "It finds pages by title too."], mount: paletteDemo },
 
     { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, type / to turn it into a block: headings, lists, quotes, tables, media, databases and more.",
-      tasks: [["sl-try", "Try it on a new note", { run: () => app.createPage?.(null, { newTab: true }), keys: "/" }]], watch: [[".slash-menu", "sl-try"]],
-      tips: ["Keep typing to narrow it: /quote, /h2, /todo.", "↑ ↓ to move, Enter to pick, Esc to close.", "Space on a blank line asks AI instead."], mount: slashDemo },
+      tasks: [["sl-try", "Press / on a new note", { run: () => app.createPage?.(null, { newTab: true }), keys: "/" }]], watch: [[".slash-menu", "sl-try"]],
+      tips: ["Use ↑ ↓ to move and Enter to pick.", "Esc closes it.", "Space on a blank line asks AI instead."], mount: slashDemo },
 
     { id: "rail", kicker: "Tools", title: "Right sidebar", railButton: true, listLabel: "Press each tab",
       text: "Tools beside the page you are writing. Press the sidebar button at the top right of the window, then press each tab.",
