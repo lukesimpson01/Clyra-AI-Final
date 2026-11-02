@@ -5,9 +5,13 @@ import { openFileMenu } from "./file-menu.js";
 import { el, icon, matchScore, menu, position, pushLayer, toast } from "./dom.js";
 import { BLOCK_TYPES } from "./block-types.js";
 import { caretOffset, setCaret, spansText, sliceSpans, spansLength } from "./richtext.js";
-import { state } from "./state.js";
+import { state, refreshPages } from "./state.js";
+import { buildDatabase } from "./database.js";
+import { openSearch } from "./search.js";
+import { insertSpans } from "./richtext.js";
+import { extraCommands } from "./slash-extras.js";
 
-const GROUP_ORDER = ["AI", "Basic blocks", "Lists", "Media", "Advanced", "Study"];
+const GROUP_ORDER = ["Suggested", "Basic blocks", "Media", "Database", "Advanced blocks", "Inline", "Embeds", "Import", "AI", "Study"];
 
 export function slashCommands(editor) {
   const commands = [];
@@ -42,19 +46,76 @@ export function slashCommands(editor) {
       run: () => editor.onGenerate?.("study-guide", { pageId: editor.page.id }),
     });
   }
+  /* blocks with their own setup (a database, tabs, a button, an AI block) have dedicated commands below */
+  const HAND_BUILT = new Set(["database", "tabs", "button", "ai_block"]);
   for (const [type, meta] of Object.entries(BLOCK_TYPES)) {
+    if (HAND_BUILT.has(type)) continue;
     commands.push({
       key: type, label: meta.label, group: meta.group, icon: meta.icon,
       desc: meta.desc, md: meta.md, keywords: `${type} ${meta.keywords || ""}`,
       run: (block) => insertType(editor, block, type),
     });
   }
+  /* Notion's Suggested group: what it expects you to reach for first. */
+  commands.push({
+    key: "meetingnotes", label: "AI Meeting Notes", group: "Suggested", icon: "mic",
+    desc: "Record a meeting or lecture and get notes.", keywords: "ai meeting record transcript summary notes",
+    run: () => editor.onGenerate?.("lecture", { pageId: editor.page.id }),
+  });
+  commands.push({
+    key: "html", label: "HTML", group: "Suggested", icon: "code", hint: "Embeds", badge: "New",
+    desc: "Run a small piece of HTML on the page.", keywords: "embed widget iframe snippet",
+    run: (block) => insertType(editor, block, "html"),
+  });
+  /* Databases: a view of records inside the page, or a page of their own. */
+  for (const [kind, label, glyph] of [["table", "Table view", "table"], ["board", "Board view", "panel"], ["gallery", "Gallery view", "image"], ["list", "List view", "list"], ["calendar", "Calendar view", "calendar"]]) {
+    commands.push({ key: `${kind}view`, label, group: "Database", icon: glyph, desc: `A new database shown as a ${kind}.`, keywords: `database ${kind} view records`, run: (block) => insertDatabase(editor, block, kind) });
+  }
+  commands.push({ key: "dbinline", label: "Database - Inline", group: "Database", icon: "table", desc: "A database inside this page.", keywords: "database inline table", run: (block) => insertDatabase(editor, block, "table") });
+  commands.push({ key: "dbfull", label: "Database - Full page", group: "Database", icon: "table", desc: "A database on its own page, linked here.", keywords: "database full page", run: (block) => insertDatabase(editor, block, "table", { fullPage: true }) });
+  commands.push({
+    key: "dblinked", label: "Linked view of data source", group: "Database", icon: "link", desc: "Show a database you already have.", keywords: "database linked view existing source",
+    run: (block) => openSearch({ title: "Link a database", filterKinds: ["database"], onSelect: (page) => {
+      if (page.kind && page.kind !== "database") { toast("Choose a database"); return; }
+      editor.turnInto(block, "database"); block.props = { pageId: String(page.page_id || page.id) }; block.__dirty = true; editor.render(); editor.commit("database", true);
+    } }),
+  });
+  /* Columns, two to five wide, as Notion lists them. */
+  for (const count of [2, 3, 4, 5]) {
+    commands.push({ key: `columns${count}`, label: `${count} columns`, group: "Advanced blocks", icon: "panel", desc: `Place blocks side by side in ${count} columns.`, keywords: `columns layout ${count}`, run: (block) => editor.splitIntoColumns(block, count) });
+  }
+  /* Inline: mentions and dates, which land inside a line of text. */
+  for (const [key, label, glyph, desc] of [["mentionpage", "Mention a page or data source", "page", "Link a page right in the text."], ["datemention", "Date or reminder", "calendar", "Today, tomorrow, or a date you pick."]]) {
+    commands.push({ key, label, group: "Inline", icon: glyph, desc, keywords: "mention date reminder page link @", run: (block) => editor.startMention(block) });
+  }
+  commands.push(...extraCommands(editor));
   commands.push({
     key: "lecture", label: "Lecture notes", group: "Study", icon: "mic",
     desc: "Record and transcribe a lecture.", keywords: "record audio transcript class",
     run: () => editor.onGenerate?.("lecture", { pageId: editor.page.id }),
   });
   return commands;
+}
+
+const VIEW_NAME = { table: "Table", board: "Board", gallery: "Gallery", list: "List", calendar: "Calendar" };
+
+/* Make a new database and put it where the "/" was: as a view inside the page, or as its own page with a link here. */
+async function insertDatabase(editor, block, kind, { fullPage = false } = {}) {
+  const spec = {
+    name: "Untitled database",
+    properties: [{ name: "Name", type: "title" }, { name: "Status", type: "status" }, { name: "Date", type: "date" }, { name: "Tags", type: "multi_select", options: ["Tag 1", "Tag 2"] }],
+    records: [{ Name: "Item one", Status: "Not started" }, { Name: "Item two", Status: "In progress" }, { Name: "Item three", Status: "Done" }],
+    views: [{ name: VIEW_NAME[kind] || "Table", type: kind, group: kind === "board" ? "Status" : undefined, date: kind === "calendar" ? "Date" : undefined }],
+  };
+  const made = await buildDatabase(spec, { parentId: String(editor.page.id), inline: !fullPage });
+  if (!made) return;
+  editor.turnInto(block, fullPage ? "link_to_page" : "database");
+  block.props = { pageId: made.page_id };
+  block.__dirty = true;
+  editor.insertAfter(block, editor.blank());
+  editor.render();
+  editor.commit("database", true);
+  await refreshPages();
 }
 
 function insertType(editor, block, type) {
@@ -133,6 +194,8 @@ export function openSlashMenu({ editor, block, line, triggerOffset, onClose }) {
         },
           el("span", { class: "m-icon" }, icon(command.icon, 17)),
           el("span", { class: "m-name", text: command.label }),
+          command.hint ? el("span", { class: "m-sub", text: `\u00B7 ${command.hint}` }) : null,
+          command.badge ? el("span", { class: "m-badge", text: command.badge }) : null,
           command.md ? el("span", { class: "m-md", text: command.md }) : null);
         rows.push(row);
         list.append(row);

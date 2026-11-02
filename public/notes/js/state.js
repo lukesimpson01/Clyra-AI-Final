@@ -86,9 +86,9 @@ export function indexPages(pages) {
 export const getPageMeta = (id) => state.pageById.get(String(id));
 export const childrenOf = (parentId) =>
   state.pages
-    .filter((page) => String(page.parent_id ?? "") === String(parentId ?? "") && page.kind !== "record")
+    .filter((page) => String(page.parent_id ?? "") === String(parentId ?? "") && page.kind !== "record" && !page.inline)
     .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
-export const hasChildren = (id) => state.pages.some((page) => String(page.parent_id ?? "") === String(id) && page.kind !== "record");
+export const hasChildren = (id) => state.pages.some((page) => String(page.parent_id ?? "") === String(id) && page.kind !== "record" && !page.inline);
 
 export async function loadWorkspace() {
   const data = await api.get("/api/notes/bootstrap");

@@ -24,9 +24,8 @@ const base = (arg("url", process.env.NOTES_URL || "http://localhost:3060")).repl
 /* The template list is the source of truth; reading the ids out of the module
    keeps the tool from drifting when a template is added. */
 async function templateIds() {
-  const files = ["template-work.js", "template-school.js", "template-life.js"];
-  const sources = await Promise.all(files.map((file) => readFile(path.join(root, "public", "notes", "js", file), "utf8")));
-  return ["blank", ...sources.flatMap((source) => [...source.matchAll(/^\s{4}id:\s*"([a-z0-9-]+)"/gm)].map((match) => match[1]))];
+  const source = await readFile(path.join(root, "public", "notes", "js", "template-notion-data.js"), "utf8");
+  return ["blank", ...[...source.matchAll(/"id":"([a-z0-9-]+)","name"/g)].map((match) => match[1])];
 }
 
 const FRAME = { width: 720, height: 500 };

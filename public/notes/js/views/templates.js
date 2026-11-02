@@ -8,7 +8,7 @@
 import { el, clear, icon, modal, toast, append } from "../dom.js";
 import { api } from "../api.js";
 import { refreshPages, withError } from "../state.js";
-import { createDatabaseFromTemplate } from "../database.js";
+import { createFromTemplate } from "../database.js";
 import { TEMPLATES, TEMPLATE_CATEGORIES, templateBlocks } from "../templates-data.js";
 
 export { TEMPLATES, TEMPLATE_CATEGORIES };
@@ -75,7 +75,7 @@ export function templatePreview(template) {
   return canvas;
 }
 
-const CATEGORY_ICONS = { All: "sparkle", Notes: "page", Study: "book", Work: "template", Planning: "calendar", Writing: "pencil", Research: "search", Personal: "star" };
+const CATEGORY_ICONS = { All: "sparkle", Notes: "page", Study: "book", Work: "template", Planning: "calendar", Writing: "pencil", Research: "search", Money: "bookmark", Personal: "star" };
 
 /* App Store style "Get" control: a pill that collapses into a progress ring while the page is created, then
    reopens as "Open". Clicking Open takes the reader to the new page. */
@@ -127,12 +127,12 @@ export function openTemplates(app, parentId) {
     state.busy.add(template.id);
     repaintButtons();
     const started = Date.now();
-    if (template.database) {
-      /* a tracker is a real database: its properties, sample rows and views are made through the database API */
-      const made = await createDatabaseFromTemplate(app, template, parentId || null);
+    if (template.databases?.length) {
+      /* some of these pages hold databases: they are made inside the page and shown in place */
+      const made = await createFromTemplate(app, template, parentId || null, { open: false });
       await new Promise((resolve) => setTimeout(resolve, Math.max(0, 900 - (Date.now() - started))));
       state.busy.delete(template.id);
-      if (made) { state.created.set(template.id, made.page_id); toast(`${template.name} is ready`); entry.close("used"); }
+      if (made) { state.created.set(template.id, made.pageId); await refreshPages(); toast(`${template.name} is ready`); }
       repaintButtons();
       return;
     }

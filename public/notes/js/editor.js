@@ -5,10 +5,13 @@
    and IME composition are the browser's to manage. Structural edits change
    the model, re-render, and then place the caret explicitly. */
 import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, position, modKey, mod, append } from "./dom.js";
+import { DatabaseView } from "./database.js";
+import { promptDialog } from "./slash-extras.js";
+import { renderMarkdown } from "./ai-composer.js";
 import { executeBlock, isExecutable, isPreviewable, runnerLabel } from "./runner.js";
 import { detectCodeLanguage, solveMath, evaluateMathFunction } from "./smart-input.js";
 import {
-  renderSpans, readSpans, plain, spansText, spansLength, sliceSpans, applyMark,
+  insertSpans, renderSpans, readSpans, plain, spansText, spansLength, sliceSpans, applyMark,
   markState, caretOffset, setCaret, selectionRangeIn, normalizeSpans, replaceRange,
 } from "./richtext.js";
 import {
@@ -33,7 +36,7 @@ const isTextBlock = (block) => TEXT_BLOCKS.has(block.type);
 
 /* Props are per-type, so converting a block keeps only what the new type
    understands — otherwise a to-do turned into a quote stays "checked". */
-const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"] };
+const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"], html: ["code"], database: ["pageId"], link_to_page: ["pageId"] };
 function propsFor(type, props = {}) {
   const keep = KEEP_PROPS[type] || [];
   const next = {};
@@ -225,6 +228,25 @@ export class Editor {
     }
     if (block.type === "table") { append(content, this.renderTable(block)); return { leading }; }
     if (block.type === "chart") { append(content, this.renderChart(block)); return { leading }; }
+    if (block.type === "database") { append(content, this.renderDatabaseBlock(block)); return { leading }; }
+    if (block.type === "html") { append(content, this.renderHtmlBlock(block)); return { leading }; }
+    if (block.type === "button") { append(content, this.renderButtonBlock(block)); return { leading }; }
+    if (block.type === "ai_block") { append(content, this.renderAiBlock(block)); return { leading }; }
+    if (block.type === "tabs") {
+      const bar = el("div", { class: "tabs-bar", role: "tablist" });
+      const host = el("div", { class: "tabs-host" });
+      const wrap = el("div", { class: "tabs-block", "data-active": String(block.props?.active || 0) }, bar, host);
+      this.paintTabsBar(block, bar, wrap);
+      append(content, wrap);
+      node.__childrenHost = host;
+      return { leading };
+    }
+    if (block.type === "tab") {
+      const pane = el("div", { class: "tab-pane" });
+      append(content, pane);
+      node.__childrenHost = pane;
+      return { leading };
+    }
     if (block.type === "source") { append(content, this.renderSource(block)); return { leading }; }
     if (block.type === "transcript") { append(content, this.renderTranscript(block)); return { leading }; }
     if (block.type === "exam_checklist") { append(content, this.renderChecklistHeader(block)); return { leading }; }
@@ -561,6 +583,23 @@ export class Editor {
     const offset = caretOffset(line);
     const text = spansText(block.text).slice(0, offset);
     if (!text.endsWith("@") || (text.length > 1 && !/\s/.test(text[text.length - 2]))) return;
+    this.openMention(block, line, offset);
+  }
+
+  /* Slash commands "Mention a page" and "Date or reminder" start the same menu by typing the "@" for you. */
+  startMention(block) {
+    const line = this.nodes.get(block.id)?.querySelector(".text-line");
+    if (!line) return;
+    line.focus();
+    const at = caretOffset(line);
+    block.text = insertSpans(block.text, at, [{ t: "@" }]);
+    this.paint(line, block);
+    setCaret(line, at + 1);
+    this.openMention(block, line, at + 1);
+  }
+
+  openMention(block, line, offset) {
+    if (this.mentionOpen) return;
     this.mentionOpen = true;
     const insert = (span) => {
       this.push();
@@ -1641,6 +1680,161 @@ Object.assign(Editor.prototype, {
      headings on every structural change. Levels are normalised against the
      shallowest heading on the page, so a note written entirely in H2s still
      reads as a flush-left list rather than one indented by an invisible H1. */
+  /* An inline database: the same views, filters and cells as a database page, in the middle of a document. The block holds
+     only the id of the database's page; the records live there. */
+  renderDatabaseBlock(block) {
+    const host = el("div", { class: "db-embed" });
+    const pageId = block.props?.pageId;
+    if (!pageId) {
+      host.append(el("div", { class: "db-embed-empty" }, icon("table", 16), el("span", { text: block.props?.dbIndex !== undefined ? "A database from this template appears here once the page is made." : "This database is not set up yet." })));
+      return host;
+    }
+    new DatabaseView(host, { id: pageId }, { openPage: (id, options) => this.onNavigate?.(id, options) }, { embedded: true });
+    return host;
+  },
+
+  /* Turn an empty line into 2 to 5 columns, each with a line to type in. Anything already typed stays in the first. */
+  splitIntoColumns(block, count = 2) {
+    this.push();
+    const carried = block.text;
+    block.type = "columns";
+    block.text = [];
+    block.props = {};
+    block.children = Array.from({ length: count }, (_, index) => {
+      const column = makeBlock("column");
+      const line = makeBlock();
+      if (index === 0 && carried?.length) line.text = carried;
+      column.children = [line];
+      return column;
+    });
+    block.__dirty = true;
+    this.render({ id: block.children[0].children[0].id, offset: 0 });
+    this.commit("columns", true);
+  },
+
+  /* A small piece of HTML, run in a sandbox so it can show a widget or a diagram but cannot reach the rest of the page. */
+  renderHtmlBlock(block) {
+    const wrap = el("div", { class: "html-block" });
+    const code = block.props?.code ?? "";
+    const frame = el("iframe", { class: "html-frame", title: "HTML", sandbox: "allow-scripts", loading: "lazy" });
+    frame.srcdoc = code || "<p style=\"font:14px system-ui;color:#888\">Nothing here yet.</p>";
+    const editor = el("textarea", { class: "html-code", rows: "7", spellcheck: "false", "aria-label": "HTML code", placeholder: "<h1>Hello</h1>" });
+    editor.value = code;
+    editor.hidden = Boolean(code);
+    const toggle = el("button", { class: "html-toggle", type: "button" }, code ? "Edit" : "Preview");
+    toggle.addEventListener("click", () => {
+      editor.hidden = !editor.hidden;
+      toggle.textContent = editor.hidden ? "Edit" : "Preview";
+      if (editor.hidden) {
+        block.props = { ...block.props, code: editor.value };
+        frame.srcdoc = editor.value || frame.srcdoc;
+        this.commit("html");
+      } else editor.focus();
+    });
+    wrap.append(el("div", { class: "html-bar" }, el("span", { class: "html-label", text: "HTML" }), toggle), editor, frame);
+    return wrap;
+  },
+
+  /* Tabs: a bar of titles over one pane at a time. Which pane shows is a data attribute on the block, so switching never
+     rebuilds the panes or loses the caret in them. */
+  paintTabsBar(block, bar, wrap) {
+    clear(bar);
+    const active = block.props?.active || 0;
+    (block.children || []).forEach((tab, index) => {
+      bar.append(el("button", {
+        class: `tabs-tab${index === active ? " active" : ""}`, type: "button", role: "tab", "aria-selected": String(index === active),
+        title: "Double-click to rename",
+        onclick: () => { block.props = { ...block.props, active: index }; wrap.dataset.active = String(index); this.paintTabsBar(block, bar, wrap); this.commit("tabs"); },
+        ondblclick: () => promptDialog({ title: "Rename tab", confirm: "Rename", fields: [{ label: "Name", value: tab.props?.title || "" }], onSubmit: ([title]) => { tab.props = { ...tab.props, title }; this.paintTabsBar(block, bar, wrap); this.commit("tabs"); } }),
+      }, tab.props?.title || `Tab ${index + 1}`));
+    });
+    if (!this.readOnly) bar.append(iconButton("plus", "Add a tab", () => {
+      this.push();
+      const tab = makeBlock("tab");
+      tab.props = { title: `Tab ${(block.children || []).length + 1}` };
+      tab.children = [makeBlock()];
+      block.children = [...(block.children || []), tab];
+      block.props = { ...block.props, active: block.children.length - 1 };
+      block.__dirty = true;
+      this.render({ id: tab.children[0].id, offset: 0 });
+      this.commit("tabs", true);
+    }, { size: 14, className: "tabs-add" }));
+  },
+
+  insertTabs(block) {
+    this.push();
+    block.type = "tabs";
+    block.text = [];
+    block.props = { active: 0 };
+    block.children = ["Tab 1", "Tab 2"].map((title) => { const tab = makeBlock("tab"); tab.props = { title }; tab.children = [makeBlock()]; return tab; });
+    block.__dirty = true;
+    this.render({ id: block.children[0].children[0].id, offset: 0 });
+    this.commit("tabs", true);
+  },
+
+  /* Embeds for named services are the ordinary embed block, asked for the service's link straight away. */
+  insertEmbed(block, provider) {
+    this.turnInto(block, "embed");
+    block.props = { ...block.props, provider };
+    this.insertAfter(block, this.blank());
+    setTimeout(() => this.mediaPrompt(block, null), 30);
+  },
+
+  /* A button adds its saved content below itself each time it is pressed. */
+  renderButtonBlock(block) {
+    const wrap = el("div", { class: "button-block" });
+    wrap.append(el("button", { class: "notion-button", type: "button", onclick: () => this.pressButton(block) }, block.props?.label || "Button"));
+    if (!this.readOnly) wrap.append(iconButton("pencil", "Edit button", () => promptDialog({
+      title: "Edit button", confirm: "Save",
+      fields: [{ label: "Label", value: block.props?.label || "" }, { label: "What it adds (markdown)", multiline: true, value: block.props?.content || "" }],
+      onSubmit: ([label, content]) => { block.props = { ...block.props, label, content }; block.__dirty = true; this.render(); this.commit("button", true); },
+    }), { size: 14, className: "button-edit" }));
+    return wrap;
+  },
+
+  pressButton(block) {
+    const drafts = parseMarkdownBlocks(block.props?.content || "");
+    if (!drafts.length) { toast("This button has nothing to add yet"); return; }
+    const blocks = drafts.map((draft) => ({ ...makeBlock(draft.type, draft.text, draft.props), children: [] }));
+    this.push();
+    const list = this.siblingsOf(block.id);
+    list.splice(list.indexOf(block) + 1, 0, ...blocks);
+    this.render({ id: blocks[blocks.length - 1].id, offset: "end" });
+    this.commit("button", true);
+  },
+
+  /* An AI block holds one generated answer and a button to make it again, so a summary can be kept up to date. */
+  renderAiBlock(block) {
+    const body = el("div", { class: "ai-block-body" });
+    const paintBody = () => { if (block.props?.result) body.innerHTML = renderMarkdown(block.props.result); else body.textContent = "Nothing generated yet."; };
+    paintBody();
+    const update = iconButton("refresh", "Update", async () => {
+      if (!state.aiConfigured) { toast("AI is not set up"); return; }
+      wrap.classList.add("busy"); body.textContent = "Writing\u2026";
+      try {
+        const text = this.flat().map((entry) => spansText(entry.block.text)).filter(Boolean).join("\n").slice(0, 8000);
+        const kind = block.props?.kind || "summarize";
+        const result = await api.post("/api/notes/ai/inline", { action: kind, text, instruction: block.props?.extra || undefined, sources: [{ pageId: this.page.id }] });
+        block.props = { ...block.props, result: String(result.text || "").trim(), updated: Date.now() };
+        this.commit("ai-block");
+      } catch (error) { toast(error?.message || "AI request failed"); }
+      wrap.classList.remove("busy"); paintBody();
+    }, { size: 14, className: "ai-block-update" });
+    const wrap = el("div", { class: "ai-block" }, el("div", { class: "ai-block-head" }, icon("sparkle", 14), el("span", { class: "ai-block-title", text: block.props?.title || "AI block" }), el("span", { class: "ai-block-spacer" }), this.readOnly ? null : update), body);
+    wrap.__update = () => update.click();
+    return wrap;
+  },
+
+  insertAiBlock(block, kind, title, extra) {
+    this.turnInto(block, "ai_block");
+    block.props = { kind, title, extra: extra || "", result: "" };
+    block.__dirty = true;
+    this.insertAfter(block, this.blank());
+    this.render();
+    this.commit("ai-block", true);
+    setTimeout(() => this.nodes.get(block.id)?.querySelector(".ai-block")?.__update?.(), 60);
+  },
+
   renderToc() {
     const headings = this.flat()
       .map((entry) => entry.block)
@@ -1802,7 +1996,7 @@ Object.assign(Editor.prototype, {
 
   mediaPrompt(block, anchor) {
     const accept = { image: "image/*", video: "video/*", audio: "audio/*", pdf: "application/pdf", file: "*/*" }[block.type];
-    const urlField = el("input", { class: "input", placeholder: "Paste a link…", type: "url" });
+    const urlField = el("input", { class: "input", placeholder: block.props?.provider ? `Paste a ${block.props.provider} link…` : "Paste a link…", type: "url" });
     const fileField = accept ? el("input", { type: "file", accept, class: "input" }) : null;
     let entry;
     const apply = (props) => {

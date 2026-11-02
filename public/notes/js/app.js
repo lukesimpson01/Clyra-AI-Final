@@ -17,6 +17,7 @@ import { renderHome } from "./views/home.js";
 import { renderFlashcards } from "./views/flashcards.js";
 import { renderTests } from "./views/tests.js";
 import { renderChat } from "./views/chat.js";
+import { renderWelcome } from "./views/welcome.js";
 import { renderInbox } from "./views/inbox.js";
 import { renderLibrary } from "./views/library.js";
 import { openTrash } from "./views/trash.js";
@@ -27,6 +28,7 @@ import { runGenerator } from "./views/generators.js";
 
 const TAB_LABELS = {
   home: { title: "Home", icon: "home" },
+  welcome: { title: "Welcome", icon: "sparkle" },
   chat: { title: "AI chat", icon: "sparkle" },
   flashcards: { title: "Flashcards", icon: "cards" },
   tests: { title: "Practice tests", icon: "check_square" },
@@ -77,6 +79,13 @@ class App {
     };
     window.addEventListener("hashchange", followLink);
     followLink();
+    /* The first time Notes opens on this device, it opens on the tour. It stays in the sidebar for later. */
+    try {
+      if (!localStorage.getItem("clyra-notes:welcomed") && !location.hash) {
+        localStorage.setItem("clyra-notes:welcomed", "1");
+        this.openView({ kind: "welcome" });
+      }
+    } catch { /* storage off: skip the tour */ }
     this.root.removeAttribute("aria-busy");
   }
 
@@ -95,6 +104,7 @@ class App {
       railHost,
     );
     this.sidebar = new Sidebar(sidebarHost, this);
+    this.listenForImport();
     this.tabstrip = new TabStrip(this.tabstripHost, this);
     this.toolbar = new Toolbar(this.toolbarHost, this);
     this.rail = new Rail(railHost, this);
@@ -121,7 +131,7 @@ class App {
       return;
     }
     const renderers = {
-      home: renderHome, chat: renderChat, flashcards: renderFlashcards,
+      home: renderHome, welcome: renderWelcome, chat: renderChat, flashcards: renderFlashcards,
       tests: renderTests, inbox: renderInbox, library: renderLibrary,
     };
     const render = renderers[tab.kind] || renderHome;
@@ -461,6 +471,9 @@ class App {
 
   openTemplates(parentId) { openTemplates(this, parentId); }
   openImport(parentId) { openImport(this, parentId); }
+
+  /* slash menu entries for importing from other tools open the same import screen */
+  listenForImport() { window.addEventListener("clyra:open-import", () => this.openImport(null)); }
   openTrash() { openTrash(this); }
   openCourses() { openCourses(this); }
   openSettings() { openSettings(this); }

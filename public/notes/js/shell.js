@@ -115,9 +115,11 @@ export class Sidebar {
     }
     if (activeTab()?.kind === "chat") { this.renderChatBody(); return; }
     const sections = [];
-    const favorites = state.pages.filter((page) => page.favorite && page.kind !== "record");
+    /* The tour is saved at the top of the sidebar, so it can be opened again at any time. */
+    sections.push(el("div", { class: "sidebar-section welcome-entry" }, this.staticRow("Welcome", "sparkle", () => this.context.openView({ kind: "welcome" }))));
+    const favorites = state.pages.filter((page) => page.favorite && page.kind !== "record" && !page.inline);
     const recents = [...state.pages]
-      .filter((page) => page.kind !== "record")
+      .filter((page) => page.kind !== "record" && !page.inline)
       .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))
       .slice(0, 5);
 

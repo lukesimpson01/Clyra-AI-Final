@@ -35,25 +35,25 @@ export type Block = {
 };
 
 export type BlockType =
-  | "text" | "h1" | "h2" | "h3"
+  | "text" | "h1" | "h2" | "h3" | "h4"
   | "bulleted" | "numbered" | "todo"
   | "toggle" | "toggle_h1" | "toggle_h2" | "toggle_h3"
   | "quote" | "callout" | "divider" | "code" | "equation"
   | "image" | "video" | "audio" | "file" | "pdf" | "bookmark" | "embed"
   | "table" | "chart" | "columns" | "column"
-  | "page" | "link_to_page" | "breadcrumb" | "toc" | "database" | "synced" | "button"
+  | "page" | "link_to_page" | "breadcrumb" | "toc" | "database" | "synced" | "button" | "tabs" | "tab" | "html" | "ai_block"
   | "flashcard_set" | "flashcard" | "quiz" | "question" | "key_term"
   | "study_summary" | "exam_checklist" | "source" | "transcript" | "objective";
 
 /* Types whose children are rendered by the editor as nested blocks. */
 export const CONTAINER_TYPES = new Set<BlockType>([
-  "toggle", "toggle_h1", "toggle_h2", "toggle_h3", "columns", "column", "callout", "quote",
+  "toggle", "toggle_h1", "toggle_h2", "toggle_h3", "columns", "column", "callout", "quote", "tabs", "tab",
 ]);
 
 /* Types that hold no editable inline text of their own. */
 export const VOID_TYPES = new Set<BlockType>([
   "divider", "image", "video", "audio", "file", "pdf", "bookmark", "embed",
-  "table", "chart", "columns", "breadcrumb", "toc", "database", "synced", "button",
+  "table", "chart", "columns", "breadcrumb", "toc", "database", "synced", "button", "html", "ai_block",
   "flashcard_set", "quiz", "source", "transcript", "link_to_page", "page",
 ]);
 
@@ -293,6 +293,7 @@ export function blocksToMarkdown(blocks: Block[], depth = 0): string {
       case "h1": out.push(`${pad}# ${text}`); break;
       case "h2": out.push(`${pad}## ${text}`); break;
       case "h3": out.push(`${pad}### ${text}`); break;
+      case "h4": out.push(`${pad}#### ${text}`); break;
       case "toggle_h1": out.push(`${pad}# ${text}`); break;
       case "toggle_h2": out.push(`${pad}## ${text}`); break;
       case "toggle_h3": out.push(`${pad}### ${text}`); break;

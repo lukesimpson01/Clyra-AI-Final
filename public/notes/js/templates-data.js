@@ -6,28 +6,16 @@
    or a database can do, a template inherits. The three sets live in template-work.js, template-school.js and
    template-life.js; template-kit.js is their shared vocabulary. */
 import { p, table } from "./template-kit.js";
-import { WORK } from "./template-work.js";
-import { SCHOOL } from "./template-school.js";
-import { LIFE } from "./template-life.js";
+import { NOTION } from "./template-notion.js";
 
 export const TEMPLATE_GROUPS = ["Work", "Life", "School"];
 /* The gallery's shelves. Every template sits in one; its Work, Life or School group is kept as well, for the filters that use it. */
-export const TEMPLATE_CATEGORIES = ["Notes", "Study", "Work", "Planning", "Writing", "Research", "Personal"];
-const CATEGORY = {
-  Notes: ["meeting-notes", "one-on-one", "cornell-notes", "lecture-notes", "daily-journal", "personal-wiki", "team-wiki"],
-  Study: ["exam-revision", "math-formulas", "source-analysis", "book-analysis", "language-vocab", "coding-notes", "student-dashboard", "grade-tracker"],
-  Work: ["project-tracker", "product-roadmap", "sprint-board", "sales-crm", "content-calendar", "okrs", "prd", "retrospective", "decision-log", "hiring-pipeline", "interview-scorecard", "sop", "task-manager", "bug-tracker"],
-  Planning: ["weekly-study-planner", "assignment-tracker", "college-applications", "weekly-review", "goal-setting", "monthly-budget", "habit-tracker", "event-planner", "trip-planner", "daily-planner"],
-  Writing: ["essay-planner", "resume"],
-  Research: ["research-paper", "lab-report", "competitor-analysis"],
-  Personal: ["meal-planner", "workout-log", "recipe-book", "reading-list", "watchlist", "moving-checklist"],
-};
-const ACCENT = { Notes: "#6e7bf2", Study: "#2f9e6b", Work: "#2383e2", Planning: "#e08a3a", Writing: "#9b51e0", Research: "#2d9cdb", Personal: "#d9534f" };
-const categoryOf = (id) => Object.entries(CATEGORY).find(([, ids]) => ids.includes(id))?.[0] || "Notes";
+export const TEMPLATE_CATEGORIES = ["Notes", "Study", "Work", "Planning", "Writing", "Money", "Personal"];
+const ACCENT = { Notes: "#6e7bf2", Study: "#2f9e6b", Work: "#2383e2", Planning: "#e08a3a", Writing: "#9b51e0", Money: "#2d9cdb", Personal: "#d9534f" };
 
-/* A database template has no blocks of its own; its preview is a table of its sample records, so the gallery card and the
-   screenshot show what the tracker holds. */
+/* A template whose page is only a database previews as a table of its sample records. */
 const previewTable = (spec) => {
+  if (!spec?.properties?.length) return [];
   const names = spec.properties.map((property) => property.name);
   const cell = (value) => (value && typeof value === "object" && "offsetDays" in value
     ? new Date(Date.now() + value.offsetDays * 86_400_000).toLocaleDateString([], { day: "numeric", month: "short" })
@@ -35,11 +23,10 @@ const previewTable = (spec) => {
   return [table([names, ...spec.records.slice(0, 5).map((record) => names.map((name) => String(cell(record[name]))))], { tint: "gray" })];
 };
 
-const library = [...WORK, ...SCHOOL, ...LIFE].map((entry) => ({
+const library = NOTION.map((entry) => ({
   ...entry,
-  category: categoryOf(entry.id),
-  accent: ACCENT[categoryOf(entry.id)],
-  blocks: entry.blocks || (() => previewTable(entry.database)),
+  accent: ACCENT[entry.category] || "#5f6672",
+  blocks: entry.blocks,
 }));
 
 export const TEMPLATES = [
@@ -52,14 +39,24 @@ export const templateGroup = (template) => template.group || "School";
 
 /* Blocks arrive as a plain tree; the store needs stable ids before it can write parent links, so they are minted here
    rather than server-side. */
-export function templateBlocks(template) {
+const mint = (list) => {
   const id = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
-  const walk = (list) => list.map((block) => ({
+  const walk = (blocks) => blocks.map((block) => ({
     id: id(),
     type: block.type,
     text: block.text || [],
     props: block.props || {},
     children: walk(block.children || []),
   }));
-  return walk(template.blocks());
+  return walk(list);
+};
+export const templateBlocks = (template) => mint(template.blocks());
+
+/* A preview shows each embedded database as a table of its sample rows, since the real database only exists once the page is made. */
+export function templatePreviewBlocks(template) {
+  const dbs = template.databases || [];
+  const swap = (list) => list.flatMap((block) => (block.type === "database"
+    ? (dbs[block.props?.dbIndex] ? previewTable(dbs[block.props.dbIndex]) : [])
+    : [{ ...block, children: swap(block.children || []) }]));
+  return mint(swap(template.blocks()));
 }

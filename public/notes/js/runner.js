@@ -44,7 +44,7 @@ const RUNNERS = {
 const PREVIEWABLE = new Set(["html", "svg", "css"]);
 
 export const isRunnable = (language) => Boolean(RUNNERS[String(language || "").toLowerCase()]);
-export const isPreviewable = (language) => PREVIEWABLE.has(String(language || "").toLowerCase());
+export const isPreviewable = (language) => PREVIEWABLE.has(String(language || "").toLowerCase()) || String(language || "").toLowerCase() === "mermaid";
 
 /** True for any code block that has something to do beyond being read. */
 export const isExecutable = (language) => isRunnable(language) || isPreviewable(language);
@@ -545,7 +545,23 @@ export async function openPreview(language, code, title = "Preview") {
 }
 
 /** The single entry point a code block calls: picks the right surface. */
+/* A Mermaid diagram is drawn in the browser from its text; the library loads on first use. */
+async function openMermaid(code) {
+  const { modal, el } = await import("./dom.js");
+  const holder = el("div", { class: "mermaid-holder", style: { minHeight: "160px", display: "grid", placeItems: "center", overflow: "auto" } }, "Drawing\u2026");
+  modal({ title: "Diagram", width: 720, body: holder });
+  try {
+    const mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs")).default;
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+    const { svg } = await mermaid.render(`m${Date.now().toString(36)}`, code);
+    holder.innerHTML = svg;
+  } catch (error) {
+    holder.textContent = `This diagram could not be drawn: ${error?.message || "check the text"}`;
+  }
+}
+
 export function executeBlock(language, code, title) {
+  if (String(language).toLowerCase() === "mermaid") return openMermaid(code);
   if (isPreviewable(language)) return openPreview(language, code, title || `${language.toUpperCase()} preview`);
   return runInTerminal(language, code);
 }

@@ -252,7 +252,7 @@ export function unlockPage(id: string, password = "") {
 export function listPages(includeTrashed = false) {
   return db
     .prepare(
-      `SELECT ${PAGE_COLUMNS} FROM pages2 ${includeTrashed ? "" : "WHERE trashed_at IS NULL"} ORDER BY sort, updated_at DESC`,
+      `SELECT ${PAGE_COLUMNS}, (SELECT inline FROM databases d WHERE d.page_id=pages2.id) AS inline FROM pages2 ${includeTrashed ? "" : "WHERE trashed_at IS NULL"} ORDER BY sort, updated_at DESC`,
     )
     .all() as Array<Record<string, unknown>>;
 }

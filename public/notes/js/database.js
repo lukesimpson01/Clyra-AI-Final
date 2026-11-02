@@ -6,6 +6,7 @@
 import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, append } from "./dom.js";
 import { api } from "./api.js";
 import { withError, refreshPages } from "./state.js";
+import { templateBlocks } from "./templates-data.js";
 
 const TYPE_LABEL = {
   title: "Title", text: "Text", number: "Number", select: "Select", multi_select: "Multi-select", status: "Status", date: "Date", checkbox: "Checkbox",
@@ -17,7 +18,9 @@ const TYPE_ICON = {
   url: "link", email: "link", phone: "link", person: "star", created_time: "history", last_edited_time: "history", formula: "equation",
 };
 const ADDABLE = ["text", "number", "select", "multi_select", "status", "date", "checkbox", "url", "email", "phone", "created_time", "last_edited_time"];
-const VIEW_KINDS = [["table", "Table", "table"], ["board", "Board", "panel"], ["list", "List", "list"], ["gallery", "Gallery", "image"], ["calendar", "Calendar", "calendar"]];
+const VIEW_KINDS = [["table", "Table", "table"], ["board", "Board", "panel"], ["timeline", "Timeline", "calendar"], ["calendar", "Calendar", "calendar"], ["list", "List", "list"], ["gallery", "Gallery", "image"], ["feed", "Feed", "list"], ["chart", "Chart", "chart"], ["dashboard", "Dashboard", "panel"], ["form", "Form", "page"]];
+const CHART_KINDS = [["vbar", "Vertical bar"], ["hbar", "Horizontal bar"], ["line", "Line"], ["donut", "Donut"], ["number", "Number"]];
+const PALETTE = ["#337ea9", "#448361", "#d9730d", "#9065b0", "#c14f87", "#cb912f", "#d44c47", "#9f6b53", "#787774"];
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const COMPUTED = new Set(["formula", "rollup", "created_time", "created_by", "last_edited_time", "last_edited_by", "unique_id", "button"]);
 const SELECTY = new Set(["select", "status", "multi_select"]);
@@ -54,15 +57,21 @@ export async function createDatabase(context, parentId = null) {
    option ids and colours, and dates written as an offset from today become real dates. */
 const slug = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x";
 const OPTION_COLORS = ["gray", "blue", "orange", "green", "purple", "pink", "yellow", "red", "brown"];
-export async function createDatabaseFromTemplate(context, template, parentId = null) {
-  const spec = template.database;
-  const properties = spec.properties.map((def) => ({
-    name: def.name, type: def.type,
-    config: def.options ? { options: def.options.map((name, index) => ({ id: slug(name), name, color: OPTION_COLORS[(def.type === "status" ? index : index + 1) % OPTION_COLORS.length] })) } : {},
-  }));
-  const made = await withError(() => api.post("/api/notes/databases", { name: spec.name, parentId, properties }), "Could not create the database");
+const NOTION_COLOR = { default: "gray", gray: "gray", brown: "brown", orange: "orange", yellow: "yellow", green: "green", blue: "blue", purple: "purple", pink: "pink", red: "red", teal: "green" };
+const STATUS_DEFAULT = ["Not started", "In progress", "Done"];
+
+export async function buildDatabase(spec, { parentId = null, inline = false, icon = null, cover = null, name } = {}) {
+  const properties = spec.properties.map((def) => {
+    let options = def.options;
+    if (def.type === "status" && !(options && options.length)) options = STATUS_DEFAULT;
+    return {
+      name: def.name, type: def.type,
+      config: options ? { options: options.map((label, index) => ({ id: slug(label), name: label, color: NOTION_COLOR[def.colors?.[index]] || OPTION_COLORS[(index + 1) % OPTION_COLORS.length] })) } : {},
+    };
+  });
+  const made = await withError(() => api.post("/api/notes/databases", { name: name || spec.name, parentId, inline, properties }), "Could not create the database");
   if (!made) return null;
-  await api.patch(`/api/notes/pages/${made.page_id}`, { icon: template.emoji || null, cover: template.cover || null }).catch(() => {});
+  await api.patch(`/api/notes/pages/${made.page_id}`, { icon, cover }).catch(() => {});
   const byName = new Map(made.properties.map((property) => [property.name, property]));
   const value = (definition, raw) => {
     if (raw === undefined || raw === null) return undefined;
@@ -72,34 +81,63 @@ export async function createDatabaseFromTemplate(context, template, parentId = n
     return raw;
   };
   const titleName = spec.properties.find((def) => def.type === "title").name;
-  for (const record of spec.records) {
+  for (const record of spec.records || []) {
     const values = {};
     for (const def of spec.properties) {
-      if (def.type === "title") continue;
+      if (def.type === "title" || !byName.get(def.name)) continue;
       const next = value(def, record[def.name]);
       if (next !== undefined) values[byName.get(def.name).id] = next;
     }
-    await api.post(`/api/notes/databases/${made.id}/records`, { title: record[titleName], values }).catch(() => {});
+    await api.post(`/api/notes/databases/${made.id}/records`, { title: record[titleName] || "", values }).catch(() => {});
   }
   const viewConfig = (view) => {
     const config = {};
-    if (view.group) config.group = byName.get(view.group)?.id;
-    if (view.date) config.dateProperty = byName.get(view.date)?.id;
-    if (view.sort) config.sorts = [{ property: byName.get(view.sort)?.id, direction: "ascending" }];
+    if (view.group && byName.get(view.group)) config.group = byName.get(view.group).id;
+    if (view.date && byName.get(view.date)) config.dateProperty = byName.get(view.date).id;
+    if (view.chart) config.chart = view.chart;
+    if (view.sort && byName.get(view.sort)) config.sorts = [{ property: byName.get(view.sort).id, direction: "ascending" }];
     return config;
   };
-  const [first, ...rest] = spec.views;
+  const views = spec.views?.length ? spec.views : [{ name: "Table", type: "table" }];
+  const [first, ...rest] = views;
   const existing = made.views[0];
   if (existing) await api.patch(`/api/notes/views/${existing.id}`, { name: first.name, type: first.type, config: viewConfig(first) }).catch(() => {});
   for (const view of rest) await api.post(`/api/notes/databases/${made.id}/views`, { name: view.name, type: view.type, config: viewConfig(view) }).catch(() => {});
-  await refreshPages();
-  context.openPage(made.page_id);
   return made;
 }
 
+/* A template becomes a page, with each database it carries created inside it and shown in place. A template that is only one
+   database becomes that database's own page. */
+export async function createFromTemplate(context, template, parentId = null, { open = true } = {}) {
+  const dbs = template.databases || [];
+  const blocks = templateBlocks(template);
+  const dbBlocks = [];
+  const walk = (list) => { for (const block of list) { if (block.type === "database") dbBlocks.push(block); walk(block.children || []); } };
+  walk(blocks);
+  let pageId = null;
+  if (blocks.length === 1 && blocks[0].type === "database" && dbs[blocks[0].props.dbIndex]) {
+    const made = await buildDatabase(dbs[blocks[0].props.dbIndex], { parentId, icon: template.emoji, cover: template.cover, name: template.name });
+    pageId = made?.page_id;
+  } else {
+    const created = await withError(() => api.post("/api/notes/pages", { parentId, title: template.name, icon: template.emoji, cover: template.cover || undefined, blocks }), "Could not create the page");
+    if (!created) return null;
+    pageId = created.id;
+    for (const block of dbBlocks) {
+      const spec = dbs[block.props.dbIndex];
+      const made = spec ? await buildDatabase(spec, { parentId: pageId, inline: true }) : null;
+      block.props = made ? { pageId: made.page_id } : {};
+    }
+    if (dbBlocks.length) await api.put(`/api/notes/pages/${pageId}/blocks`, { blocks }).catch(() => toast("Some databases could not be placed"));
+  }
+  if (!pageId) return null;
+  await refreshPages();
+  if (open) context.openPage(pageId);
+  return { pageId };
+}
+
 export class DatabaseView {
-  constructor(host, page, context) {
-    this.host = host; this.page = page; this.context = context;
+  constructor(host, page, context, options = {}) {
+    this.host = host; this.page = page; this.context = context; this.embedded = Boolean(options.embedded);
     this.db = null; this.data = null; this.viewId = null; this.month = new Date(); this.search = "";
     this.node = el("div", { class: "db" });
     host.append(this.node);
@@ -152,7 +190,8 @@ export class DatabaseView {
 
   paint() {
     clear(this.node);
-    append(this.node, this.buildTabs(), this.buildBar(), this.buildBody());
+    this.node.classList.toggle("embedded", this.embedded);
+    append(this.node, this.embedded ? el("div", { class: "db-title", text: this.db.name }) : null, this.buildTabs(), this.buildBar(), this.buildBody());
   }
 
   buildTabs() {
@@ -217,8 +256,9 @@ export class DatabaseView {
     return el("div", { class: "db-bar" },
       button("Filter", "list", filterCount, (anchor) => this.filterMenu(anchor)),
       button("Sort", "arrow_up", sortCount, (anchor) => this.sortMenu(anchor)),
-      type !== "calendar" && type !== "gallery" ? button("Group", "panel", this.config.group && type !== "board" ? 1 : 0, (anchor) => this.groupMenu(anchor)) : null,
-      type === "calendar" ? button("Date by", "calendar", 0, (anchor) => this.dateByMenu(anchor)) : null,
+      type !== "calendar" && type !== "gallery" && type !== "timeline" && type !== "form" && type !== "dashboard" ? button(type === "chart" ? "Group by" : "Group", "panel", this.config.group && type !== "board" ? 1 : 0, (anchor) => this.groupMenu(anchor)) : null,
+      type === "chart" ? button((CHART_KINDS.find(([key]) => key === (this.config.chart || "vbar")) || CHART_KINDS[0])[1], "chart", 0, (anchor) => menu(anchor, CHART_KINDS.map(([key, label]) => ({ label, checked: (this.config.chart || "vbar") === key, onSelect: () => { this.config.chart = key; this.saveConfig(); this.paint(); } })), { align: "start" })) : null,
+      type === "calendar" || type === "timeline" ? button("Date by", "calendar", 0, (anchor) => this.dateByMenu(anchor)) : null,
       button("Properties", "pencil", (this.config.hidden || []).length, (anchor) => this.propertiesMenu(anchor)),
       el("span", { class: "db-bar-spacer" }),
       search,
@@ -470,7 +510,7 @@ export class DatabaseView {
     const type = this.view.type;
     const body = el("div", { class: `db-body db-${type}` });
     if (!this.data) return body;
-    const builder = { table: () => this.table(), board: () => this.board(), list: () => this.list(), gallery: () => this.gallery(), calendar: () => this.calendar() }[type] || (() => this.table());
+    const builder = { table: () => this.table(), board: () => this.board(), list: () => this.list(), gallery: () => this.gallery(), calendar: () => this.calendar(), feed: () => this.feed(), timeline: () => this.timeline(), form: () => this.form(), chart: () => this.chart(), dashboard: () => this.dashboard() }[type] || (() => this.table());
     body.append(builder());
     return body;
   }
@@ -565,6 +605,161 @@ export class DatabaseView {
     const wrap = el("div", { class: "db-gallery" }, this.rows().map((record) => this.card(record)));
     wrap.append(el("button", { class: "db-card db-card-new", type: "button", onclick: () => this.newRecord() }, icon("plus", 16), el("span", { text: "New" })));
     return wrap;
+  }
+
+  feed() {
+    const wrap = el("div", { class: "db-feed" });
+    for (const record of this.rows()) {
+      wrap.append(el("article", { class: "db-feed-item", tabindex: "0", onclick: () => this.open(record), onkeydown: (event) => { if (event.key === "Enter") this.open(record); } },
+        el("h4", { class: "db-feed-title", text: titleOf(record) }),
+        ...this.visibleProps().map((property) => { const shown = this.display(property, record.values[property.id]); return shown ? el("div", { class: "db-feed-prop" }, el("span", { class: "db-feed-label", text: property.name }), shown) : null; }).filter(Boolean)));
+    }
+    wrap.append(el("button", { class: "db-list-new", type: "button", onclick: () => this.newRecord() }, icon("plus", 13), "New"));
+    return wrap;
+  }
+
+  /* A timeline lays records out along a row of days by their date; each runs three days from its start. */
+  timeline() {
+    const dateProp = this.dateProperty();
+    const wrap = el("div", { class: "db-timeline" });
+    if (!dateProp) { wrap.append(el("div", { class: "db-pop-empty", text: "A timeline needs a Date property." })); return wrap; }
+    const DAY = 86_400_000, DAYS = 3;
+    const day = (value) => { const key = dateKey(value); return key ? Math.floor(new Date(`${key}T00:00:00Z`).getTime() / DAY) : null; };
+    const dated = this.rows().map((record) => ({ record, at: day(record.values[dateProp.id]) })).filter((entry) => entry.at !== null);
+    const today = Math.floor(new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime() / DAY);
+    const first = Math.min(today - 3, ...dated.map((entry) => entry.at)) - 1;
+    const last = Math.max(today + 10, ...dated.map((entry) => entry.at + DAYS)) + 1;
+    const span = Math.min(90, last - first + 1);
+    const cell = 34;
+    const head = el("div", { class: "db-tl-head", style: { gridTemplateColumns: `220px repeat(${span}, ${cell}px)` } }, el("div", { class: "db-tl-corner" }));
+    for (let i = 0; i < span; i += 1) {
+      const date = new Date((first + i) * DAY);
+      head.append(el("div", { class: `db-tl-day${first + i === today ? " today" : ""}` }, el("span", { class: "db-tl-dow", text: date.toLocaleDateString([], { weekday: "narrow", timeZone: "UTC" }) }), el("span", { text: String(date.getUTCDate()) })));
+    }
+    wrap.append(head);
+    for (const { record, at } of dated) {
+      const row = el("div", { class: "db-tl-row", style: { gridTemplateColumns: `220px repeat(${span}, ${cell}px)` } },
+        el("button", { class: "db-tl-name", type: "button", onclick: () => this.open(record), text: titleOf(record) }));
+      const start = Math.max(0, at - first);
+      row.append(el("div", { class: "db-tl-bar", style: { gridColumn: `${start + 2} / span ${DAYS}` } }, el("span", { text: titleOf(record) })));
+      wrap.append(row);
+    }
+    wrap.append(el("button", { class: "db-list-new", type: "button", onclick: () => this.newRecord({ [dateProp.id]: { start: new Date().toISOString().slice(0, 10) } }) }, icon("plus", 13), "New"));
+    return wrap;
+  }
+
+  /* A form: one field per property, and a submit that adds a record. */
+  form() {
+    const wrap = el("form", { class: "db-form", novalidate: "true" });
+    const fields = this.props.filter((property) => !COMPUTED.has(property.type));
+    const readers = [];
+    for (const property of fields) {
+      let control;
+      if (SELECTY.has(property.type)) {
+        control = el("select", { class: "db-select", "aria-label": property.name, multiple: property.type === "multi_select" || undefined }, [property.type === "multi_select" ? null : el("option", { value: "", text: "Choose\u2026" }), ...optionsOf(property).map((option) => el("option", { value: option.id, text: option.name }))].filter(Boolean));
+        readers.push([property, () => (property.type === "multi_select" ? [...control.selectedOptions].map((option) => option.value) : control.value || null)]);
+      } else if (property.type === "checkbox") {
+        control = el("input", { type: "checkbox", "aria-label": property.name });
+        readers.push([property, () => control.checked]);
+      } else {
+        control = el("input", { class: "db-input", type: property.type === "number" ? "number" : property.type === "date" ? "date" : "text", "aria-label": property.name });
+        readers.push([property, () => (property.type === "number" ? (control.value === "" ? null : Number(control.value)) : property.type === "date" ? (control.value ? { start: control.value } : null) : control.value)]);
+      }
+      wrap.append(el("label", { class: "db-form-field" }, el("span", { class: "db-form-label", text: property.name }), control));
+    }
+    const note = el("div", { class: "db-form-note", role: "status" });
+    wrap.append(el("button", { class: "db-new", type: "submit" }, "Submit"), note);
+    wrap.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = {}; let title = "";
+      for (const [property, read] of readers) { const value = read(); if (property.type === "title") title = String(value || ""); else if (value !== null && value !== "" && !(Array.isArray(value) && !value.length)) values[property.id] = value; }
+      if (!title.trim()) { note.textContent = "Add a title first."; return; }
+      const made = await this.newRecord(values, title);
+      if (made) { wrap.reset(); note.textContent = "Submitted. The record is in the database."; this.paint(); }
+    });
+    return wrap;
+  }
+
+  /* Count records by a property: the buckets a chart draws, in the order the property lists them. */
+  buckets(property) {
+    const rows = this.rows();
+    const counts = new Map();
+    const bump = (key, label, color) => { const entry = counts.get(key) || { label, color, n: 0 }; entry.n += 1; counts.set(key, entry); };
+    if (property && SELECTY.has(property.type)) {
+      for (const option of optionsOf(property)) counts.set(option.id, { label: option.name, color: `var(--c-${option.color || "gray"})`, n: 0 });
+      for (const record of rows) { const raw = record.values[property.id]; const list = Array.isArray(raw) ? raw : raw ? [raw] : []; if (!list.length) bump("", "None"); for (const id of list) { const option = optionsOf(property).find((entry) => entry.id === id); bump(id, option?.name || String(id), option ? `var(--c-${option.color || "gray"})` : undefined); } }
+    } else if (property && property.type === "checkbox") {
+      for (const record of rows) bump(record.values[property.id] ? "yes" : "no", record.values[property.id] ? "Checked" : "Unchecked");
+    } else if (property && (property.type === "date" || property.type === "created_time")) {
+      for (const record of rows) { const key = dateKey(record.values[property.id]); bump(key || "", key ? dateText(key) : "No date"); }
+      return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, entry]) => entry);
+    } else if (property) {
+      for (const record of rows) { const raw = property.type === "title" ? record.title : record.values[property.id]; const key = raw === null || raw === undefined || raw === "" ? "" : String(raw).slice(0, 24); bump(key, key || "None"); }
+    }
+    return [...counts.values()].filter((entry) => entry.n > 0 || (property && SELECTY.has(property.type)));
+  }
+
+  chartProperty() {
+    return this.prop(this.config.group) || this.props.find((property) => property.type === "status") || this.props.find((property) => property.type === "select") || this.props.find((property) => property.type === "date") || this.titleProp();
+  }
+
+  drawChart(kind, buckets, title) {
+    const NS = "http://www.w3.org/2000/svg";
+    const node = (tag, attrs = {}, ...kids) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); n.append(...kids); return n; };
+    const color = (entry, index) => (entry.color && !String(entry.color).includes("--c-gray") ? entry.color : PALETTE[index % PALETTE.length]);
+    const total = buckets.reduce((sum, entry) => sum + entry.n, 0);
+    const card = el("figure", { class: "db-chart", "aria-label": title });
+    card.append(el("figcaption", { class: "db-chart-title", text: title }));
+    if (kind === "number") { card.append(el("div", { class: "db-chart-number" }, el("strong", { text: String(total) }), el("span", { text: total === 1 ? "record" : "records" }))); return card; }
+    if (!buckets.length || !total) { card.append(el("div", { class: "db-pop-empty", text: "No data to chart yet." })); return card; }
+    const max = Math.max(...buckets.map((entry) => entry.n), 1);
+    if (kind === "donut") {
+      const svg = node("svg", { viewBox: "0 0 160 160", class: "db-chart-svg donut", role: "img" });
+      let angle = -Math.PI / 2;
+      buckets.forEach((entry, index) => {
+        if (!entry.n) return;
+        const sweep = (entry.n / total) * Math.PI * 2, r = 64, x1 = 80 + r * Math.cos(angle), y1 = 80 + r * Math.sin(angle), x2 = 80 + r * Math.cos(angle + sweep), y2 = 80 + r * Math.sin(angle + sweep);
+        svg.append(node("path", { d: entry.n === total ? `M80 16 A64 64 0 1 1 79.99 16` : `M${x1} ${y1} A${r} ${r} 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2} ${y2}`, fill: "none", stroke: color(entry, index), "stroke-width": "26" }, node("title", {}, `${entry.label}: ${entry.n}`)));
+        angle += sweep;
+      });
+      svg.append(node("text", { x: "80", y: "86", "text-anchor": "middle", class: "db-chart-total" }, String(total)));
+      card.append(svg, el("ul", { class: "db-chart-legend" }, buckets.map((entry, index) => el("li", {}, el("i", { style: { background: color(entry, index) } }), `${entry.label} \u00B7 ${entry.n}`))));
+      return card;
+    }
+    if (kind === "hbar") {
+      card.append(el("div", { class: "db-hbars" }, buckets.map((entry, index) => el("div", { class: "db-hbar" }, el("span", { class: "db-hbar-label", text: entry.label }), el("span", { class: "db-hbar-track" }, el("i", { style: { width: `${(entry.n / max) * 100}%`, background: color(entry, index) } })), el("span", { class: "db-hbar-n", text: String(entry.n) })))));
+      return card;
+    }
+    const W = 520, H = 220, pad = { l: 28, r: 8, t: 10, b: 38 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const svg = node("svg", { viewBox: `0 0 ${W} ${H}`, class: "db-chart-svg", role: "img" });
+    for (let i = 0; i <= 4; i += 1) { const y = pad.t + (ih * i) / 4; svg.append(node("line", { x1: pad.l, x2: W - pad.r, y1: y, y2: y, stroke: "currentColor", "stroke-opacity": ".1" }), node("text", { x: pad.l - 6, y: y + 3, "text-anchor": "end", class: "db-chart-tick" }, String(Math.round(max - (max * i) / 4)))); }
+    const step = iw / buckets.length;
+    if (kind === "line") {
+      const points = buckets.map((entry, index) => [pad.l + step * index + step / 2, pad.t + ih - (entry.n / max) * ih]);
+      svg.append(node("polyline", { points: points.map((point) => point.join(",")).join(" "), fill: "none", stroke: PALETTE[0], "stroke-width": "2.5", "stroke-linejoin": "round" }));
+      points.forEach(([x, y], index) => svg.append(node("circle", { cx: x, cy: y, r: "4", fill: PALETTE[0] }, node("title", {}, `${buckets[index].label}: ${buckets[index].n}`))));
+    } else {
+      buckets.forEach((entry, index) => { const h = (entry.n / max) * ih; svg.append(node("rect", { x: pad.l + step * index + step * 0.18, y: pad.t + ih - h, width: step * 0.64, height: Math.max(h, 0), rx: "3", fill: color(entry, index) }, node("title", {}, `${entry.label}: ${entry.n}`))); });
+    }
+    buckets.forEach((entry, index) => svg.append(node("text", { x: pad.l + step * index + step / 2, y: H - 20, "text-anchor": "middle", class: "db-chart-tick" }, entry.label.length > 10 ? `${entry.label.slice(0, 9)}\u2026` : entry.label)));
+    card.append(svg);
+    return card;
+  }
+
+  chart() {
+    const property = this.chartProperty();
+    return el("div", { class: "db-chart-wrap" }, this.drawChart(this.config.chart || "vbar", this.buckets(property), `${property?.name || "Records"}`));
+  }
+
+  /* A dashboard: a count, then a chart for each select-like property and one over time. */
+  dashboard() {
+    const grid = el("div", { class: "db-dashboard" });
+    grid.append(this.drawChart("number", this.buckets(null), "Total records"));
+    const selectish = this.props.filter((property) => SELECTY.has(property.type)).slice(0, 3);
+    selectish.forEach((property, index) => grid.append(this.drawChart(index % 2 ? "vbar" : "donut", this.buckets(property), `By ${property.name}`)));
+    const when = this.props.find((property) => property.type === "date");
+    if (when) grid.append(this.drawChart("line", this.buckets(when), `Over ${when.name}`));
+    return grid;
   }
 
   calendar() {

@@ -37,7 +37,7 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script type="module">
       import { Editor } from "/notes/js/editor.js";
-      import { TEMPLATES, templateBlocks } from "/notes/js/templates-data.js";
+      import { TEMPLATES, templatePreviewBlocks } from "/notes/js/templates-data.js";
 
       const params = new URLSearchParams(location.search);
       if (params.get("theme") === "dark") document.documentElement.dataset.notesTheme = "dark";
@@ -48,7 +48,7 @@
       if (template.cover) cover.style.background = template.cover; else cover.style.display = "none";
       const iconNode = document.querySelector(".shot-icon");
       if (template.emoji && template.id !== "blank") iconNode.textContent = template.emoji; else iconNode.style.display = "none";
-      const page = { id: `preview-${template.id}`, title: template.name, blocks: templateBlocks(template), breadcrumb: [] };
+      const page = { id: `preview-${template.id}`, title: template.name, blocks: templatePreviewBlocks(template), breadcrumb: [] };
       new Editor(document.querySelector(".editor-host"), { page, readOnly: true });
       /* The tool waits on this flag rather than a fixed delay. */
       requestAnimationFrame(() => requestAnimationFrame(() => { document.body.dataset.ready = "true"; }));
