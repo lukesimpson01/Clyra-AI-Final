@@ -355,7 +355,7 @@ export function menu(anchor, items, options = {}) {
     if (options.search) {
       const input = el("input", {
         class: "menu-search", placeholder: options.searchPlaceholder || "Search…", value: query,
-        oninput: (event) => { build(event.target.value); node.querySelector(".menu-search")?.focus(); },
+        oninput: (event) => { build(event.target.value); const next = node.querySelector(".menu-search"); next?.focus(); next?.setSelectionRange(next.value.length, next.value.length); },
         onkeydown: (event) => handleKey(event),
       });
       node.append(input);

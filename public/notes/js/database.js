@@ -50,6 +50,53 @@ export async function createDatabase(context, parentId = null) {
   return made;
 }
 
+/* A template's database: its properties, sample rows and views, made with the ordinary database API. Option names become
+   option ids and colours, and dates written as an offset from today become real dates. */
+const slug = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x";
+const OPTION_COLORS = ["gray", "blue", "orange", "green", "purple", "pink", "yellow", "red", "brown"];
+export async function createDatabaseFromTemplate(context, template, parentId = null) {
+  const spec = template.database;
+  const properties = spec.properties.map((def) => ({
+    name: def.name, type: def.type,
+    config: def.options ? { options: def.options.map((name, index) => ({ id: slug(name), name, color: OPTION_COLORS[(def.type === "status" ? index : index + 1) % OPTION_COLORS.length] })) } : {},
+  }));
+  const made = await withError(() => api.post("/api/notes/databases", { name: spec.name, parentId, properties }), "Could not create the database");
+  if (!made) return null;
+  await api.patch(`/api/notes/pages/${made.page_id}`, { icon: template.emoji || null, cover: template.cover || null }).catch(() => {});
+  const byName = new Map(made.properties.map((property) => [property.name, property]));
+  const value = (definition, raw) => {
+    if (raw === undefined || raw === null) return undefined;
+    if (raw && typeof raw === "object" && "offsetDays" in raw) return { start: new Date(Date.now() + raw.offsetDays * 86_400_000).toISOString().slice(0, 10) };
+    if (definition.type === "select" || definition.type === "status") return slug(raw);
+    if (definition.type === "multi_select") return (Array.isArray(raw) ? raw : [raw]).map(slug);
+    return raw;
+  };
+  const titleName = spec.properties.find((def) => def.type === "title").name;
+  for (const record of spec.records) {
+    const values = {};
+    for (const def of spec.properties) {
+      if (def.type === "title") continue;
+      const next = value(def, record[def.name]);
+      if (next !== undefined) values[byName.get(def.name).id] = next;
+    }
+    await api.post(`/api/notes/databases/${made.id}/records`, { title: record[titleName], values }).catch(() => {});
+  }
+  const viewConfig = (view) => {
+    const config = {};
+    if (view.group) config.group = byName.get(view.group)?.id;
+    if (view.date) config.dateProperty = byName.get(view.date)?.id;
+    if (view.sort) config.sorts = [{ property: byName.get(view.sort)?.id, direction: "ascending" }];
+    return config;
+  };
+  const [first, ...rest] = spec.views;
+  const existing = made.views[0];
+  if (existing) await api.patch(`/api/notes/views/${existing.id}`, { name: first.name, type: first.type, config: viewConfig(first) }).catch(() => {});
+  for (const view of rest) await api.post(`/api/notes/databases/${made.id}/views`, { name: view.name, type: view.type, config: viewConfig(view) }).catch(() => {});
+  await refreshPages();
+  context.openPage(made.page_id);
+  return made;
+}
+
 export class DatabaseView {
   constructor(host, page, context) {
     this.host = host; this.page = page; this.context = context;

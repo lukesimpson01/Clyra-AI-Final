@@ -17,6 +17,15 @@ export function slashCommands(editor) {
       desc: "Write, explain or summarise with AI.", keywords: "ai write generate assistant",
       run: (block) => editor.openAiComposer(block),
     });
+    for (const [key, label, glyph, desc, options] of [
+      ["summarize", "Summarize page", "list", "A short summary with the key points.", { action: "summarize" }],
+      ["actionitems", "Find action items", "check_square", "Pull the tasks out of this page as a checklist.", { action: "action_items" }],
+      ["continuewriting", "Continue writing", "pencil", "Carry on from where the page stops.", { action: "continue" }],
+      ["brainstorm", "Brainstorm ideas", "sparkle", "Ideas on a topic you name.", { prefill: "Brainstorm ideas for " }],
+      ["draftblog", "Draft a blog post", "text", "A first draft of a post on a topic you name.", { prefill: "Write a blog post about " }],
+    ]) {
+      commands.push({ key, label, group: "AI", icon: glyph, desc, keywords: `ai ${label.toLowerCase()} notion`, run: (block) => editor.openAiComposer(block, options) });
+    }
     commands.push({
       key: "flashcards", label: "Generate flashcards", group: "AI", icon: "cards",
       desc: "Make cards from this page.", keywords: "ai cards revision anki",

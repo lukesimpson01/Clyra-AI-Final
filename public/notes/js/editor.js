@@ -501,6 +501,7 @@ export class Editor {
       }
     }
     this.checkSlash(block, line);
+    this.checkMention(block, line);
     this.updateSmartAnswer(block);
     this.commit("type");
   }
@@ -551,6 +552,45 @@ export class Editor {
       return true;
     }
     return false;
+  }
+
+  /* "@" opens a small menu to mention a page or a date, as in Notion. The mention is a span in the text, so it moves with
+     the words around it and a page mention follows the page's title. */
+  checkMention(block, line) {
+    if (this.slashOpen || this.mentionOpen || block.type === "code" || block.type === "equation") return;
+    const offset = caretOffset(line);
+    const text = spansText(block.text).slice(0, offset);
+    if (!text.endsWith("@") || (text.length > 1 && !/\s/.test(text[text.length - 2]))) return;
+    this.mentionOpen = true;
+    const insert = (span) => {
+      this.push();
+      block.text = replaceRange(block.text, offset - 1, offset, [span, { t: " " }]);
+      this.paint(line, block);
+      this.focus(block.id, offset + 1);
+      this.commit("mention", true);
+    };
+    const fmt = (date) => date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+    const iso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const dayItem = (label, delta) => {
+      const date = new Date(); date.setDate(date.getDate() + delta);
+      return { label, icon: "calendar", hint: fmt(date), keywords: "date day", onSelect: () => insert({ t: fmt(date), date: iso(date) }) };
+    };
+    const pages = [...state.pages].filter((page) => page.kind !== "record" && String(page.id) !== String(this.page.id))
+      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || ""))).slice(0, 500);
+    menu(line, [
+      { type: "label", label: "Dates" },
+      dayItem("Today", 0), dayItem("Tomorrow", 1), dayItem("Yesterday", -1),
+      { label: "Pick a date\u2026", icon: "calendar", keywords: "date calendar", onSelect: () => {
+        const input = el("input", { class: "extras-input", type: "date", "aria-label": "Date" });
+        const save = el("button", { class: "button primary", type: "button" }, "Insert");
+        const cancel = el("button", { class: "button", type: "button" }, "Cancel");
+        const entry = modal({ title: "Mention a date", width: 360, body: el("div", { class: "extras-body" }, input), footer: [cancel, save] });
+        cancel.addEventListener("click", () => entry.close("cancel"));
+        save.addEventListener("click", () => { if (!input.value) return; const date = new Date(`${input.value}T00:00:00`); entry.close("save"); insert({ t: fmt(date), date: input.value }); });
+      } },
+      { type: "label", label: "Pages" },
+      ...pages.map((page) => ({ label: page.title || "Untitled", icon: page.kind === "database" ? "table" : "page", keywords: "page link mention", onSelect: () => insert({ t: page.title || "Untitled", page: String(page.id) }) })),
+    ], { search: true, searchPlaceholder: "Mention a page or date\u2026", class: "mention-menu", onClose: () => { this.mentionOpen = false; } });
   }
 
   checkSlash(block, line) {

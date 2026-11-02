@@ -8,7 +8,8 @@
 import { el, clear, icon, modal, toast, append } from "../dom.js";
 import { api } from "../api.js";
 import { refreshPages, withError } from "../state.js";
-import { TEMPLATES, TEMPLATE_CATEGORIES, TEMPLATE_GROUPS, templateGroup, templateBlocks } from "../templates-data.js";
+import { createDatabaseFromTemplate } from "../database.js";
+import { TEMPLATES, TEMPLATE_CATEGORIES, templateBlocks } from "../templates-data.js";
 
 export { TEMPLATES, TEMPLATE_CATEGORIES };
 
@@ -74,30 +75,67 @@ export function templatePreview(template) {
   return canvas;
 }
 
-/* Notion's Marketplace, in our own words: Discover, then Work, Life and School. A card is one click: it makes the page and opens it. */
-const FEATURES = {
-  School: { eyebrow: "School", title: "Finals season", text: "Notes, planners and revision pages to study smarter and stay organised.", ids: ["cornell", "student-dashboard", "revision"], tint: "#f4f0f7" },
-  Work: { eyebrow: "Work", title: "Run the week", text: "Meetings, projects and trackers for the work your team does every day.", ids: ["meeting", "project", "task-tracker"], tint: "#e7f3f8" },
-  Life: { eyebrow: "Life", title: "Organise your life", text: "Habits, money, reading and plans without starting from a blank page.", ids: ["habit-tracker", "budget", "reading-list"], tint: "#edf3ec" },
-};
-const SECTIONS = [
-  ["School", "Student life", "Class notes, study guides, planners and trackers for school."],
-  ["Work", "Work essentials", "Tools that work with your team."],
-  ["Life", "Organise your life", "Goals, habits, trips and the rest."],
-];
+const CATEGORY_ICONS = { All: "sparkle", Notes: "page", Study: "book", Work: "template", Planning: "calendar", Writing: "pencil", Research: "search", Personal: "star" };
+
+/* App Store style "Get" control: a pill that collapses into a progress ring while the page is created, then
+   reopens as "Open". Clicking Open takes the reader to the new page. */
+function getButton(template, state, onGet, onOpen, { large = false } = {}) {
+  const button = el("button", { class: `as-get${large ? " large" : ""}`, type: "button", "aria-label": `Get ${template.name}` });
+  const label = el("span", { class: "as-get-label", text: "Get" });
+  const ring = el("span", { class: "as-ring", "aria-hidden": "true" });
+  ring.innerHTML = '<svg viewBox="0 0 28 28"><circle class="as-ring-track" cx="14" cy="14" r="11.5"/><circle class="as-ring-fill" cx="14" cy="14" r="11.5"/></svg><i class="as-ring-stop"></i>';
+  append(button, label, ring);
+  const paint = () => {
+    const created = state.created.get(template.id);
+    button.classList.toggle("is-busy", state.busy.has(template.id));
+    button.classList.toggle("is-open", Boolean(created));
+    label.textContent = created ? "Open" : "Get";
+    button.setAttribute("aria-label", `${created ? "Open" : "Get"} ${template.name}`);
+  };
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (state.busy.has(template.id)) return;
+    if (state.created.get(template.id)) onOpen(template);
+    else onGet(template);
+  });
+  state.paints.add(paint);
+  paint();
+  return button;
+}
+
+function appIcon(template, size = 44) {
+  return el("span", {
+    class: "as-icon", "aria-hidden": "true",
+    style: { width: `${size}px`, height: `${size}px`, "--tpl-accent": template.accent || "#2383e2" },
+  }, template.emoji
+    ? el("span", { class: "as-emoji", style: { fontSize: `${Math.round(size * 0.52)}px` }, text: template.emoji })
+    : icon(template.icon || "page", Math.round(size * 0.46)));
+}
 
 export function openTemplates(app, parentId) {
   let entry;
-  let tab = "Discover";
+  let category = "All";
   let query = "";
-  const busy = new Set();
-  const main = el("div", { class: "nm-main scroll" });
-  const tabs = el("div", { class: "nm-tabs", role: "tablist" });
-  const search = el("input", { class: "nm-search", placeholder: "Search templates", type: "search", "aria-label": "Search templates" });
+  const state = { busy: new Set(), created: new Map(), paints: new Set() };
+  const repaintButtons = () => state.paints.forEach((paint) => paint());
 
-  const use = async (template) => {
-    if (busy.has(template.id)) return;
-    busy.add(template.id);
+  const main = el("div", { class: "template-main as-main scroll" });
+  const rail = el("div", { class: "template-rail as-rail" });
+  const search = el("input", { class: "input template-search as-search", placeholder: "Search", type: "search", "aria-label": "Search templates" });
+
+  const create = async (template) => {
+    state.busy.add(template.id);
+    repaintButtons();
+    const started = Date.now();
+    if (template.database) {
+      /* a tracker is a real database: its properties, sample rows and views are made through the database API */
+      const made = await createDatabaseFromTemplate(app, template, parentId || null);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, 900 - (Date.now() - started))));
+      state.busy.delete(template.id);
+      if (made) { state.created.set(template.id, made.page_id); toast(`${template.name} is ready`); entry.close("used"); }
+      repaintButtons();
+      return;
+    }
     const created = await withError(
       () => api.post("/api/notes/pages", {
         parentId: parentId || null,
@@ -108,84 +146,113 @@ export function openTemplates(app, parentId) {
       }),
       "Could not create the page",
     );
-    busy.delete(template.id);
-    if (!created) return;
-    await refreshPages();
+    // Let the ring complete one honest sweep, the way an App Store download settles before it reads Open.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, 900 - (Date.now() - started))));
+    state.busy.delete(template.id);
+    if (created) {
+      state.created.set(template.id, created.id);
+      await refreshPages();
+      toast(template.id === "blank" ? "New page ready" : `${template.name} is ready`);
+    }
+    repaintButtons();
+  };
+  const open = (template) => {
+    const id = state.created.get(template.id);
+    if (!id) return;
     entry.close("used");
-    app.openPage(created.id);
-    toast(template.id === "blank" ? "New page ready" : `${template.name} is ready`);
+    app.openPage(id);
   };
 
-  const card = (template, index) => el("button", {
-    class: "nm-card", type: "button", "aria-label": `Use ${template.name}`,
-    style: { animationDelay: `${Math.min(index, 8) * 24}ms` },
-    onclick: () => use(template),
-  },
-    el("span", { class: "nm-art" }, templatePreview(template), el("span", { class: "nm-use", text: "Use template" })),
-    el("span", { class: "nm-meta" },
-      el("span", { class: "nm-name" }, el("span", { class: "nm-emoji", text: template.emoji || "" }), template.name),
-      el("span", { class: "nm-desc", text: template.desc })));
-
-  const feature = (group) => {
-    const spec = FEATURES[group];
-    const first = spec.ids.map((id) => TEMPLATES.find((t) => t.id === id)).find(Boolean);
-    return el("section", { class: "nm-feature", style: { "--nm-tint": spec.tint } },
-      el("span", { class: "nm-eyebrow", text: spec.eyebrow }),
-      el("h3", { class: "nm-feature-title", text: spec.title }),
-      el("p", { class: "nm-feature-text", text: spec.text }),
-      el("div", { class: "nm-feature-list" }, spec.ids.map((id) => TEMPLATES.find((t) => t.id === id)).filter(Boolean).map((t) =>
-        el("button", { class: "nm-pill", type: "button", onclick: () => use(t) }, el("span", { text: t.emoji || "" }), t.name))),
-      first ? el("button", { class: "nm-explore", type: "button", onclick: () => { tab = group; paintTabs(); paint(); } }, `Explore ${group}`) : null);
+  const card = (template, index, { wide = false } = {}) => {
+    const node = el("div", {
+      class: `as-card${wide ? " wide" : ""}`, role: "button", tabindex: "0",
+      style: { animationDelay: `${Math.min(index, 10) * 22}ms`, "--tpl-accent": template.accent || "var(--accent)" },
+      onclick: () => (state.created.get(template.id) ? open(template) : create(template)),
+      onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); node.click(); } },
+    },
+      el("div", { class: "as-art" }, templatePreview(template)),
+      el("div", { class: "as-lockup" },
+        appIcon(template, 40),
+        el("span", { class: "as-text" },
+          el("span", { class: "as-name", text: template.name }),
+          el("span", { class: "as-sub", text: template.desc })),
+        getButton(template, state, create, open)),
+    );
+    return node;
   };
 
-  const row = (title, text, list, group) => el("section", { class: "nm-section" },
-    el("div", { class: "nm-section-head" },
-      el("div", {}, el("h4", { class: "nm-section-title", text: title }), el("p", { class: "nm-section-text", text })),
-      el("button", { class: "nm-see-all", type: "button", text: "See all", onclick: () => { tab = group; paintTabs(); paint(); } })),
-    el("div", { class: "nm-row" }, list.slice(0, 4).map((t, i) => card(t, i))));
+  const hero = (template) => el("section", { class: "as-hero", style: { "--tpl-accent": template.accent || "var(--accent)" } },
+    el("div", { class: "as-hero-text" },
+      el("span", { class: "as-eyebrow", text: `Featured · ${template.category}` }),
+      el("h3", { class: "as-hero-title", text: template.name }),
+      el("p", { class: "as-hero-desc", text: template.desc }),
+      el("div", { class: "as-hero-lockup" },
+        appIcon(template, 46),
+        el("span", { class: "as-text" },
+          el("span", { class: "as-name", text: template.name }),
+          el("span", { class: "as-sub", text: `${template.category} template` })),
+        getButton(template, state, create, open, { large: true }))),
+    el("div", { class: "as-hero-art" }, templatePreview(template)));
 
-  const paintTabs = () => {
-    clear(tabs);
-    for (const name of ["Discover", ...TEMPLATE_GROUPS]) {
-      tabs.append(el("button", {
-        class: `nm-tab${tab === name ? " active" : ""}`, type: "button", role: "tab", "aria-selected": tab === name ? "true" : "false",
-        onclick: () => { tab = name; query = ""; search.value = ""; paintTabs(); paint(); },
-      }, name));
+  const shelf = (title, list) => {
+    const row = el("div", { class: "as-shelf-row" });
+    list.forEach((template, index) => row.append(card(template, index, { wide: true })));
+    return el("section", { class: "as-shelf" },
+      el("div", { class: "as-shelf-head" },
+        el("h4", { class: "as-shelf-title", text: title }),
+        el("button", { class: "as-see-all", type: "button", text: "See All", onclick: () => { category = title; paintRail(); paint(); } })),
+      row);
+  };
+
+  const paintRail = () => {
+    clear(rail);
+    for (const name of ["All", ...TEMPLATE_CATEGORIES]) {
+      rail.append(el("button", {
+        class: `as-tab${category === name ? " active" : ""}`, type: "button",
+        onclick: () => { category = name; paintRail(); paint(); },
+      }, el("span", { class: "as-tab-icon" }, icon(CATEGORY_ICONS[name] || "page", 15)), el("span", { text: name === "All" ? "Discover" : name })));
     }
   };
 
   const paint = () => {
+    state.paints.clear();
     clear(main);
     main.scrollTop = 0;
     const needle = query.trim().toLowerCase();
-    const matches = (t) => !needle || `${t.name} ${t.desc} ${t.category}`.toLowerCase().includes(needle);
-    if (tab === "Discover" && !needle) {
-      main.append(el("h2", { class: "nm-heading", text: "Get started faster with templates" }),
-        el("div", { class: "nm-features" }, TEMPLATE_GROUPS.map((group) => feature(group))));
-      const blank = TEMPLATES.find((t) => t.id === "blank");
-      for (const [group, title, text] of SECTIONS) {
-        const list = TEMPLATES.filter((t) => t.id !== "blank" && templateGroup(t) === group);
-        if (list.length) main.append(row(title, text, list, group));
+    if (category === "All" && !needle) {
+      main.append(el("h2", { class: "as-page-title", text: "Discover" }));
+      const featured = TEMPLATES.find((t) => t.id !== "blank" && t.category === "Study") || TEMPLATES[1] || TEMPLATES[0];
+      if (featured) main.append(hero(featured));
+      for (const name of TEMPLATE_CATEGORIES) {
+        const list = TEMPLATES.filter((t) => t.category === name);
+        if (list.length) main.append(shelf(name, list));
       }
-      if (blank) main.append(el("div", { class: "nm-blank" }, el("button", { class: "nm-blank-btn", type: "button", onclick: () => use(blank) }, icon("page", 16), "Start with a blank page")));
       return;
     }
-    const list = TEMPLATES.filter((t) => t.id !== "blank" && (tab === "Discover" || templateGroup(t) === tab) && matches(t));
-    main.append(el("h2", { class: "nm-heading", text: needle ? `Results for “${query}”` : tab }));
-    if (!list.length) { main.append(el("div", { class: "template-empty", text: `No templates match “${query}”` })); return; }
-    const grid = el("div", { class: "nm-grid" });
-    list.forEach((t, i) => grid.append(card(t, i)));
+    const list = TEMPLATES.filter((template) =>
+      (category === "All" || template.category === category) &&
+      (!needle || template.name.toLowerCase().includes(needle) || template.desc.toLowerCase().includes(needle)));
+    main.append(el("h2", { class: "as-page-title", text: needle ? "Results" : category }));
+    if (!list.length) {
+      main.append(el("div", { class: "template-empty", text: `No templates match "${query}"` }));
+      return;
+    }
+    const grid = el("div", { class: "as-grid" });
+    list.forEach((template, index) => grid.append(card(template, index)));
     main.append(grid);
   };
 
   search.addEventListener("input", () => { query = search.value; paint(); });
+
   entry = modal({
     title: "Templates",
     width: 1120,
-    className: "template-modal notion-gallery",
-    body: el("div", { class: "nm-layout" }, el("div", { class: "nm-top" }, tabs, search), main),
+    className: "template-modal appstore",
+    body: el("div", { class: "template-layout as-layout" },
+      el("aside", { class: "template-side as-side" }, search, rail),
+      main),
   });
-  paintTabs();
+  paintRail();
   paint();
   queueMicrotask(() => search.focus());
   return entry;
