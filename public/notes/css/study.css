@@ -1332,3 +1332,29 @@
 .template-modal.appstore.as-view { position: static; width: 100%; max-width: none; height: 100%; border-radius: 0; box-shadow: none; background: var(--background-main); display: block; }
 .template-modal.appstore.as-view .as-layout { height: 100%; }
 .template-modal.appstore.as-view .as-main { padding: 28px 40px 48px; }
+
+/* The chat's work label sweeps a band of ink across the text, as in the chat app. */
+.chat-view .shimmer-text, .chat-work-label.shimmer-text {
+  background-image: linear-gradient(100deg, #8f8f8f 0%, #8f8f8f 38%, #3a3a3a 46%, #0d0d0d 50%, #3a3a3a 54%, #8f8f8f 62%, #8f8f8f 100%);
+  background-size: 260% 100%; background-position: 100% 0; background-repeat: no-repeat;
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+  animation: chat-ink 2.2s linear infinite; font-weight: 500;
+}
+@keyframes chat-ink { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.chat-live > * { margin: 0 0 .7em; } .chat-live > :last-child { margin-bottom: 0; }
+.chat-live-in { animation: chat-block-in 190ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes chat-block-in { from { opacity: 0; transform: translate3d(0, 5px, 0); } to { opacity: 1; transform: none; } }
+.reduce-motion .chat-view .shimmer-text { animation: none; -webkit-text-fill-color: currentColor; }
+@media (prefers-reduced-motion: reduce) { .chat-view .shimmer-text, .chat-live-in { animation: none; -webkit-text-fill-color: currentColor; } }
+
+/* Which note a chat belongs to, always shown under the header. */
+.chat-attached { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 2px 12px 6px; font-size: 12.5px; color: var(--text-tertiary); flex: none; }
+.chat-attached-link { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; padding: 4px 8px 4px 7px; border: 0; border-radius: 7px; background: var(--background-subtle); color: var(--text-secondary); font: inherit; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
+.chat-attached-link:hover { background: var(--background-hover); color: var(--text-primary); }
+.chat-attached-text { display: inline-flex; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.chat-attached-text b { font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
+.chat-attached-emoji { font-size: 14px; line-height: 1; }
+.chat-attached-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-attached-all { display: inline-flex; align-items: center; gap: 7px; padding: 4px 2px; }
+.chat-view.landing .chat-attached { display: none; }
+.chat-layout.compact .chat-attached-hint { display: none; }

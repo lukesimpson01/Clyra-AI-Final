@@ -41,7 +41,7 @@ export type BlockType =
   | "quote" | "callout" | "divider" | "code" | "equation"
   | "image" | "video" | "audio" | "file" | "pdf" | "bookmark" | "embed"
   | "table" | "chart" | "columns" | "column"
-  | "page" | "link_to_page" | "breadcrumb" | "toc" | "database" | "synced" | "button" | "tabs" | "tab" | "html" | "ai_block"
+  | "page" | "link_to_page" | "breadcrumb" | "toc" | "database" | "synced" | "button" | "tabs" | "tab" | "html" | "ai_block" | "brainstorm"
   | "flashcard_set" | "flashcard" | "quiz" | "question" | "key_term"
   | "study_summary" | "exam_checklist" | "source" | "transcript" | "objective";
 
@@ -53,7 +53,7 @@ export const CONTAINER_TYPES = new Set<BlockType>([
 /* Types that hold no editable inline text of their own. */
 export const VOID_TYPES = new Set<BlockType>([
   "divider", "image", "video", "audio", "file", "pdf", "bookmark", "embed",
-  "table", "chart", "columns", "breadcrumb", "toc", "database", "synced", "button", "html", "ai_block",
+  "table", "chart", "columns", "breadcrumb", "toc", "database", "synced", "button", "html", "ai_block", "brainstorm",
   "flashcard_set", "quiz", "source", "transcript", "link_to_page", "page",
 ]);
 

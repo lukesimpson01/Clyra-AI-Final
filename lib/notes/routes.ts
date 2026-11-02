@@ -421,9 +421,13 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.patch("/api/notes/comments/:id", wrap((req) => store.updateComment(req.params.id, req.body || {})));
   app.delete("/api/notes/comments/:id", wrap((req) => store.deleteComment(req.params.id)));
 
+  /* ---- workspace flags ---- */
+  app.get("/api/notes/meta/:key", wrap((req) => store.getMeta(String(req.params.key).slice(0, 60))));
+  app.put("/api/notes/meta/:key", wrap((req) => store.setMeta(String(req.params.key).slice(0, 60), req.body?.value === undefined || req.body?.value === null ? null : String(req.body.value).slice(0, 2000))));
+
   /* ---- chats ---- */
-  app.get("/api/notes/chats", wrap(() => store.listChats()));
-  app.post("/api/notes/chats", wrap((req, res) => { res.status(201); return store.createChat(req.body?.title); }));
+  app.get("/api/notes/chats", wrap((req) => store.listChats(req.query.pageId ? String(req.query.pageId) : undefined)));
+  app.post("/api/notes/chats", wrap((req, res) => { res.status(201); return store.createChat(req.body?.title, req.body?.pageId); }));
   app.get("/api/notes/chats/:id", wrap((req) => store.getChat(req.params.id)));
   app.post("/api/notes/chats/:id/messages", wrap((req) => store.addChatMessage(req.params.id, req.body || {})));
   app.patch("/api/notes/chats/:id", wrap((req) => store.renameChat(req.params.id, String(req.body?.title || ""))));

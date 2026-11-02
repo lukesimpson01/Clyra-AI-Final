@@ -17,7 +17,8 @@ import { renderHome } from "./views/home.js";
 import { renderFlashcards } from "./views/flashcards.js";
 import { renderTests } from "./views/tests.js";
 import { renderChat } from "./views/chat.js";
-import { renderWelcome } from "./views/welcome.js";
+import { renderWelcome, loadTourState, tourSeen, markTourSeen } from "./views/welcome.js";
+import { openCommandPalette } from "./command-palette.js";
 import { renderInbox } from "./views/inbox.js";
 import { renderLibrary } from "./views/library.js";
 import { openTrash } from "./views/trash.js";
@@ -28,7 +29,7 @@ import { runGenerator } from "./views/generators.js";
 
 const TAB_LABELS = {
   home: { title: "Home", icon: "home" },
-  welcome: { title: "Welcome", icon: "sparkle" },
+  welcome: { title: "Welcome", icon: "home", emoji: "\u{1F44B}" },
   templates: { title: "Templates", icon: "template" },
   chat: { title: "AI chat", icon: "sparkle" },
   flashcards: { title: "Flashcards", icon: "cards" },
@@ -80,13 +81,11 @@ class App {
     };
     window.addEventListener("hashchange", followLink);
     followLink();
-    /* The first time Notes opens on this device, it opens on the tour. It stays in the sidebar for later. */
+    /* The first time this workspace is opened, it opens on the tour. It stays in the sidebar for later. */
     try {
-      if (!localStorage.getItem("clyra-notes:welcomed") && !location.hash) {
-        localStorage.setItem("clyra-notes:welcomed", "1");
-        this.openView({ kind: "welcome" });
-      }
-    } catch { /* storage off: skip the tour */ }
+      await loadTourState();
+      if (!tourSeen() && !location.hash) { markTourSeen(); this.openView({ kind: "welcome" }); }
+    } catch { /* skip the tour */ }
     this.root.removeAttribute("aria-busy");
   }
 
@@ -472,6 +471,7 @@ class App {
 
   openTemplates(parentId) { this.openView({ kind: "templates", parentId: parentId || null }); }
   openImport(parentId) { openImport(this, parentId); }
+  openCommandPalette() { openCommandPalette(this); }
 
   /* slash menu entries for importing from other tools open the same import screen */
   listenForImport() { window.addEventListener("clyra:open-import", () => this.openImport(null)); }
@@ -730,6 +730,8 @@ class App {
          not intercept it; its own search remains available from the sidebar
          and Cmd/Ctrl+P. */
       if (modKey(event) && event.key.toLowerCase() === "p" && !event.shiftKey) { event.preventDefault(); openSearch(); return; }
+      /* Cmd/Ctrl+S is "save" everywhere else; here pages save themselves, so it opens the command palette instead. */
+      if (modKey(event) && event.key.toLowerCase() === "s" && !event.shiftKey && !event.altKey) { event.preventDefault(); if (!document.querySelector(".cp")) openCommandPalette(this); return; }
       if (modKey(event) && event.key === "\\") {
         event.preventDefault();
         event.shiftKey ? this.toggleRail() : this.toggleSidebar();

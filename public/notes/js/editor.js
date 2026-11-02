@@ -6,6 +6,7 @@
    the model, re-render, and then place the caret explicitly. */
 import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, position, modKey, mod, append } from "./dom.js";
 import { DatabaseView } from "./database.js";
+import { Brainstorm } from "./brainstorm.js";
 import { promptDialog } from "./slash-extras.js";
 import { renderMarkdown } from "./ai-composer.js";
 import { executeBlock, isExecutable, isPreviewable, runnerLabel } from "./runner.js";
@@ -36,7 +37,7 @@ const isTextBlock = (block) => TEXT_BLOCKS.has(block.type);
 
 /* Props are per-type, so converting a block keeps only what the new type
    understands — otherwise a to-do turned into a quote stays "checked". */
-const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"], html: ["code"], database: ["pageId"], link_to_page: ["pageId"] };
+const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"], html: ["code"], database: ["pageId"], link_to_page: ["pageId"], brainstorm: ["board"] };
 function propsFor(type, props = {}) {
   const keep = KEEP_PROPS[type] || [];
   const next = {};
@@ -230,6 +231,7 @@ export class Editor {
     if (block.type === "chart") { append(content, this.renderChart(block)); return { leading }; }
     if (block.type === "database") { append(content, this.renderDatabaseBlock(block)); return { leading }; }
     if (block.type === "html") { append(content, this.renderHtmlBlock(block)); return { leading }; }
+    if (block.type === "brainstorm") { append(content, this.renderBrainstormBlock(block)); return { leading }; }
     if (block.type === "button") { append(content, this.renderButtonBlock(block)); return { leading }; }
     if (block.type === "ai_block") { append(content, this.renderAiBlock(block)); return { leading }; }
     if (block.type === "tabs") {
@@ -1833,6 +1835,29 @@ Object.assign(Editor.prototype, {
     this.render();
     this.commit("ai-block", true);
     setTimeout(() => this.nodes.get(block.id)?.querySelector(".ai-block")?.__update?.(), 60);
+  },
+
+  /* A brainstorm board: the canvas lives in the block's props, so it is saved, restored and versioned with the page. */
+  renderBrainstormBlock(block) {
+    const host = el("div", { class: `bs-embed${block.props?.tall ? " tall" : ""}` });
+    const board = new Brainstorm(host, {
+      data: block.props?.board,
+      readOnly: this.readOnly,
+      openPage: (id) => this.onNavigate?.(id),
+      onChange: (data) => { block.props = { ...block.props, board: data }; this.commit("brainstorm"); },
+    });
+    host.__board = board;
+    return host;
+  },
+
+  insertBrainstorm(block) {
+    this.turnInto(block, "brainstorm");
+    block.props = { board: { items: [], edges: [], cam: { x: 0, y: 0, z: 1 } } };
+    block.__dirty = true;
+    this.insertAfter(block, this.blank());
+    this.render();
+    this.commit("brainstorm", true);
+    setTimeout(() => this.nodes.get(block.id)?.querySelector(".bs")?.focus(), 80);
   },
 
   renderToc() {

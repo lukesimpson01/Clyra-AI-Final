@@ -3080,11 +3080,12 @@ async function startServer() {
       await runChatAgent(
         turns,
         {
-          createNote: ({ title, markdown, parentId }) => { const page = createNotesPage({ title, markdown, parentId }) as { id: string; title: string } | null; if (!page) throw new Error("Notes could not create the page."); return { id: String(page.id), title: String(page.title || title) }; },
+          createNote: ({ title, markdown, parentId, icon }) => { const page = createNotesPage({ title, markdown, parentId, icon }) as { id: string; title: string } | null; if (!page) throw new Error("Notes could not create the page."); return { id: String(page.id), title: String(page.title || title) }; },
           notes: req.body?.notes ? {
             search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
             read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
             insert: (id, markdown, where) => notesStore.insertMarkdown(id, markdown, where),
+            index: (() => { const rows = notesStore.listPages() as Array<Record<string, unknown>>; const names = new Map(rows.map((r) => [String(r.id), String(r.title || "Untitled")])); return rows.filter((r) => !r.inline && r.kind !== "record").slice(0, 300).map((r) => ({ id: String(r.id), title: String(r.title || "Untitled"), icon: r.icon ? String(r.icon).slice(0, 8) : undefined, parentTitle: r.parent_id ? names.get(String(r.parent_id)) : undefined })); })(),
             context: (Array.isArray(req.body.notes.pageIds) ? req.body.notes.pageIds : []).slice(0, 6).map((id: unknown) => {
               const md = notesStore.pageMarkdown(String(id)); const page = notesStore.getPage(String(id));
               return md && page ? { id: String(id), title: String(page.title || "Untitled"), markdown: md, current: String(id) === String(req.body.notes.currentPageId || "") } : null;

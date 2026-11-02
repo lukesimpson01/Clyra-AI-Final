@@ -36,6 +36,7 @@ export const BLOCK_TYPES = {
   button:      { label: "Button", icon: "plus", group: "Advanced blocks", desc: "A button that adds content to the page.", keywords: "button action" },
   tabs:        { label: "Tabs", icon: "panel", group: "Advanced blocks", desc: "Show one pane at a time under tabs.", keywords: "tabs panes" },
   ai_block:    { label: "AI Block", icon: "sparkle", group: "Advanced blocks", desc: "A summary or answer that updates on demand.", keywords: "ai summary" },
+  brainstorm:  { label: "Brainstorm", icon: "target", group: "Advanced blocks", desc: "A whiteboard for ideas: stickies, shapes, notes and connectors.", keywords: "brainstorm whiteboard board canvas figjam miro sticky mind map diagram flow" },
   database:    { label: "Database", icon: "table", group: "Database", desc: "A table, board, list, gallery or calendar of records.", keywords: "table board gallery list calendar view inline" },
   chart:       { label: "Cartesian graph", icon: "chart", group: "Advanced blocks", desc: "Plot a Cartesian plane, line, scatter or bar chart.", keywords: "graph plot cartesian plane x y chart visualize data table" },
   columns:     { label: "Columns", icon: "panel", group: "Advanced blocks", desc: "Place blocks side by side.", keywords: "layout side columns" },

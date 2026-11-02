@@ -251,6 +251,12 @@ CREATE INDEX IF NOT EXISTS source_refs_owner ON source_refs(owner_kind, owner_id
 
 /* Chat threads. Kept separate from pages: a conversation is a transcript,
    not a document, and deleting one should never touch the notes it cited. */
+/* Small workspace flags that must follow the workspace rather than one browser (whether the welcome tour has been seen). */
+CREATE TABLE IF NOT EXISTS app_meta(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS chats(
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT 'New chat',
@@ -318,6 +324,10 @@ export async function openNotesDb(): Promise<DB> {
   if (!pageColumns.has("lock_salt")) db.exec("ALTER TABLE pages2 ADD COLUMN lock_salt TEXT");
   /* "pin6" | "pin8" | "password": how the unlock screen should ask for it. */
   if (!pageColumns.has("lock_kind")) db.exec("ALTER TABLE pages2 ADD COLUMN lock_kind TEXT");
+  /* A chat can belong to one note: the note's own thread, kept with it. */
+  const chatColumns = new Set((db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>).map((c) => c.name));
+  if (!chatColumns.has("page_id")) db.exec("ALTER TABLE chats ADD COLUMN page_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS chats_page ON chats(page_id, updated_at DESC)");
   migrateLegacyPages(db);
   return db;
 }

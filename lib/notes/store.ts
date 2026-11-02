@@ -1550,18 +1550,33 @@ export function deleteComment(id: string) {
   return { ok: true };
 }
 
+/* ----------------------------------------------------------------- meta */
+
+export function getMeta(key: string) {
+  const row = db.prepare("SELECT value FROM app_meta WHERE key=?").get(key) as { value: string } | undefined;
+  return { key, value: row?.value ?? null };
+}
+
+export function setMeta(key: string, value: string | null) {
+  if (value === null || value === "") db.prepare("DELETE FROM app_meta WHERE key=?").run(key);
+  else db.prepare("INSERT INTO app_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+  return getMeta(key);
+}
+
 /* ---------------------------------------------------------------- chats */
 
-export function listChats() {
+export function listChats(pageId?: string) {
   return db.prepare(
     `SELECT c.*, (SELECT count(*) FROM chat_messages WHERE chat_id=c.id) AS message_count,
-            (SELECT text FROM chat_messages WHERE chat_id=c.id AND role='user' ORDER BY sort LIMIT 1) AS opener
-     FROM chats c ORDER BY c.updated_at DESC LIMIT 100`,
-  ).all();
+            (SELECT text FROM chat_messages WHERE chat_id=c.id AND role='user' ORDER BY sort LIMIT 1) AS opener,
+            (SELECT title FROM pages2 WHERE id=c.page_id) AS page_title,
+            (SELECT icon FROM pages2 WHERE id=c.page_id) AS page_icon
+     FROM chats c ${pageId ? "WHERE c.page_id=?" : ""} ORDER BY c.updated_at DESC LIMIT 100`,
+  ).all(...(pageId ? [pageId] : []));
 }
 
 export function getChat(id: string): Record<string, unknown> | null {
-  const chat = db.prepare("SELECT * FROM chats WHERE id=?").get(id) as Record<string, unknown> | undefined;
+  const chat = db.prepare("SELECT c.*, (SELECT title FROM pages2 WHERE id=c.page_id) AS page_title, (SELECT icon FROM pages2 WHERE id=c.page_id) AS page_icon FROM chats c WHERE c.id=?").get(id) as Record<string, unknown> | undefined;
   if (!chat) return null;
   const messages = (db.prepare("SELECT * FROM chat_messages WHERE chat_id=? ORDER BY sort").all(id) as Array<Record<string, unknown>>)
     .map((row) => ({
@@ -1572,9 +1587,9 @@ export function getChat(id: string): Record<string, unknown> | null {
   return { ...chat, messages };
 }
 
-export function createChat(title?: string) {
+export function createChat(title?: string, pageId?: string | null) {
   const id = newId();
-  db.prepare("INSERT INTO chats(id,title) VALUES(?,?)").run(id, String(title || "New chat"));
+  db.prepare("INSERT INTO chats(id,title,page_id) VALUES(?,?,?)").run(id, String(title || "New chat"), pageId ? String(pageId) : null);
   return getChat(id);
 }
 

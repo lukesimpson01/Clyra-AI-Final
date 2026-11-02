@@ -189,6 +189,7 @@ export class Rail {
           view = renderChat(node, this.context, { compact: true });
         }
         const pageId = this.context.currentPageId?.();
+        view.setPage?.(pageId || null);
         if (!pageId || pageId === attachedFor) return;
         attachedFor = pageId;
         if (!autoPageOn()) { view.setSources?.([]); return; }

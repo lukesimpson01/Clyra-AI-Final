@@ -60,6 +60,10 @@ export function renderChat(host, app, options = {}) {
   let agentId = null;
   let reviewMode = false;
   let chats = [];
+  /* The note this thread belongs to. In the side panel that is the page you are on: its chat is saved with it and comes back
+     when you return. In the full-screen chat a thread can be attached to a note too, once it has been started from one. */
+  let boundId = null;
+  let wantedId;
   let modelId = (() => { try { const saved = localStorage.getItem(MODEL_KEY); return MODELS.some((m) => m.id === saved) ? saved : "auto"; } catch { return "auto"; } })();
   let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
 
@@ -151,6 +155,25 @@ export function renderChat(host, app, options = {}) {
     const title = currentChat()?.title || agent?.name || "New AI chat";
     append(headTitle, ...[agent?.emoji ? el("span", { class: "chat-head-emoji", text: agent.emoji }) : compact ? bloub(18) : null, el("span", { class: "chat-head-name", text: title }), icon("chevron_down", 12)].filter(Boolean));
     pinButton.classList.toggle("on", Boolean(chatId) && isPinned(chatId));
+    paintAttached();
+  };
+  const pageInfo = (id) => { const meta = id ? state.pageById?.get(String(id)) : null; return meta ? { id: String(id), title: meta.title || "Untitled", icon: meta.icon } : null; };
+  /* Which note this chat is attached to, always visible: the note, or all of them. */
+  const paintAttached = () => {
+    clear(attached);
+    const chat = currentChat();
+    const id = compact ? boundId : (chat?.page_id || null);
+    const info = pageInfo(id) || (id && chat ? { id, title: chat.page_title || "Untitled", icon: chat.page_icon } : null);
+    attached.classList.toggle("on", Boolean(info));
+    if (info) {
+      const glyph = info.icon && !/^https?:|^\//.test(info.icon) ? el("span", { class: "chat-attached-emoji", text: info.icon }) : icon("page", 14);
+      attached.append(el("button", { class: "chat-attached-link", type: "button", title: "Open this note", onclick: () => app.openPage(info.id) }, glyph,
+        el("span", { class: "chat-attached-text" }, el("span", { class: "chat-attached-label", text: compact ? "Chatting about" : "Attached to" }), el("b", { text: info.title })),
+        icon("chevron_right", 12)),
+        el("span", { class: "chat-attached-hint", text: "Saved with this note · reads all your notes" }));
+    } else {
+      attached.append(el("span", { class: "chat-attached-all" }, icon("book", 14), el("span", { text: "Reads across all your notes" })));
+    }
   };
   const transcript = () => messages.filter((m) => m.text && !m.error).map((m) => `${m.role === "user" ? "You" : "Clyra"}: ${m.text}`).join("\n\n");
   const markdownFile = () => `# ${currentChat()?.title || "Chat with Clyra"}\n\n${messages.filter((m) => m.text && !m.error).map((m) => (m.role === "user" ? `**You**\n\n${m.text}` : `**Clyra**\n\n${m.text}`)).join("\n\n---\n\n")}\n`;
@@ -210,7 +233,8 @@ export function renderChat(host, app, options = {}) {
     exportButton,
     pinButton,
     moreButton);
-  const chatView = el("div", { class: "chat-view" }, panelHead, thread, composer, compact ? null : actionRow);
+  const attached = el("div", { class: "chat-attached" });
+  const chatView = el("div", { class: "chat-view" }, panelHead, attached, thread, composer, compact ? null : actionRow);
   historyOpen = false;
   const layout = el("div", { class: `chat-layout history-hidden${compact ? " compact" : ""}` },
     chatView,
@@ -231,7 +255,7 @@ export function renderChat(host, app, options = {}) {
     window.dispatchEvent(new CustomEvent("clyra:chats-changed"));
   };
   const loadChats = async () => {
-    chats = (await withError(() => api.get("/api/notes/chats"), "Could not load your chats")) || [];
+    chats = (await withError(() => api.get(compact && boundId ? `/api/notes/chats?pageId=${encodeURIComponent(boundId)}` : "/api/notes/chats"), "Could not load your chats")) || [];
     paintHistory();
     paintHead();
     publishChats();
@@ -259,7 +283,7 @@ export function renderChat(host, app, options = {}) {
       const row = el("div", { class: `chat-history-row${chat.id === chatId ? " active" : ""}` },
         el("button", { class: "chat-history-open", type: "button", onclick: () => openChat(chat.id) },
           el("span", { class: "chat-history-name", text: chat.title || "New chat" }),
-          el("span", { class: "chat-history-meta", text: formatRelative(chat.updated_at) })),
+          el("span", { class: "chat-history-meta", text: `${chat.page_title ? `${chat.page_title} \u00B7 ` : ""}${formatRelative(chat.updated_at)}` })),
         iconButton("dots", "Chat actions", (event) => {
           event.stopPropagation();
           menu(event.currentTarget, [
@@ -319,6 +343,7 @@ export function renderChat(host, app, options = {}) {
     if (!chat) return;
     chatId = id;
     agentId = null;
+    if (!chats.some((entry) => entry.id === id)) chats = [chat, ...chats];
     messages = (chat.messages || []).map((row) => ({
       role: row.role,
       text: row.text,
@@ -353,7 +378,7 @@ export function renderChat(host, app, options = {}) {
      page does not litter the history with empty chats. */
   const ensureChat = async () => {
     if (chatId) return chatId;
-    const created = await withError(() => api.post("/api/notes/chats"), "Could not start a chat");
+    const created = await withError(() => api.post("/api/notes/chats", { pageId: compact ? boundId : null }), "Could not start a chat");
     chatId = created?.id ?? null;
     return chatId;
   };
@@ -468,6 +493,27 @@ export function renderChat(host, app, options = {}) {
     });
   };
 
+  /* The reply streams into one element that is kept between repaints: text already on screen is never rebuilt, and each new
+     block (paragraph, list, heading) settles in once, as in the chat app. */
+  const liveText = (message) => {
+    const host_ = message.liveEl || (message.liveEl = el("div", { class: "chat-stream chat-live" }));
+    if (message.liveFor === message.text) return host_;
+    message.liveFor = message.text;
+    message.streamedLive = true;
+    const next = document.createElement("div");
+    next.innerHTML = renderMarkdown(message.text);
+    const have = [...host_.children], want = [...next.children];
+    want.forEach((node, i) => {
+      if (!have[i]) { node.classList.add("chat-live-in"); host_.append(node); }
+      else if (have[i].tagName !== node.tagName) have[i].replaceWith(node);
+      else if (have[i].innerHTML !== node.innerHTML) have[i].innerHTML = node.innerHTML;
+    });
+    while (host_.children.length > want.length) host_.lastElementChild.remove();
+    return host_;
+  };
+  let paintQueued = 0;
+  const paintSoon = () => { if (paintQueued) return; paintQueued = requestAnimationFrame(() => { paintQueued = 0; paint(); }); };
+
   const workRow = (label, kind) =>
     el("div", { class: `chat-work ${kind}` },
       el("span", { class: "chat-work-mark" }, kind === "search" ? icon("search", 13) : bloub(18)),
@@ -538,7 +584,7 @@ export function renderChat(host, app, options = {}) {
         message.runState = message.runState || {};
         append(body,
           renderAgentRun(message.run, { live: true, onOpenNote: (id) => app.openPage(id), state: message.runState }),
-          message.text ? el("div", { class: "chat-stream", html: renderMarkdown(message.text) }) : null,
+          message.text ? liveText(message) : null,
           !message.run?.todos.length && !message.run?.steps.length && !message.text ? workRow("Thinking", "think") : null);
       } else {
         if (message.run) {
@@ -548,7 +594,7 @@ export function renderChat(host, app, options = {}) {
         }
         const answerHost = el("div", { class: "chat-answer-text" });
         body.append(answerHost);
-        revealAnswer(answerHost, message.text, !message.restored);
+        revealAnswer(answerHost, message.text, !message.restored && !message.streamedLive);
         if (message.searched) {
           body.append(el("div", { class: "ai-searched" }, icon("search", 12), `Searched the web for "${message.searched}"`));
         }
@@ -612,6 +658,7 @@ export function renderChat(host, app, options = {}) {
     askAbort = controller;
     answer.run = { todos: [], steps: [] };
     answer.text = "";
+    answer.liveEl = null; answer.liveFor = null; answer.streamedLive = false;
     let roundText = "";
     let finished = false;
     const history = messages
@@ -627,13 +674,14 @@ export function renderChat(host, app, options = {}) {
     quotes = [];
     files = [];
     paintSources();
-    const pageIds = [...new Set([...sources.map((source) => source.pageId), ...(app.currentPageId?.() ? [String(app.currentPageId())] : [])])];
+    const attachedId = compact ? boundId : (currentChat()?.page_id || null);
+    const pageIds = [...new Set([...sources.map((source) => source.pageId), ...(attachedId ? [String(attachedId)] : app.currentPageId?.() ? [String(app.currentPageId())] : [])])];
     try {
       await streamAgent({
         messages: history,
         model: MODELS.find((m) => m.id === modelId)?.model,
         instructions: [instructionsFor(agentId), reviewMode ? REVIEW_NOTE : ""].filter(Boolean).join("\n\n"),
-        notes: { pageIds, currentPageId: app.currentPageId?.() ? String(app.currentPageId()) : null },
+        notes: { pageIds, currentPageId: attachedId ? String(attachedId) : app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {
           if (event.type === "todos") answer.run.todos = event.items;
@@ -641,7 +689,7 @@ export function renderChat(host, app, options = {}) {
             roundText = ""; answer.text = ""; // words before a tool call were commentary on that step
             const index = answer.run.steps.findIndex((step) => step.id === event.id);
             if (index >= 0) answer.run.steps[index] = event; else answer.run.steps.push(event);
-          } else if (event.type === "text") { roundText += event.text; answer.text = roundText; }
+          } else if (event.type === "text") { roundText += event.text; answer.text = roundText; paintSoon(); return; }
           else if (event.type === "done") {
             finished = true;
             answer.pending = false;
@@ -671,6 +719,7 @@ export function renderChat(host, app, options = {}) {
       busy = false;
       syncSend();
       paint();
+      if (compact && wantedId !== undefined && wantedId !== boundId) setPage(wantedId);
     }
   };
 
@@ -707,11 +756,28 @@ export function renderChat(host, app, options = {}) {
     toast("Page created");
   };
 
+  /* The side panel follows the page: each note has its own thread, and moving to another note brings its chat back. */
+  const setPage = async (id) => {
+    if (!compact) return;
+    id = id ? String(id) : null;
+    wantedId = id;
+    if (busy || id === boundId) return;
+    boundId = id;
+    chatId = null; messages = []; sources = []; quotes = []; files = [];
+    paintSources(); paintAttached(); paint();
+    const mine = await api.get(id ? `/api/notes/chats?pageId=${encodeURIComponent(id)}` : "/api/notes/chats").catch(() => []);
+    if (wantedId !== id || busy) return;
+    chats = id ? mine : chats;
+    if (id && mine.length && mine[0].message_count) await openChat(mine[0].id);
+    else { paintHead(); paintHistory(); }
+  };
+
   paint();
   loadChats();
   if (!compact) api.post("/api/notes/chats/prune", {}).catch(() => {});
   queueMicrotask(() => { if (!compact) input.focus(); });
   return {
+    setPage,
     toggleHistory,
     focus: () => input.focus(),
     /* The rail replaces the attached set whenever the page changes; the

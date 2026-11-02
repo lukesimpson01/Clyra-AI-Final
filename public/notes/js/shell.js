@@ -116,7 +116,7 @@ export class Sidebar {
     if (activeTab()?.kind === "chat") { this.renderChatBody(); return; }
     const sections = [];
     /* The tour is saved at the top of the sidebar, so it can be opened again at any time. */
-    sections.push(el("div", { class: "sidebar-section welcome-entry" }, this.staticRow("Welcome", "sparkle", () => this.context.openView({ kind: "welcome" }))));
+    sections.push(el("div", { class: "sidebar-section welcome-entry" }, this.staticRow("Welcome", "\u{1F44B}", () => this.context.openView({ kind: "welcome" }))));
     const favorites = state.pages.filter((page) => page.favorite && page.kind !== "record" && !page.inline);
     const recents = [...state.pages]
       .filter((page) => page.kind !== "record" && !page.inline)
@@ -179,8 +179,8 @@ export class Sidebar {
         onclick: () => act("open", chat.id),
         onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); act("open", chat.id); } } },
         el("span", { class: "page-caret leaf" }),
-        el("span", { class: "page-icon" }, icon(pins.includes(chat.id) ? "pin" : "comment", 15)),
-        el("span", { class: "page-title", text: chat.title || "New chat" }),
+        el("span", { class: "page-icon" }, chat.page_id && !pins.includes(chat.id) ? (chat.page_icon && !/^https?:|^\//.test(chat.page_icon) ? chat.page_icon : icon("page", 15)) : icon(pins.includes(chat.id) ? "pin" : "comment", 15)),
+        el("span", { class: "page-title", text: chat.title || "New chat", title: chat.page_title ? `On ${chat.page_title}` : undefined }),
         el("div", { class: "page-row-actions" }, iconButton("dots", "Chat actions", (event) => {
           event.stopPropagation();
           menu(event.currentTarget, [
@@ -275,7 +275,7 @@ export class Sidebar {
   staticRow(label, iconName, onClick, hint) {
     return el("button", { class: "page-row", type: "button", onclick: onClick },
       el("span", { class: "page-caret leaf" }),
-      el("span", { class: "page-icon" }, icon(iconName, 15)),
+      el("span", { class: "page-icon" }, /^[a-z_]+$/i.test(iconName) ? icon(iconName, 15) : iconName),
       el("span", { class: "page-title", text: label }),
       hint ? el("span", { class: "shortcut", text: hint }) : null);
   }

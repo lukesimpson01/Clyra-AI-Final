@@ -95,6 +95,9 @@ export function extraCommands(editor) {
     add({ key: `db-${key}`, label: view.label, group: "Database", icon: view.glyph, badge: view.badge, desc: `A new database shown as a ${view.label.toLowerCase()}.`, keywords: `database ${key} view chart`, run: (block) => insertDatabaseView(editor, block, key) });
   }
 
+  add({ key: "brainstorm", label: "Brainstorm", group: "Suggested", icon: "target", badge: "New", desc: "A whiteboard for ideas: stickies, shapes, notes and connectors.", keywords: "brainstorm whiteboard board canvas figjam miro sticky mind map diagram flow ideas",
+    run: (block) => editor.insertBrainstorm(block) });
+
   add({ key: "button", label: "Button", group: "Advanced blocks", icon: "plus", desc: "A button that adds content to the page when pressed.", keywords: "button action add template",
     run: (block) => promptDialog({ title: "New button", confirm: "Create button", fields: [{ label: "Label", placeholder: "Add a meeting note", value: "Add a note" }, { label: "What it adds (markdown)", placeholder: "## Notes\n- ", multiline: true, value: "## Notes\n- " }],
       onSubmit: ([label, content]) => { editor.turnInto(block, "button"); block.props = { label, content }; block.__dirty = true; editor.insertAfter(block, editor.blank()); editor.render(); editor.commit("button", true); } }) });
