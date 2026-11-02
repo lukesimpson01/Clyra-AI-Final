@@ -506,6 +506,33 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.patch("/api/notes/comments/:id", wrap((req) => store.updateComment(req.params.id, req.body || {})));
   app.delete("/api/notes/comments/:id", wrap((req) => store.deleteComment(req.params.id)));
 
+  /* ---- places for the database Map view: looked up once, then remembered ---- */
+  const placeCache = new Map<string, { lat: number; lon: number; label: string } | null>();
+  app.post("/api/notes/geocode", wrap(async (req) => {
+    const { geocodePlace } = await import("../research/weather");
+    const wanted = [...new Set(((req.body?.places || []) as unknown[]).map((place) => String(place).trim().slice(0, 160)).filter(Boolean))].slice(0, 40);
+    const results: Record<string, { lat: number; lon: number; label: string } | null> = {};
+    let lookups = 0;
+    for (const place of wanted) {
+      if (!placeCache.has(place)) {
+        if (lookups >= 12) { results[place] = null; continue; }
+        if (lookups) await new Promise((resolve) => setTimeout(resolve, 1100));
+        lookups += 1;
+        const found = await geocodePlace(place).catch(() => null);
+        const hit = found?.place;
+        placeCache.set(place, hit ? { lat: hit.latitude, lon: hit.longitude, label: [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ") } : null);
+      }
+      results[place] = placeCache.get(place) ?? null;
+    }
+    return { results };
+  }));
+
+  /* ---- synced blocks ---- */
+  app.get("/api/notes/synced", wrap(() => store.listSynced()));
+  app.get("/api/notes/synced/:id", wrap((req) => store.getSynced(req.params.id) ?? { error: "That synced block no longer exists." }));
+  app.post("/api/notes/synced", wrap((req, res) => { res.status(201); return store.createSynced(req.body?.text); }));
+  app.put("/api/notes/synced/:id", wrap((req) => store.saveSynced(req.params.id, String(req.body?.text ?? ""))));
+
   /* ---- workspace flags ---- */
   app.get("/api/notes/meta/:key", wrap((req) => store.getMeta(String(req.params.key).slice(0, 60))));
   app.put("/api/notes/meta/:key", wrap((req) => store.setMeta(String(req.params.key).slice(0, 60), req.body?.value === undefined || req.body?.value === null ? null : String(req.body.value).slice(0, 2000))));

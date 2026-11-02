@@ -37,7 +37,11 @@ const isTextBlock = (block) => TEXT_BLOCKS.has(block.type);
 
 /* Props are per-type, so converting a block keeps only what the new type
    understands — otherwise a to-do turned into a quote stays "checked". */
-const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"], html: ["code"], database: ["pageId"], link_to_page: ["pageId"], brainstorm: ["board"] };
+/* People you have mentioned before, kept on this device so the next @ offers them. */
+const PEOPLE_KEY = "clyra-notes:people";
+const knownPeople = () => { try { const list = JSON.parse(localStorage.getItem(PEOPLE_KEY) || "[]"); return Array.isArray(list) ? list.slice(0, 30) : []; } catch { return []; } };
+const rememberPerson = (name) => { try { localStorage.setItem(PEOPLE_KEY, JSON.stringify([name, ...knownPeople().filter((entry) => entry !== name)].slice(0, 30))); } catch { /* storage off */ } };
+const KEEP_PROPS = { todo: ["checked"], code: ["language"], callout: ["icon", "color"], html: ["code"], database: ["pageId"], link_to_page: ["pageId"], brainstorm: ["board"], synced: ["syncId"] };
 function propsFor(type, props = {}) {
   const keep = KEEP_PROPS[type] || [];
   const next = {};
@@ -232,6 +236,7 @@ export class Editor {
     if (block.type === "database") { append(content, this.renderDatabaseBlock(block)); return { leading }; }
     if (block.type === "html") { append(content, this.renderHtmlBlock(block)); return { leading }; }
     if (block.type === "brainstorm") { append(content, this.renderBrainstormBlock(block)); return { leading }; }
+    if (block.type === "synced") { append(content, this.renderSyncedBlock(block)); return { leading }; }
     if (block.type === "button") { append(content, this.renderButtonBlock(block)); return { leading }; }
     if (block.type === "ai_block") { append(content, this.renderAiBlock(block)); return { leading }; }
     if (block.type === "tabs") {
@@ -629,9 +634,21 @@ export class Editor {
         cancel.addEventListener("click", () => entry.close("cancel"));
         save.addEventListener("click", () => { if (!input.value) return; const date = new Date(`${input.value}T00:00:00`); entry.close("save"); insert({ t: fmt(date), date: input.value }); });
       } },
+      { type: "label", label: "People" },
+      ...knownPeople().map((name) => ({ label: name, icon: "users", keywords: "person people mention", onSelect: () => insert({ t: `@${name}`, person: name }) })),
+      { label: "Mention someone new\u2026", icon: "plus", keywords: "person people add name", onSelect: () => {
+        const input = el("input", { class: "extras-input", placeholder: "Name", "aria-label": "Name" });
+        const save = el("button", { class: "button primary", type: "button" }, "Mention");
+        const cancel = el("button", { class: "button", type: "button" }, "Cancel");
+        const entry = modal({ title: "Mention a person", width: 360, body: el("div", { class: "extras-body" }, input), footer: [cancel, save] });
+        const submit = () => { const name = input.value.trim().slice(0, 60); if (!name) return; entry.close("save"); rememberPerson(name); insert({ t: `@${name}`, person: name }); };
+        cancel.addEventListener("click", () => entry.close("cancel")); save.addEventListener("click", submit);
+        input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } });
+        setTimeout(() => input.focus(), 40);
+      } },
       { type: "label", label: "Pages" },
       ...pages.map((page) => ({ label: page.title || "Untitled", icon: page.kind === "database" ? "table" : "page", keywords: "page link mention", onSelect: () => insert({ t: page.title || "Untitled", page: String(page.id) }) })),
-    ], { search: true, searchPlaceholder: "Mention a page or date\u2026", class: "mention-menu", onClose: () => { this.mentionOpen = false; } });
+    ], { search: true, searchPlaceholder: "Mention a person, page or date\u2026", class: "mention-menu", onClose: () => { this.mentionOpen = false; } });
   }
 
   checkSlash(block, line) {
@@ -1858,6 +1875,44 @@ Object.assign(Editor.prototype, {
     this.render();
     this.commit("brainstorm", true);
     setTimeout(() => this.nodes.get(block.id)?.querySelector(".bs")?.focus(), 80);
+  },
+
+  /* A synced block: the text lives once on the server, and every block pointing at it shows the same words. Edit it in any page. */
+  renderSyncedBlock(block) {
+    const body = el("div", { class: "synced-body", contenteditable: this.readOnly ? "false" : "true", spellcheck: "true", role: "textbox", "aria-label": "Synced text" });
+    const label = el("span", { class: "synced-label", text: "Synced" });
+    const state_ = el("span", { class: "synced-state", text: "" });
+    const frame = el("div", { class: "synced-block" }, el("div", { class: "synced-head" }, icon("refresh", 13), label, state_), body);
+    let timer = 0; let loaded = false;
+    const syncId = block.props?.syncId;
+    const refresh = async () => {
+      const found = syncId ? await api.get(`/api/notes/synced/${syncId}`).catch(() => null) : null;
+      if (!found || found.error) { body.textContent = ""; state_.textContent = "This synced block was removed"; body.contentEditable = "false"; return; }
+      if (document.activeElement !== body) body.innerText = found.text;
+      loaded = true;
+    };
+    body.addEventListener("keydown", (event) => event.stopPropagation());
+    body.addEventListener("input", () => {
+      if (!loaded) return;
+      state_.textContent = "Saving\u2026"; clearTimeout(timer);
+      timer = setTimeout(async () => { await api.put(`/api/notes/synced/${syncId}`, { text: body.innerText }).catch(() => {}); state_.textContent = "Saved everywhere"; setTimeout(() => { state_.textContent = ""; }, 1600); }, 500);
+    });
+    body.addEventListener("focus", () => frame.classList.add("editing"));
+    body.addEventListener("blur", () => { frame.classList.remove("editing"); refresh(); });
+    refresh();
+    return frame;
+  },
+
+  async insertSynced(block, existingId = null) {
+    const syncId = existingId || (await api.post("/api/notes/synced", { text: "" }))?.id;
+    if (!syncId) return;
+    this.turnInto(block, "synced");
+    block.props = { syncId };
+    block.__dirty = true;
+    this.insertAfter(block, this.blank());
+    this.render();
+    this.commit("synced", true);
+    setTimeout(() => this.nodes.get(block.id)?.querySelector(".synced-body")?.focus(), 80);
   },
 
   renderToc() {

@@ -112,25 +112,57 @@ export function renderWelcome(host, app) {
     return () => { alive = false; };
   };
 
+  /* The command palette, played on a loop: it eases in, a few letters narrow it, the top result is chosen. */
+  const paletteDemo = async (stage) => {
+    const ALL = [["New page", "plus", "Create"], ["New database", "table", "Create"], ["New brainstorm board", "target", "Create"], ["New to-do list", "check_square", "Create"], ["Daily note", "calendar", "Create"], ["Go to Templates", "template", "Go to"], ["Go to Flashcards", "cards", "Go to"], ["Toggle sidebar", "panel", "View"], ["Export all notes", "export", "Workspace"]];
+    const QUERIES = ["board", "go to", "new"];
+    const input = el("div", { class: "wl-pd-input" }, icon("search", 15), el("span", { class: "wl-pd-text" }), el("i", { class: "wl-sd-caret" }));
+    const listNode = el("div", { class: "wl-pd-list" });
+    const panel = el("div", { class: "wl-pd out" }, input, listNode, el("div", { class: "wl-pd-foot" }, el("span", { text: "↑ ↓ move" }), el("span", { text: "↵ run" })));
+    stage.append(el("div", { class: "wl-pdwrap" }, panel, el("p", { class: "wl-sd-cap", text: "One box for every action" })));
+    const text = input.querySelector(".wl-pd-text");
+    let alive = true;
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const draw = (query, hit) => {
+      clear(listNode);
+      const shown = ALL.filter(([name, , group]) => !query || name.toLowerCase().includes(query) || group.toLowerCase().includes(query)).slice(0, 6);
+      let last = "";
+      shown.forEach(([name, glyph, group], i) => {
+        if (group !== last) { last = group; listNode.append(el("div", { class: "wl-pd-head", text: group })); }
+        listNode.append(el("div", { class: `wl-pd-row${i === 0 ? " on" : ""}${i === 0 && hit ? " hit" : ""}` }, icon(glyph, 15), el("span", { text: name })));
+      });
+    };
+    const play = async () => {
+      for (let round = 0; alive; round = (round + 1) % QUERIES.length) {
+        text.textContent = ""; draw("", false);
+        panel.classList.remove("out"); await sleep(1300); if (!alive) return;
+        for (const char of QUERIES[round]) { if (!alive) return; text.textContent += char; draw(text.textContent.toLowerCase(), false); await sleep(210); }
+        await sleep(900); if (!alive) return;
+        draw(text.textContent.toLowerCase(), true); await sleep(520);
+        panel.classList.add("out"); await sleep(900);
+      }
+    };
+    play();
+    return () => { alive = false; };
+  };
+
   const STEPS = [
     { id: "hello", title: "Welcome", hero: true },
 
     { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action in one search box. Make a page, a board or a daily note, jump anywhere, hide panels, export.",
       tasks: [["cp", "Open the command palette", { run: () => app.openCommandPalette?.(), keys: "⌘ S" }]], watch: [[".cp", "cp"]], chords: [[chord("s"), "cp"]],
-      tips: ["Type a few letters, then Enter.", "What you use most rises to Recent.", "It finds pages by title too."] },
+      tips: ["Type a few letters, then Enter.", "What you use most rises to Recent.", "It finds pages by title too."], mount: paletteDemo },
 
     { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, type / to turn it into a block: headings, lists, quotes, tables, media, databases and more.",
       tasks: [["sl-try", "Try it on a new note", { run: () => app.createPage?.(null, { newTab: true }), keys: "/" }]], watch: [[".slash-menu", "sl-try"]],
       tips: ["Keep typing to narrow it: /quote, /h2, /todo.", "↑ ↓ to move, Enter to pick, Esc to close.", "Space on a blank line asks AI instead."], mount: slashDemo },
 
-    { id: "rail", kicker: "Tools", title: "Right sidebar", text: "Tools beside the page you are writing: a calculator, a web browser, an outline, linked notes, comments and a chat.",
-      tasks: [
-        ["r-toggle", "Show or hide the panel", { run: () => { app.toggleRail?.(); app.tabstrip?.syncRailToggle?.(); }, keys: "⌘ ⇧ \\" }],
-        tool("r-calc", "calculator", "Calculator", "k"), tool("r-browser", "browser", "Browser", "b"), tool("r-outline", "outline", "Outline", "o"),
-        tool("r-links", "links", "Linked notes", "l"), tool("r-comments", "comments", "Comments", "m"), tool("r-chat", "chat", "Chat", "j"),
-      ],
-      chords: [[chord("\\", { shift: true }), "r-toggle"], ...["k:calc", "b:browser", "o:outline", "l:links", "m:comments", "j:chat"].map((pair) => { const [key, name] = pair.split(":"); return [railKey(key), `r-${name}`]; })],
-      tips: ["Each tool has its own shortcut.", "The chat is saved with the page you are on."] },
+    { id: "rail", kicker: "Tools", title: "Right sidebar", railButton: true, listLabel: "Press each tab",
+      text: "Tools beside the page you are writing. Press the sidebar button at the top right of the window, then press each tab.",
+      button: { run: () => { if (!app.railOpen?.()) app.toggleRail?.(); app.tabstrip?.syncRailToggle?.(); app.showRailPanel?.(null); } },
+      tasks: [["r-calc", "Calculator"], ["r-browser", "Browser"], ["r-outline", "Outline"], ["r-links", "Linked notes"], ["r-comments", "Comments"], ["r-chat", "Chat"]],
+      observe: () => { const panel = document.querySelector(".rail-title")?.textContent?.trim(); const id = { Calculator: "r-calc", Browser: "r-browser", Outline: "r-outline", "Linked notes": "r-links", Comments: "r-comments", Chat: "r-chat" }[panel]; if (id) mark(id); },
+      tips: ["The chat is saved with the page you are on.", "Close the sidebar with the cross at its top right."] },
 
     { id: "brainstorm", kicker: "Create", title: "Brainstorm", text: "A whiteboard inside any page. Stickies, shapes, notes, pictures and files, joined by connectors.",
       tasks: [["bs-add", "Add a sticky from the bar below"], ["bs-link", "Drag from a dot to connect two"]],
@@ -140,7 +172,7 @@ export function renderWelcome(host, app) {
         stage.append(box);
         const seed = { items: [
           { id: "t1", type: "sticky", x: 28, y: 70, w: 140, h: 100, color: "white", text: "Idea", z: 1 },
-          { id: "t2", type: "sticky", x: 180, y: 200, w: 140, h: 100, color: "white", text: "Next step", z: 2 },
+          { id: "t2", type: "sticky", x: 196, y: 150, w: 140, h: 100, color: "white", text: "Next step", z: 2 },
         ], edges: [], cam: { x: 0, y: 0, z: 1 } };
         const board = new Brainstorm(box, { data: seed, openPage: (id, options) => app.openPage(id, options), onChange: (data) => {
           if (data.items.length > 2) mark("bs-add");
@@ -176,10 +208,17 @@ export function renderWelcome(host, app) {
   const LAST = STEPS.length - 1;
 
   /* ------------------------------------------------------------ layout */
+  /* The sidebar button, where it lives in the app: top right. Pressed, it slides the real sidebar in and steps aside. */
+  const railBtn = el("button", { class: "wl-railbtn", type: "button", "aria-label": "Open the right sidebar", hidden: true, onclick: () => {
+    try { STEPS[index].button?.run(); } catch { /* reports its own trouble */ }
+    railBtn.classList.add("pressed"); setTimeout(() => { railBtn.hidden = true; }, 480);
+  } }, icon("panel", 19));
   const barFill = el("i");
-  const bar = el("div", { class: "wl-bar", role: "progressbar", "aria-label": "Tour progress", "aria-valuemin": "0", "aria-valuemax": String(STEPS.length - 1) }, barFill);
+  const bar = el("div", { class: "wl-bar", role: "progressbar", "aria-label": "Tour progress", "aria-valuemin": "0", "aria-valuemax": "100" }, barFill);
   const counter = el("span", { class: "wl-counter" });
+  const percent = el("span", { class: "wl-percent", "aria-hidden": "true" });
   const top = el("div", { class: "wl-top" }, el("span", { class: "wl-brand" }, el("span", { class: "wl-brand-emoji", text: WAVE }), "Welcome"), counter,
+    el("div", { class: "wl-progress" }, bar, percent),
     el("button", { class: "wl-skip", type: "button", onclick: () => leave(false) }, "Skip tour"));
   const copy = el("div", { class: "wl-copy" });
   const stage = el("div", { class: "wl-stage" });
@@ -187,8 +226,10 @@ export function renderWelcome(host, app) {
   const main = el("div", { class: "wl-main" }, copy, side);
   const back = el("button", { class: "wl-button", type: "button", onclick: () => go(index - 1) }, icon("chevron_left", 14), "Back");
   const next = el("button", { class: "wl-button primary", type: "button", onclick: () => go(index + 1) });
-  const nav = el("div", { class: "wl-nav" }, back, next);
-  const root = el("div", { class: "wl-root" }, bar, top, main, nav);
+  const dots = el("div", { class: "wl-dots", role: "tablist", "aria-label": "Steps" });
+  const nav = el("div", { class: "wl-nav" }, back, dots, next);
+  const railRow = el("div", { class: "wl-railrow" }, railBtn);
+  const root = el("div", { class: "wl-root" }, top, railRow, main, nav);
   host.append(root);
 
   /* The tour takes the whole window: the tabs and both sidebars slide away, and slide back when you leave. */
@@ -200,14 +241,14 @@ export function renderWelcome(host, app) {
   function leave(complete) { if (complete) saveTour({ done: true }); app.goHome?.(); }
 
   function paintTasks(pop) {
-    const list = side.querySelector(".wl-tasks");
+    const list = root.querySelector(".wl-tasks");
     if (!list) return;
     const step = STEPS[index];
     const existing = [...list.children];
     step.tasks.forEach(([id, label, opts = {}], i) => {
       let row = existing[i];
       if (!row) {
-        const inner = [el("span", { class: "wl-check", "aria-hidden": "true" }, tick(13)), el("span", { class: "wl-task-label", text: label }), opts.run ? el("span", { class: "wl-task-go", "aria-hidden": "true" }, icon("chevron_right", 16)) : null];
+        const inner = [el("span", { class: "wl-check", "aria-hidden": "true" }, tick(13)), el("span", { class: "wl-task-label" }, el("span", { class: "wl-strike", text: label })), opts.run ? el("span", { class: "wl-task-go", "aria-hidden": "true" }, icon("chevron_right", 16)) : null];
         const control = opts.run
           ? el("button", { class: "wl-task-btn", type: "button", onclick: (event) => { mark(id); try { const result = opts.run(event.currentTarget); result?.catch?.(() => {}); } catch { /* the action reports its own trouble */ } } }, ...inner)
           : el("div", { class: "wl-task-btn passive" }, ...inner);
@@ -218,7 +259,7 @@ export function renderWelcome(host, app) {
       row.classList.toggle("done", Boolean(done[id]));
       if (pop && done[id] && !was) row.classList.add("pop");
     });
-    const count = side.querySelector(".wl-count");
+    const count = root.querySelector(".wl-count");
     if (count) count.textContent = `${step.tasks.filter(([id]) => done[id]).length} of ${step.tasks.length}`;
     const all = step.tasks.length && step.tasks.every(([id]) => done[id]);
     next.classList.toggle("ready", Boolean(all));
@@ -228,10 +269,14 @@ export function renderWelcome(host, app) {
     const step = STEPS[index];
     const intro = index === 0, last = index === LAST;
     root.classList.toggle("is-intro", intro);
-    barFill.style.width = `${(index / LAST) * 100}%`;
-    bar.setAttribute("aria-valuenow", String(index));
-    counter.textContent = intro || last ? "" : `${index} / ${LAST - 1}`;
-    back.hidden = index <= 1;
+    const pct = Math.round((index / LAST) * 100);
+    barFill.style.width = `${pct}%`;
+    bar.setAttribute("aria-valuenow", String(pct));
+    percent.textContent = `${pct}%`;
+    counter.textContent = intro || last ? "" : `${index} of ${LAST - 1}`;
+    clear(dots);
+    STEPS.forEach((entry, i) => { if (i > 0) dots.append(el("button", { class: `wl-dot${i === index ? " active" : ""}${i < index ? " past" : ""}`, type: "button", role: "tab", "aria-selected": String(i === index), "aria-label": entry.title, onclick: () => go(i) })); });
+    back.classList.toggle("ghost", index <= 1);
     nav.hidden = intro || last;
     next.classList.remove("ready");
     clear(next);
@@ -283,7 +328,6 @@ export function renderWelcome(host, app) {
       saveTour({ done: true });
       const page = await app.createPage?.(null, { title });
       if (!page) { make.disabled = false; return; }
-      toast("First note created");
     };
     make.addEventListener("click", create);
     field.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); create(); } });
@@ -308,7 +352,8 @@ export function renderWelcome(host, app) {
       el("p", { class: "wl-text", text: step.text }),
       keyed.length ? el("div", { class: "wl-hotkeys", "aria-label": "Keyboard shortcuts" }, keyed.map(([keys, label], i) => el("div", { class: "wl-hotkey", style: { "--i": String(i) } },
         el("span", { class: "wl-keys-cap" }, ...keys.split(" ").map((key) => el("kbd", { text: key }))), el("span", { class: "wl-hotkey-label", text: label })))) : null,
-      step.tips?.length ? el("ul", { class: "wl-tips" }, step.tips.map((tip, i) => el("li", { style: { "--i": String(i) }, text: tip }))) : null);
+      step.tasks.length ? el("div", { class: "wl-actions wl-under" }, el("div", { class: "wl-tasks-head" }, el("span", { text: step.listLabel || "Try it" }), el("span", { class: "wl-count" })), el("ul", { class: "wl-tasks" })) : null,
+      step.tips?.length ? el("ul", { class: "wl-tips" }, step.tips.slice(0, 2).map((tip, i) => el("li", { style: { "--i": String(i) }, text: tip }))) : null);
     paintTasks();
   }
 
@@ -319,8 +364,8 @@ export function renderWelcome(host, app) {
     const found = typeof step.spot === "function" ? step.spot() : step.spot ? [...document.querySelectorAll(step.spot)] : [];
     for (const node of found.slice(0, 2)) { node.classList.add("wl-spot"); spotted.push(node); }
     let observer = null;
-    if (step.watch?.length) {
-      const check = () => { for (const [selector, id] of step.watch) if (!done[id] && document.querySelector(selector)) mark(id); };
+    if (step.watch?.length || step.observe) {
+      const check = () => { for (const [selector, id] of step.watch || []) if (!done[id] && document.querySelector(selector)) mark(id); step.observe?.(); };
       observer = new MutationObserver(check);
       observer.observe(document.body, { childList: true, subtree: true });
     }
@@ -329,8 +374,8 @@ export function renderWelcome(host, app) {
 
   async function show(step) {
     release?.(); release = null;
-    side.querySelector(".wl-actions")?.remove();
-    if (!step.hero && !step.finish && !sorted && step.tasks.length) side.append(el("div", { class: "wl-actions" }, el("div", { class: "wl-tasks-head" }, el("span", { text: "Try it" }), el("span", { class: "wl-count" })), el("ul", { class: "wl-tasks" })));
+    const plain = !step.hero && !step.finish && !sorted;
+
     buildCopy(step);
     clear(stage);
     const poster = Boolean(sorted || step.hero || step.finish);
@@ -338,6 +383,8 @@ export function renderWelcome(host, app) {
     stage.hidden = poster || solo;
     main.classList.toggle("poster", poster);
     main.classList.toggle("solo", solo);
+    main.classList.toggle("centered", Boolean(plain && solo));
+    railBtn.classList.remove("pressed"); railBtn.hidden = !(plain && step.railButton) || Boolean(app.railOpen?.());
     if (!poster) attach(step);
     cleanup = !poster && step.mount ? await step.mount(stage) : null;
   }
@@ -348,15 +395,15 @@ export function renderWelcome(host, app) {
     busy = true;
     const forward = target > index;
     const nodes = [main];
-    const SLIDE = 72;
-    if (!reduced()) await Promise.all(nodes.map((node) => node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${forward ? -SLIDE : SLIDE}px)` }], { duration: 230, easing: "cubic-bezier(.4, 0, 1, 1)", fill: "forwards" }).finished.catch(() => {})));
+    const SLIDE = 120, EASE = "cubic-bezier(.65, 0, .35, 1)";
+    if (!reduced()) await Promise.all(nodes.map((node) => node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${forward ? -SLIDE : SLIDE}px)` }], { duration: 520, easing: EASE, fill: "forwards" }).finished.catch(() => {})));
     try { await cleanup?.(); } catch { /* a step that cannot clean up is replaced anyway */ }
     cleanup = null;
     index = target;
     const step = paintChrome();
     await show(step);
     nodes.forEach((node) => node.getAnimations().forEach((animation) => animation.cancel()));
-    if (!reduced()) nodes.forEach((node) => node.animate([{ opacity: 0, transform: `translateX(${forward ? SLIDE : -SLIDE}px)` }, { opacity: 1, transform: "none" }], { duration: 520, easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "backwards" }));
+    if (!reduced()) nodes.forEach((node) => node.animate([{ opacity: 0, transform: `translateX(${forward ? SLIDE : -SLIDE}px)` }, { opacity: 1, transform: "none" }], { duration: 760, easing: EASE, fill: "backwards" }));
     busy = false;
   }
 

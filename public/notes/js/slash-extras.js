@@ -98,6 +98,17 @@ export function extraCommands(editor) {
   add({ key: "brainstorm", label: "Brainstorm", group: "Suggested", icon: "target", badge: "New", desc: "A whiteboard for ideas: stickies, shapes, notes and connectors.", keywords: "brainstorm whiteboard board canvas figjam miro sticky mind map diagram flow ideas",
     run: (block) => editor.insertBrainstorm(block) });
 
+  add({ key: "synced", label: "Synced block", group: "Advanced blocks", icon: "refresh", desc: "The same text in many pages, edited in one place.", keywords: "synced sync mirror shared copy reuse",
+    run: async (block) => {
+      const existing = await api.get("/api/notes/synced").catch(() => []);
+      const anchor = lineOf(editor, block) || document.body;
+      menu(anchor, [
+        { label: "New synced block", icon: "plus", onSelect: () => editor.insertSynced(block) },
+        ...(existing.length ? [{ type: "label", label: "Use an existing one" }] : []),
+        ...existing.slice(0, 12).map((entry) => ({ label: (entry.text || "").split("\n")[0].slice(0, 48) || "Empty synced block", icon: "refresh", onSelect: () => editor.insertSynced(block, entry.id) })),
+      ], { align: "start" });
+    } });
+
   add({ key: "button", label: "Button", group: "Advanced blocks", icon: "plus", desc: "A button that adds content to the page when pressed.", keywords: "button action add template",
     run: (block) => promptDialog({ title: "New button", confirm: "Create button", fields: [{ label: "Label", placeholder: "Add a meeting note", value: "Add a note" }, { label: "What it adds (markdown)", placeholder: "## Notes\n- ", multiline: true, value: "## Notes\n- " }],
       onSubmit: ([label, content]) => { editor.turnInto(block, "button"); block.props = { label, content }; block.__dirty = true; editor.insertAfter(block, editor.blank()); editor.render(); editor.commit("button", true); } }) });

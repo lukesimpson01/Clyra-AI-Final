@@ -257,6 +257,13 @@ CREATE TABLE IF NOT EXISTS app_meta(
   value TEXT NOT NULL DEFAULT ''
 );
 
+/* Text shared by every synced block that points at it: edit it in one page and every copy shows the change. */
+CREATE TABLE IF NOT EXISTS synced_blocks(
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS chats(
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT 'New chat',

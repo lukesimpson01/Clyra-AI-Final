@@ -18,7 +18,7 @@ const TYPE_ICON = {
   url: "link", email: "link", phone: "link", person: "star", created_time: "history", last_edited_time: "history", formula: "equation",
 };
 const ADDABLE = ["text", "number", "select", "multi_select", "status", "date", "checkbox", "url", "email", "phone", "created_time", "last_edited_time"];
-const VIEW_KINDS = [["table", "Table", "table"], ["board", "Board", "panel"], ["timeline", "Timeline", "calendar"], ["calendar", "Calendar", "calendar"], ["list", "List", "list"], ["gallery", "Gallery", "image"], ["feed", "Feed", "list"], ["chart", "Chart", "chart"], ["dashboard", "Dashboard", "panel"], ["form", "Form", "page"]];
+const VIEW_KINDS = [["table", "Table", "table"], ["board", "Board", "panel"], ["timeline", "Timeline", "calendar"], ["calendar", "Calendar", "calendar"], ["list", "List", "list"], ["gallery", "Gallery", "image"], ["map", "Map", "map"], ["feed", "Feed", "list"], ["chart", "Chart", "chart"], ["dashboard", "Dashboard", "panel"], ["form", "Form", "page"]];
 const CHART_KINDS = [["vbar", "Vertical bar"], ["hbar", "Horizontal bar"], ["line", "Line"], ["donut", "Donut"], ["number", "Number"]];
 const PALETTE = ["#337ea9", "#448361", "#d9730d", "#9065b0", "#c14f87", "#cb912f", "#d44c47", "#9f6b53", "#787774"];
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
@@ -36,6 +36,18 @@ const OPERATORS = {
 const operatorsFor = (type) => OPERATORS[type === "status" ? "select" : ["text", "number", "select", "multi_select", "checkbox", "date"].includes(type) ? type : type === "created_time" || type === "last_edited_time" ? "date" : "text"];
 const NO_VALUE = new Set(["is_empty", "is_not_empty", "is_checked", "is_unchecked", "is_today", "is_before_today", "is_within_next_days"]);
 
+/* The map library is loaded the first time a Map view is shown, so databases without one never pay for it. */
+let leafletReady = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  leafletReady ||= new Promise((resolve, reject) => {
+    const sheet = document.createElement("link"); sheet.rel = "stylesheet"; sheet.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.append(sheet);
+    const script = document.createElement("script"); script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.onload = () => (window.L ? resolve(window.L) : reject(new Error("map library missing"))); script.onerror = () => { leafletReady = null; reject(new Error("map library could not load")); };
+    document.head.append(script);
+  });
+  return leafletReady;
+}
 const titleOf = (record) => String(record.title || "").trim() || "Untitled";
 const dateText = (value) => { const raw = value && typeof value === "object" ? value.start : value; if (!raw) return ""; const d = new Date(String(raw).includes("T") ? raw : `${raw}T00:00:00`); return Number.isFinite(d.getTime()) ? d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : String(raw); };
 const dateKey = (value) => { const raw = value && typeof value === "object" ? value.start : value; return raw ? String(raw).slice(0, 10) : ""; };
@@ -510,7 +522,7 @@ export class DatabaseView {
     const type = this.view.type;
     const body = el("div", { class: `db-body db-${type}` });
     if (!this.data) return body;
-    const builder = { table: () => this.table(), board: () => this.board(), list: () => this.list(), gallery: () => this.gallery(), calendar: () => this.calendar(), feed: () => this.feed(), timeline: () => this.timeline(), form: () => this.form(), chart: () => this.chart(), dashboard: () => this.dashboard() }[type] || (() => this.table());
+    const builder = { table: () => this.table(), board: () => this.board(), list: () => this.list(), gallery: () => this.gallery(), map: () => this.map(), calendar: () => this.calendar(), feed: () => this.feed(), timeline: () => this.timeline(), form: () => this.form(), chart: () => this.chart(), dashboard: () => this.dashboard() }[type] || (() => this.table());
     body.append(builder());
     return body;
   }
@@ -604,6 +616,52 @@ export class DatabaseView {
   gallery() {
     const wrap = el("div", { class: "db-gallery" }, this.rows().map((record) => this.card(record)));
     wrap.append(el("button", { class: "db-card db-card-new", type: "button", onclick: () => this.newRecord() }, icon("plus", 16), el("span", { text: "New" })));
+    return wrap;
+  }
+
+  /* A map plots each record where its Place is. Places are looked up once on the server and remembered. */
+  placeProperty() {
+    return this.prop(this.config.placeProperty)
+      || this.props.find((property) => ["text", "url", "select"].includes(property.type) && /place|location|address|city|where|venue/i.test(property.name))
+      || this.props.find((property) => property.type === "text") || null;
+  }
+
+  map() {
+    const place = this.placeProperty();
+    const wrap = el("div", { class: "db-map" });
+    const canvas = el("div", { class: "db-map-canvas" }, el("div", { class: "db-map-note", text: "Finding places\u2026" }));
+    const list = el("div", { class: "db-map-list" });
+    wrap.append(canvas, list);
+    const raw = (value) => (value && typeof value === "object" ? (Array.isArray(value) ? value.map((entry) => entry?.name ?? entry).join(", ") : value.name ?? value.text ?? "") : String(value ?? ""));
+    const entries = this.rows().map((record) => ({ record, text: (place ? raw(record.values[place.id]) : titleOf(record)).trim() })).filter((entry) => entry.text);
+    if (!entries.length) { canvas.replaceChildren(el("div", { class: "db-map-note", text: place ? `Add a place to a record's ${place.name} to see it here.` : "A map needs a Place property: add a text property named Place." })); return wrap; }
+    const rows = new Map();
+    for (const entry of entries) {
+      const row = el("button", { class: "db-map-row", type: "button", onclick: () => this.open(entry.record) }, icon("map", 14), el("span", { class: "db-map-name" }, el("b", { text: titleOf(entry.record) }), el("small", { text: entry.text })));
+      rows.set(entry.text + entry.record.id, row); list.append(row);
+    }
+    (async () => {
+      const found = await api.post("/api/notes/geocode", { places: entries.map((entry) => entry.text) }).catch(() => null);
+      const spots = entries.map((entry) => ({ ...entry, at: found?.results?.[entry.text] })).filter((entry) => entry.at);
+      if (!wrap.isConnected && !canvas.isConnected) return;
+      if (!spots.length) { canvas.replaceChildren(el("div", { class: "db-map-note", text: "None of those places could be found." })); return; }
+      try {
+        const L = await loadLeaflet();
+        canvas.replaceChildren();
+        const map = L.map(canvas, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "\u00A9 OpenStreetMap" }).addTo(map);
+        const points = spots.map((spot) => {
+          const marker = L.circleMarker([spot.at.lat, spot.at.lon], { radius: 8, color: "#fff", weight: 2, fillColor: "#2383e2", fillOpacity: 1 }).addTo(map);
+          marker.bindTooltip(titleOf(spot.record), { direction: "top", offset: [0, -6] });
+          marker.on("click", () => this.open(spot.record));
+          return [spot.at.lat, spot.at.lon];
+        });
+        map.fitBounds(points, { padding: [40, 40], maxZoom: 13 });
+        setTimeout(() => map.invalidateSize(), 120);
+      } catch {
+        canvas.replaceChildren(el("div", { class: "db-map-note", text: "The map tiles could not load. The places are listed on the right." }));
+      }
+    })();
     return wrap;
   }
 

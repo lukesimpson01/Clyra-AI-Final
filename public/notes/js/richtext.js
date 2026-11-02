@@ -17,9 +17,9 @@ const sameMarks = (a, b) =>
 export function normalizeSpans(spans) {
   const out = [];
   for (const span of spans || []) {
-    if (!span || (!span.t && !span.eq && !span.page && !span.date)) continue;
+    if (!span || (!span.t && !span.eq && !span.page && !span.date && !span.person)) continue;
     const last = out[out.length - 1];
-    if (last && !last.eq && !last.page && !last.date && !span.eq && !span.page && !span.date && sameMarks(last, span)) {
+    if (last && !last.eq && !last.page && !last.date && !last.person && !span.eq && !span.page && !span.date && !span.person && sameMarks(last, span)) {
       last.t += span.t;
     } else out.push({ ...span });
   }
@@ -42,6 +42,9 @@ function renderSpan(span, context) {
       class: "page-mention", "data-page": span.page, contenteditable: "false",
       onclick: (event) => { event.preventDefault(); context.onOpenPage?.(span.page, event); },
     }, page?.icon || "", page?.title || span.t || "New page");
+  }
+  if (span.person) {
+    return el("span", { class: "person-mention", "data-person": span.person, contenteditable: "false" }, el("i", { class: "person-avatar", text: span.person.trim().charAt(0).toUpperCase() }), span.person);
   }
   if (span.date) {
     return el("span", { class: "date-mention", "data-date": span.date, contenteditable: "false" }, span.t || span.date);
@@ -98,6 +101,7 @@ export function readSpans(root) {
       if (child.tagName === "BR") { spans.push({ ...marks, t: "\n" }); continue; }
       if (child.dataset?.eq !== undefined) { spans.push({ ...marks, t: child.textContent, eq: child.dataset.eq }); continue; }
       if (child.dataset?.page !== undefined) { spans.push({ ...marks, t: child.textContent, page: child.dataset.page }); continue; }
+      if (child.dataset?.person !== undefined) { spans.push({ ...marks, t: `@${child.dataset.person}`, person: child.dataset.person }); continue; }
       if (child.dataset?.date !== undefined) { spans.push({ ...marks, t: child.textContent, date: child.dataset.date }); continue; }
       const next = { ...marks };
       const tag = child.tagName;

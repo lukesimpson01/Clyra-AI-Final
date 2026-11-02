@@ -1145,3 +1145,14 @@
 .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 260px; overflow-y: auto; }
 .emoji-cell { width: 34px; height: 34px; border: 0; border-radius: 6px; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; }
 .emoji-cell:hover, .emoji-cell:focus-visible { background: var(--background-hover); outline: none; }
+
+/* mentions of people */
+.person-mention { display: inline-flex; align-items: center; gap: 5px; padding: 0 7px 0 3px; border-radius: 999px; background: var(--background-subtle); color: var(--text-primary); font-size: .94em; line-height: 1.5; white-space: nowrap; vertical-align: baseline; }
+.person-avatar { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #2383e2; color: #fff; font: 600 10px/1 system-ui, sans-serif; font-style: normal; }
+/* synced blocks */
+.synced-block { margin: 4px 0; padding: 8px 14px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1.5px rgba(214, 69, 65, .45); transition: box-shadow 160ms ease; }
+.synced-block.editing { box-shadow: inset 0 0 0 1.5px rgba(214, 69, 65, .85); }
+.synced-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: rgb(190, 64, 60); }
+.synced-state { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-tertiary); }
+.synced-body { min-height: 1.6em; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.synced-body:empty::before { content: "Type here. Every copy of this block shows the same text."; color: var(--text-placeholder, #b4b2ab); }

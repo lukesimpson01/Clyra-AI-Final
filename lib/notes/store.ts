@@ -1563,6 +1563,22 @@ export function setMeta(key: string, value: string | null) {
   return getMeta(key);
 }
 
+/* ---------------------------------------------------------- synced blocks */
+
+export function listSynced() {
+  return db.prepare("SELECT id, text, updated_at FROM synced_blocks ORDER BY updated_at DESC LIMIT 100").all();
+}
+export function getSynced(id: string) { return db.prepare("SELECT id, text, updated_at FROM synced_blocks WHERE id=?").get(id) ?? null; }
+export function createSynced(text = "") {
+  const id = newId();
+  db.prepare("INSERT INTO synced_blocks(id,text) VALUES(?,?)").run(id, String(text).slice(0, 20000));
+  return getSynced(id);
+}
+export function saveSynced(id: string, text: string) {
+  db.prepare("UPDATE synced_blocks SET text=?, updated_at=datetime('now') WHERE id=?").run(String(text).slice(0, 20000), id);
+  return getSynced(id);
+}
+
 /* ---------------------------------------------------------------- chats */
 
 export function listChats(pageId?: string) {

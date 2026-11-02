@@ -47,7 +47,7 @@ export function slashCommands(editor) {
     });
   }
   /* blocks with their own setup (a database, tabs, a button, an AI block) have dedicated commands below */
-  const HAND_BUILT = new Set(["database", "tabs", "button", "ai_block"]);
+  const HAND_BUILT = new Set(["database", "tabs", "button", "ai_block", "synced", "brainstorm"]);
   for (const [type, meta] of Object.entries(BLOCK_TYPES)) {
     if (HAND_BUILT.has(type)) continue;
     commands.push({
