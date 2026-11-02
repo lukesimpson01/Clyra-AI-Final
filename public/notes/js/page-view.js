@@ -1,4 +1,5 @@
 /* The document surface: cover, icon, title, backlinks and the block editor. */
+import { DatabaseView, recordProperties } from "./database.js";
 import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, mod, modKey, append } from "./dom.js";
 import { api } from "./api.js";
 import { Editor, makeBlock, uploadFile } from "./editor.js";
@@ -110,6 +111,21 @@ export class PageView {
     append(column, head);
     if ((page.backlinks || []).length) append(column, this.buildBacklinks());
 
+    /* A database page shows its records instead of a text editor; a record shows its properties above its text. */
+    if (page.kind === "database") {
+      canvas.classList.add("database");
+      const dbHost = el("div", { class: "db-host" });
+      append(column, dbHost);
+      append(canvas, column);
+      this.host.append(el("div", { class: "page-scroll scroll" }, canvas));
+      this.database = new DatabaseView(dbHost, page, this.context);
+      return;
+    }
+    if (page.kind === "record" && page.database_id) {
+      const props = el("div", { class: "db-record-host" });
+      append(column, props);
+      recordProperties(page, this.context).then((panel) => { if (panel) props.append(panel); });
+    }
     const editorHost = el("div", { class: "editor-host" });
     append(column, editorHost);
     append(canvas, column);
@@ -346,6 +362,7 @@ export class PageView {
   }
 
   destroy() {
+    this.database?.destroy();
     this.editor?.destroy();
     flushPage(this.pageId);
   }

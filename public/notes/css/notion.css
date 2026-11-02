@@ -288,3 +288,47 @@
 .chat-view.landing .chat-panel-head { position: absolute; top: 0; left: 0; right: 0; z-index: 1; }
 .chat-layout:not(.compact) .chat-history-list { flex: 0 1 auto; max-height: 58%; }
 .chat-layout:not(.compact) .chat-agent-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ---- the same whites and greys as Notion: white pages and chat, #f9f8f7 sidebar, white tool panel ---- */
+.doc-toolbar[hidden], .toolbar[hidden] { display: none; }
+.rail { background: var(--background-main); }
+.rail-chat, .rail-chat .chat-view, .rail-chat .chat-thread { background: var(--background-main); }
+.rail .rail-tabs { background: var(--background-main); }
+
+/* ---- full-screen chat: Notion's welcome ---- */
+.chat-layout:not(.compact) .chat-view { background: var(--background-main); }
+.chat-layout:not(.compact) .chat-view.landing .chat-panel-head { display: none; }
+.chat-layout:not(.compact) .chat-view.landing { padding-bottom: 12vh; }
+.chat-layout:not(.compact) .chat-intro-mark {
+  display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 1px rgba(42, 28, 0, .07), 0 2px 6px rgba(25, 25, 25, .05), 0 8px 12px rgba(25, 25, 25, .03);
+}
+.chat-view.landing .chat-title { font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: 0; color: var(--text-primary); margin: 18px 0 26px; }
+.chat-layout:not(.compact) .chat-view.landing .chat-composer { max-width: 760px; padding: 0 28px; }
+.chat-layout:not(.compact) .chat-bar {
+  border: 0; border-radius: 16px; background: #fff;
+  box-shadow: 0 8px 12px rgba(25, 25, 25, .027), 0 2px 6px rgba(25, 25, 25, .027), 0 0 0 1px rgba(42, 28, 0, .07);
+}
+.chat-layout:not(.compact) .chat-input { font-size: 16px; }
+.chat-layout:not(.compact) [aria-label="What Clyra can use"] { display: none; }
+.chat-layout:not(.compact) .chat-view:not(.landing) .chat-composer { max-width: 820px; width: 100%; margin: 0 auto; padding: 0 28px 20px; }
+.chat-review {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 14px; background: transparent;
+  color: var(--text-secondary, #5f5e59); font: 400 14px/1 inherit; cursor: pointer; transition: background-color 120ms ease, color 120ms ease;
+}
+.chat-review:hover { background: var(--hover, rgba(55, 53, 47, .08)); color: var(--text-primary); }
+.chat-review.on { background: rgba(35, 131, 226, .12); color: #1b6fc2; }
+.chat-review:focus-visible { outline: 2px solid var(--accent, #2383e2); outline-offset: 1px; }
+.chat-action-chip { border: 0; background: transparent; color: var(--text-secondary, #5f5e59); }
+.chat-action-chip:hover { background: var(--hover, rgba(55, 53, 47, .08)); color: var(--text-primary); }
+
+.chat-head-crumb { display: inline-flex; align-items: center; gap: 8px; color: var(--text-primary); font: 500 14px/1 inherit; }
+.chat-head-mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(42, 28, 0, .09); }
+.chat-head-sep { color: var(--text-tertiary, #a19e99); margin: 0 -2px; }
+.chat-layout:not(.compact) .chat-panel-head { min-height: 52px; padding: 8px 16px; }
+.chat-layout:not(.compact) .chat-head-title { margin-left: 0; font-weight: 500; }
+.chat-pin.on { color: var(--text-primary); }
+.chat-pin.on svg { fill: currentColor; }
+.chat-side-top { padding-bottom: 4px; }
+.chat-side-row .page-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .chat-review { transition: none; } }

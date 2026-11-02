@@ -29,7 +29,7 @@ export const state = {
   open: new Map(),        // pageId -> loaded page with blocks
   expanded: new Set(),
   collapsedSections: new Set(),
-  sidebarWidth: 300,
+  sidebarWidth: 270,
   sidebarHidden: false,
   /* The tools rail starts closed: it is a second surface, not a default. */
   railHidden: true,
@@ -50,7 +50,9 @@ const persisted = {
 };
 
 export function restoreSession() {
-  state.sidebarWidth = persisted.read("sidebarWidth", 300);
+  state.sidebarWidth = persisted.read("sidebarWidth", 270);
+  /* 300 was the old default; Notion's is 270, so anyone still on the old default moves with it */
+  if (state.sidebarWidth === 300) state.sidebarWidth = 270;
   state.sidebarHidden = persisted.read("sidebarHidden", false);
   state.railHidden = persisted.read("railHidden", true);
   state.expanded = new Set(persisted.read("expanded", []));

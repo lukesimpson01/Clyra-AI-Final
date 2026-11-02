@@ -34,6 +34,11 @@ export function instructionsFor(agentId) {
   return parts.join("\n\n");
 }
 
+const PINS_KEY = "clyra-notes:chat-pins";
+export const getPins = () => (Array.isArray(read(PINS_KEY, [])) ? read(PINS_KEY, []) : []);
+export const isPinned = (id) => getPins().includes(id);
+export function togglePin(id) { const pins = getPins(); write(PINS_KEY, pins.includes(id) ? pins.filter((entry) => entry !== id) : [id, ...pins].slice(0, 30)); }
+
 export function openPersonalize(onSaved) {
   const field = el("textarea", { class: "extras-field", rows: "7", placeholder: "For example: I'm studying nursing. Keep answers short, use plain words and give an example.", "aria-label": "How should Clyra answer?" });
   field.value = getPersonalize();

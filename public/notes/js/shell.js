@@ -5,6 +5,8 @@ import {
   state, childrenOf, hasChildren, getPageMeta, saveSession, refreshPages,
   openTab, closeTab, selectTab, moveTab, activeTab, withError, dropPage, isSealed,
 } from "./state.js";
+import { getPins, togglePin, listAgents } from "./chat-extras.js";
+import { createDatabase } from "./database.js";
 
 /* --------------------------------------------------------------- sidebar */
 
@@ -13,6 +15,8 @@ export class Sidebar {
     this.host = host;
     this.context = context;
     this.build();
+    /* the chat view reports its list and what is open; the sidebar shows them while the AI chat is the current view */
+    window.addEventListener("clyra:chats-changed", () => { if (activeTab()?.kind === "chat") this.renderBody(); });
   }
 
   build() {
@@ -21,7 +25,7 @@ export class Sidebar {
     /* Content lives in a fixed-width inner shell so collapsing the sidebar
        slides it away rather than squeezing every row as the track shrinks. */
     this.host.append(
-      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), this.buildNav(), this.body, this.buildFooter()),
+      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), (this.nav = this.buildNav()), this.body, this.buildFooter()),
       this.buildResizer(),
     );
     this.renderBody();
@@ -54,6 +58,7 @@ export class Sidebar {
       { label: "Settings", icon: "settings", onSelect: () => this.context.openSettings() },
       { label: "Courses", icon: "book", onSelect: () => this.context.openCourses() },
       { type: "separator" },
+      { label: "New database", icon: "table", onSelect: () => createDatabase(this.context, null) },
       { label: "Import", icon: "import", onSelect: () => this.context.openImport(null) },
       { label: "Export all notes", icon: "export", onSelect: () => this.context.exportAll() },
       { type: "separator" },
@@ -69,7 +74,7 @@ export class Sidebar {
   buildNav() {
     const nav = el("div", { class: "sidebar-nav" });
     const item = (kind, label, iconName, shortcut, onClick) => {
-      const selected = state.view.kind === kind;
+      const selected = activeTab()?.kind === kind;
       const button = el("button", {
         class: `nav-item${selected ? " selected" : ""}`, type: "button",
         "aria-label": label, "aria-current": selected ? "page" : null,
@@ -99,6 +104,8 @@ export class Sidebar {
   buildFooter() { return null; }
 
   renderBody() {
+    /* the nav shows which view is open, so it is rebuilt with the body */
+    if (this.nav?.isConnected) { const next = this.buildNav(); this.nav.replaceWith(next); this.nav = next; }
     clear(this.body);
     /* Before the workspace has loaded the sidebar stays quiet rather than
        claiming there are no pages. */
@@ -106,6 +113,7 @@ export class Sidebar {
       append(this.body, el("div", { class: "loading-row", style: { padding: "10px 14px" } }, el("span", { class: "spinner" }), "Loading…"));
       return;
     }
+    if (activeTab()?.kind === "chat") { this.renderChatBody(); return; }
     const sections = [];
     const favorites = state.pages.filter((page) => page.favorite && page.kind !== "record");
     const recents = [...state.pages]
@@ -139,7 +147,7 @@ export class Sidebar {
     const notesPages = childrenOf(null).filter((page) => !page.class_id);
     sections.push(this.section("Notes", notesPages.length
       ? notesPages.map((page) => this.pageRow(page, 0))
-      : [el("div", { class: "sidebar-empty", text: "No notes yet" })], { onAdd: () => this.context.createPage(null) }));
+      : [el("div", { class: "sidebar-empty", text: "No notes yet" })], { onAdd: (anchor) => menu(anchor, [{ label: "Page", icon: "page", onSelect: () => this.context.createPage(null) }, { label: "Database", icon: "table", onSelect: () => createDatabase(this.context, null) }], { align: "start" }) }));
 
     sections.push(this.section("Study", [
       this.staticRow("Flashcards", "cards", () => this.context.openView({ kind: "flashcards" }), state.study.due ? `${state.study.due} due` : null),
@@ -155,6 +163,42 @@ export class Sidebar {
       this.staticRow("Trash", "trash", () => this.context.openTrash(), state.trashCount ? String(state.trashCount) : null)));
 
     append(this.body, ...sections);
+  }
+
+  /* In the AI chat the sidebar is the chat's own: a new chat, the chats you have had, and your agents, as in Notion. */
+  renderChatBody() {
+    const chats = [...(state.chatList || [])];
+    const pins = getPins();
+    chats.sort((a, b) => (pins.includes(b.id) - pins.includes(a.id)) || String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+    const act = (type, id) => window.dispatchEvent(new CustomEvent("clyra:chat-action", { detail: { type, id } }));
+    const chatRow = (chat) => {
+      const active = chat.id === state.activeChatId;
+      const row = el("div", { class: `page-row chat-side-row${active ? " selected active" : ""}`, role: "button", tabindex: "0", "aria-current": active ? "true" : null,
+        onclick: () => act("open", chat.id),
+        onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); act("open", chat.id); } } },
+        el("span", { class: "page-caret leaf" }),
+        el("span", { class: "page-icon" }, icon(pins.includes(chat.id) ? "pin" : "comment", 15)),
+        el("span", { class: "page-title", text: chat.title || "New chat" }),
+        el("div", { class: "page-row-actions" }, iconButton("dots", "Chat actions", (event) => {
+          event.stopPropagation();
+          menu(event.currentTarget, [
+            { label: pins.includes(chat.id) ? "Unpin" : "Pin", icon: "pin", onSelect: () => { togglePin(chat.id); this.renderBody(); } },
+            { label: "Rename", icon: "pencil", onSelect: () => act("rename", chat.id) },
+            { type: "separator" },
+            { label: "Delete", icon: "trash", danger: true, onSelect: () => act("delete", chat.id) },
+          ], { align: "start" });
+        }, { size: 14 })));
+      return row;
+    };
+    const agents = listAgents();
+    append(this.body,
+      el("div", { class: "sidebar-section chat-side-top" }, this.staticRow("New chat", "comment", () => this.context.newChat())),
+      this.section("Chats", chats.length ? chats.map(chatRow) : [el("div", { class: "sidebar-empty", text: "No chats yet" })]),
+      this.section("Agents", [
+        ...agents.map((agent) => el("button", { class: "page-row", type: "button", onclick: () => act("agent", agent.id) },
+          el("span", { class: "page-caret leaf" }), el("span", { class: "page-icon", text: agent.emoji || "\u2728" }), el("span", { class: "page-title", text: agent.name }))),
+        this.staticRow("New agent", "plus", () => act("new-agent")),
+      ]));
   }
 
   section(title, rows, options = {}) {
@@ -190,8 +234,8 @@ export class Sidebar {
             })
           : null,
         options.onAdd || options.classId
-          ? iconButton("plus", `New page in ${title}`, () =>
-              (options.classId ? this.context.createPage(null, { classId: options.classId }) : options.onAdd()))
+          ? iconButton("plus", `New page in ${title}`, (event) =>
+              (options.classId ? this.context.createPage(null, { classId: options.classId }) : options.onAdd(event.currentTarget)))
           : null),
     );
     const node = el("div", { class: "sidebar-section" }, header, content);
@@ -609,6 +653,8 @@ export class Toolbar {
   render() {
     clear(this.host);
     const tab = activeTab();
+    /* the AI chat carries its own header, as Notion's full-screen chat does */
+    this.host.hidden = tab?.kind === "chat";
     const crumbs = el("div", { class: "breadcrumbs" });
     const actions = el("div", { class: "toolbar-actions" });
 

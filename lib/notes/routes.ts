@@ -301,6 +301,7 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   /* ---- databases ---- */
   app.post("/api/notes/databases", wrap((req, res) => { res.status(201); return store.createDatabase(req.body); }));
   app.get("/api/notes/databases/:id", wrap((req) => store.getDatabase(req.params.id)));
+  app.get("/api/notes/pages/:id/database", wrap((req) => store.getDatabaseByPage(req.params.id)));
   app.get("/api/notes/databases/:id/records", wrap((req) => store.listRecords(req.params.id)));
   app.post("/api/notes/databases/:id/records", wrap((req, res) => { res.status(201); return store.createRecord(req.params.id, req.body); }));
   app.post("/api/notes/databases/:id/properties", wrap((req) => store.addProperty(req.params.id, req.body)));

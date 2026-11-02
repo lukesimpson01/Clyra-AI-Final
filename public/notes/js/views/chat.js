@@ -12,7 +12,7 @@ import { formatRelative } from "../app.js";
 import { renderMarkdown } from "../ai-composer.js";
 import { openSearch } from "../search.js";
 import { streamAgent, renderAgentRun } from "../agent-run.js";
-import { instructionsFor, listAgents, getAgent, deleteAgent, openPersonalize, openAgentEditor } from "../chat-extras.js";
+import { instructionsFor, listAgents, getAgent, deleteAgent, openPersonalize, openAgentEditor, isPinned, togglePin } from "../chat-extras.js";
 
 /* Quick actions under the composer, as Notion's chat has them: each is a real task for the agent, which can read the
    notes, create pages and answer with sources, not a canned reply. */
@@ -40,6 +40,7 @@ const MODELS = [
   { id: "thorough", label: "Thorough", hint: "More careful on long notes and hard questions.", model: "deepseek-v4-pro" },
 ];
 const MODEL_KEY = "clyra-notes:chat-model";
+const REVIEW_NOTE = "Review mode is on. Before you create a page or change a note, show the person exactly what you plan to write and wait for their go-ahead. Reading, searching and answering questions need no approval.";
 const AUTOPAGE_KEY = "clyra-notes:chat-autopage";
 export const autoPageOn = () => { try { return localStorage.getItem(AUTOPAGE_KEY) !== "0"; } catch { return true; } };
 const clock = (when) => new Date(when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -56,6 +57,7 @@ export function renderChat(host, app, options = {}) {
   let quotes = [];
   let chatId = null;
   let agentId = null;
+  let reviewMode = false;
   let chats = [];
   let modelId = (() => { try { const saved = localStorage.getItem(MODEL_KEY); return MODELS.some((m) => m.id === saved) ? saved : "auto"; } catch { return "auto"; } })();
   let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
@@ -67,7 +69,7 @@ export function renderChat(host, app, options = {}) {
   /* The placeholder teaches the one thing the composer can do that a plain
      chat box cannot: attach notes. Naming the key is what makes it
      discoverable — there is nothing else on the bar that says so. */
-  const PLACEHOLDER = "Ask about your notes\u2026";
+  const PLACEHOLDER = "Ask Clyra";
   const input = el("textarea", {
     class: "chat-input", rows: "1", placeholder: PLACEHOLDER, "aria-label": "Ask Clyra",
   });
@@ -83,8 +85,17 @@ export function renderChat(host, app, options = {}) {
   const plusButton = iconButton("plus", "Add context", () => menu(plusButton, [
     { label: "Add a note", icon: "page", onSelect: () => addSource() },
     { label: "Research the web", icon: "search", onSelect: () => { if (!input.value.trim()) input.value = "Research this on the web and write it up with sources: "; grow(); syncSend(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); } },
+    { label: "Web browser", icon: "embed", hint: "Open beside the page", onSelect: () => app.showRailPanel ? (app.railOpen?.() || app.toggleRail?.(), app.showRailPanel("browser")) : null },
     { label: "Ask about a selection", icon: "comment", hint: "Select text in a page first", onSelect: () => toast("Select text in a page, then choose Ask Clyra") },
+    { type: "separator" },
+    { type: "label", label: "Agents" },
+    ...listAgents().map((agent) => ({ label: agent.name, icon: agent.emoji || "sparkle", checked: agent.id === agentId, onSelect: () => startChat(agent.id) })),
+    { label: "New agent\u2026", icon: "plus", onSelect: () => openAgentEditor(null, (saved) => startChat(saved.id)) },
   ], { side: "top" }), { size: 16, className: "chat-at" });
+
+  /* "Review for me": Clyra shows what it would write and waits, instead of acting. */
+  const reviewChip = el("button", { class: "chat-review", type: "button", "aria-pressed": "false", title: "Clyra shows what it plans to write and waits for your go-ahead" }, icon("check_square", 14), el("span", { text: "Review for me" }));
+  reviewChip.addEventListener("click", () => { reviewMode = !reviewMode; reviewChip.classList.toggle("on", reviewMode); reviewChip.setAttribute("aria-pressed", String(reviewMode)); });
 
   /* What Clyra may look at: a real switch for reading the open page, and a plain statement of what it can and cannot do. */
   const shieldButton = iconButton("shield", "What Clyra can use", () => menu(shieldButton, [
@@ -107,6 +118,7 @@ export function renderChat(host, app, options = {}) {
       el("div", { class: "chat-bar-controls" },
         plusButton,
         shieldButton,
+        reviewChip,
         chips,
         el("span", { class: "chat-bar-hint" }, "Type ", el("kbd", { text: "@" }), " to reference a note"),
         el("span", { class: "chat-bar-spacer" }),
@@ -135,12 +147,13 @@ export function renderChat(host, app, options = {}) {
     clear(headTitle);
     const agent = agentId ? getAgent(agentId) : null;
     const title = currentChat()?.title || agent?.name || "New AI chat";
-    headTitle.append(agent?.emoji ? el("span", { class: "chat-head-emoji", text: agent.emoji }) : bloub(18), el("span", { class: "chat-head-name", text: title }), icon("chevron_down", 12));
+    append(headTitle, ...[agent?.emoji ? el("span", { class: "chat-head-emoji", text: agent.emoji }) : compact ? bloub(18) : null, el("span", { class: "chat-head-name", text: title }), icon("chevron_down", 12)].filter(Boolean));
+    pinButton.classList.toggle("on", Boolean(chatId) && isPinned(chatId));
   };
   const transcript = () => messages.filter((m) => m.text && !m.error).map((m) => `${m.role === "user" ? "You" : "Clyra"}: ${m.text}`).join("\n\n");
   const markdownFile = () => `# ${currentChat()?.title || "Chat with Clyra"}\n\n${messages.filter((m) => m.text && !m.error).map((m) => (m.role === "user" ? `**You**\n\n${m.text}` : `**Clyra**\n\n${m.text}`)).join("\n\n---\n\n")}\n`;
-  const renameChatPrompt = () => {
-    const chat = currentChat();
+  const renameChatPrompt = (target) => {
+    const chat = target && target.id ? target : currentChat();
     if (!chat) { toast("Send a message first"); return; }
     const input_ = el("input", { class: "extras-input", value: chat.title || "", "aria-label": "Chat name" });
     const save = el("button", { class: "button primary", type: "button" }, "Rename");
@@ -186,14 +199,18 @@ export function renderChat(host, app, options = {}) {
       chat ? { label: `Last updated ${formatRelative(chat.updated_at)}`, disabled: true } : null,
     ].filter(Boolean), { align: "end" });
   }, { size: 15 });
+  const pinButton = iconButton("pin", "Pin chat", () => { if (!chatId) { toast("Send a message first"); return; } togglePin(chatId); paintHead(); publishChats(); }, { size: 15, className: "chat-pin" });
   const panelHead = el("div", { class: "chat-panel-head" },
+    compact ? null : el("span", { class: "chat-head-crumb" }, el("span", { class: "chat-head-mark" }, bloub(16)), el("span", { class: "chat-head-brand", text: "Clyra" }), el("span", { class: "chat-head-sep", text: "/" })),
     headTitle,
     el("span", { class: "chat-head-spacer" }),
     iconButton("plus", "New chat", () => startChat(), { size: 15 }),
     exportButton,
+    pinButton,
     moreButton);
   const chatView = el("div", { class: "chat-view" }, panelHead, thread, composer, compact ? null : actionRow);
-  const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}${compact ? " compact" : ""}` },
+  historyOpen = false;
+  const layout = el("div", { class: `chat-layout history-hidden${compact ? " compact" : ""}` },
     chatView,
     compact ? null : history);
   host.append(layout);
@@ -205,10 +222,17 @@ export function renderChat(host, app, options = {}) {
     localStorage.setItem("clyra-notes:chat-history", historyOpen ? "1" : "0");
   };
 
+  /* The workspace sidebar shows the chat list in the full view, as Notion's does; this hands it the list and what is open. */
+  const publishChats = () => {
+    if (compact) return;
+    state.chatList = chats; state.activeChatId = chatId;
+    window.dispatchEvent(new CustomEvent("clyra:chats-changed"));
+  };
   const loadChats = async () => {
     chats = (await withError(() => api.get("/api/notes/chats"), "Could not load your chats")) || [];
     paintHistory();
     paintHead();
+    publishChats();
   };
 
   const paintAgents = () => {
@@ -306,12 +330,14 @@ export function renderChat(host, app, options = {}) {
     paint();
     paintHistory();
     paintHead();
+    publishChats();
   };
 
   const startChat = (withAgent = null) => {
     chatId = null;
     agentId = typeof withAgent === "string" ? withAgent : null;
     paintHead();
+    publishChats();
     messages = [];
     sources = [];
     paintSources();
@@ -355,6 +381,16 @@ export function renderChat(host, app, options = {}) {
 
   const onNewChat = () => startChat();
   window.addEventListener("clyra:new-chat", onNewChat);
+  const onSidebar = (event) => {
+    if (compact) return;
+    const { type, id } = event.detail || {};
+    if (type === "open") openChat(id);
+    else if (type === "agent") startChat(id);
+    else if (type === "new-agent") openAgentEditor(null, (saved) => startChat(saved.id));
+    else if (type === "rename") { const chat = chats.find((entry) => entry.id === id); if (chat) renameChatPrompt(chat); }
+    else if (type === "delete") { const chat = chats.find((entry) => entry.id === id); if (chat) removeChat(chat); }
+  };
+  window.addEventListener("clyra:chat-action", onSidebar);
   /* Text selected in a page: "Add to chat" attaches it as context; "Ask Clyra" attaches it and starts the question. */
   const onQuote = (event) => {
     const { text, mode } = event.detail || {};
@@ -422,6 +458,11 @@ export function renderChat(host, app, options = {}) {
         el("span", { class: index === activeIndex ? "shimmer-text" : "", text: step }))));
 
   const paint = () => {
+    const wasLanding = chatView.classList.contains("landing");
+    const composerBefore = wasLanding ? composer.getBoundingClientRect() : null;
+    const viewBefore = wasLanding ? chatView.getBoundingClientRect() : null;
+    const ghost = wasLanding ? thread.querySelector(".chat-intro")?.cloneNode(true) : null;
+    const ghostRect = ghost ? thread.querySelector(".chat-intro").getBoundingClientRect() : null;
     clear(thread);
     /* an empty chat is a landing: the heading and the composer sit together in the middle, as in Notion */
     chatView.classList.toggle("landing", Boolean(state.aiConfigured) && !messages.length && !compact);
@@ -516,6 +557,17 @@ export function renderChat(host, app, options = {}) {
       thread.append(el("div", { class: "chat-column chat-row assistant" }, wrapper));
     }
     thread.scrollTop = thread.scrollHeight;
+    /* Entering the chat: the welcome lifts away and the composer glides down to the foot of the page. */
+    if (wasLanding && messages.length && !compact && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const after = composer.getBoundingClientRect();
+      const dy = composerBefore.top - after.top;
+      if (Math.abs(dy) > 4) composer.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 460, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+      if (ghost) {
+        Object.assign(ghost.style, { position: "absolute", left: `${ghostRect.left - viewBefore.left}px`, top: `${ghostRect.top - viewBefore.top}px`, width: `${ghostRect.width}px`, margin: "0", pointerEvents: "none" });
+        chatView.append(ghost);
+        ghost.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-14px)" }], { duration: 240, easing: "ease-out", fill: "forwards" }).onfinish = () => ghost.remove();
+      }
+    }
   };
 
   const ask = async (retryOf) => {
@@ -555,7 +607,7 @@ export function renderChat(host, app, options = {}) {
       await streamAgent({
         messages: history,
         model: MODELS.find((m) => m.id === modelId)?.model,
-        instructions: instructionsFor(agentId),
+        instructions: [instructionsFor(agentId), reviewMode ? REVIEW_NOTE : ""].filter(Boolean).join("\n\n"),
         notes: { pageIds, currentPageId: app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {
@@ -647,7 +699,7 @@ export function renderChat(host, app, options = {}) {
         source.pageId && !seen.has(source.pageId) && seen.add(source.pageId));
       paintSources();
     },
-    destroy() { window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); },
+    destroy() { window.removeEventListener("clyra:chat-action", onSidebar); window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); },
   };
 }
 
