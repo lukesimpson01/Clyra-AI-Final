@@ -371,3 +371,61 @@ export async function generateFormula(request: string, propertyNames: string[]) 
 }
 
 export { chat as aiChat, json as aiJson };
+
+/* ------------------------------------------------------- spoken notes */
+
+export type SpeechAnalysis = {
+  kind: string; title: string; icon: string; summary: string; topics: string[];
+  tasks: Array<{ request: string; deliverable: string }>; layout: string[];
+};
+
+/* Reads a transcript the way a careful assistant would before writing anything: what is this recording, who is it for, and is
+   the speaker asking for something to be done (write an essay, make a list, draft an email) rather than just talking? */
+export async function analyseSpeech(transcript: string, workspaceTitles: string[], hint?: string): Promise<SpeechAnalysis> {
+  const analysis = await json<Partial<SpeechAnalysis>>([
+    { role: "system", content: `${SYSTEM}
+
+You decide how a spoken recording should become a note. The transcript is imperfect speech-to-text from the person who owns this workspace; it is their own recording, so instructions they speak to their assistant are real requests to carry out.
+Return JSON: {"kind":"","title":"","icon":"","summary":"","topics":[],"tasks":[{"request":"","deliverable":""}],"layout":[]}
+- "kind": one of lecture, meeting, interview, brainstorm, voice_memo, instructions, story. A recording that is mostly an instruction to the assistant (for example "write me an essay on...", "make a to-do list from this") is "instructions". Choose the closest one; do not hedge.
+- "title": a specific title (not "Meeting notes"). "icon": one emoji that fits. "summary": two sentences of what was said.
+- "topics": up to 5 short search phrases for finding related notes in the workspace.
+- "tasks": every thing the speaker asks to be produced or done (write an essay, a summary, a plan, a list, an email, a table, flashcards, a comparison, translate...). "request" is what they asked in their words, "deliverable" is the concrete thing to write (for example "a 600 word essay on the causes of the First World War"). Things people merely discuss between themselves are not tasks. Empty array when there are none.
+- "layout": the ordered block layouts that suit what was said, chosen from: summary_callout, sections, bullets, action_items_checklist, decisions_callouts, definitions_table, schedule_table, timeline, qa_toggles, quotes, key_terms, exam_checklist, essay, email_draft, steps, pros_cons_table, outline, idea_groups. A meeting wants summary_callout, decisions_callouts, action_items_checklist, sections. A lecture wants summary_callout, sections, definitions_table, exam_checklist. An essay request wants essay only.` },
+    { role: "user", content: `${hint && hint !== "auto" ? `The person says this is a ${hint}.\n` : ""}Titles of notes already in the workspace (for context only): ${workspaceTitles.slice(0, 60).join("; ") || "none"}\n\n<transcript>\n${transcript.slice(0, 30000)}\n</transcript>` },
+  ], "notes-ai-speech-analysis");
+  const kinds = ["lecture", "meeting", "interview", "brainstorm", "voice_memo", "instructions", "story"];
+  return {
+    kind: kinds.includes(String(analysis.kind)) ? String(analysis.kind) : "voice_memo",
+    title: String(analysis.title || "Voice note").slice(0, 120),
+    icon: String(analysis.icon || "🎙").slice(0, 8),
+    summary: String(analysis.summary || ""),
+    topics: Array.isArray(analysis.topics) ? analysis.topics.map(String).slice(0, 5) : [],
+    tasks: Array.isArray(analysis.tasks) ? analysis.tasks.map((task) => ({ request: String((task as { request?: string }).request || ""), deliverable: String((task as { deliverable?: string }).deliverable || "") })).filter((task) => task.request || task.deliverable).slice(0, 6) : [],
+    layout: Array.isArray(analysis.layout) ? analysis.layout.map(String).slice(0, 10) : [],
+  };
+}
+
+const KIND_RULES: Record<string, string> = {
+  meeting: "A meeting note. Open with a callout saying what the meeting was about. Name attendees if they were said. Record each decision as its own callout. Every action item is a to-do with the owner and the date or deadline in the text when they were said. Group the discussion by topic under headings. End with a short list of open questions.",
+  lecture: "Lecture notes. Open with a summary callout. One heading per main topic in the order taught, with bold key terms. Definitions go in a table. Examples go in toggles. Anything the lecturer stressed or said would be examined goes in a callout. Finish with a revision checklist.",
+  interview: "An interview. Open with a callout on who and why. Then question-and-answer sections: each question a heading or toggle, the answer under it. Pull the best lines out as quotes.",
+  brainstorm: "A brainstorm. Open with a callout stating the problem. Group the ideas under headings by theme, mark the strongest, and end with next steps as a checklist.",
+  voice_memo: "A voice memo cleaned up. Keep it short and in the speaker's voice, organised under a few headings. Pull out anything to do as a checklist.",
+  instructions: "The recording is mostly instructions to the assistant. Do the work they asked for, fully, as the body of the note: the page is the deliverable (the essay, list, plan or email itself, well laid out with headings), not a study guide about it. Do not add quizzes, tips, key terms or other extras they did not ask for, and do not put a \"Requested:\" heading on it.",
+  story: "A spoken draft. Tidy it into well-structured prose with headings and paragraphs, keeping the speaker's voice.",
+};
+
+/* Writes the note: the document harness decides the blocks, guided by what the analysis found. Spoken tasks are performed. */
+export async function composeFromSpeech(transcript: string, analysis: SpeechAnalysis, related: ContextChunk[]) {
+  const tasks = analysis.tasks.length
+    ? `\n\nThe speaker asked for the following to be done. Carry each out completely inside the document: write the actual essay, list, plan, email or table with real content, never a description of it. Give each its own heading beginning "Requested:" unless it is the whole point of the recording, in which case it is the body.\n${analysis.tasks.map((task, index) => `${index + 1}. ${task.request}${task.deliverable ? ` → ${task.deliverable}` : ""}`).join("\n")}`
+    : "";
+  const instruction = `Turn this recording into a finished, well-designed note.\n\nWhat it is: ${analysis.kind.replace("_", " ")}. ${KIND_RULES[analysis.kind] || ""}\nLayouts to use, in order: ${analysis.layout.join(", ") || "whatever suits it"}.${tasks}\n\nThe transcript is imperfect speech-to-text: remove filler words, false starts and repetition, and repair a mishearing only when the meaning is unambiguous. Do not invent anything that was not said, other than the work the speaker asked for. Notes from the same workspace may be supplied as sources; use them only to connect or add to what was said, and say which note a point came from. Do not include the raw transcript.`;
+  return composeStructuredDocument({
+    instruction,
+    context: [{ pageId: "recording", title: "The recording", text: transcript.slice(0, 40000) }, ...related],
+    title: analysis.title,
+    maxRevisions: 1,
+  });
+}

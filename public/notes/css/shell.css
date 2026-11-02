@@ -749,3 +749,11 @@ svg[data-icon="dots"] { stroke-width: 3.4; }
 .cp-foot span { display: inline-flex; align-items: center; gap: 4px; } .cp-count { margin-left: auto; }
 .cp-shortcuts { display: grid; gap: 2px; } .cp-srow { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--border-soft); font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { .cp { animation: none; } .cp-option { transition: none; } }
+
+/* The welcome tour takes the whole window: tabs and both sidebars glide away, and glide back when it ends. */
+.tabstrip { overflow: hidden; transition: height var(--duration-panel) var(--ease-glide), opacity 260ms ease, border-color 260ms ease, padding 260ms ease; }
+.workspace.tour-mode { grid-template-columns: 0px minmax(0, 1fr) var(--rail-width); }
+.workspace.tour-mode.rail-hidden { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+.workspace.tour-mode .sidebar { border-right-color: transparent; pointer-events: none; }
+.workspace.tour-mode .sidebar-inner { transform: translateX(-40px); opacity: 0; }
+.workspace.tour-mode .tabstrip { height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; border-bottom-color: transparent; pointer-events: none; }

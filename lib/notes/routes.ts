@@ -8,6 +8,7 @@ import * as store from "./store";
 import * as ai from "./ai";
 import { runWebSearchResearch } from "../research/research-handlers";
 import { safeFetchUserUrl } from "../security/safe-fetch";
+import * as recorder from "./recorder";
 import { blocksToMarkdown, markdownToBlocks, spanText, parseSpans, type Block } from "./blocks";
 import { registerNotesBrowseRoutes } from "./browse";
 import type { Rating } from "./fsrs";
@@ -398,7 +399,91 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.get("/api/notes/lectures/:id", wrap((req) => store.getLecture(req.params.id)));
   app.post("/api/notes/lectures/:id/segments", wrap((req) => store.appendSegment(req.params.id, req.body)));
   app.post("/api/notes/lectures/:id/status", wrap((req) => store.setLectureStatus(req.params.id, String(req.body.status || "ended"))));
+  /* ---- spoken notes: upload a recording, transcribe it, write it up ---- */
+
+  /* The note itself: read the transcript, decide what the recording is, write it in a layout that suits it, perform any task the
+     speaker gave, and keep the transcript behind a toggle. The raw lecture page is never overwritten. */
+  const writeSpokenNote = async (sessionId: string, options: { hint?: string; title?: string; onStage?: (stage: "analysing" | "writing") => void } = {}) => {
+    const transcript = store.lectureTranscript(sessionId);
+    if (!transcript.trim()) throw new Error("There is no transcript to work from yet.");
+    const session = store.getLecture(sessionId)!;
+    const titles = (store.listPages() as Array<Record<string, unknown>>).filter((page) => !page.inline && page.kind !== "record").map((page) => String(page.title || "Untitled"));
+    options.onStage?.("analysing");
+    const analysis = await ai.analyseSpeech(transcript, titles, options.hint);
+    /* context from the rest of the workspace: notes that match what was talked about */
+    const related: ai.ContextChunk[] = [];
+    const seen = new Set<string>([String(session.page_id)]);
+    for (const topic of analysis.topics.slice(0, 4)) {
+      for (const hit of (store.search(topic) as Array<Record<string, unknown>>).slice(0, 2)) {
+        const id = String(hit.page_id);
+        if (seen.has(id) || related.length >= 5) continue;
+        seen.add(id);
+        const markdown = store.pageMarkdown(id);
+        if (markdown) related.push({ pageId: id, title: String(hit.title || "Untitled"), text: markdown.slice(0, 1800) });
+      }
+    }
+    options.onStage?.("writing");
+    const composed = await ai.composeFromSpeech(transcript, analysis, related);
+    const paragraphs = transcript.match(/[\s\S]{1,700}(?:\s|$)/g) || [transcript];
+    const drafts = [
+      ...composed.blocks,
+      { type: "divider", text: [], props: {}, children: [] },
+      { type: "toggle", text: [{ t: "Full transcript" }], props: { collapsed: true }, children: paragraphs.map((chunk) => ({ type: "text", text: [{ t: chunk.trim() }], props: {}, children: [] })) },
+    ];
+    const page = store.createPage({
+      parentId: session.page_id,
+      title: options.title || composed.title || analysis.title,
+      icon: analysis.icon,
+      blocks: draftsToPageBlocks(drafts as Array<Record<string, unknown>>),
+    });
+    return { page, analysis, passes: composed.passes };
+  };
+
+  app.post("/api/notes/lectures/transcribe", express_.raw({ type: "application/octet-stream", limit: "400mb" }), wrap(async (req) => {
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || !body.length) return { error: "No audio was received." };
+    const name = path.basename(String(req.query.name || "recording")).slice(0, 120);
+    const hint = String(req.query.hint || "auto");
+    const job = recorder.startJob();
+    const title = String(req.query.title || "").trim() || name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Recording";
+    /* the work runs on after this reply; the page asks how far along it is */
+    void (async () => {
+      try {
+        const { segments, seconds } = await recorder.transcribeRecording(body, name, job);
+        if (!segments.length) throw new Error("No speech could be heard in that recording.");
+        const started = store.startLecture({ title });
+        if (!started) throw new Error("Could not make the page for this recording.");
+        const sessionId = String((started.session as Record<string, unknown>).id);
+        for (const segment of segments) store.appendSegment(sessionId, segment);
+        store.setLectureStatus(sessionId, "ended");
+        job.result = { sessionId, pageId: (started.page as Record<string, unknown>).id, seconds, words: segments.reduce((total, segment) => total + segment.text.split(/\s+/).length, 0) };
+        if (ai.aiConfigured()) {
+          const written = await writeSpokenNote(sessionId, { hint, onStage: (stage) => { job.stage = stage; job.progress = stage === "analysing" ? 0.84 : 0.92; } });
+          job.result = { ...job.result, notePageId: (written.page as Record<string, unknown>).id, kind: written.analysis.kind, tasks: written.analysis.tasks.length };
+        }
+        job.stage = "done"; job.progress = 1; job.status = "done";
+      } catch (error) {
+        job.status = "failed"; job.error = error instanceof Error ? error.message : "Could not transcribe that recording.";
+      }
+    })();
+    return { id: job.id };
+  }));
+  app.get("/api/notes/lectures/jobs/:id", wrap((req) => {
+    const job = recorder.getJob(String(req.params.id));
+    if (!job) return { error: "That recording is no longer being processed." };
+    return { id: job.id, status: job.status, stage: job.stage, progress: job.progress, ...(job.error ? { failure: job.error } : {}), heard: job.segments.length, text: job.segments.slice(-1)[0]?.text || "", result: job.result };
+  }));
+
   app.post("/api/notes/lectures/:id/notes", wrap(async (req) => {
+    if (ai.aiConfigured()) {
+      try {
+        const written = await writeSpokenNote(String(req.params.id), { hint: req.body?.hint, title: req.body?.title });
+        return { page: written.page, generated: { title: (written.page as Record<string, unknown>).title, kind: written.analysis.kind } };
+      } catch (error) {
+        if (error instanceof Error && /no transcript/i.test(error.message)) return { error: error.message };
+        /* the older single-pass writer is still there if the careful route fails */
+      }
+    }
     const transcript = store.lectureTranscript(req.params.id);
     if (!transcript.trim()) return { error: "There is no transcript to work from yet." };
     const session = store.getLecture(req.params.id)!;

@@ -3,7 +3,7 @@
    The page stays an ordinary editor page; recording adds a small status strip
    and appends timestamped transcript segments. Generating clean notes creates
    a separate child page so the raw transcript is never overwritten. */
-import { el, clear, icon, iconButton, modal, toast, confirmDialog } from "../dom.js";
+import { el, clear, icon, iconButton, modal, toast, confirmDialog, append, menu } from "../dom.js";
 import { api } from "../api.js";
 import { state, refreshPages, withError } from "../state.js";
 import { formatTime } from "../editor.js";
@@ -97,7 +97,79 @@ async function startPhraseCapture({ onPhrase, onLevel }) {
   };
 }
 
-export async function openLectureRecorder(app, target = {}) {
+/* Meeting and lecture notes start here: one simple box to drop a recording into. Drop it, or browse, or record live. The work carries
+   on if the box is closed, and the note opens when it is ready. */
+export function openLectureRecorder(app, target = {}) {
+  let entry;
+  let hint = "auto";
+  const body = el("div", { class: "rec-box" });
+  const file = el("input", { type: "file", accept: "audio/*,video/*,.m4a,.mp3,.wav,.aiff,.aac,.ogg,.flac,.webm,.mp4,.mov", style: { display: "none" } });
+  file.addEventListener("change", () => { if (file.files?.[0]) transcribeFile(file.files[0]); });
+  const KINDS = [["auto", "Detect"], ["meeting", "Meeting"], ["lecture", "Lecture"], ["brainstorm", "Brainstorm"], ["voice_memo", "Memo"]];
+  const cloud = () => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", "0 0 48 48"); svg.setAttribute("width", "44"); svg.setAttribute("height", "44"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "1.6"); svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round"); const path = document.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", "M15 32a8 8 0 0 1-1.4-15.9A11 11 0 0 1 34.8 14 9 9 0 0 1 35 32M24 38V22m0 0-6 6m6-6 6 6"); svg.append(path); return svg; };
+
+  const paintChoices = () => {
+    clear(body);
+    const zone = el("div", { class: "rec-zone", tabindex: "0", role: "button", "aria-label": "Drop a recording here or browse" },
+      el("div", { class: "rec-zone-icon" }, cloud()),
+      el("div", { class: "rec-zone-title", text: "Drop a recording here" }),
+      el("div", { class: "rec-zone-sub" }, "or ", el("span", { class: "rec-browse", text: "browse files" })),
+      el("div", { class: "rec-zone-fine", text: "Audio or video, up to 380 MB" }));
+    zone.addEventListener("click", () => file.click());
+    zone.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); file.click(); } });
+    zone.addEventListener("dragenter", (event) => { event.preventDefault(); zone.classList.add("over"); });
+    zone.addEventListener("dragover", (event) => { event.preventDefault(); zone.classList.add("over"); });
+    zone.addEventListener("dragleave", (event) => { if (!zone.contains(event.relatedTarget)) zone.classList.remove("over"); });
+    zone.addEventListener("drop", (event) => { event.preventDefault(); zone.classList.remove("over"); const dropped = event.dataTransfer?.files?.[0]; if (dropped) transcribeFile(dropped); });
+    const kinds = el("div", { class: "rec-kinds", role: "group", "aria-label": "What is it?" }, KINDS.map(([id, label]) =>
+      el("button", { class: `rec-kind${id === hint ? " on" : ""}`, type: "button", onclick: (event) => { hint = id; kinds.querySelectorAll(".rec-kind").forEach((node) => node.classList.toggle("on", node === event.currentTarget)); } }, label)));
+    append(body, zone,
+      el("div", { class: "rec-foot" }, kinds, el("button", { class: "rec-live", type: "button", onclick: () => { entry.close("record"); startLiveLecture(app, target); } }, icon("mic", 15), "Record live")),
+      file);
+  };
+  paintChoices();
+  entry = modal({ title: "Meeting and lecture notes", width: 540, body, footer: [] });
+
+  /* upload, then follow the job until the note exists */
+  async function transcribeFile(source) {
+    if (source.size > 380 * 1024 * 1024) { toast("That recording is over 380 MB", "error"); return; }
+    const bar = el("i"); const stage = el("div", { class: "rec-stage", text: "Uploading" }); const heard = el("div", { class: "rec-heard" });
+    clear(body);
+    append(body, el("div", { class: "rec-zone working" }, el("div", { class: "rec-file" }, icon("mic", 16), el("span", { text: source.name })), stage, el("div", { class: "rec-bar" }, bar), heard,
+      el("div", { class: "rec-zone-fine", text: "You can close this. The note opens when it is ready." })));
+    const label = { converting: "Reading the audio", transcribing: "Transcribing", analysing: "Working out what was said", writing: "Writing your note", done: "Done" };
+    const fail = (message) => {
+      if (!body.isConnected) { toast(message, "error"); return; }
+      clear(body);
+      append(body, el("div", { class: "rec-zone" }, el("div", { class: "rec-error", text: message }), el("button", { class: "rec-kind", type: "button", onclick: () => paintChoices() }, "Try again")));
+    };
+    try {
+      const response = await fetch(`/api/notes/lectures/transcribe?name=${encodeURIComponent(source.name)}&hint=${encodeURIComponent(hint)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: source });
+      const started = await response.json().catch(() => ({}));
+      if (!response.ok || started.error) { fail(started.error || "The upload failed."); return; }
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const job = await api.get(`/api/notes/lectures/jobs/${started.id}`).catch(() => null);
+        if (!job || (job.error && !job.status)) { fail(job?.error || "Lost track of that recording."); return; }
+        if (body.isConnected) {
+          stage.textContent = label[job.stage] || "Working";
+          bar.style.transform = `scaleX(${Math.max(0.04, job.progress || 0)})`;
+          if (job.text) heard.textContent = `\u201C${job.text.slice(-120)}\u201D`;
+        }
+        if (job.status === "failed") { fail(job.failure || "That recording could not be transcribed."); return; }
+        if (job.status === "done") {
+          entry.close("done");
+          await refreshPages();
+          app.openPage(String(job.result?.notePageId || job.result?.pageId));
+          toast(job.result?.notePageId ? "Your note is ready" : "Transcript saved (AI is not set up, so it was not written up)");
+          return;
+        }
+      }
+    } catch (error) { fail(error?.message || "The upload failed."); }
+  }
+}
+
+async function startLiveLecture(app, target = {}) {
   const session = await withError(
     () => api.post("/api/notes/lectures", { pageId: target.pageId || null, title: target.title }),
     "Could not start the lecture",

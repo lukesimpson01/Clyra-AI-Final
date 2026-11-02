@@ -18,40 +18,40 @@ body.bs-locked { overflow: hidden; }
 
 .bs-item { position: absolute; box-sizing: border-box; transform-origin: center; }
 .bs-body { width: 100%; height: 100%; box-sizing: border-box; overflow: hidden; }
-.bs-sticky .bs-body { padding: 14px; background: var(--fill); color: var(--ink); border-radius: 3px; font: 500 16px/1.35 "Segoe Print", "Bradley Hand", ui-rounded, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.1), 0 8px 14px -6px rgba(0,0,0,.18); white-space: pre-wrap; overflow-wrap: anywhere; }
-.bs-text .bs-body { padding: 4px 6px; font: 500 20px/1.3 system-ui, sans-serif; color: var(--text-primary); white-space: pre-wrap; overflow: visible; }
+.bs-sticky .bs-body { padding: 14px 16px; background: var(--fill); color: var(--ink); border-radius: 10px; font: 500 15px/1.45 system-ui, -apple-system, sans-serif; letter-spacing: -.005em; box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .09); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bs-text .bs-body { padding: 4px 6px; font: 500 18px/1.35 system-ui, -apple-system, sans-serif; letter-spacing: -.01em; color: var(--text-primary); white-space: pre-wrap; overflow: visible; }
 .bs-shape .bs-body { position: relative; display: grid; place-items: center; overflow: visible; }
-.bs-shape-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 1px 2px rgba(0,0,0,.08)); }
-.bs-shape .bs-text { position: relative; z-index: 1; padding: 10px 16px; text-align: center; color: var(--ink); font: 500 15px/1.3 system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
-.bs-frame .bs-body { background: rgba(55, 53, 47, .035); box-shadow: inset 0 0 0 1.5px rgba(55, 53, 47, .22); border-radius: 12px; overflow: visible; }
+.bs-shape-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;  }
+.bs-shape .bs-text { position: relative; z-index: 1; padding: 10px 16px; text-align: center; color: var(--ink); font: 500 14.5px/1.35 system-ui, -apple-system, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bs-frame .bs-body { background: rgba(55, 53, 47, .03); box-shadow: inset 0 0 0 1.5px rgba(55, 53, 47, .16); border-radius: 14px; overflow: visible; }
 .bs-frame-label { position: absolute; left: 0; top: -26px; font: 600 14px/1 system-ui, sans-serif; color: var(--text-secondary); }
 .bs-pen .bs-body { overflow: visible; } .bs-emoji .bs-body { font-size: 44px; line-height: 1; display: grid; place-items: center; }
-.bs-image .bs-body { border-radius: 8px; box-shadow: 0 0 0 1px rgba(42, 28, 0, .12), 0 8px 18px -8px rgba(0,0,0,.25); } .bs-image img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
-.bs-note .bs-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: #fff; border-radius: 10px; box-shadow: 0 0 0 1px rgba(42, 28, 0, .12), 0 8px 18px -8px rgba(0,0,0,.2); cursor: default; }
-.bs-note-head { display: flex; align-items: center; gap: 8px; font: 600 15px/1.2 system-ui, sans-serif; color: var(--text-primary); }
+.bs-image .bs-body { border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .12); } .bs-image img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; border-radius: 10px; }
+.bs-note .bs-body { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: #fff; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .14); cursor: default; }
+.bs-note-head { display: flex; align-items: center; gap: 8px; font: 600 14.5px/1.25 system-ui, -apple-system, sans-serif; color: var(--text-primary); }
 .bs-note-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bs-note-snippet { flex: 1; min-height: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-secondary); overflow: hidden; }
 .bs-note-open { font-size: 11px; color: #2383e2; opacity: 0; transition: opacity 140ms ease; } .bs-note:hover .bs-note-open { opacity: 1; }
 .bs-editor { width: 100%; min-height: 100%; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 .bs-item.empty .bs-body::before { content: attr(data-empty); color: rgba(0,0,0,.28); }
 .bs-sticky.empty .bs-body::before { content: "Type something"; } .bs-text.empty .bs-body::before { content: "Text"; } .bs-shape.empty .bs-text::before { content: ""; }
-.bs-item.selected > .bs-body { outline: 2px solid #2383e2; outline-offset: 3px; }
+.bs-item.selected > .bs-body { outline: 1.5px solid #2383e2; outline-offset: 3px; border-radius: 12px; }
 .bs-item.target > .bs-body { outline: 2px dashed #2383e2; outline-offset: 5px; }
 
 /* the four connection points, shown on hover and while connecting */
-.bs-pt { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #2383e2; opacity: 0; transform: scale(.4); transition: opacity 120ms ease, transform 160ms cubic-bezier(.22, 1, .36, 1); cursor: crosshair; z-index: 3; }
+.bs-pt { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.5px #2383e2; opacity: 0; transform: scale(.4); transition: opacity 120ms ease, transform 160ms cubic-bezier(.22, 1, .36, 1), background-color 120ms ease; cursor: crosshair; z-index: 3; }
 .bs-pt::after { content: ""; position: absolute; inset: -9px; }
-.bs-pt-t { left: 50%; top: -12px; } .bs-pt-b { left: 50%; top: calc(100% + 12px); } .bs-pt-l { left: -12px; top: 50%; } .bs-pt-r { left: calc(100% + 12px); top: 50%; }
+.bs-pt-t { left: 50%; top: -10px; } .bs-pt-b { left: 50%; top: calc(100% + 10px); } .bs-pt-l { left: -10px; top: 50%; } .bs-pt-r { left: calc(100% + 10px); top: 50%; }
 .bs-item:hover > .bs-pt, .bs-item.selected > .bs-pt, .bs.connecting .bs-item > .bs-pt, .bs.connecting-mode .bs-item > .bs-pt { opacity: 1; transform: scale(1); }
 .bs.connecting .bs-item > .bs-pt:hover, .bs-pt:hover { background: #2383e2; transform: scale(1.25); }
 .bs-pen > .bs-pt, .bs-emoji > .bs-pt { display: none; }
-.bs-grip { position: absolute; right: -8px; bottom: -8px; width: 14px; height: 14px; border-radius: 4px; background: #fff; box-shadow: 0 0 0 2px #2383e2; cursor: nwse-resize; opacity: 0; z-index: 3; }
+.bs-grip { position: absolute; right: -6px; bottom: -6px; width: 10px; height: 10px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.5px #2383e2; cursor: nwse-resize; opacity: 0; z-index: 3; }
 .bs-item.selected > .bs-grip { opacity: 1; }
 .bs-marquee { position: absolute; border: 1.5px solid #2383e2; background: rgba(35, 131, 226, .08); border-radius: 4px; pointer-events: none; }
 
 /* the round toolbar at the bottom: grouped tools, a quiet grey pill for the one in use, no blue fill */
 .bs { container-type: inline-size; }
-.bs-toolbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .09), 0 10px 28px rgba(25, 25, 25, .12), 0 1px 3px rgba(25, 25, 25, .06); z-index: 6; animation: bs-rise 420ms cubic-bezier(.22, 1, .36, 1) both; max-width: calc(100% - 20px); }
+.bs-toolbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; animation: bs-rise 420ms cubic-bezier(.22, 1, .36, 1) both; max-width: calc(100% - 20px); }
 @keyframes bs-rise { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .bs-group { display: flex; align-items: center; gap: 1px; padding: 0 4px; position: relative; }
 .bs-group + .bs-group::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 1px; background: rgba(55, 53, 47, .12); }
@@ -63,7 +63,7 @@ body.bs-locked { overflow: hidden; }
 .bs-tool::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translate(-50%, 4px); padding: 5px 8px; border-radius: 6px; background: #2c2c2b; color: #fff; font: 500 12px/1 system-ui, sans-serif; white-space: pre; opacity: 0; pointer-events: none; transition: opacity 120ms ease, transform 120ms ease; z-index: 10; }
 .bs-tool:hover::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 350ms; }
 .bs-color i { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.22); display: block; }
-.bs-pill { position: absolute; top: 12px; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .09), 0 4px 14px rgba(25, 25, 25, .08); z-index: 6; }
+.bs-pill { position: absolute; top: 12px; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; }
 .bs-history { left: 12px; } .bs-corner { right: 12px; }
 .bs-pill .bs-tool { width: 30px; height: 30px; } .bs-pill .bs-tool::after { bottom: auto; top: calc(100% + 8px); }
 .bs-zoom-label { position: relative; height: 30px; padding: 0 10px; border: 0; border-radius: 15px; background: transparent; font: 500 12.5px/1 system-ui, sans-serif; color: var(--text-secondary); cursor: pointer; transition: background-color 140ms ease; font-variant-numeric: tabular-nums; }
@@ -73,7 +73,7 @@ body.bs-locked { overflow: hidden; }
 @container (max-width: 560px) { .bs-tool { width: 30px; height: 30px; } .bs-group { padding: 0 2px; } .bs-toolbar { padding: 4px; } }
 .bs-hint { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%) translateY(6px); padding: 6px 12px; border-radius: 14px; background: rgba(44, 44, 43, .88); color: #fff; font: 500 12.5px/1 system-ui, sans-serif; opacity: 0; pointer-events: none; transition: opacity 180ms ease, transform 180ms ease; z-index: 6; white-space: nowrap; }
 .bs-hint.on { opacity: 1; transform: translateX(-50%); }
-.bs-selbar { position: absolute; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px rgba(42,28,0,.1), 0 8px 22px rgba(25,25,25,.16); z-index: 5; animation: bs-pop 160ms cubic-bezier(.22, 1, .36, 1); }
+.bs-selbar { position: absolute; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px rgba(42,28,0,.14); z-index: 5; animation: bs-pop 160ms cubic-bezier(.22, 1, .36, 1); }
 @keyframes bs-pop { from { opacity: 0; transform: translateY(6px) scale(.96); } to { opacity: 1; transform: none; } }
 .bs-sel-btn, .bs-sel-color { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
 .bs-sel-btn:hover, .bs-sel-color:hover { background: rgba(55, 53, 47, .08); }
@@ -85,7 +85,7 @@ body.bs-locked { overflow: hidden; }
 .bs-embed.tall .bs { height: calc(100vh - 230px); min-height: 420px; }
 
 /* No colour is the default: a clean white card with a hairline edge. */
-.bs-item[data-color="white"].bs-sticky .bs-body { box-shadow: 0 0 0 1px rgba(42, 28, 0, .14), 0 8px 14px -8px rgba(0,0,0,.14); }
-.bs-file .bs-body { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #fff; border-radius: 10px; box-shadow: 0 0 0 1px rgba(42, 28, 0, .12), 0 8px 18px -8px rgba(0,0,0,.2); cursor: default; }
+.bs-item[data-color="white"].bs-sticky .bs-body { box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .15); }
+.bs-file .bs-body { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #fff; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .14); cursor: default; }
 .bs-file-ico { display: grid; place-items: center; width: 36px; height: 36px; flex: none; color: var(--text-secondary); }
 .bs-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .bs-file-text b { font: 600 14px/1.2 system-ui, sans-serif; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .bs-file-text small { font: 500 11.5px/1 system-ui, sans-serif; color: var(--text-tertiary); letter-spacing: .02em; }
