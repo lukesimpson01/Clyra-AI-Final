@@ -46,8 +46,14 @@ function clyraAgentChrome(data) {
     root.setAttribute("aria-hidden", "false");
     root.style.cssText = "position:fixed;inset:0;z-index:2147483646;pointer-events:none;contain:layout style paint;opacity:0;transition:opacity .45s cubic-bezier(.22,1,.36,1);";
 
-    const canvas = document.createElement("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+    /* The working field is the Clyra agent-UI kit's: drifting blue light, the same as in chat and the Browser app. */
+    const canvas = document.createElement("div");
+    canvas.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden;background:radial-gradient(ellipse 65% 70% at 22% 76%,rgba(25,109,231,.4),transparent 78%),radial-gradient(ellipse 58% 65% at 83% 32%,rgba(84,164,253,.45),transparent 78%),linear-gradient(125deg,rgba(231,237,247,.28),rgba(220,233,249,.18) 55%,rgba(233,240,251,.28));";
+    const glow = document.createElement("div");
+    glow.style.cssText = "position:absolute;inset:-24%;opacity:.8;filter:blur(15px);background:radial-gradient(ellipse 42% 35% at 45% 50%,rgba(54,128,246,.44),transparent 80%);animation:clyra-bf-glow 5.4s ease-in-out infinite alternate;";
+    const glowStyle = document.createElement("style");
+    glowStyle.textContent = "@keyframes clyra-bf-glow{0%{transform:translate3d(-10%,8%,0) rotate(-7deg)}50%{transform:translate3d(10%,-9%,0) rotate(7deg)}100%{transform:translate3d(-4%,2%,0) rotate(0)}}";
+    canvas.append(glowStyle, glow);
     const fallback = document.createElement("canvas");
     fallback.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;";
 
@@ -148,7 +154,7 @@ function clyraAgentChrome(data) {
 
   /* ---------- blue edge wave ---------- */
   const wantAura = Boolean(data.aura) && !chrome.reducedMotion;
-  chrome.canvas.style.opacity = wantAura ? "1" : "0";
+  chrome.canvas.style.opacity = wantAura ? ".62" : "0";
   chrome.fallback.style.opacity = wantAura ? "1" : "0";
   chrome.canvas.style.transition = chrome.fallback.style.transition = "opacity .5s ease";
   if (wantAura === chrome.aura) return;
@@ -158,6 +164,8 @@ function clyraAgentChrome(data) {
     chrome.frame = 0;
     return;
   }
+  /* The field is plain CSS: nothing to render per frame. */
+  return;
 
   const VERTEX = "attribute vec2 a_pos;void main(){gl_Position=vec4(a_pos,0.,1.);}";
   const FRAGMENT = `precision highp float;

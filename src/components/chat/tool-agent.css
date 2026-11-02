@@ -1,0 +1,24 @@
+/* An app of ours while the agent works in it: the blue field, the pointer, a light frost, and the app locked until the run ends.
+   The same layer shows in the workspace and in the app's live tile in Task View, because both are the one mounted window. */
+.clyra-toolagent { position: absolute; inset: 0; z-index: 30; overflow: hidden; cursor: progress; user-select: none; }
+.clyra-toolagent .clyra-bf { opacity: .62; transform: none; }
+.clyra-toolagent__frost { position: absolute; inset: 0; background: rgba(110, 160, 255, .045); -webkit-backdrop-filter: blur(0.7px) saturate(1.04); backdrop-filter: blur(0.7px) saturate(1.04); animation: clyra-ta-frost 900ms cubic-bezier(.22, 1, .36, 1) both; }
+.clyra-toolagent__pill { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 9px; max-width: calc(100% - 40px); padding: 9px 15px; border-radius: 999px; background: rgba(255, 255, 255, .92); box-shadow: 0 0 0 1px rgba(15, 23, 42, .07), 0 8px 28px rgba(30, 80, 200, .16); font: 500 13px/1.2 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; color: #1c2230; animation: clyra-ta-pill 520ms cubic-bezier(.22, 1, .36, 1) 120ms both; }
+.clyra-toolagent__pill i { width: 8px; height: 8px; border-radius: 50%; background: #3680f6; flex: none; animation: clyra-ta-pulse 1.4s ease-in-out infinite; }
+.clyra-toolagent__pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clyra-toolagent.is-leaving { animation: clyra-ta-out 480ms cubic-bezier(.22, 1, .36, 1) both; pointer-events: none; }
+@keyframes clyra-ta-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes clyra-ta-out { to { opacity: 0; } }
+/* entering an app that is mid-task: it arrives frosted, then settles to the light frost it stays under until done */
+@keyframes clyra-ta-frost { from { -webkit-backdrop-filter: blur(16px) saturate(1.1); backdrop-filter: blur(16px) saturate(1.1); background: rgba(110, 160, 255, .2); } }
+@keyframes clyra-ta-pill { from { opacity: 0; transform: translate(-50%, 10px); } }
+@keyframes clyra-ta-pulse { 50% { opacity: .35; transform: scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .clyra-toolagent, .clyra-toolagent__frost, .clyra-toolagent__pill, .clyra-toolagent__pill i { animation: none; } }
+
+/* the chat card's window for one of our apps: its name and what it is doing, never an address */
+.clyra-browserrun__tool { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; color: #24304a; z-index: 1; }
+.clyra-browserrun__tool svg { width: 26px; height: 26px; color: #3680f6; }
+.clyra-browserrun__tool strong { font: 650 15px/1.2 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+.clyra-browserrun__tool span { font: 450 13px/1.3 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; color: #5b6881; max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clyra-browserrun__open { margin-top: 10px; height: 30px; padding: 0 12px; border-radius: 8px; background: #101425; color: #fff; font: 600 13px -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+.clyra-browserrun__open:hover { background: #3680f6; }

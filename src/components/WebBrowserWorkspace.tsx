@@ -2298,6 +2298,17 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
               page carries an injected equivalent (electron/agent-chrome-script). */}
           {!desktopChromium ? <BrowserAgentAura active={aiInControl && !activeInternalTab} reducedMotion={settings.reducedMotion} className="ab-aura" /> : null}
 
+          {/* While Clyra works the page is hers: clicks and keys go nowhere until the task ends (Stop is the way out). */}
+          {!desktopChromium && aiInControl && !activeInternalTab ? (
+            <div className="ab-lock" role="status" aria-live="polite">
+              <span className="ab-lock-pill">
+                <Sparkles />
+                <span>Clyra is working here. You'll get control back when it finishes.</span>
+                <button type="button" onClick={() => void controlAgent("stop")}>Stop</button>
+              </span>
+            </div>
+          ) : null}
+
           {!desktopChromium && liveCursor && showAgentChrome && settings.showAiCursor && !browserState?.agent.manualControl ? (
             <motion.div
               className="ab-cursor"
@@ -2310,7 +2321,7 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
               aria-hidden
             >
               <span className="ab-cursor-glow" />
-              <span className="ab-cursor-core" />
+              <svg className="ab-cursor-arrow" viewBox="0 0 24 24" aria-hidden><path d="M5 3v17l4.7-4.7 3 6.4 3-1.5-3.1-6.2 6.8-.7L5 3z" /></svg>
               {settings.showAiActionLabels ? <span className="ab-cursor-label">{cursorIntent}</span> : null}
               {liveCursor.kind === "click" || liveCursor.kind === "double_click" ? <span key={liveCursor.id} className="ab-cursor-click" /> : null}
             </motion.div>

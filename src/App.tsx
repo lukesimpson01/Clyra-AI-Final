@@ -5,6 +5,12 @@
 
 import { chatReplyFailureText, isCreditsError } from "./lib/chatReplyErrors";
 import { CreditsNotice } from "./components/chat/CreditsNotice";
+import { AgentTodo, ChatAgentRunView } from "./components/chat/ChatAgentRun";
+import { ChatMapCard } from "./components/chat/ChatMapCard";
+import { shouldUseBrowserUse, shouldUseChatAgent, streamChatAgent, type ChatAgentRun } from "./lib/chatAgentClient";
+import { ChatBrowserRunView, type ChatBrowserRunState } from "./components/chat/ChatBrowserRun";
+import { reduceRunItems, type RunEvent, type RunItem } from "./lib/browserRunFeed";
+import { matchToolTask, runToolAgent } from "./lib/toolAgent";
 import { useNativeOcclusion } from "./lib/nativeOcclusion";
 import { WorkspaceCardPlaceholder, WorkspaceSlot, useWorkspacePortalNodes } from "./components/WorkspacePortal";
 import { preloadableLazy } from "./lib/preloadableLazy";
@@ -1836,6 +1842,8 @@ export const AnimatedMessage = ({
   harnessPhase,
   harnessSteps,
   failure,
+  agentRun,
+  browserRun,
   weather,
   mapLocation,
   googleAction,
@@ -1899,6 +1907,8 @@ export const AnimatedMessage = ({
   automation?: AutomationStatus;
   isLastAssistant?: boolean;
   failure?: "credits";
+  agentRun?: ChatAgentRun;
+  browserRun?: ChatBrowserRunState;
   onVibePreviewReady?: (
     messageId: string,
     filesByPath: Record<string, string>,
@@ -2008,7 +2018,9 @@ export const AnimatedMessage = ({
 
   const shouldRenderMarkdown =
     markdownSupport && hasMarkdownStructure && !useDocumentUI;
-  const showThinking = !isVibe && awaitingFirstAnswer;
+  const hasAgentRun = Boolean(agentRun && (agentRun.todos.length || agentRun.steps.length));
+  const hasBrowserRun = Boolean(browserRun);
+  const showThinking = !isVibe && awaitingFirstAnswer && !hasAgentRun && !hasBrowserRun;
   /* how long the thinking row really ran, once it has: measured here, never assumed */
   const thoughtSeconds = useThoughtSeconds(showThinking);
   /* a plain conversation (no search, coding, maps, weather… turn): its only activity is the thinking row */
@@ -2200,11 +2212,26 @@ export const AnimatedMessage = ({
           {completedActivity}
         </>
       )}
+      {browserRun ? (
+        <ChatBrowserRunView
+          run={browserRun}
+          live={live}
+          onStop={() => { if (browserRun.tool) window.dispatchEvent(new Event("clyra:stop-tool-agent")); else void fetch("/api/openbrowser/cancel", { method: "POST" }).catch(() => undefined); }}
+          onOpenTool={browserRun.tool ? () => window.dispatchEvent(new CustomEvent("clyra:open-workspace", { detail: browserRun.tool?.workspace })) : undefined}
+        />
+      ) : null}
+      {hasAgentRun ? (
+        <>
+          <ChatAgentRunView run={agentRun!} live={live} showTodo={false} onOpenNote={(id) => window.location.assign(`/notes#${encodeURIComponent(id)}`)} />
+          {/* between steps the model is composing its next move: that is real thinking, and it says so */}
+          {live && content.length === 0 && agentRun!.steps.every((step) => step.state !== "running") ? <StatusLine key="agent-thinking" label="Thinking" icon={<Brain />} /> : null}
+        </>
+      ) : null}
       {/* a Vibe turn that has started but has no text yet is thinking, and says so: never an empty gap */}
       {isVibe && live && content.length === 0 ? <StatusLine key="vibe-thinking" label="Thinking" icon={<Brain />} /> : null}
       {youtubeVideoId ? <YoutubeScanEmbed videoId={youtubeVideoId} active={showYoutubeScan} /> : null}
       {weather ? <WeatherDiagramCard weather={weather} /> : null}
-      {mapLocation ? <LocationMapCard location={mapLocation} /> : null}
+      {mapLocation ? <ChatMapCard location={mapLocation} /> : null}
       {hasInlineStatusCard ? missionNodes : null}
       {answerNode}
       {showAnswer && !isStreaming && !isVibe && !useDocumentUI ? <SourcesFooter sources={sourceViews} query={thinkingMode === "search" ? searchQuery : undefined} /> : null}
@@ -2548,6 +2575,10 @@ export default function App() {
     stopped?: boolean;
     /** The reply could not be made because the model account has no credits: shown as a notice, not as text. */
     failure?: "credits";
+    /** The tool run behind this reply: the agent's plan and every step it really took. */
+    agentRun?: ChatAgentRun;
+    /** A browser task run from chat: the live window and the actions the agent took. */
+    browserRun?: ChatBrowserRunState;
     /** `vibe` keeps the expandable thought UI; normal chat uses the “Thinking:” line only. */
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
@@ -2840,6 +2871,17 @@ export default function App() {
     const initial = readEmbeddedWorkspace();
     return initial === "chat" ? ["chat"] : ["chat", initial];
   });
+  /* "Open Shorts" on a tool run in chat, and anything else that wants a workspace shown */
+  useEffect(() => {
+    const open = (event: Event) => {
+      const tab = String((event as CustomEvent).detail || "") as WorkspaceTabId;
+      if (!tab) return;
+      setVisitedWorkspaceTabs((current) => (current.includes(tab) ? current : [...current, tab]));
+      setActiveWorkspaceTab(tab);
+    };
+    window.addEventListener("clyra:open-workspace", open);
+    return () => window.removeEventListener("clyra:open-workspace", open);
+  }, []);
   const [taskViewPreviews, setTaskViewPreviews] = useState<Record<string, TaskViewPreview>>({});
   const taskViewSelectionRef = useRef(false);
   const appLauncherChordRef = useRef(false);
@@ -5372,10 +5414,21 @@ export default function App() {
       }
     };
     const handleWorkspaceMessage = (event: MessageEvent) => {
-      const isTrustedVibeOrigin =
-        event.origin === "http://127.0.0.1:8000" ||
-        event.origin === "http://localhost:8000";
-      if (!isTrustedVibeOrigin || event.data?.type !== "clyra:toggle-app-launcher") {
+      /* Embedded apps (Vibe, Shorts) run in their own frames, so Cmd/Ctrl+J and +K never reach this window by
+         themselves; they forward the chord and Clyra answers it here, exactly as it would on its own page. */
+      let local = false;
+      try { const host = new URL(event.origin).hostname; local = host === "localhost" || host === "127.0.0.1"; } catch { /* opaque origin */ }
+      if (local && event.data?.type === "clyra:shortcut") {
+        if (event.data.shortcut === "taskview" && claimGlobalShortcut("taskview")) {
+          void openTaskView();
+          appLauncherChordRef.current = false;
+          setShowCommandPalette(false);
+        } else if (event.data.shortcut === "launcher" && claimGlobalShortcut("launcher")) {
+          toggleAppLauncher();
+        }
+        return;
+      }
+      if (!local || event.data?.type !== "clyra:toggle-app-launcher") {
         return;
       }
       setIsAppLauncherOpen((current) => !current);
@@ -5469,6 +5522,15 @@ export default function App() {
       label: "Web search",
       description: "Research current information from the web",
       prefix: "/search",
+      workspace: "chat",
+    },
+    {
+      id: "browser-use",
+      kind: "command",
+      icon: () => <Globe className="h-4 w-4" />,
+      label: "Browser use",
+      description: "Let Clyra operate a real browser for you, right here in the chat",
+      prefix: "/browser-use",
       workspace: "chat",
     },
     {
@@ -7169,6 +7231,7 @@ Please analyze the code you just wrote and fix this error.`;
       const automateCommand = rawUserText.match(/^\/automate(?:\s+(.+))?$/i);
       const youtubeCommand = rawUserText.match(/^\/youtube(?:\s+(.+))?$/i);
       const searchCommand = rawUserText.match(/^\/search(?:\s+(.+))?$/i);
+      const browserUseCommand = rawUserText.match(/^\/browser-use(?:\s+(.+))?$/i);
       if (userCommandId === "clip" || clipCommand) {
         const clipCommandSource = clipCommand?.[1]?.trim() ?? rawUserText;
         setClipInitialUrl(
@@ -7303,6 +7366,7 @@ Please analyze the code you just wrote and fix this error.`;
             !attachedAgentOwnsRequest &&
             !detectedYoutubeUrl &&
             !hasReadableAttachments &&
+            !shouldUseBrowserUse(rawUserText) &&
             looksLikeLocationQuery(rawUserText)));
       const mapsWantsCurrentLocation = isAskingForCurrentLocation(rawUserText);
       const mapsLocationQuery =
@@ -7604,6 +7668,144 @@ Please analyze the code you just wrote and fix this error.`;
       // Ordinary questions keep Clyra's fast chat route. Requests that need
       // sustained work across tools, apps or specialists become one visible
       // agent run — no separate mode switch or fake background dashboard.
+      // Browser use: the same managed browser and agent loop as the Browser app, run from chat with its window in view.
+      // One of Clyra's own apps (Shorts...) asked to do something: go straight into it and operate it, with the same blue
+      // field and pointer as browser use, and its name in place of any address. Vibe Coder keeps its own "prompt it and go" path.
+      const toolMatch = !browserUseCommand && userCommandId !== "browser-use" && !isWeatherMode && !isMapsMode && !googleTool && !browserTask && !attachedAgentOwnsRequest && !isVibeMode && !hasReadableAttachments ? matchToolTask(userText) : null;
+      if (toolMatch) {
+        let items: RunItem[] = [];
+        const run: ChatBrowserRunState = { task: userText, items, status: "planning", tool: { id: toolMatch.tool.id, name: toolMatch.tool.name, workspace: toolMatch.workspace } };
+        const patch = (extra: Partial<Message> = {}) =>
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? { ...message, browserRun: { ...run, items: [...items] }, ...extra } : message));
+        patch({ content: "", isThinking: false, isStreaming: true });
+        // straight into the tool: its window opens now rather than after a chat reply, and Task View lists it
+        setVisitedWorkspaceTabs((current) => (current.includes(toolMatch.workspace) ? current : [...current, toolMatch.workspace]));
+        setActiveWorkspaceTab(toolMatch.workspace);
+        const stop = () => streamController.abort();
+        window.addEventListener("clyra:stop-tool-agent", stop);
+        try {
+          const result = await runToolAgent({ tool: toolMatch.tool, task: userText, signal: streamController.signal, onItems: (next, status) => { items = next; run.status = status; patch(); } });
+          if (streamController.signal.aborted) { run.status = "cancelled"; patch({ isStreaming: false, stopped: true }); return; }
+          run.status = result.ok ? "completed" : result.asked ? "waiting_for_user" : "failed";
+          patch({ content: result.summary, isStreaming: false, isThinking: false });
+        } catch (error) {
+          run.status = "failed";
+          patch({ content: chatReplyFailureText(error), isStreaming: false, isThinking: false });
+        } finally { window.removeEventListener("clyra:stop-tool-agent", stop); }
+        return;
+      }
+      const browserUseTask = browserUseCommand?.[1]?.trim() || (userCommandId === "browser-use" ? rawUserText : "");
+      const autoBrowserUse = !browserUseTask && !isWeatherMode && !isMapsMode && !googleTool && !browserTask && !attachedAgentOwnsRequest && !isVibeMode && !hasReadableAttachments && shouldUseBrowserUse(userText);
+      if (browserUseTask || autoBrowserUse) {
+        const task = browserUseTask || userText;
+        let items: RunItem[] = [];
+        let cursorSeq = 0;
+        const run: ChatBrowserRunState = { task, items, status: "planning" };
+        const patch = (extra: Partial<Message> = {}) =>
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? { ...message, browserRun: { ...run, items: [...items] }, ...extra } : message));
+        patch({ content: "", isThinking: false, isStreaming: true });
+        // the Browser app is where this task is really happening: list it in Task View (Cmd+J) so it can be watched there
+        setVisitedWorkspaceTabs((current) => (current.includes("browser") ? current : [...current, "browser"]));
+        let final: Record<string, any> | null = null;
+        try {
+          const response = await fetch("/api/openbrowser/assist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+            body: JSON.stringify({ task }),
+            signal: streamController.signal,
+          });
+          if (!response.ok || !response.body) {
+            const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+            throw new Error(payload?.error?.message || `Chat API error: ${response.status}`);
+          }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const frames = buffer.split("\n\n");
+            buffer = frames.pop() || "";
+            for (const frame of frames) {
+              const line = frame.split("\n").find((item) => item.startsWith("data: "));
+              if (!line) continue;
+              const next = JSON.parse(line.slice(6)) as Record<string, any>;
+              if (next.type === "error") throw new Error(next.error?.message || "The browser agent could not complete that task.");
+              if (next.state?.url) { run.url = String(next.state.url); run.title = String(next.state.title || ""); }
+              if (next.state?.viewport?.width) run.viewport = { width: Number(next.state.viewport.width), height: Number(next.state.viewport.height) };
+              if (next.cursor && Number.isFinite(next.cursor.x)) { cursorSeq += 1; run.cursor = { x: Number(next.cursor.x), y: Number(next.cursor.y), kind: next.cursor.kind, id: cursorSeq }; patch(); }
+              if (next.type === "progress" && next.phase) { run.status = next.phase; items = reduceRunItems(items, next as RunEvent); patch(); }
+              if (next.type === "complete") final = next;
+            }
+          }
+          if (streamController.signal.aborted) { run.status = "cancelled"; patch({ isStreaming: false, stopped: true }); return; }
+          if (!final?.ok) throw new Error("The browser agent stopped before returning a verified result.");
+          run.status = final.success === false ? "failed" : "completed";
+          patch({ content: String(final.content || "Done."), isStreaming: false, isThinking: false });
+        } catch (error) {
+          if (streamController.signal.aborted) { run.status = "cancelled"; patch({ isStreaming: false, stopped: true }); return; }
+          run.status = "failed";
+          console.error("Browser use error:", error);
+          patch({ content: chatReplyFailureText(error), failure: isCreditsError(error) ? "credits" : undefined, isStreaming: false, isThinking: false });
+        }
+        return;
+      }
+
+      // Research, lookups, documents and anything that needs the outside world: one real tool run whose every step is
+      // streamed to the chat. Plain conversation never reaches it.
+      const chatAgentCandidate =
+        !isDeepResearchMode && !isYoutubeMode && !isWeatherMode && !isMapsMode && !googleTool && !browserTask && !attachedAgentOwnsRequest &&
+        !isVibeMode && !isForcedMission && !hasReadableAttachments && (isSearchMode || shouldUseChatAgent(userText));
+      if (chatAgentCandidate) {
+        const run: ChatAgentRun = { todos: [], steps: [] };
+        let roundText = "";
+        let finished = false;
+        const patch = (extra: Partial<Message> = {}) =>
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? { ...message, agentRun: { todos: [...run.todos], steps: [...run.steps] }, ...extra } : message));
+        const prior = messages
+          .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim() && !m.failure && !m.isThinking)
+          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content.slice(0, 6000) }));
+        // the new user message may already be in state: it is sent once, last
+        if (prior.length && prior[prior.length - 1].role === "user" && prior[prior.length - 1].content.trim() === rawUserText.trim()) prior.pop();
+        const history = [...prior.slice(-12), { role: "user" as const, content: userText }];
+        try {
+          await streamChatAgent({
+            messages: history,
+            model: CHAT_EFFORT_MODEL[chatEffort],
+            signal: streamController.signal,
+            onEvent: (event) => {
+              if (event.type === "todos") { run.todos = event.items; patch(); }
+              else if (event.type === "step") {
+                roundText = ""; // words before a tool call were commentary on the step, not the answer
+                const index = run.steps.findIndex((step) => step.id === event.id);
+                if (index >= 0) run.steps[index] = event; else run.steps.push(event);
+                patch({ content: "", isThinking: false, isStreaming: true });
+              } else if (event.type === "text") { roundText += event.text; patch({ content: roundText, isThinking: false, isStreaming: true }); }
+              else if (event.type === "done") {
+                finished = true;
+                patch({
+                  content: event.text,
+                  searchCitations: event.citations,
+                  searchSources: event.citations.map((c) => c.url),
+                  isThinking: false,
+                  isStreaming: false,
+                });
+              } else if (event.type === "error") {
+                finished = true;
+                if (event.code === "cancelled") patch({ isThinking: false, isStreaming: false, stopped: true });
+                else patch({ content: chatReplyFailureText(new Error(event.code === "credits" ? "API error: 402" : event.message)), failure: event.code === "credits" ? "credits" : undefined, isThinking: false, isStreaming: false });
+              }
+            },
+          });
+          if (!finished) patch({ isThinking: false, isStreaming: false, content: roundText || "Clyra couldn't finish this reply. Press Retry to try again." });
+        } catch (error) {
+          if (streamController.signal.aborted) { patch({ isThinking: false, isStreaming: false, stopped: true }); return; }
+          console.error("Chat agent error:", error);
+          patch({ content: chatReplyFailureText(error), failure: isCreditsError(error) ? "credits" : undefined, isThinking: false, isStreaming: false });
+        }
+        return;
+      }
       const autonomousAgentCandidate =
         !isDeepResearchMode && !isYoutubeMode && !isWeatherMode && !googleTool && !browserTask && !attachedAgentOwnsRequest &&
         (isForcedMission || /\b(?:research|compare|investigate|inspect (?:this |the )?(?:project|codebase)|fix (?:the )?(?:build|bug|tests?)|run (?:the )?(?:build|tests?)|create (?:a )?(?:report|comparison|study note)|use (?:multiple|separate) agents|delegate|(?:edit|modify|move|rename|reorganize|organise|change) (?:the )?(?:project )?files?|(?:edit|modify|move|rename)\s+\S+(?:\s+(?:to|into)\s+\S+)?|build (?:this |a )?(?:feature|project)|open (?:clyra )?notes|continue (?:my |the )?(?:project|work))\b/i.test(userText));
@@ -9086,6 +9288,31 @@ Please analyze the code you just wrote and fix this error.`;
 
   /* The model account was topped up while the "out of credits" notice was showing: the failed turn goes away and its
      message returns to the composer, so the person is back at their last good message, ready to send again. */
+  /* "Get directions" / "Open in Maps" on a chat map card: hand the place to the Maps app and bring it forward. */
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ mode?: "directions" | "place"; name: string; coordinates: [number, number]; address?: string }>).detail;
+      if (!detail || !Array.isArray(detail.coordinates)) return;
+      try { sessionStorage.setItem("clyra.maps.pending", JSON.stringify(detail)); } catch { /* the Maps app opens without a destination */ }
+      setSelectedCommand(null);
+      setActiveWorkspaceTab("maps");
+      setWorkspaceChromeEngaged(true);
+      window.setTimeout(() => window.dispatchEvent(new Event("clyra:maps-pending")), 50);
+    };
+    window.addEventListener("clyra:open-in-maps", onOpen);
+    return () => window.removeEventListener("clyra:open-in-maps", onOpen);
+  }, []);
+  /* The agent's plan, docked above the composer: the latest reply that has one, while it runs and after it finishes. */
+  const composerPlan = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role !== "assistant") continue;
+      const todos = message.agentRun?.todos;
+      if (!todos?.length) return null;
+      return <AgentTodo key={message.id} todos={todos} live={Boolean(message.isThinking || message.isStreaming)} defaultOpen={false} />;
+    }
+    return null;
+  }, [messages]);
   const liveMessagesRef = useRef<Message[]>([]);
   liveMessagesRef.current = messages;
   useEffect(() => {
@@ -10272,6 +10499,8 @@ Please analyze the code you just wrote and fix this error.`;
                 onAutomationRun={(automation) => controlChatAutomation(message.id, automation, "run")}
                 memoryActivity={message.memoryActivity}
                 failure={message.failure}
+                agentRun={message.agentRun}
+                browserRun={message.browserRun}
               />
               {message.spotifyRun ? <SpotifyRunTimeline run={message.spotifyRun} /> : null}
               {message.agentSteps?.length ? (
@@ -10526,6 +10755,7 @@ Please analyze the code you just wrote and fix this error.`;
                               onToggleWebSearch: () => setWebSearchShellEnabled((v) => !v),
                             }}
                             transcript={shellTranscript} transcriptOverlay={scrollLatestControl}
+                            dockAbove={composerPlan}
                             transcriptContainerId="chat-container"
                             transcriptContainerRef={chatContentRef}
                           />

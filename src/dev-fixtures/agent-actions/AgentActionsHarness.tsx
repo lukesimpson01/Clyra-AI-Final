@@ -17,6 +17,8 @@ import { WeatherDiagramCard, type WeatherPayload } from "../../components/Weathe
 import { LocationMapCard } from "../../components/LocationMapCard";
 import { CreditsNotice } from "../../components/chat/CreditsNotice";
 import { TodoChecklist } from "../../components/clyra-code/harness";
+import { ChatMapCard } from "../../components/chat/ChatMapCard";
+import { ChatAgentRunView } from "../../components/chat/ChatAgentRun";
 import { ActivityGroup, RunHeader } from "../../components/clyra-code/CodexActivity";
 import "../../components/clyra-code/harness.css";
 import type { AgentAction } from "../../components/clyra-code/store";
@@ -37,6 +39,21 @@ const hours = Array.from({ length: 12 }, (_, i) => ({ time: new Date(Date.now() 
 const days = Array.from({ length: 7 }, (_, i) => ({ date: new Date(Date.now() + i * 86400_000).toISOString().slice(0, 10), highC: 22 + (i % 3), lowC: 14 + (i % 4), precipProb: i % 3 === 0 ? 40 : 5, weatherCode: i % 3 === 0 ? 61 : 2, condition: "Partly cloudy" }));
 /* sample payload for looking at the card only: real turns get theirs from /api/research/weather */
 const sampleWeather: WeatherPayload = { location: "Hornsby Heights", region: "New South Wales", country: "Australia", isCurrentLocation: true, lat: -33.6667, lon: 151.1, observedAt: new Date().toISOString(), current: { tempC: 19, feelsLikeC: 18, weatherCode: 2, isDay: true, highC: 23, lowC: 14, precipProb: 20, humidity: 62, windKph: 14, windDirection: 120, condition: "Partly cloudy" }, hourly: hours, daily: days };
+const agentRun = {
+  todos: [
+    { id: "t1", content: "Research Iman Gadzhi", status: "completed" as const },
+    { id: "t2", content: "Research his friend Alex", status: "in_progress" as const },
+    { id: "t3", content: "Write a short notes document", status: "pending" as const },
+  ],
+  steps: [
+    { type: "step" as const, id: "s1", tool: "web_search", label: "Searched the web for “Iman Gadzhi”", state: "done" as const, sources, detail: "6 results" },
+    { type: "step" as const, id: "s2", tool: "web_open", label: "Read en.wikipedia.org", state: "done" as const, detail: "Iman Gadzhi - Wikipedia" },
+    { type: "step" as const, id: "s3", tool: "web_find", label: "Searched S1 for “agency”", state: "done" as const, detail: "2 passages" },
+    { type: "step" as const, id: "s4", tool: "web_search", label: "Searching the web for “Alex friend of Iman Gadzhi”", state: "running" as const },
+    { type: "step" as const, id: "s5", tool: "web_open", label: "Couldn’t read example.org", state: "failed" as const, error: "The site blocked automated reading" },
+    { type: "step" as const, id: "s6", tool: "create_note", label: "Created the note “Iman & Alex”", state: "done" as const, document: { id: "p1", title: "Iman & Alex" } },
+  ],
+};
 const t0 = Date.now() - 60000;
 const codeActions: AgentAction[] = [
   { id: "1", kind: "read", tool: "read", status: "success", target: "src/App.tsx", startedAt: t0, endedAt: t0 + 400 },
@@ -71,6 +88,8 @@ export default function AgentActionsHarness() {
           </AssistantResponse>
           <SourcesFooter sources={sources} />
         </div>
+        <ChatAgentRunView run={agentRun} live onOpenNote={() => {}} />
+        <ChatMapCard location={{ name: "Sydney Opera House", region: "New South Wales", country: "Australia", lat: -33.857198, lon: 151.2151234 }} />
         <div className="clyra-code-ui" style={{ display: "grid", gap: 12, maxWidth: 560 }}>
           <TodoChecklist todos={[{ content: "Read the project", status: "completed" }, { content: "Edit Panel.tsx", status: "in_progress" }, { content: "Run the tests", status: "pending" }]} />
           <TodoChecklist todos={[{ content: "Done one", status: "completed" }, { content: "Done two", status: "completed" }]} finished />

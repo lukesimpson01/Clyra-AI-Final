@@ -1,6 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
-import { MapPanel } from "./LocationMapCard";
 
 export type WeatherDay = {
   date: string;
@@ -239,7 +238,6 @@ export function WeatherDiagramCard({ weather, className }: { weather: WeatherPay
   const weekLow = Math.min(...days.map((d) => d.lowC));
   const weekHigh = Math.max(...days.map((d) => d.highC));
   const weekSpan = Math.max(weekHigh - weekLow, 1);
-  const hasMap = Number.isFinite(weather.lat) && Number.isFinite(weather.lon);
   const night = !weather.current.isDay;
 
   return (
@@ -325,14 +323,7 @@ export function WeatherDiagramCard({ weather, className }: { weather: WeatherPay
         </ul>
       </div>
 
-      {hasMap ? (
-        <div className="mt-3 border-t border-slate-100">
-          <MapPanel lat={weather.lat as number} lon={weather.lon as number} title={place} height={190} zoom={0.05} />
-          <p className="px-6 py-2 text-[10.5px] text-slate-400">Weather by Open-Meteo · Map © OpenStreetMap contributors</p>
-        </div>
-      ) : (
-        <p className="px-6 pb-4 pt-2 text-[10.5px] text-slate-400">Weather by Open-Meteo</p>
-      )}
+      <p className="px-6 pb-4 pt-2 text-[10.5px] text-slate-400">Weather by Open-Meteo</p>
     </div>
   );
 }

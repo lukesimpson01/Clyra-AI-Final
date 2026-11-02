@@ -155,6 +155,8 @@ export interface ClyraComposerShellProps {
   onSend: () => void;
   /** Controls pinned over the visible transcript, outside its scroll content. */
   transcriptOverlay?: ReactNode;
+  /** Rendered docked above the composer bar (the agent's task list). */
+  dockAbove?: ReactNode;
   /** True while a reply streams; the send control then becomes Stop. */
   isResponding?: boolean;
   /** Cancels the reply in progress (the Stop control and Escape). */
@@ -383,6 +385,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onKeyDown,
     onSend,
     transcriptOverlay,
+    dockAbove,
     isResponding = false,
     onStop,
     onStartVoiceCall,
@@ -1858,6 +1861,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             isolation: "isolate",
           }}
         >
+          {/* The plan: docked just above the bar, centred, where the agent's progress is read at a glance. */}
+          {dockAbove ? <div className="clyra-composer-dock">{dockAbove}</div> : null}
           {/* Flow dictation: covers the whole composer card (same shape), the controls underneath soften away. */}
           {dictation.flow ? (
             <FlowComposerOverlay flow={dictation.flow} onStop={dictation.onStop} onCancel={() => dictation.onCancel?.()} />

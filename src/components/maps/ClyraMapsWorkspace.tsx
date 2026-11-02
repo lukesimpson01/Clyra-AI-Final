@@ -564,6 +564,26 @@ export function ClyraMapsWorkspace() {
     [controller, loadRouteFor, resetStops],
   );
 
+  /** A place handed over from chat ("Get directions" on a map card): Maps opens already on it. Directions open the
+   * route overview for that destination, ready for Start; "place" opens its card. Read once, then cleared. */
+  useEffect(() => {
+    if (!mapReady) return;
+    const consume = () => {
+      let pending: { mode?: "directions" | "place"; name: string; coordinates: Coordinate; address?: string } | null = null;
+      try {
+        pending = JSON.parse(sessionStorage.getItem("clyra.maps.pending") || "null");
+        sessionStorage.removeItem("clyra.maps.pending");
+      } catch { pending = null; }
+      if (!pending || !Array.isArray(pending.coordinates)) return;
+      const place: ClyraPlace = { id: `chat-${pending.coordinates[1].toFixed(5)}-${pending.coordinates[0].toFixed(5)}`, name: pending.name, coordinates: pending.coordinates, address: pending.address, categories: [], sourceLinks: [] };
+      if (pending.mode === "place") selectPlace(place);
+      else { controller()?.setSelectionPin(place.coordinates); frameOnMap(place.coordinates); void computeRoute(place); }
+    };
+    consume();
+    window.addEventListener("clyra:maps-pending", consume);
+    return () => window.removeEventListener("clyra:maps-pending", consume);
+  }, [mapReady, controller, computeRoute, selectPlace, frameOnMap]);
+
   /** Any click on the map identifies what is there. The pin appears at once;
    * the card fills in when the identify service answers. */
   const handleMapClick = useCallback(

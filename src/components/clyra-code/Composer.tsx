@@ -4,7 +4,9 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUp, Bug, CheckCircle2, Clipboard, Feather, File as FileIcon, FileSearch, Flame, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X, Zap } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
-import { ChevronDown14, TodoChecklist, type TodoRow } from "./harness";
+import { ChevronDown14, type TodoRow } from "./harness";
+import { AgentTodo } from "../chat/ChatAgentRun";
+import "../chat/assistant/agent-actions.css";
 import { EffortSlider } from "../chat/EffortSlider";
 import type { ComposerEffortOption } from "../chat/ClyraComposerShell";
 import type { BriefPlatform } from "./appBrief";
@@ -289,7 +291,10 @@ export function Composer({
           transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
           className={cn("mx-auto", welcome ? "max-w-[620px]" : "max-w-[680px]")}
         >
-          <TodoChecklist todos={plan} finished={finished} />
+          <AgentTodo
+            live={Boolean(running) && !finished}
+            todos={plan.map((item, index) => ({ id: String(index), content: item.content, status: item.status === "completed" ? "completed" : item.status === "in_progress" ? "in_progress" : "pending" }))}
+          />
         </motion.div>
       ) : null}
       <motion.div

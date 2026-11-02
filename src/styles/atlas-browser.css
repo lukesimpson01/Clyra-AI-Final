@@ -544,3 +544,15 @@
   .ab *, .ab *::before, .ab *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   .ab-shine { color: #7a8290 !important; -webkit-text-fill-color: #7a8290; background: none; }
 }
+
+/* the page is locked to the user while the agent drives it */
+.ab-lock { position: absolute; inset: 0; z-index: 25; cursor: progress; display: flex; align-items: flex-start; justify-content: center; padding-top: 14px; background: transparent; }
+.ab-lock-pill { display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 6px 8px 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, .94); color: #2c2f36; font-size: 12.5px; line-height: 18px; box-shadow: 0 6px 22px -8px rgba(30, 64, 175, .35), 0 0 0 1px rgba(59, 111, 224, .18); backdrop-filter: blur(8px); }
+.ab-lock-pill svg { width: 14px; height: 14px; color: #3b6fe0; flex: none; }
+.ab-lock-pill button { flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 999px; background: #eef3ff; color: #1f4fb8; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.ab-lock-pill button:hover { background: #dde8ff; }
+
+/* the agent's pointer: the same arrow as the Clyra agent-UI kit, with a soft halo and a ripple on click */
+.ab-cursor-core { display: none; }
+.ab-cursor-arrow { position: absolute; left: 1px; top: 1px; z-index: 2; width: 20px; height: 23px; fill: #fff; stroke: #3b475d; stroke-width: 1.5; stroke-linejoin: round; filter: drop-shadow(0 1px 2px rgba(27, 39, 73, .28)); transform-origin: 4px 3px; }
+.ab-cursor-click { animation: abClick .64s var(--ab-ease) both; }

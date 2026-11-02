@@ -188,8 +188,12 @@ function recordAnthropicUsage(payload: any, feature: string, fallbackModel?: str
     usage: usageFromAnthropic(payload),
   }).catch((error) => console.warn("[usage] unable to record provider usage", error instanceof Error ? error.message : error));
 }
+import { decideToolStep } from "./lib/tool-agent";
 import { initNotesStore } from "./lib/notes/store";
 import { registerNotesRoutes } from "./lib/notes/routes";
+import { runChatAgent, type AgentEvent } from "./lib/chat-agent/agent";
+import * as notesStore from "./lib/notes/store";
+import { createPage as createNotesPage } from "./lib/notes/store";
 import { ServerMissionService } from "./lib/clyra-agent/server-mission-service";
 import { AutomationEngine, parseAutomationPrompt } from "./lib/clyra-agent/automation-engine";
 import { AgentZeroRuntimeBridge } from "./lib/clyra-agent/agent-zero-runtime";
@@ -3055,6 +3059,47 @@ async function startServer() {
     }
   });
 
+  /**
+   * The chat agent: one tool-calling run (web search, page reading, to-do list, note creation) streamed as
+   * server-sent events, one per real step. Cancelled when the browser closes the connection.
+   */
+  app.post("/api/chat/agent", async (req, res) => {
+    const turns = (Array.isArray(req.body?.messages) ? req.body.messages : [])
+      .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m.content === "string" && m.content.trim())
+      .slice(-24)
+      .map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 12_000) }));
+    if (!turns.length || turns[turns.length - 1].role !== "user") {
+      res.status(400).json({ error: "A user message is required." });
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    const controller = new AbortController();
+    res.on("close", () => controller.abort());
+    const send = (event: AgentEvent) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+    try {
+      await runChatAgent(
+        turns,
+        {
+          createNote: ({ title, markdown, parentId }) => { const page = createNotesPage({ title, markdown, parentId }) as { id: string; title: string } | null; if (!page) throw new Error("Notes could not create the page."); return { id: String(page.id), title: String(page.title || title) }; },
+          notes: req.body?.notes ? {
+            search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
+            read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
+            insert: (id, markdown, where) => notesStore.insertMarkdown(id, markdown, where),
+            context: (Array.isArray(req.body.notes.pageIds) ? req.body.notes.pageIds : []).slice(0, 6).map((id: unknown) => {
+              const md = notesStore.pageMarkdown(String(id)); const page = notesStore.getPage(String(id));
+              return md && page ? { id: String(id), title: String(page.title || "Untitled"), markdown: md, current: String(id) === String(req.body.notes.currentPageId || "") } : null;
+            }).filter(Boolean),
+          } : undefined,
+        },
+        send,
+        { model: typeof req.body?.model === "string" ? req.body.model : undefined, instructions: typeof req.body?.instructions === "string" ? req.body.instructions : undefined, signal: controller.signal },
+      );
+    } catch (error) {
+      send({ type: "error", code: "failed", message: error instanceof Error ? error.message : "The agent could not finish." });
+    }
+    res.end();
+  });
+
   app.post("/api/clyra/chat", handleClyraChat);
   app.post("/api/deepseek/chat", handleClyraChat);
   app.post("/api/openpencil/v1/chat/completions", handleClyraChat);
@@ -3381,6 +3426,18 @@ async function startServer() {
       res.json({ ok: true, ...(await answerAboutManagedBrowserPage(question, apiKey)) });
     } catch (error) {
       res.status(502).json({ ok: false, error: { message: error instanceof Error ? error.message : "Could not read this page" } });
+    }
+  });
+
+  /* Clyra's own apps (Shorts...) operated from chat: the browser sends what is on screen, this answers with the next action. */
+  app.post("/api/tool-agent/step", async (req, res) => {
+    try {
+      const { task, tool, snapshot, history, step } = req.body ?? {};
+      if (!task || !tool?.id || !Array.isArray(snapshot?.elements)) { res.status(400).json({ ok: false, error: { message: "A task, a tool and the page snapshot are required." } }); return; }
+      const result = await decideToolStep({ task: String(task).slice(0, 2000), tool: { id: String(tool.id), name: String(tool.name || tool.id), hints: String(tool.hints || "").slice(0, 3000) }, snapshot, history: Array.isArray(history) ? history : [], step: Number(step) || 1 });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      res.status(502).json({ ok: false, error: { message: error instanceof Error ? error.message : "The tool agent could not decide." } });
     }
   });
 

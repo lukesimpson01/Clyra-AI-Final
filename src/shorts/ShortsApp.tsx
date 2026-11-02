@@ -1,4 +1,8 @@
 import React from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { AgentPointer } from "../components/chat/AgentPointer";
+import { ShimmerText } from "../components/chat/assistant";
+import { useToolAgent } from "../lib/toolAgentStore";
 
 /*
  * Clyra's Shorts workspace: the Shorts app (apps/shorts/app, with its advanced editor apps/shorts/openfilm), as it is,
@@ -44,12 +48,30 @@ export function ShortsApp({ entry, onExit }: { entry: ShortsEntry; onExit?: () =
     return () => { live = false; window.clearTimeout(timer); };
   }, []);
   const path = PATH_OF[entry.name === "home" ? "home" : entry.kind] ?? "/dashboard";
+  /* while Clyra's agent works in this app: the blue field, its pointer, and the app locked until it is done */
+  const agent = useToolAgent();
+  const working = agent.busy && agent.tool === "shorts";
+  const frame = React.useRef<HTMLIFrameElement | null>(null);
+  const root = React.useRef<HTMLDivElement | null>(null);
+  /* zooming into the app from Task View while it is mid-task resizes its window: the frost arrives blurred again, then settles */
+  const [enterKey, setEnterKey] = React.useState(0);
+  React.useEffect(() => {
+    const el = root.current; if (!el || typeof ResizeObserver === "undefined") return undefined;
+    let width = el.clientWidth;
+    const watch = new ResizeObserver(() => { const next = el.clientWidth; if (Math.abs(next - width) > 120 && working) setEnterKey((k) => k + 1); width = next; });
+    watch.observe(el); return () => watch.disconnect();
+  }, [working]);
+  React.useEffect(() => {
+    const el = frame.current; if (!el) return;
+    if (working) { el.setAttribute("inert", ""); (document.activeElement as HTMLElement | null)?.blur?.(); } else el.removeAttribute("inert");
+  }, [working, url]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-white">
+    <div ref={root} className="relative h-full w-full overflow-hidden bg-white">
       <style>{`.shorts-surface{transition:opacity 360ms cubic-bezier(.22,1,.36,1)}@media(prefers-reduced-motion:reduce){.shorts-surface{transition:none!important}}`}</style>
       {url ? (
         <iframe
+          ref={frame}
           title="Shorts"
           src={`${url}${path}`}
           onLoad={() => setLoaded(true)}
@@ -58,6 +80,16 @@ export function ShortsApp({ entry, onExit }: { entry: ShortsEntry; onExit?: () =
           allow="autoplay; clipboard-read; clipboard-write; fullscreen; microphone"
         />
       ) : null}
+      <AnimatePresence>
+        {working ? (
+          <motion.div className="clyra-toolagent" key="agent" role="status" aria-live="polite" aria-label="Clyra is working in Shorts" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}>
+            <span className="clyra-bf is-working" aria-hidden />
+            <div className="clyra-toolagent__frost" key={enterKey} aria-hidden />
+            {agent.cursor ? <AgentPointer x={agent.cursor.x} y={agent.cursor.y} kind={agent.cursor.kind} id={agent.cursor.id} /> : null}
+            <div className="clyra-toolagent__pill"><i aria-hidden /><ShimmerText>{agent.label || "Working in Shorts"}</ShimmerText></div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {error ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
           <strong className="text-[15px] font-semibold text-neutral-900">Shorts could not start</strong>
