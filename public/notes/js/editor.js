@@ -1459,6 +1459,7 @@ Object.assign(Editor.prototype, {
       block.type === "callout" ? { label: "Highlight colour", icon: "palette", onSelect: () => this.colorMenu(block, anchor) } : null,
       block.type === "bulleted" ? { label: "Bullet style", icon: "bullet", onSelect: () => this.bulletStyleMenu(block, anchor) } : null,
       { type: "separator" },
+      { label: "Comment", icon: "comments", keywords: "discuss note reply", onSelect: () => this.onComment?.(block, spansText(block.text || [])) },
       { label: "Copy link to block", icon: "link", keywords: "share url", onSelect: () => { navigator.clipboard.writeText(`${location.origin}/notes#${this.page.id}:${block.id}`); toast("Block link copied"); } },
       { label: "Duplicate", icon: "duplicate", shortcut: `${mod}+D`, onSelect: () => this.duplicateBlock(block) },
       { label: "Move to", icon: "move", keywords: "another page transfer", onSelect: () => this.moveBlocksMenu(ids, anchor) },

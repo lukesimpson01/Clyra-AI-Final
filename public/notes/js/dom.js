@@ -64,6 +64,8 @@ const PATHS = {
   arrow_up: "M12 19V5M6 11l6-6 6 6",
   arrow_down: "M12 5v14M6 13l6 6 6-6",
   align_left: "M4 6h16M4 10.5h10M4 15h16M4 19.5h10",
+  comments: "M4.500 5.500h15a.5.5 0 0 1 .5.5v9.500a.5.5 0 0 1-.5.5H12l-4 3.500V16H4.500a.5.5 0 0 1-.5-.5V6a.5.5 0 0 1 .5-.5ZM8 9.500h8M8 12.500h5",
+  translate: "M4 6h9M8.5 4v2M6 6c.5 3 2.500 5 5.500 6.500M11 6c-.5 3-2.500 5-6 7M12.500 20l3.500-8 3.500 8M13.800 17h4.400",
   align_center: "M4 6h16M7 10.5h10M4 15h16M7 19.5h10",
   align_right: "M4 6h16M10 10.5h10M4 15h16M10 19.5h10",
   kind_keyword: "M6 4.5h12M6 12h12M6 19.5h7",

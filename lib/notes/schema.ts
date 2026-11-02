@@ -272,6 +272,20 @@ CREATE TABLE IF NOT EXISTS chat_messages(
 );
 CREATE INDEX IF NOT EXISTS chat_messages_chat ON chat_messages(chat_id, sort);
 
+/* Comments on a page, or on one block of it. A block id is kept as text rather than a reference: a block can be deleted
+   while the conversation about it is worth keeping, and the comment then simply says what it was on. */
+CREATE TABLE IF NOT EXISTS comments(
+  id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL REFERENCES pages2(id) ON DELETE CASCADE,
+  block_id TEXT,
+  quote TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  resolved INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS comments_page ON comments(page_id, created_at);
+
 CREATE TABLE IF NOT EXISTS inbox_events(
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,

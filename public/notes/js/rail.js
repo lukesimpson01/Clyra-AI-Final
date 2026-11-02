@@ -13,6 +13,7 @@ import { state, withError } from "./state.js";
 import { readPreference, writePreference } from "./preferences.js";
 import { calculatorPanel } from "./panels/calculator.js";
 import { browserPanel } from "./panels/browser.js";
+import { commentsPanel } from "./panels/comments.js";
 import { renderChat } from "./views/chat.js";
 
 /* Each tool carries its own shortcut. They are real bindings, not labels:
@@ -21,6 +22,7 @@ const PANELS = [
   { id: "outline", label: "Outline", icon: "list", key: "o", chord: "\u2303\u21e7O" },
   { id: "links", label: "Linked notes", icon: "link", key: "l", chord: "\u2303\u21e7L" },
   { id: "calculator", label: "Calculator", icon: "equation", key: "k", chord: "\u2303\u21e7K" },
+  { id: "comments", label: "Comments", icon: "comments", key: "m", chord: "\u2303\u21e7M" },
   { id: "chat", label: "Chat", icon: "comment", key: "j", chord: "\u2303\u21e7J" },
   { id: "browser", label: "Browser", icon: "embed", key: "b", chord: "\u2303\u21e7B" },
 ];
@@ -154,6 +156,7 @@ export class Rail {
   buildPanel(id) {
     if (id === "calculator") return calculatorPanel(this.context);
     if (id === "browser") return browserPanel(this.context);
+    if (id === "comments") return commentsPanel(this.context);
     if (id === "chat") return this.buildChat();
     if (id === "links") return this.buildLinks();
     return this.buildOutline();

@@ -5,7 +5,7 @@
    uses. Generating them here rather than drawing an approximation means a
    preview cannot describe a page the template does not actually produce.
 
-   Usage:  node tools/notes-template-shots.mjs [--url http://localhost:3060]
+   Usage:  node tools/notes-template-shots.mjs [--url http://localhost:3060] [--only id,id]
    The dev server must already be running (npm run dev:source). */
 import { chromium } from "playwright";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
@@ -31,7 +31,9 @@ async function templateIds() {
 const FRAME = { width: 720, height: 500 };
 
 async function main() {
-  const ids = await templateIds();
+  const only = arg("only", "");
+  const wanted = only ? new Set(only.split(",").map((id) => id.trim()).filter(Boolean)) : null;
+  const ids = (await templateIds()).filter((id) => !wanted || wanted.has(id));
   if (!ids.length) throw new Error("No template ids found in templates-data.js");
   await mkdir(outDir, { recursive: true });
 

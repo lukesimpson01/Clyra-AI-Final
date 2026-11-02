@@ -686,7 +686,7 @@ export async function clearWorkspace() {
       "card_reviews", "cards", "decks",
       "db_relations", "db_values", "db_views", "db_properties", "databases",
       "page_versions", "page_links", "blocks", "source_refs", "sources",
-      "chat_messages", "chats", "transcript_segments", "lecture_sessions",
+      "comments", "chat_messages", "chats", "transcript_segments", "lecture_sessions",
       "inbox_events", "pages2", "pages", "classes",
     ]) db.prepare(`DELETE FROM ${table}`).run();
   })();
@@ -1510,6 +1510,44 @@ export function sourceRefs(ownerKind: string, ownerId: string) {
        LEFT JOIN pages2 p ON p.id=r.page_id WHERE r.owner_kind=? AND r.owner_id=?`,
     )
     .all(ownerKind, ownerId);
+}
+
+/* ------------------------------------------------------------- comments */
+
+export function listComments(pageId: string) {
+  return db.prepare("SELECT * FROM comments WHERE page_id=? ORDER BY created_at, rowid").all(pageId)
+    .map((row) => ({ ...(row as Record<string, unknown>), resolved: Boolean((row as Record<string, unknown>).resolved) }));
+}
+
+/* How many open comments each block of a page carries, so the editor can mark them without loading the thread. */
+export function commentCounts(pageId: string) {
+  return db.prepare("SELECT block_id, count(*) AS n FROM comments WHERE page_id=? AND resolved=0 AND block_id IS NOT NULL GROUP BY block_id").all(pageId);
+}
+
+export function addComment(pageId: string, input: Record<string, unknown>) {
+  const body = String(input.body || "").trim().slice(0, 4000);
+  if (!body) return { error: "A comment needs some text" };
+  if (!db.prepare("SELECT 1 FROM pages2 WHERE id=?").get(pageId)) return { error: "Page not found" };
+  const id = newId();
+  db.prepare("INSERT INTO comments(id,page_id,block_id,quote,body) VALUES(?,?,?,?,?)")
+    .run(id, pageId, input.blockId ? String(input.blockId) : null, String(input.quote || "").replace(/\s+/g, " ").trim().slice(0, 240), body);
+  return db.prepare("SELECT * FROM comments WHERE id=?").get(id);
+}
+
+export function updateComment(id: string, input: Record<string, unknown>) {
+  const row = db.prepare("SELECT * FROM comments WHERE id=?").get(id) as Record<string, unknown> | undefined;
+  if (!row) return { error: "Comment not found" };
+  const body = input.body === undefined ? String(row.body) : String(input.body).trim().slice(0, 4000);
+  if (!body) return { error: "A comment needs some text" };
+  const resolved = input.resolved === undefined ? Number(row.resolved) : input.resolved ? 1 : 0;
+  db.prepare("UPDATE comments SET body=?, resolved=?, updated_at=datetime('now') WHERE id=?").run(body, resolved, id);
+  const next = db.prepare("SELECT * FROM comments WHERE id=?").get(id) as Record<string, unknown>;
+  return { ...next, resolved: Boolean(next.resolved) };
+}
+
+export function deleteComment(id: string) {
+  db.prepare("DELETE FROM comments WHERE id=?").run(id);
+  return { ok: true };
 }
 
 /* ---------------------------------------------------------------- chats */

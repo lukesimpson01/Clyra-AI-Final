@@ -122,12 +122,14 @@ export class PageView {
     });
     this.editor.onChange = () => this.syncQuickstart();
     this.editor.onAskClyra = (text, mode) => this.context.askWithSelection?.(text, mode);
+    this.editor.onComment = (block, quote) => this.context.commentOnBlock?.(block.id, quote);
     this.editor.onGenerate = (kind, target) => this.context.generate(kind, target);
     this.editor.onCreateChildPage = (block) => this.createChildPage(block);
     this.editor.onLinkPage = (block) => this.linkPage(block);
     this.editor.onPageStyle = (patch) => this.setMeta(mapStyle(patch));
     this.applyColourFocus();
     requestAnimationFrame(() => this.context.revealBlock?.());
+    this.context.refreshCommentMarks?.();
 
     this.quickstart = el("div", { class: "quickstart" });
     append(column, this.quickstart);

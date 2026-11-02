@@ -277,6 +277,25 @@ class App {
     setTimeout(() => window.dispatchEvent(new CustomEvent("clyra:notes-quote", { detail: { text, mode } })), 160);
   }
 
+  /* Comment on one block: open the Comments panel with that block already chosen. */
+  commentOnBlock(blockId, quote = "") {
+    if (!this.currentPageId()) return;
+    if (!this.railOpen()) this.toggleRail();
+    this.showRailPanel("comments");
+    setTimeout(() => window.dispatchEvent(new CustomEvent("clyra:comment-on", { detail: { blockId, quote } })), 120);
+  }
+
+  /* Blocks carrying open comments get a quiet mark in the margin. */
+  async refreshCommentMarks() {
+    const pageId = this.currentPageId();
+    const surface = document.querySelector(".editor-host");
+    if (!surface) return;
+    surface.querySelectorAll(".block[data-commented]").forEach((node) => node.removeAttribute("data-commented"));
+    if (!pageId) return;
+    const counts = await api.get(`/api/notes/pages/${pageId}/comment-counts`).catch(() => []);
+    for (const row of counts || []) surface.querySelector(`[data-block="${CSS.escape(String(row.block_id))}"]`)?.setAttribute("data-commented", String(row.n));
+  }
+
   askAboutPage(page = null) {
     const pageId = page?.id ? String(page.id) : this.currentPageId();
     if (!pageId) { toast("Open a page first"); return; }

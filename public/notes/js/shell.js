@@ -633,6 +633,7 @@ export class Toolbar {
         /* who can see it, as Notion's top bar says it: a lock and "Private", opening the same access menu as Share */
         el("button", { class: "text-button visibility-chip", type: "button", "aria-label": "Page access: private", onclick: (event) => this.context.shareMenu(page, event.currentTarget) },
           icon("lock", 14), el("span", { text: "Private" }), icon("chevron_down", 12)),
+        iconButton("comments", "Comments", () => this.context.commentOnBlock?.(null, ""), { size: 16 }),
         el("button", { class: "text-button", type: "button", onclick: () => this.context.askAboutPage(page) }, "Ask Clyra"),
         el("button", { class: "text-button", type: "button", onclick: (event) => this.context.shareMenu(page, event.currentTarget) }, "Share"),
         iconButton("link", "Copy link", () => { navigator.clipboard?.writeText(`${location.origin}/notes#${page.id}`); toast("Link copied"); }),

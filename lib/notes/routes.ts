@@ -413,6 +413,13 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
     return { page, generated };
   }));
 
+  /* ---- comments ---- */
+  app.get("/api/notes/pages/:id/comments", wrap((req) => store.listComments(req.params.id)));
+  app.get("/api/notes/pages/:id/comment-counts", wrap((req) => store.commentCounts(req.params.id)));
+  app.post("/api/notes/pages/:id/comments", wrap((req, res) => { res.status(201); return store.addComment(req.params.id, req.body || {}); }));
+  app.patch("/api/notes/comments/:id", wrap((req) => store.updateComment(req.params.id, req.body || {})));
+  app.delete("/api/notes/comments/:id", wrap((req) => store.deleteComment(req.params.id)));
+
   /* ---- chats ---- */
   app.get("/api/notes/chats", wrap(() => store.listChats()));
   app.post("/api/notes/chats", wrap((req, res) => { res.status(201); return store.createChat(req.body?.title); }));

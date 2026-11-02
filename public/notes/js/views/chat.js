@@ -24,6 +24,22 @@ const ACTIONS = [
 ];
 const SUGGESTIONS = ACTIONS.map((a) => a.prompt);
 
+/* The panel's starting points, as Notion's AI panel lists them: each is a real task for the agent on the open page. */
+const PAGE_TASKS = [
+  { icon: "align_left", label: "Summarize this page", prompt: "Summarize this page: the main points in a few short bullets." },
+  { icon: "translate", label: "Translate this page", prompt: "Translate this page into Spanish and keep its structure. Put the translation in a new page." },
+  { icon: "search", label: "Analyze for insights", prompt: "Analyze this page for insights: what stands out, what is missing and what I should do next." },
+  { icon: "check_square", label: "Create a task tracker", prompt: "Create a task tracker page from the action items in this page, with To do, Doing and Done columns." },
+];
+
+/* What the picker offers. Clyra runs on DeepSeek, so these are its real speeds, not renamed copies of one model. */
+const MODELS = [
+  { id: "auto", label: "Auto", hint: "Balances speed, effort and cost.", model: undefined },
+  { id: "fast", label: "Fast", hint: "Quickest answers for simple questions.", model: "deepseek-v4-flash" },
+  { id: "thorough", label: "Thorough", hint: "More careful on long notes and hard questions.", model: "deepseek-v4-pro" },
+];
+const MODEL_KEY = "clyra-notes:chat-model";
+
 /* `compact` is the rail's chat: same thread, same composer, no history
    column and no room for one. Everything else behaves identically, so there
    is one chat implementation rather than two that drift. */
@@ -36,6 +52,7 @@ export function renderChat(host, app, options = {}) {
   let quotes = [];
   let chatId = null;
   let chats = [];
+  let modelId = (() => { try { const saved = localStorage.getItem(MODEL_KEY); return MODELS.some((m) => m.id === saved) ? saved : "auto"; } catch { return "auto"; } })();
   let historyOpen = !compact && localStorage.getItem("clyra-notes:chat-history") !== "0";
 
   const thread = el("div", { class: "chat-thread scroll" });
@@ -51,15 +68,28 @@ export function renderChat(host, app, options = {}) {
   const send = el("button", { class: "chat-send", type: "button", "aria-label": "Send message", disabled: true },
     el("span", { class: "chat-send-icon", "aria-hidden": "true", html: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>' }));
 
-  /* Chat's composer shape: the prompt on top, a control row beneath — add a note on the left, send on the right. */
+  const modelButton = el("button", { class: "chat-model", type: "button", "aria-haspopup": "menu", "aria-label": "Choose how Clyra answers" });
+  const paintModel = () => { clear(modelButton); modelButton.append(el("span", { text: MODELS.find((m) => m.id === modelId).label }), icon("chevron_down", 11)); };
+  paintModel();
+  modelButton.addEventListener("click", () => menu(modelButton, [
+    ...MODELS.map((m) => ({ label: m.label, hint: m.hint, checked: m.id === modelId, class: "model-row", onSelect: () => { modelId = m.id; try { localStorage.setItem(MODEL_KEY, m.id); } catch { /* storage off */ } paintModel(); } })),
+  ], { class: "model-menu", side: "top", align: "end" }));
+  const plusButton = iconButton("plus", "Add context", () => menu(plusButton, [
+    { label: "Add a note", icon: "page", onSelect: () => addSource() },
+    { label: "Research the web", icon: "search", onSelect: () => { if (!input.value.trim()) input.value = "Research this on the web and write it up with sources: "; grow(); syncSend(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); } },
+    { label: "Ask about a selection", icon: "comment", hint: "Select text in a page first", onSelect: () => toast("Select text in a page, then choose Ask Clyra") },
+  ], { side: "top" }), { size: 16, className: "chat-at" });
+
+  /* Chat's composer shape: the prompt on top, a control row beneath — add context on the left, the model and send on the right. */
   const composer = el("div", { class: "chat-composer" },
     el("div", { class: "chat-bar" },
       el("div", { class: "chat-bar-field" }, input),
       el("div", { class: "chat-bar-controls" },
-        iconButton("plus", "Add a note as context", () => addSource(), { size: 16, className: "chat-at" }),
+        plusButton,
         chips,
         el("span", { class: "chat-bar-hint" }, "Type ", el("kbd", { text: "@" }), " to reference a note"),
         el("span", { class: "chat-bar-spacer" }),
+        modelButton,
         send)));
   /* History sits on the right, like any chat client: the thread you are in
      stays where your eye already is. */
@@ -75,7 +105,10 @@ export function renderChat(host, app, options = {}) {
       class: "chat-action-chip", type: "button",
       onclick: () => { input.value = action.prompt; grow(); syncSend(); if (action.prompt.endsWith(": ")) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } else ask(); },
     }, icon(action.icon, 15), action.label)));
-  const chatView = el("div", { class: "chat-view" }, thread, composer, compact ? null : actionRow);
+  const panelHead = compact ? el("div", { class: "chat-panel-head" },
+    el("span", { class: "chat-panel-title" }, bloub(18), el("span", { text: "New AI chat" })),
+    iconButton("plus", "New chat", () => startChat(), { size: 15 })) : null;
+  const chatView = el("div", { class: "chat-view" }, panelHead, thread, composer, compact ? null : actionRow);
   const layout = el("div", { class: `chat-layout${historyOpen ? "" : " history-hidden"}${compact ? " compact" : ""}` },
     chatView,
     compact ? null : history);
@@ -307,8 +340,8 @@ export function renderChat(host, app, options = {}) {
           el("span", { text: "Type " }),
           el("kbd", { class: "chat-lead-key", text: "@" }),
           el("span", { text: " to reference one note or several, so answers stay grounded in your own material." })) : null,
-        compact ? el("div", { class: "chat-suggestions" }, SUGGESTIONS.slice(0, 3).map((suggestion) =>
-          el("button", { class: "chip", type: "button", onclick: () => { input.value = suggestion; grow(); syncSend(); ask(); } }, suggestion))) : null));
+        compact ? el("div", { class: "chat-suggest-list", role: "group", "aria-label": "Suggestions" }, PAGE_TASKS.map((task) =>
+          el("button", { class: "chat-suggest-row", type: "button", onclick: () => { input.value = task.prompt; grow(); syncSend(); ask(); } }, icon(task.icon, 16), el("span", { text: task.label })))) : null));
       return;
     }
     for (const message of messages) {
@@ -413,6 +446,7 @@ export function renderChat(host, app, options = {}) {
     try {
       await streamAgent({
         messages: history,
+        model: MODELS.find((m) => m.id === modelId)?.model,
         notes: { pageIds, currentPageId: app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {
