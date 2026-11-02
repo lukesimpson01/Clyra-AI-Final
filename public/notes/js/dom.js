@@ -382,6 +382,7 @@ export function menu(anchor, items, options = {}) {
         onclick: (event) => {
           if (item.disabled) return;
           event.stopPropagation();
+          if (item.switch) row.querySelector(".m-switch")?.classList.toggle("on");
           if (!item.keepOpen) entry.close("select");
           item.onSelect?.(event);
         },
@@ -389,7 +390,7 @@ export function menu(anchor, items, options = {}) {
       },
         item.icon !== undefined ? el("span", { class: "m-icon" }, typeof item.icon === "string" ? (hasIcon(item.icon) ? icon(item.icon) : item.icon) : item.icon) : null,
         el("span", { class: "m-label", text: item.label }),
-        item.checked ? el("span", { class: "m-check" }, icon("check_square", 14)) : null,
+        item.switch ? el("span", { class: `m-switch${item.checked ? " on" : ""}`, "aria-hidden": "true" }, el("i")) : item.checked ? el("span", { class: "m-check" }, icon("check_square", 14)) : null,
         item.hint ? el("span", { class: "m-sub", text: item.hint }) : null,
         item.shortcut ? el("span", { class: "shortcut", text: item.shortcut }) : null,
       );

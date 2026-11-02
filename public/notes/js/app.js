@@ -68,6 +68,15 @@ class App {
       else if (reason === "save-status") this.toolbar.render();
     });
     window.addEventListener("clyra:open-page", (event) => this.openPage(event.detail.id, { newTab: event.detail.newTab }));
+    /* Links to a page, or to one block of it (/notes#page or /notes#page:block), open it: the links Copy link and the chat's "Open note" make. */
+    const followLink = () => {
+      const [pageId, blockId] = decodeURIComponent(location.hash.slice(1)).split(":");
+      if (!pageId || !getPageMeta(pageId)) return;
+      this.openPage(pageId, { blockId: blockId || undefined });
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+    };
+    window.addEventListener("hashchange", followLink);
+    followLink();
     this.root.removeAttribute("aria-busy");
   }
 
@@ -489,15 +498,43 @@ class App {
       { label: page.locked ? "Unlock page" : "Lock page", icon: "lock", onSelect: () => this.lockDialog(page, refresh) },
       { label: "Version history", icon: "history", onSelect: () => this.versionDialog(page) },
       { type: "separator" },
-      { type: "label", label: "Layout" },
-      { label: "Full width", icon: "panel", checked: Boolean(page.full_width), onSelect: async () => {
-        await withError(() => api.patch(`/api/notes/pages/${id}`, { fullWidth: !page.full_width }), "Could not update layout");
+      /* Notion's page style block: the typeface as chips, then two switches. Each applies at once; the menu stays open. */
+      { type: "custom", render: () => {
+        const row = el("div", { class: "menu-fonts", role: "radiogroup", "aria-label": "Font" });
+        for (const [font, name] of [["default", "Default"], ["serif", "Serif"], ["mono", "Mono"], ["rounded", "Rounded"]]) {
+          const on = (page.font_style || "default") === font;
+          row.append(el("button", {
+            class: `menu-font${on ? " on" : ""}`, type: "button", role: "radio", "aria-checked": on ? "true" : "false",
+            onclick: async () => {
+              row.querySelectorAll(".menu-font").forEach((b) => { b.classList.remove("on"); b.setAttribute("aria-checked", "false"); });
+              row.querySelector(`[data-font="${font}"]`)?.classList.add("on");
+              page.font_style = font;
+              await withError(() => api.patch(`/api/notes/pages/${id}`, { fontStyle: font }), "Could not update the font");
+              dropPage(id); await refresh(); this.currentKey = null; this.renderSurface();
+            }, "data-font": font,
+          }, el("span", { class: `menu-font-glyph font-${font}`, text: "Ag" }), el("span", { class: "menu-font-name", text: name })));
+        }
+        return row;
+      } },
+      { label: "Small text", icon: "text", switch: true, keepOpen: true, checked: page.text_size === "small", onSelect: async () => {
+        const next = page.text_size === "small" ? "medium" : "small"; page.text_size = next;
+        await withError(() => api.patch(`/api/notes/pages/${id}`, { textSize: next }), "Could not update text size");
         dropPage(id); await refresh(); this.currentKey = null; this.renderSurface();
       } },
-      { label: "Text size", icon: "text", onSelect: () => this.textSizeMenu(page, anchor, refresh) },
-      { label: "Font", icon: "text", onSelect: () => this.fontMenu(page, anchor, refresh) },
+      { label: "Full width", icon: "panel", switch: true, keepOpen: true, checked: Boolean(page.full_width), onSelect: async () => {
+        const next = !page.full_width; page.full_width = next;
+        await withError(() => api.patch(`/api/notes/pages/${id}`, { fullWidth: next }), "Could not update layout");
+        dropPage(id); await refresh(); this.currentKey = null; this.renderSurface();
+      } },
+      { label: "More text sizes", icon: "text", onSelect: () => this.textSizeMenu(page, anchor, refresh) },
       { type: "separator" },
       { label: "Move to trash", icon: "trash", danger: true, onSelect: () => this.trashPage(page, onChange) },
+      { type: "separator" },
+      { type: "custom", render: () => {
+        const raw = page.updated_at ? new Date(`${String(page.updated_at).replace(" ", "T")}${/Z|\+/.test(String(page.updated_at)) ? "" : "Z"}`) : null;
+        const when = raw && !Number.isNaN(raw.getTime()) ? raw.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "just now";
+        return el("div", { class: "menu-footer" }, el("div", { class: "menu-footer-label", text: "Last edited" }), el("div", { text: when }));
+      } },
     ], { align: "end" });
   }
 

@@ -104,3 +104,45 @@
 
 /* ---- columns: each column takes an equal share, as Notion's do ---- */
 .columns > .block { flex: 1 1 0; min-width: 0; }
+
+/* ---- block menu and page menu, as Notion's ---- */
+.menu-search { margin: 6px 8px 4px; width: calc(100% - 16px); }
+.menu-footer { padding: 8px 12px 10px; font: 400 12px/1.5 var(--font-ui); color: var(--text-secondary); }
+.menu-footer-label { font-weight: 500; color: var(--text-tertiary); margin-bottom: 1px; }
+.menu-footer-muted { color: var(--text-tertiary); }
+.m-switch { margin-left: auto; position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--border-strong); flex: none; transition: background var(--duration-hover) var(--ease); }
+.m-switch i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15,15,15,.3); transition: transform var(--duration-hover) var(--ease); }
+.m-switch.on { background: var(--accent); }
+.m-switch.on i { transform: translateX(12px); }
+.menu-fonts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 6px 8px 8px; }
+.menu-font { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 6px; border-radius: 6px; color: var(--text-secondary); transition: background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease); }
+.menu-font:hover { background: var(--background-hover); }
+.menu-font.on { color: var(--accent-text); background: var(--accent-soft); }
+.menu-font-glyph { font-size: 22px; line-height: 1.1; font-weight: 500; }
+.menu-font-glyph.font-serif { font-family: var(--font-serif); }
+.menu-font-glyph.font-mono { font-family: var(--font-mono); font-size: 20px; }
+.menu-font-glyph.font-rounded { font-family: var(--font-rounded); }
+.menu-font-name { font-size: 11.5px; }
+.tint-swatch.tc { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; font: 600 12px/1 var(--font-ui); box-shadow: inset 0 0 0 1px var(--border-soft); }
+/* the block the menu belongs to stays lit while it is open */
+.block.menu-open > .block-row { background: rgba(35, 131, 226, 0.12); border-radius: 4px; }
+
+/* ---- block colours: text and background, for every text block ---- */
+.block[data-tc="gray"] > .block-row .text-line { color: var(--c-gray); }
+.block[data-bg="gray"] > .block-row { background: var(--c-gray-bg); border-radius: 4px; }
+.block[data-tc="brown"] > .block-row .text-line { color: var(--c-brown); }
+.block[data-bg="brown"] > .block-row { background: var(--c-brown-bg); border-radius: 4px; }
+.block[data-tc="orange"] > .block-row .text-line { color: var(--c-orange); }
+.block[data-bg="orange"] > .block-row { background: var(--c-orange-bg); border-radius: 4px; }
+.block[data-tc="yellow"] > .block-row .text-line { color: var(--c-yellow); }
+.block[data-bg="yellow"] > .block-row { background: var(--c-yellow-bg); border-radius: 4px; }
+.block[data-tc="green"] > .block-row .text-line { color: var(--c-green); }
+.block[data-bg="green"] > .block-row { background: var(--c-green-bg); border-radius: 4px; }
+.block[data-tc="blue"] > .block-row .text-line { color: var(--c-blue); }
+.block[data-bg="blue"] > .block-row { background: var(--c-blue-bg); border-radius: 4px; }
+.block[data-tc="purple"] > .block-row .text-line { color: var(--c-purple); }
+.block[data-bg="purple"] > .block-row { background: var(--c-purple-bg); border-radius: 4px; }
+.block[data-tc="pink"] > .block-row .text-line { color: var(--c-pink); }
+.block[data-bg="pink"] > .block-row { background: var(--c-pink-bg); border-radius: 4px; }
+.block[data-tc="red"] > .block-row .text-line { color: var(--c-red); }
+.block[data-bg="red"] > .block-row { background: var(--c-red-bg); border-radius: 4px; }

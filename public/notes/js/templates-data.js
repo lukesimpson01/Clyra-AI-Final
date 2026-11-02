@@ -1297,13 +1297,65 @@ const NOTION = [
       h2("Library"),
       table([["Title", "Author", "Status", "Rating", "Takeaway"], ["", "", "To read", "", ""], ["", "", "To read", "", ""], ["", "", "To read", "", ""], ["", "", "To read", "", ""]], { align: ["left", "left", "center", "center", "left"] }),
     ] },
+  { id: "team-wiki", name: "Team wiki", emoji: "📚", category: "Work", icon: "book",
+    desc: "A home for how your team works: onboarding, processes and who to ask.", blocks: () => [
+      callout("📚", "Start here. Keep each page short, give it an **owner**, and link to it instead of copying it.", "default"),
+      columns(
+        [h3("🚀 Getting started"), li("Onboarding checklist"), li("Tools and accounts"), li("Who is who")],
+        [h3("⚙️ How we work"), li("Meetings and rituals"), li("Decisions and reviews"), li("Support and on-call")],
+        [h3("🧭 Reference"), li("Glossary"), li("Policies"), li("Brand and style")]),
+      h2("Pages"),
+      table([["Page", "Owner", "Updated", "Status"], ["", "", "", "Current"], ["", "", "", "Current"], ["", "", "", "Needs review"]], { align: ["left", "left", "center", "center"] }),
+      toggle("How to add a page", [p("Make it a sub-page of the right section, add an owner and a review date, then link it from this home.")]),
+    ] },
+  { id: "crm", name: "Sales CRM", emoji: "🤝", category: "Work", icon: "template",
+    desc: "Leads, deals and next steps in one pipeline.", blocks: () => [
+      columns(
+        [h3("Lead"), todo(""), todo(""), todo("")],
+        [h3("Talking"), todo(""), todo("")],
+        [h3("Proposal"), todo("")],
+        [h3("Won"), todo("", true)]),
+      h2("Accounts"),
+      table([["Company", "Contact", "Stage", "Value", "Next step", "When"], ["", "", "Lead", "", "", ""], ["", "", "Lead", "", "", ""], ["", "", "Lead", "", "", ""]], { align: ["left", "left", "center", "right", "left", "center"] }),
+      toggle("Follow-up rules", [li("Reply within a day"), li("Never leave a deal without a dated next step")]),
+    ] },
+  { id: "lesson-plan", name: "Lesson plan", emoji: "🍎", category: "Study", icon: "book",
+    desc: "Objectives, timing and materials for a single lesson.", blocks: () => [
+      meta(["Subject"], ["Year group"], ["Date"], ["Length"]),
+      h2("Objectives"), todo("Students can ..."), todo("Students can ..."),
+      h2("Plan"),
+      table([["Time", "Activity", "Grouping", "Resources"], ["5 min", "Starter", "Whole class", ""], ["15 min", "Teach", "Whole class", ""], ["20 min", "Practice", "Pairs", ""], ["10 min", "Review", "Whole class", ""]], { align: ["center", "left", "left", "left"] }),
+      columns([h3("Materials"), li(""), li("")], [h3("Check for understanding"), li(""), li("")]),
+      h2("Reflection"), p("What worked, what to change next time."),
+    ] },
+  { id: "meal-planner", name: "Meal planner", emoji: "🥗", category: "Personal", icon: "page",
+    desc: "A week of meals and the shopping list that goes with it.", blocks: () => [
+      table([["Day", "Breakfast", "Lunch", "Dinner"], ["Mon", "", "", ""], ["Tue", "", "", ""], ["Wed", "", "", ""], ["Thu", "", "", ""], ["Fri", "", "", ""], ["Sat", "", "", ""], ["Sun", "", "", ""]], { align: ["left", "left", "left", "left"] }),
+      columns([h3("🛒 Shopping list"), todo(""), todo(""), todo(""), todo("")], [h3("🧊 Already have"), li(""), li("")]),
+      toggle("Favourite recipes", [li(""), li("")]),
+    ] },
+  { id: "moving-checklist", name: "Moving checklist", emoji: "📦", category: "Personal", icon: "check_square",
+    desc: "Everything to do before, during and after a move.", blocks: () => [
+      columns(
+        [h3("Eight weeks out"), todo("Give notice"), todo("Book movers or a van"), todo("Start decluttering")],
+        [h3("Two weeks out"), todo("Pack non-essentials"), todo("Redirect mail"), todo("Update your address")],
+        [h3("Moving day"), todo("Meter readings"), todo("Final walk-through"), todo("Keys handed over")]),
+      h2("After the move"), checklist("Settle in", ["Unpack the essentials first", "Test smoke alarms", "Register with local services", "Say hello to the neighbours"]),
+      h2("Costs"),
+      table([["Item", "Cost", "Paid"], ["Movers", "", ""], ["Bond / deposit", "", ""], ["Utilities set-up", "", ""]], { align: ["left", "right", "center"] }),
+    ] },
+  { id: "class-schedule", name: "Class schedule", emoji: "🗓️", category: "Study", icon: "template",
+    desc: "A weekly timetable with room for homework and exams.", blocks: () => [
+      table([["Time", "Mon", "Tue", "Wed", "Thu", "Fri"], ["9:00", "", "", "", "", ""], ["10:00", "", "", "", "", ""], ["11:00", "", "", "", "", ""], ["1:00", "", "", "", "", ""], ["2:00", "", "", "", "", ""]], { align: ["center", "left", "left", "left", "left", "left"] }),
+      columns([h3("📝 Homework"), todo(""), todo(""), todo("")], [h3("🧪 Exams"), li(""), li("")]),
+    ] },
 ];
 TEMPLATES.push(...NOTION.map((entry) => ({ accent: "#8a8f9c", ...entry })));
 
 /* Notion's three groups. A template belongs to the group of the Notion template it matches. */
 export const TEMPLATE_GROUPS = ["Work", "Life", "School"];
-const LIFE = new Set(["journal", "habit-tracker", "trip", "workout-log", "recipe", "book-notes", "reading-list", "weekly-review", "daily-plan", "goal-setting", "budget"]);
-const WORK = new Set(["meeting", "agenda", "one-on-one", "project", "project-brief", "decision-record", "status-report", "okrs", "retrospective", "client-call", "proposal", "sop", "prd", "interview-scorecard", "job-tracker", "content-calendar", "blog-post", "cover-letter", "user-interview", "swot", "competitor-analysis", "roadmap", "task-tracker", "report"]);
+const LIFE = new Set(["journal", "habit-tracker", "trip", "workout-log", "recipe", "book-notes", "reading-list", "weekly-review", "daily-plan", "goal-setting", "budget", "meal-planner", "moving-checklist"]);
+const WORK = new Set(["meeting", "agenda", "one-on-one", "project", "project-brief", "decision-record", "status-report", "okrs", "retrospective", "client-call", "proposal", "sop", "prd", "interview-scorecard", "job-tracker", "content-calendar", "blog-post", "cover-letter", "user-interview", "swot", "competitor-analysis", "roadmap", "task-tracker", "report", "team-wiki", "crm"]);
 export const templateGroup = (template) => (LIFE.has(template.id) ? "Life" : WORK.has(template.id) || template.category === "Work" ? "Work" : "School");
 
 /* The restrained look: neutral tints and cover, one quiet icon. Applied to every template, the original catalogue

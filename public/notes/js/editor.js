@@ -20,6 +20,7 @@ import { highlight, handlePairs, handleNewline, completionsFor } from "./code.js
 import { openInlineToolbar } from "./inline-toolbar.js";
 import { runAiComposer } from "./ai-composer.js";
 import { state, getPageMeta, queueBlockSave } from "./state.js";
+import { api } from "./api.js";
 import { prefOn } from "./preferences.js";
 
 export const newBlockId = () =>
@@ -37,6 +38,8 @@ function propsFor(type, props = {}) {
   const keep = KEEP_PROPS[type] || [];
   const next = {};
   for (const key of keep) if (props[key] !== undefined) next[key] = props[key];
+  /* text and background colour belong to the block, whatever it becomes */
+  for (const key of ["tc", "bg"]) if (props[key] && props[key] !== "default") next[key] = props[key];
   if (type.startsWith("toggle") && props.collapsed !== undefined) next.collapsed = props.collapsed;
   if (type === "todo" && next.checked === undefined) next.checked = false;
   if (type === "code" && next.language === undefined) next.language = "plain";
@@ -161,6 +164,8 @@ export class Editor {
 
   buildBlock(block, parentBlock) {
     const node = el("div", { class: "block", "data-block": block.id, "data-type": block.type });
+    if (block.props?.tc) node.dataset.tc = block.props.tc;
+    if (block.props?.bg) node.dataset.bg = block.props.bg;
     node.__type = block.type;
     node.__block = block;
 
@@ -1440,33 +1445,87 @@ Object.assign(Editor.prototype, {
     const node = this.nodes.get(block.id);
     node?.classList.add("menu-open");
     const ids = this.selection.size > 1 && this.selection.has(block.id) ? [...this.selection] : [block.id];
+    const text = spansText(block.text || []);
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const textual = isTextBlock(block);
+    const meta = getPageMeta(this.page?.id);
+    const stamp = meta?.updated_at ? new Date(`${String(meta.updated_at).replace(" ", "T")}${/Z|\+/.test(String(meta.updated_at)) ? "" : "Z"}`) : null;
+    const edited = stamp && !Number.isNaN(stamp.getTime()) ? stamp.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "just now";
+    /* the order and grouping are Notion's: how it looks, then what you do with it, then what it can do for you */
     const entry = menu(anchor, [
-      { label: "Delete", icon: "trash", shortcut: "Del", danger: true, onSelect: () => this.deleteBlocks(ids) },
-      { label: "Duplicate", icon: "duplicate", shortcut: `${mod}+D`, onSelect: () => this.duplicateBlock(block) },
-      isTextBlock(block) ? {
-        label: "Turn into", icon: "refresh", onSelect: () => this.turnIntoMenu(block, anchor),
-      } : null,
-      { label: "Copy link to block", icon: "link", onSelect: () => {
-        navigator.clipboard.writeText(`${location.origin}/notes#${this.page.id}:${block.id}`);
-        toast("Block link copied");
-      } },
-      { type: "separator" },
-      { label: "Move up", icon: "chevron_right", shortcut: "↑", onSelect: () => this.shift(block, -1) },
-      { label: "Move down", icon: "chevron_right", shortcut: "↓", onSelect: () => this.shift(block, 1) },
-      /* block.props.color only ever renders as the callout's background tint
-         (see the callout wrapper above, and KEEP_PROPS, which reserves
-         `color` for callout alone) — never as literal text colour. Showing
-         this on any other text block used to be a silent no-op, since
-         nothing else reads the prop. Gate it to callouts, where it does
-         something. */
+      { type: "label", label: ids.length > 1 ? `${ids.length} blocks` : (BLOCK_TYPES[block.type]?.label || "Block") },
+      textual && ids.length === 1 ? { label: "Turn into", icon: "refresh", onSelect: () => this.turnIntoMenu(block, anchor) } : null,
+      textual ? { label: "Color", icon: "palette", onSelect: () => this.blockColorMenu(block, anchor, ids) } : null,
       block.type === "callout" ? { label: "Highlight colour", icon: "palette", onSelect: () => this.colorMenu(block, anchor) } : null,
       block.type === "bulleted" ? { label: "Bullet style", icon: "bullet", onSelect: () => this.bulletStyleMenu(block, anchor) } : null,
+      { type: "separator" },
+      { label: "Copy link to block", icon: "link", keywords: "share url", onSelect: () => { navigator.clipboard.writeText(`${location.origin}/notes#${this.page.id}:${block.id}`); toast("Block link copied"); } },
+      { label: "Duplicate", icon: "duplicate", shortcut: `${mod}+D`, onSelect: () => this.duplicateBlock(block) },
+      { label: "Move to", icon: "move", keywords: "another page transfer", onSelect: () => this.moveBlocksMenu(ids, anchor) },
+      { label: "Move up", icon: "chevron_right", shortcut: "↑", keywords: "reorder", onSelect: () => this.shift(block, -1) },
+      { label: "Move down", icon: "chevron_right", shortcut: "↓", keywords: "reorder", onSelect: () => this.shift(block, 1) },
+      { label: "Delete", icon: "trash", shortcut: "Del", danger: true, onSelect: () => this.deleteBlocks(ids) },
       state.aiConfigured ? { type: "separator" } : null,
-      state.aiConfigured ? { label: "Ask AI about this", icon: "sparkle", onSelect: () => this.openAiComposer(block, { seedText: spansText(block.text) }) } : null,
+      state.aiConfigured ? { label: "Ask AI", icon: "sparkle", shortcut: `${mod}+J`, keywords: "explain rewrite summarise", onSelect: () => this.openAiComposer(block, { seedText: text }) } : null,
       state.aiConfigured ? { label: "Generate flashcards", icon: "cards", onSelect: () => this.generateFrom(block, "flashcards") } : null,
       state.aiConfigured ? { label: "Generate questions", icon: "check_square", onSelect: () => this.generateFrom(block, "questions") } : null,
-    ].filter(Boolean), { onClose: () => node?.classList.remove("menu-open") });
+      { type: "separator" },
+      { type: "custom", render: () => el("div", { class: "menu-footer" },
+        el("div", { class: "menu-footer-label", text: "Last edited" }),
+        el("div", { text: edited }),
+        textual ? el("div", { class: "menu-footer-muted", text: `${words} word${words === 1 ? "" : "s"}, ${text.length} character${text.length === 1 ? "" : "s"}` }) : null) },
+    ].filter(Boolean), { search: true, searchPlaceholder: "Search actions…", onClose: () => node?.classList.remove("menu-open") });
     return entry;
+  },
+
+  /* Text and background colour for any text block, the way Notion's Color menu offers them. */
+  blockColorMenu(block, anchor, ids = [block.id]) {
+    const label = (c) => (c === "default" ? "Default" : c[0].toUpperCase() + c.slice(1));
+    const targets = this.linear().filter((b) => ids.includes(b.id) && isTextBlock(b));
+    const set = (key, value) => {
+      this.push();
+      for (const target of targets.length ? targets : [block]) {
+        const props = { ...(target.props || {}) };
+        if (value === "default") delete props[key]; else props[key] = value;
+        target.props = props; target.__dirty = true;
+      }
+      this.render(); this.commit("block-color", true);
+    };
+    menu(anchor, [
+      { type: "label", label: "Text colour" },
+      ...COLORS.map((c) => ({ label: label(c), checked: (block.props?.tc || "default") === c, keywords: `text ${c}`,
+        icon: el("span", { class: "tint-swatch tc", style: { color: c === "default" ? "var(--text-primary)" : `var(--c-${c})` }, text: "A" }), onSelect: () => set("tc", c) })),
+      { type: "separator" },
+      { type: "label", label: "Background colour" },
+      ...COLORS.map((c) => ({ label: label(c), checked: (block.props?.bg || "default") === c, keywords: `background ${c}`,
+        icon: el("span", { class: "tint-swatch", style: { background: c === "default" ? "var(--background-subtle)" : `var(--c-${c}-bg)` } }), onSelect: () => set("bg", c) })),
+    ], { align: "start", search: true, searchPlaceholder: "Search colours…" });
+  },
+
+  /* Move blocks onto another page: they are copied there with fresh ids, then removed here, so a failed save loses nothing. */
+  moveBlocksMenu(ids, anchor) {
+    const here = String(this.page?.id);
+    const items = state.pages.filter((p) => String(p.id) !== here && !p.locked && !p.sealed).slice(0, 400).map((p) => ({
+      label: p.title || "New page", keywords: p.title || "", icon: p.icon && !/^https?:|^\//.test(p.icon) ? p.icon : "page",
+      onSelect: () => this.moveBlocksToPage(ids, p),
+    }));
+    menu(anchor, items.length ? items : [{ label: "No other pages", disabled: true }], { align: "start", search: true, searchPlaceholder: "Move to a page…" });
+  },
+
+  async moveBlocksToPage(ids, target) {
+    const chosen = this.linear().filter((b) => ids.includes(b.id));
+    if (!chosen.length) return;
+    try {
+      const page = await api.get(`/api/notes/pages/${target.id}`);
+      const existing = (page.blocks || []).map((b) => ({ id: b.id, type: b.type, text: b.text || [], props: b.props || {}, children: b.children || [] }));
+      const moved = chosen.map((b) => cloneBlock(b));
+      await api.put(`/api/notes/pages/${target.id}/blocks`, { blocks: [...existing, ...moved] });
+    } catch {
+      toast("Could not move that block");
+      return;
+    }
+    this.deleteBlocks(ids);
+    toast(`Moved to ${target.title || "New page"}`);
   },
 
   turnIntoMenu(block, anchor) {
