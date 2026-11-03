@@ -40,6 +40,8 @@ export type NotesDeps = {
   search: (query: string) => Array<{ id: string; title: string; snippet: string }>;
   read: (id: string) => { title: string; markdown: string } | null;
   insert: (id: string, markdown: string, where: { position?: "start" | "end" | "after"; afterText?: string }) => { ok: true; title: string; landed: string } | { ok: false; error: string };
+  /** Adds the same durable Link to page block that the slash menu creates. */
+  linkPage?: (hostId: string, linkedPageId: string) => { ok: true; hostTitle: string; linkedTitle: string } | { ok: false; error: string };
   /** Pages the person attached or is looking at, read up front so answers are grounded in them. */
   context: Array<{ id: string; title: string; markdown: string; current?: boolean }>;
   /** Every page's title and id, so the agent knows the whole workspace and can read any of it. */
@@ -212,6 +214,14 @@ const NOTES_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "notes_link_page",
+      description: "Insert a real Clyra Link to page block into a note. Use it to connect a hub, index, course, project or dashboard to an existing note; this is the same native link block available from the slash menu, not a pasted URL.",
+      parameters: { type: "object", properties: { page_id: { type: "string", description: "The note that should receive the link" }, linked_page_id: { type: "string", description: "The existing note to link" } }, required: ["page_id", "linked_page_id"] },
+    },
+  },
 ] as const;
 
 const hostLabel = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
@@ -220,7 +230,7 @@ function systemPrompt(now: Date, notes?: NotesDeps) {
   const index = notes?.index?.length ? `\n\nEvery note in their workspace (title, id). Use notes_read with an id to open any of them, or notes_search to find by content:\n${notes.index.slice(0, 250).map((p) => `- ${p.icon ? `${p.icon} ` : ""}${p.title || "Untitled"}${p.parentTitle ? ` (in ${p.parentTitle})` : ""} — ${p.id}`).join("\n")}` : "";
   const inNotes = notes ? `\n\nYou are inside the person's Notes app and you have context from ALL of their notes. Their own pages are the first source of truth for questions about their material: use notes_search / notes_read, and say which note a fact came from. Never claim you added something unless the tool said it did.
 
-Use initiative with notes. When they ask you to make, write, plan, list or organise something (a to-do list, a plan, a schedule, an essay, a summary, a study guide, an itinerary, a tracker, meeting notes), do not print it in the chat: put it on a note, then say in one or two lines what you made. If they are on a page and the request is about that page ("add a to-do list", "tidy this", "summarise this above"), add it there with notes_insert at the place they asked for (default 'end'). Otherwise call create_note with a fitting emoji icon and a designed layout: a callout summary first, headings that group the content, - [ ] checklists for tasks, tables for schedules and comparisons, numbered steps for procedures, dividers between big sections. Never leave a note plain or as one block of text. Pull in facts from their other notes when they help, and name those notes. For a quick question, just answer in chat.${notes.context.length ? `\n\nPages in context (read these first):\n${notes.context.map((c) => `--- ${c.title} (id ${c.id})${c.current ? " [the page they are on]" : ""}\n${c.markdown.slice(0, 9000)}`).join("\n\n")}` : ""}${index}` : "";
+Use initiative with notes. When they ask you to make, write, plan, list or organise something (a to-do list, a plan, a schedule, an essay, a summary, a study guide, an itinerary, a tracker, meeting notes), do not print it in the chat: put it on a note, then say in one or two lines what you made. If they are on a page and the request is about that page ("add a to-do list", "tidy this", "summarise this above"), add it there with notes_insert at the place they asked for (default 'end'). Otherwise call create_note with a fitting emoji icon and a designed layout: a callout summary first, headings that group the content, - [ ] checklists for tasks, tables for schedules and comparisons, numbered steps for procedures, dividers between big sections. Never leave a note plain or as one block of text. When someone explicitly asks for a collection of notes, make a hub plus the individual child notes with repeated create_note calls (using parent_id), then use notes_link_page to place native page links in the hub. Pull in facts from their other notes when they help, and name those notes. For a quick question, just answer in chat.${notes.context.length ? `\n\nPages in context (read these first):\n${notes.context.map((c) => `--- ${c.title} (id ${c.id})${c.current ? " [the page they are on]" : ""}\n${c.markdown.slice(0, 9000)}`).join("\n\n")}` : ""}${index}` : "";
   return `You are Clyra, working for the person in their chat. Today is ${now.toDateString()}.
 
 You have tools. Use them for real: never say you searched, opened, read or wrote something unless a tool call did it.
@@ -359,12 +369,26 @@ export async function runChatAgent(
         if (!deps.notes) return JSON.stringify({ error: "Notes are not available here." });
         const markdown = String(args.markdown ?? "").trim();
         if (!markdown) return JSON.stringify({ error: "markdown is required" });
-        step({ id, tool: "notes_insert", label: "Adding to your note", state: "running" });
+        const noteId = String(args.page_id ?? "");
+        const noteTitle = deps.notes.context.find((page) => page.id === noteId)?.title
+          || deps.notes.index?.find((page) => page.id === noteId)?.title
+          || "this note";
+        step({ id, tool: "notes_insert", label: `Editing note “${clip(noteTitle, 60)}”`, state: "running", document: { id: noteId, title: noteTitle } });
         const checked = validateCitations(markdown, ledger);
-        const result = deps.notes.insert(String(args.page_id ?? ""), checked.text, { position: args.position, afterText: args.after_text ? String(args.after_text) : undefined });
+        const result = deps.notes.insert(noteId, checked.text, { position: args.position, afterText: args.after_text ? String(args.after_text) : undefined });
         if (!result.ok) { step({ id, tool: "notes_insert", label: "Couldn’t add to the note", state: "failed", error: result.error }); return JSON.stringify({ error: result.error }); }
         step({ id, tool: "notes_insert", label: `Added to “${clip(result.title, 50)}”`, state: "done", detail: result.landed, document: { id: String(args.page_id), title: result.title } });
         return JSON.stringify({ ok: true, landed: result.landed });
+      }
+      case "notes_link_page": {
+        if (!deps.notes?.linkPage) return JSON.stringify({ error: "Native page links are not available here." });
+        const hostId = String(args.page_id ?? "");
+        const linkedPageId = String(args.linked_page_id ?? "");
+        step({ id, tool: "notes_link_page", label: "Linking notes", state: "running" });
+        const result = deps.notes.linkPage(hostId, linkedPageId);
+        if (!result.ok) { step({ id, tool: "notes_link_page", label: "Couldn’t link those notes", state: "failed", error: result.error }); return JSON.stringify({ error: result.error }); }
+        step({ id, tool: "notes_link_page", label: `Linked “${clip(result.linkedTitle, 50)}” in “${clip(result.hostTitle, 50)}”`, state: "done", document: { id: hostId, title: result.hostTitle } });
+        return JSON.stringify({ ok: true, host_title: result.hostTitle, linked_title: result.linkedTitle });
       }
       case "create_note": {
         const title = String(args.title ?? "").trim().slice(0, 140) || "Untitled";

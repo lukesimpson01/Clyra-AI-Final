@@ -75,7 +75,14 @@ export function templatePreview(template) {
   return canvas;
 }
 
-const CATEGORY_ICONS = { All: "sparkle", Notes: "page", Study: "book", Work: "template", Planning: "calendar", Writing: "pencil", Research: "search", Money: "bookmark", Personal: "star" };
+const CATEGORY_ICONS = {
+  All: "sparkle",
+  "Study & Education": "book",
+  "Planning & Productivity": "calendar",
+  "Work & Business": "template",
+  "Life & Finance": "bookmark",
+  "Dashboards & Knowledge": "page",
+};
 
 /* App Store style "Get" control: a pill that collapses into a progress ring while the page is created, then
    reopens as "Open". Clicking Open takes the reader to the new page. */
@@ -121,6 +128,7 @@ export function openTemplates(app, parentId, { host = null } = {}) {
   let entry;
   let category = "All";
   let query = "";
+  let detail = null;
   const state = { busy: new Set(), created: new Map(), paints: new Set() };
   const repaintButtons = () => state.paints.forEach((paint) => paint());
 
@@ -168,11 +176,32 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     app.openPage(id);
   };
 
+  const showDetail = (template) => { detail = template; paint(); };
+
+  const detailScreen = (template) => {
+    const back = el("button", { class: "as-detail-back", type: "button", onclick: () => { detail = null; paint(); } }, icon("chevron_left", 15), "Back");
+    const shots = el("div", { class: "as-detail-shots", "aria-label": `${template.name} previews` },
+      el("div", { class: "as-detail-shot hero" }, templatePreview(template)),
+      el("div", { class: "as-detail-shot" }, templatePreview(template)),
+      el("div", { class: "as-detail-shot" }, templatePreview(template)));
+    return el("article", { class: "as-detail", style: { "--tpl-accent": template.accent || "var(--accent)" } },
+      back,
+      el("header", { class: "as-detail-head" },
+        appIcon(template, 72),
+        el("div", { class: "as-detail-title" }, el("h2", { text: template.name }), el("p", { text: `${template.category} · Clyra template` })),
+        getButton(template, state, create, open, { large: true })),
+      shots,
+      el("section", { class: "as-detail-copy" },
+        el("h3", { text: "About this template" }),
+        el("p", { text: template.desc }),
+        el("p", { class: "as-detail-note", text: "Preview before adding it. Nothing is created until you press Get." })));
+  };
+
   const card = (template, index, { wide = false } = {}) => {
     const node = el("div", {
       class: `as-card${wide ? " wide" : ""}`, role: "button", tabindex: "0",
       style: { animationDelay: `${Math.min(index, 10) * 22}ms`, "--tpl-accent": template.accent || "var(--accent)" },
-      onclick: () => (state.created.get(template.id) ? open(template) : create(template)),
+      onclick: () => showDetail(template),
       onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); node.click(); } },
     },
       el("div", { class: "as-art" }, templatePreview(template)),
@@ -214,7 +243,7 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     for (const name of ["All", ...TEMPLATE_CATEGORIES]) {
       rail.append(el("button", {
         class: `as-tab${category === name ? " active" : ""}`, type: "button",
-        onclick: () => { category = name; paintRail(); paint(); },
+        onclick: () => { detail = null; category = name; paintRail(); paint(); },
       }, el("span", { class: "as-tab-icon" }, icon(CATEGORY_ICONS[name] || "page", 15)), el("span", { text: name === "All" ? "Discover" : name })));
     }
   };
@@ -223,10 +252,11 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     state.paints.clear();
     clear(main);
     main.scrollTop = 0;
+    if (detail) { main.append(detailScreen(detail)); return; }
     const needle = query.trim().toLowerCase();
     if (category === "All" && !needle) {
       main.append(el("h2", { class: "as-page-title", text: "Discover" }));
-      const featured = TEMPLATES.find((t) => t.id !== "blank" && t.category === "Study") || TEMPLATES[1] || TEMPLATES[0];
+      const featured = TEMPLATES.find((t) => t.category === "Study & Education") || TEMPLATES[0];
       if (featured) main.append(hero(featured));
       for (const name of TEMPLATE_CATEGORIES) {
         const list = TEMPLATES.filter((t) => t.category === name);

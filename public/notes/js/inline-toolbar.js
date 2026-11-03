@@ -34,7 +34,16 @@ export function openInlineToolbar({ editor, block, line, range }) {
     onclick: (event) => onOpen(event.currentTarget),
   }, label, icon("chevron_down", 11));
 
+  const alignButton = el("button", {
+    class: "icon-button", type: "button", title: "Text alignment", "aria-label": "Text alignment",
+    onclick: (event) => alignmentMenu(editor, block, line, event.currentTarget),
+  }, icon(block.props?.textAlign === "center" ? "align_center" : block.props?.textAlign === "right" ? "align_right" : "align_left", 15));
+
   append(node,
+    el("button", {
+      class: "text-button ask-clyra", type: "button", title: "Ask Clyra about the selection",
+      onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "ask"); },
+    }, icon("sparkle", 15), "Ask Clyra"),
     state.aiConfigured ? el("button", {
       class: "text-button ai", type: "button",
       /* Opens the composer with the selection attached, so a typed
@@ -53,11 +62,7 @@ export function openInlineToolbar({ editor, block, line, range }) {
       class: "text-button", type: "button", title: "Attach the selection to the Clyra chat",
       onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "add"); },
     }, icon("comment", 15), "Add to chat") : null,
-    state.aiConfigured ? el("button", {
-      class: "text-button", type: "button", title: "Ask Clyra about the selection",
-      onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "ask"); },
-    }, icon("comment", 15), "Ask Clyra") : null,
-    state.aiConfigured ? el("div", { class: "sep" }) : null,
+    el("div", { class: "sep" }),
     dropdown(BLOCK_TYPES[block.type]?.label || "Text", "Turn into", (anchor) =>
       menu(anchor, TURN_INTO.map((type) => ({
         label: BLOCK_TYPES[type].label, icon: BLOCK_TYPES[type].icon,
@@ -65,6 +70,7 @@ export function openInlineToolbar({ editor, block, line, range }) {
         onSelect: () => editor.turnInto(block, type),
       })), { search: true, searchPlaceholder: "Turn into…" })),
     dropdown("Aa", "Font and size", (anchor) => styleMenu(editor, block, line, anchor)),
+    alignButton,
     el("div", { class: "sep" }),
     markButton("bold", "Bold", "b", `${mod}+B`),
     markButton("italic", "Italic", "i", `${mod}+I`),
@@ -77,6 +83,11 @@ export function openInlineToolbar({ editor, block, line, range }) {
     }, { size: 15 }),
     el("div", { class: "sep" }),
     iconButton("link", "Link", (event) => promptLink(editor, block, line, range, event.currentTarget), { shortcut: `${mod}+K`, size: 15 }),
+    iconButton("comment", "Comment on selection", () => {
+      const text = spansText(sliceSpans(block.text, range.start, range.end));
+      closeInlineToolbar();
+      editor.onComment?.(block, text);
+    }, { size: 15 }),
     iconButton("palette", "Colour and highlight", (event) => colorMenu(editor, block, line, event.currentTarget), { size: 15 }),
     el("button", { class: "text-button smart-highlight-button", type: "button", "aria-label": "Highlight / Colour Code", onclick: (event) => openColourPalette(editor, block, line, event.currentTarget, range) }, icon("highlight", 14), "Highlight", icon("chevron_down", 11)),
   );
@@ -107,6 +118,16 @@ export function openInlineToolbar({ editor, block, line, range }) {
   document.addEventListener("mousedown", dismiss, true);
   document.addEventListener("keydown", onKey, true);
   return entry;
+}
+
+function alignmentMenu(editor, block, line, anchor) {
+  const current = block.props?.textAlign || "left";
+  menu(anchor, [
+    { type: "label", label: "Text alignment" },
+    { label: "Align left", icon: "align_left", checked: current === "left", onSelect: () => editor.setTextAlign(block, line, "left") },
+    { label: "Align centre", icon: "align_center", checked: current === "center", onSelect: () => editor.setTextAlign(block, line, "center") },
+    { label: "Align right", icon: "align_right", checked: current === "right", onSelect: () => editor.setTextAlign(block, line, "right") },
+  ], { align: "center" });
 }
 
 function promptLink(editor, block, line, range, anchor) {

@@ -442,6 +442,7 @@ export class Editor {
   buildLine(block) {
     const line = el("div", {
       class: "text-line",
+      style: { textAlign: block.props?.textAlign || "left" },
       contenteditable: this.readOnly ? "false" : "true",
       spellcheck: block.type === "code" || !prefOn("spellcheck") ? "false" : "true",
       "data-placeholder": PLACEHOLDERS[block.type] ?? "",
@@ -1141,6 +1142,16 @@ export class Editor {
     this.push();
     for (const [key, value] of Object.entries(patch)) block.text = applyMark(block.text, range.start, range.end, key, value || null);
     this.paint(line, block); setCaretRange(line, range.start, range.end); this.commit("text-style", true);
+  }
+
+  /* Alignment is a block property—not a fake inline mark—so it survives a
+     reload and applies naturally to every span in the selected line. */
+  setTextAlign(block, line, textAlign) {
+    this.push();
+    block.props = { ...block.props, textAlign };
+    block.__dirty = true;
+    line.style.textAlign = textAlign;
+    this.commit("text-align", true);
   }
 
   applySmartHighlight(block, line, category, savedRange) {

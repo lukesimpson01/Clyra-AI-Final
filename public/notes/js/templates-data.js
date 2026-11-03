@@ -1,17 +1,14 @@
-/* The template catalogue: fifty finished pages across Work, School and Life, plus a blank page.
-
-   A template is a block tree (or, for trackers, a database definition), not a markdown string, so what a person gets is a
-   page with a cover, an icon, callouts, side-by-side columns and tables that already have the right columns. Templates
-   are created through the ordinary page and database APIs; there is no separate template runtime, so whatever the editor
-   or a database can do, a template inherits. The three sets live in template-work.js, template-school.js and
-   template-life.js; template-kit.js is their shared vocabulary. */
-import { p, table } from "./template-kit.js";
-import { NOTION } from "./template-notion.js";
+/* The active catalogue is deliberately small and explicit: forty independent
+   Clyra-native systems across five shelves. A template remains a normal page
+   plus normal databases, so creating one never introduces a second editor or
+   persistence model. The legacy catalogue files stay on disk as a reversible
+   migration backup, but are not imported by this public registry. */
+import { table } from "./template-kit.js";
+import { TEMPLATE_LIBRARY_V2, TEMPLATE_LIBRARY_V2_CATEGORIES } from "./template-library-v2.js";
 
 export const TEMPLATE_GROUPS = ["Work", "Life", "School"];
-/* The gallery's shelves. Every template sits in one; its Work, Life or School group is kept as well, for the filters that use it. */
-export const TEMPLATE_CATEGORIES = ["Notes", "Study", "Work", "Planning", "Writing", "Money", "Personal"];
-const ACCENT = { Notes: "#6e7bf2", Study: "#2f9e6b", Work: "#2383e2", Planning: "#e08a3a", Writing: "#9b51e0", Money: "#2d9cdb", Personal: "#d9534f" };
+/* Exactly five shelves, each with eight original Clyra-native systems. */
+export const TEMPLATE_CATEGORIES = TEMPLATE_LIBRARY_V2_CATEGORIES;
 
 /* A template whose page is only a database previews as a table of its sample records. */
 const previewTable = (spec) => {
@@ -23,15 +20,8 @@ const previewTable = (spec) => {
   return [table([names, ...spec.records.slice(0, 5).map((record) => names.map((name) => String(cell(record[name]))))], { tint: "gray" })];
 };
 
-const library = NOTION.map((entry) => ({
-  ...entry,
-  accent: ACCENT[entry.category] || "#5f6672",
-  blocks: entry.blocks,
-}));
-
 export const TEMPLATES = [
-  { id: "blank", name: "Blank page", icon: "page", category: "Notes", group: "School", desc: "An empty page with nothing in the way.", accent: "#8a8f9c", cover: null, blocks: () => [p("")] },
-  ...library,
+  ...TEMPLATE_LIBRARY_V2,
 ];
 
 export const templateById = (id) => TEMPLATES.find((template) => template.id === id) || null;

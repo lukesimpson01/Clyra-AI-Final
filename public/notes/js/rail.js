@@ -19,12 +19,12 @@ import { renderChat, autoPageOn } from "./views/chat.js";
 /* Each tool carries its own shortcut. They are real bindings, not labels:
    the chord opens the rail on that tool from anywhere in the workspace. */
 const PANELS = [
-  { id: "outline", label: "Outline", icon: "list", key: "o", chord: "\u2303\u21e7O" },
-  { id: "links", label: "Linked notes", icon: "link", key: "l", chord: "\u2303\u21e7L" },
-  { id: "calculator", label: "Calculator", icon: "equation", key: "k", chord: "\u2303\u21e7K" },
-  { id: "comments", label: "Comments", icon: "comments", key: "m", chord: "\u2303\u21e7M" },
-  { id: "chat", label: "Chat", icon: "comment", key: "j", chord: "\u2303\u21e7J" },
-  { id: "browser", label: "Browser", icon: "embed", key: "b", chord: "\u2303\u21e7B" },
+  { id: "outline", label: "Outline", hint: "Jump through headings", icon: "list", key: "o", chord: "\u2303\u21e7O" },
+  { id: "links", label: "Linked notes", hint: "Follow connected pages", icon: "link", key: "l", chord: "\u2303\u21e7L" },
+  { id: "calculator", label: "Calculator", hint: "Work out quick values", icon: "equation", key: "k", chord: "\u2303\u21e7K" },
+  { id: "comments", label: "Comments", hint: "Discuss selected work", icon: "comments", key: "m", chord: "\u2303\u21e7M" },
+  { id: "chat", label: "Chat", hint: "Ask with page context", icon: "comment", key: "j", chord: "\u2303\u21e7J" },
+  { id: "browser", label: "Browser", hint: "Research without leaving", icon: "embed", key: "b", chord: "\u2303\u21e7B" },
 ];
 
 export class Rail {
@@ -106,7 +106,9 @@ export class Rail {
         onclick: () => this.show(panel.id),
       },
         el("span", { class: "rail-launch-icon" }, icon(panel.icon, 18)),
-        el("span", { class: "rail-launch-label", text: panel.label })));
+        el("span", { class: "rail-launch-copy" },
+          el("span", { class: "rail-launch-label", text: panel.label }),
+          el("span", { class: "rail-launch-hint", text: panel.hint }))));
     }
     return list;
   }

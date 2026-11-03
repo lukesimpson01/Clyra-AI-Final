@@ -32,6 +32,7 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
     "notes:template-shots": "node tools/notes-template-shots.mjs",
+    "test:template-library": "tsx tools/template-library-unit-tests.ts",
     "sqlite:node": "node tools/sqlite-abi.mjs node",
     "sqlite:electron": "node tools/sqlite-abi.mjs electron",
     "test:maps": "tsx tools/maps-unit-tests.ts",

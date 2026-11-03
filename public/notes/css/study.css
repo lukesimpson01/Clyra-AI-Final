@@ -1214,6 +1214,16 @@
 @keyframes as-ring-fill { from { stroke-dashoffset: 72.3; } to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .as-card { animation: none; } .as-get.is-busy .as-ring-fill { animation-duration: 1ms; } }
 
+/* Template details are a browse-first App Store view. A card opens this
+   information screen; only the familiar Get control creates a page. */
+.as-detail { max-width: 880px; margin: 0 auto; padding: 4px 0 38px; animation: as-detail-in 260ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes as-detail-in { from { opacity: 0; transform: translateY(8px); } }
+.as-detail-back { display: inline-flex; align-items: center; gap: 3px; height: 30px; margin: 0 0 16px -6px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--as-blue); font: 500 13px inherit; cursor: pointer; }.as-detail-back:hover { background: rgba(0,122,255,.07); }
+.as-detail-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-bottom: 22px; }.as-detail-title { min-width: 0; }.as-detail-title h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1d1d1f; font-size: 27px; letter-spacing: -.035em; }.as-detail-title p { margin: 4px 0 0; color: #86868b; font-size: 13px; }
+.as-detail-shots { display: grid; grid-template-columns: minmax(0, 1.9fr) repeat(2, minmax(130px, 1fr)); gap: 12px; margin-bottom: 28px; }.as-detail-shot { overflow: hidden; min-height: 158px; border-radius: 14px; background: #f5f5f7; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); }.as-detail-shot.hero { min-height: 278px; }.as-detail-shot .tpl-preview { height: 100%; border: 0; border-radius: 0; }.as-detail-shot:not(.hero) .tpl-preview { transform: scale(1.18); transform-origin: top left; width: 118%; }
+.as-detail-copy { max-width: 620px; }.as-detail-copy h3 { margin: 0 0 7px; color: #1d1d1f; font-size: 18px; letter-spacing: -.02em; }.as-detail-copy p { margin: 0; color: #424245; font-size: 14px; line-height: 1.55; }.as-detail-copy .as-detail-note { margin-top: 12px; color: #86868b; font-size: 12.5px; }
+@media (max-width: 680px) { .as-detail-head { grid-template-columns: auto minmax(0, 1fr); }.as-detail-head .as-get { grid-column: 1 / -1; width: 100%; }.as-detail-shots { grid-template-columns: minmax(0, 1fr); }.as-detail-shot.hero { min-height: 220px; }.as-detail-shot:not(.hero) { display: none; } }
+
 /* ------------------------------------------- AI chat composer · Chat's composer language */
 .chat-composer { padding: 8px 28px 22px; }
 .chat-bar {
@@ -1332,6 +1342,36 @@
 .template-modal.appstore.as-view { position: static; width: 100%; max-width: none; height: 100%; border-radius: 0; box-shadow: none; background: var(--background-main); display: block; }
 .template-modal.appstore.as-view .as-layout { height: 100%; }
 .template-modal.appstore.as-view .as-main { padding: 28px 40px 48px; }
+
+/* The app-store catalogue lives inside the workspace as well as in a modal.
+   At narrow widths its browse rail becomes a short horizontal strip; keeping
+   the desktop 220px column here would leave the actual catalogue unusable. */
+@media (max-width: 860px) {
+  .template-modal.appstore .as-layout { grid-template-columns: minmax(0, 1fr); height: 100%; }
+  .template-modal.appstore .as-side {
+    flex-direction: row; align-items: center; min-width: 0; padding: 9px 12px;
+    border-right: 0; border-bottom: 1px solid var(--border-soft); overflow-x: auto;
+    overscroll-behavior-inline: contain; scrollbar-width: none;
+  }
+  .template-modal.appstore .as-side::-webkit-scrollbar { display: none; }
+  .template-modal.appstore .as-search { flex: 0 0 164px; }
+  .template-modal.appstore .as-rail { flex-direction: row; flex: 0 0 auto; }
+  .template-modal.appstore .as-tab { flex: 0 0 auto; white-space: nowrap; }
+  .template-modal.appstore.as-view .as-main { padding: 22px 24px 36px; }
+}
+
+@media (max-width: 680px) {
+  .template-modal.appstore.as-view .as-main { padding: 18px 16px 30px; }
+  .as-page-title { font-size: 26px; }
+  .as-hero { grid-template-columns: minmax(0, 1fr); min-height: 0; margin-bottom: 22px; }
+  .as-hero-text { padding: 20px; }
+  .as-hero-title { font-size: 25px; }
+  .as-hero-art { display: none; }
+  .as-hero-lockup { margin-top: 14px; }
+  .as-shelf-row { gap: 12px; }
+  .as-card.wide { flex-basis: min(258px, calc(100vw - 48px)); }
+  .as-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+}
 
 /* The chat's work label sweeps a band of ink across the text, as in the chat app. */
 .chat-view .shimmer-text, .chat-work-label.shimmer-text {

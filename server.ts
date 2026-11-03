@@ -3085,6 +3085,15 @@ async function startServer() {
             search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
             read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
             insert: (id, markdown, where) => notesStore.insertMarkdown(id, markdown, where),
+            linkPage: (hostId, linkedPageId) => {
+              const host = notesStore.getPage(hostId); const linked = notesStore.getPage(linkedPageId);
+              if (!host || !linked) return { ok: false as const, error: "Choose two existing notes." };
+              if ((host as any).locked) return { ok: false as const, error: "That note is locked, so nothing was added." };
+              const tree = notesStore.blockTree(hostId);
+              tree.push({ id: `agent-link-${crypto.randomUUID()}`, page_id: hostId, parent_id: null, type: "link_to_page", text: [], props: { pageId: linkedPageId, title: String(linked.title || "Untitled") }, sort: tree.length, children: [] } as any);
+              notesStore.saveBlocks(hostId, tree);
+              return { ok: true as const, hostTitle: String(host.title || "Untitled"), linkedTitle: String(linked.title || "Untitled") };
+            },
             index: (() => { const rows = notesStore.listPages() as Array<Record<string, unknown>>; const names = new Map(rows.map((r) => [String(r.id), String(r.title || "Untitled")])); return rows.filter((r) => !r.inline && r.kind !== "record").slice(0, 300).map((r) => ({ id: String(r.id), title: String(r.title || "Untitled"), icon: r.icon ? String(r.icon).slice(0, 8) : undefined, parentTitle: r.parent_id ? names.get(String(r.parent_id)) : undefined })); })(),
             context: (Array.isArray(req.body.notes.pageIds) ? req.body.notes.pageIds : []).slice(0, 6).map((id: unknown) => {
               const md = notesStore.pageMarkdown(String(id)); const page = notesStore.getPage(String(id));

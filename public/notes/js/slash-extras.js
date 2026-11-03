@@ -8,7 +8,10 @@ import { buildDatabase } from "./database.js";
 import { caretOffset, setCaret, insertSpans, spansText } from "./richtext.js";
 
 /* Embeds: each is the ordinary embed block, asked for its link with the service's name. */
-const EMBED_PROVIDERS = ["Google Drive", "Tweet", "GitHub Gist", "Google Maps", "Figma", "Abstract", "Invision", "Mixpanel", "Framer", "Whimsical", "Miro", "Sketch", "Excalidraw", "PDF", "Loom", "Typeform", "CodePen", "Replit", "Hex", "Deepnote", "Trello", "Pitch", "OneDrive", "Dropbox", "Amplitude", "Claap", "Box", "Linear", "Lucidchart", "Lucidspark", "Eraser", "ClickUp", "Plus", "Dovetail", "Streak Share", "Shortcut", "SendOwl", "Zendesk", "Jira", "GitHub", "GitLab", "Asana", "Zoom", "Discord", "PagerDuty", "Adobe XD", "Google Contacts", "Microsoft Contacts"];
+/* The first run is the complete set observed in the current Notion desktop
+   slash menu. The second is useful Clyra coverage that remains searchable,
+   without replacing or renaming the observed entries. */
+const EMBED_PROVIDERS = ["Google Drive", "Tweet", "GitHub Gist", "Google Maps", "Figma", "Abstract", "Invision", "Mixpanel", "Framer", "Whimsical", "Miro", "Sketch", "Excalidraw", "PDF", "Loom", "Typeform", "CodePen", "Replit", "Hex", "Deepnote", "Trello", "Slack", "Pitch", "OneDrive", "Dropbox", "Amplitude", "Claap", "Box", "Linear", "Lucidchart", "Lucidspark", "Eraser", "ClickUp", "Plus", "Dovetail", "Streak", "Share", "Shortcut", "SendOwl", "Zendesk", "Jira", "GitHub", "GitLab", "Asana", "Zoom", "Discord", "PagerDuty", "Adobe XD", "Google Contacts", "Microsoft Contacts"];
 const IMPORTS = ["CSV", "Text and Markdown", "Word", "Google Docs", "Confluence", "Dropbox Paper", "Evernote", "Workflowy"];
 
 const EMOJI = "😀 😃 😄 😁 😆 😅 😂 🙂 😉 😊 😍 🥰 😘 😎 🤓 🤔 😴 😮 😢 😭 😡 🥳 🤯 🙌 👍 👎 👏 🙏 💪 👀 🧠 ❤️ 🧡 💛 💚 💙 💜 🔥 ✨ ⭐ 🌟 💡 ✅ ❌ ⚠️ ❓ ❗ 🎯 🚀 🎉 🏆 📌 📍 📎 📝 📚 📖 📅 ⏰ 🔔 🔒 🔑 💻 📱 🖥️ ☕ 🍕 🍎 🌱 🌍 ☀️ 🌙 ⚡ 🌈 🎵 🎨 🏠 🚗 ✈️ 💰 📈 📉 🔍 🛠️ 🧪 🔬 ➕ ➖ ➡️ ⬆️ ⬇️".split(" ");
@@ -49,6 +52,7 @@ function promptDialog({ title, fields, confirm = "Insert", onSubmit }) {
 
 const VIEW_SPECS = {
   feed: { name: "Feed", label: "Feed view", glyph: "list" },
+  map: { name: "Map", label: "Map view", glyph: "map", badge: "New" },
   timeline: { name: "Timeline", label: "Timeline view", glyph: "calendar" },
   form: { name: "Form", label: "Form", glyph: "page" },
   dashboard: { name: "Dashboard", label: "Dashboard view", glyph: "panel", badge: "New" },
@@ -94,6 +98,8 @@ export function extraCommands(editor) {
     const view = VIEW_SPECS[key];
     add({ key: `db-${key}`, label: view.label, group: "Database", icon: view.glyph, badge: view.badge, desc: `A new database shown as a ${view.label.toLowerCase()}.`, keywords: `database ${key} view chart`, run: (block) => insertDatabaseView(editor, block, key) });
   }
+
+  add({ key: "db-map", label: "Map view", group: "Database", icon: "map", badge: "New", desc: "A new database shown on a map.", keywords: "database map view locations", run: (block) => insertDatabaseView(editor, block, "map") });
 
   add({ key: "brainstorm", label: "Brainstorm", group: "Suggested", icon: "target", badge: "New", desc: "A whiteboard for ideas: stickies, shapes, notes and connectors.", keywords: "brainstorm whiteboard board canvas figjam miro sticky mind map diagram flow ideas",
     run: (block) => editor.insertBrainstorm(block) });

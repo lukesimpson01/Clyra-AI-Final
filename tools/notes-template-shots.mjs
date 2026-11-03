@@ -21,11 +21,12 @@ const arg = (name, fallback) => {
 };
 const base = (arg("url", process.env.NOTES_URL || "http://localhost:3060")).replace(/\/$/, "");
 
-/* The template list is the source of truth; reading the ids out of the module
-   keeps the tool from drifting when a template is added. */
+/* The active registry is the source of truth. Read its ids rather than the
+   archived catalogue so previews can never silently be produced for retired
+   templates. */
 async function templateIds() {
-  const source = await readFile(path.join(root, "public", "notes", "js", "template-notion-data.js"), "utf8");
-  return ["blank", ...[...source.matchAll(/"id":"([a-z0-9-]+)","name"/g)].map((match) => match[1])];
+  const source = await readFile(path.join(root, "public", "notes", "js", "template-library-v2.js"), "utf8");
+  return [...source.matchAll(/\bid:\s*"([a-z0-9-]+)"/g)].map((match) => match[1]);
 }
 
 const FRAME = { width: 720, height: 500 };

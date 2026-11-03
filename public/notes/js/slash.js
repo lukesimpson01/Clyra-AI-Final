@@ -84,9 +84,17 @@ export function slashCommands(editor) {
   for (const count of [2, 3, 4, 5]) {
     commands.push({ key: `columns${count}`, label: `${count} columns`, group: "Advanced blocks", icon: "panel", desc: `Place blocks side by side in ${count} columns.`, keywords: `columns layout ${count}`, run: (block) => editor.splitIntoColumns(block, count) });
   }
+  /* Notion places meeting capture in both Suggested and Advanced. Keep both
+     entry points: the first is discoverable; this one remains where people
+     scan the complete block catalogue. */
+  commands.push({
+    key: "meetingnotes-advanced", label: "AI Meeting Notes", group: "Advanced blocks", icon: "mic",
+    desc: "Record a meeting or lecture and turn it into notes.", keywords: "ai meeting record transcript summary notes lecture",
+    run: () => editor.onGenerate?.("lecture", { pageId: editor.page.id }),
+  });
   /* Inline: mentions and dates, which land inside a line of text. */
-  for (const [key, label, glyph, desc] of [["mentionpage", "Mention a page or data source", "page", "Link a page right in the text."], ["datemention", "Date or reminder", "calendar", "Today, tomorrow, or a date you pick."]]) {
-    commands.push({ key, label, group: "Inline", icon: glyph, desc, keywords: "mention date reminder page link @", run: (block) => editor.startMention(block) });
+  for (const [key, label, glyph, desc] of [["mentionperson", "Mention a person", "users", "Tag someone right in the text."], ["mentionpage", "Mention a page or data source", "page", "Link a page right in the text."], ["datemention", "Date or reminder", "calendar", "Today, tomorrow, or a date you pick."]]) {
+    commands.push({ key, label, group: "Inline", icon: glyph, desc, keywords: "mention person people date reminder page link @", run: (block) => editor.startMention(block) });
   }
   commands.push(...extraCommands(editor));
   commands.push({
