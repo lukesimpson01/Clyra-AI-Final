@@ -72,13 +72,16 @@ const OPTION_COLORS = ["gray", "blue", "orange", "green", "purple", "pink", "yel
 const NOTION_COLOR = { default: "gray", gray: "gray", brown: "brown", orange: "orange", yellow: "yellow", green: "green", blue: "blue", purple: "purple", pink: "pink", red: "red", teal: "green" };
 const STATUS_DEFAULT = ["Not started", "In progress", "Done"];
 
-export async function buildDatabase(spec, { parentId = null, inline = false, icon = null, cover = null, name } = {}) {
+export async function buildDatabase(spec, { parentId = null, inline = false, icon = null, cover = null, name, seed = true } = {}) {
   const properties = spec.properties.map((def) => {
     let options = def.options;
     if (def.type === "status" && !(options && options.length)) options = STATUS_DEFAULT;
     return {
       name: def.name, type: def.type,
-      config: options ? { options: options.map((label, index) => ({ id: slug(label), name: label, color: NOTION_COLOR[def.colors?.[index]] || OPTION_COLORS[(index + 1) % OPTION_COLORS.length] })) } : {},
+      /* Formula expressions are already safe-checked by the Notes store. Template-only
+         metadata (such as `templateTarget`) is resolved after all sibling databases
+         exist and is never persisted. */
+      config: options ? { ...(def.config || {}), options: options.map((label, index) => ({ id: slug(label), name: label, color: NOTION_COLOR[def.colors?.[index]] || OPTION_COLORS[(index + 1) % OPTION_COLORS.length] })) } : { ...(def.config || {}) },
     };
   });
   const made = await withError(() => api.post("/api/notes/databases", { name: name || spec.name, parentId, inline, properties }), "Could not create the database");
@@ -87,20 +90,25 @@ export async function buildDatabase(spec, { parentId = null, inline = false, ico
   const byName = new Map(made.properties.map((property) => [property.name, property]));
   const value = (definition, raw) => {
     if (raw === undefined || raw === null) return undefined;
+    /* Relation titles are resolved only after every sibling database and record
+       has an id. Sending a title here would silently create an empty relation. */
+    if (definition.type === "relation") return undefined;
     if (raw && typeof raw === "object" && "offsetDays" in raw) return { start: new Date(Date.now() + raw.offsetDays * 86_400_000).toISOString().slice(0, 10) };
     if (definition.type === "select" || definition.type === "status") return slug(raw);
     if (definition.type === "multi_select") return (Array.isArray(raw) ? raw : [raw]).map(slug);
     return raw;
   };
   const titleName = spec.properties.find((def) => def.type === "title").name;
-  for (const record of spec.records || []) {
+  const createdRecords = [];
+  for (const record of seed ? (spec.records || []) : []) {
     const values = {};
     for (const def of spec.properties) {
       if (def.type === "title" || !byName.get(def.name)) continue;
       const next = value(def, record[def.name]);
       if (next !== undefined) values[byName.get(def.name).id] = next;
     }
-    await api.post(`/api/notes/databases/${made.id}/records`, { title: record[titleName] || "", values }).catch(() => {});
+    const created = await api.post(`/api/notes/databases/${made.id}/records`, { title: record[titleName] || "", values }).catch(() => null);
+    if (created) createdRecords.push(created);
   }
   const viewConfig = (view) => {
     const config = {};
@@ -115,7 +123,52 @@ export async function buildDatabase(spec, { parentId = null, inline = false, ico
   const existing = made.views[0];
   if (existing) await api.patch(`/api/notes/views/${existing.id}`, { name: first.name, type: first.type, config: viewConfig(first) }).catch(() => {});
   for (const view of rest) await api.post(`/api/notes/databases/${made.id}/views`, { name: view.name, type: view.type, config: viewConfig(view) }).catch(() => {});
-  return made;
+  return { ...made, createdRecords };
+}
+
+/* Templates may declare a relation using a sibling database index and record titles.
+   The real database ids do not exist until instantiation, so resolve them in a
+   second pass. Keeping this here means templates stay portable definitions rather
+   than storing installation-specific ids. */
+async function resolveTemplateRelations(created, specs) {
+  const byIndex = created.map((entry) => new Map((entry.createdRecords || []).map((record) => [String(record.title || ""), record.id])));
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const made = created[index];
+    if (!spec || !made) continue;
+    const properties = new Map((made.properties || []).map((property) => [property.name, property]));
+    for (const definition of spec.properties || []) {
+      if (definition.type !== "relation" || !Number.isInteger(definition.templateTarget)) continue;
+      const property = properties.get(definition.name);
+      const target = created[definition.templateTarget];
+      if (!property || !target) continue;
+      const config = { ...(property.config || {}), databaseId: target.id };
+      delete config.templateTarget;
+      const updated = await api.patch(`/api/notes/properties/${property.id}`, { config }).catch(() => null);
+      if (updated) property.config = updated.config;
+    }
+  }
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const made = created[index];
+    if (!spec || !made) continue;
+    const properties = new Map((made.properties || []).map((property) => [property.name, property]));
+    for (let rowIndex = 0; rowIndex < (spec.records || []).length; rowIndex += 1) {
+      const source = spec.records[rowIndex];
+      const record = made.createdRecords?.[rowIndex];
+      if (!record) continue;
+      const values = {};
+      for (const definition of spec.properties || []) {
+        if (definition.type !== "relation" || !Number.isInteger(definition.templateTarget)) continue;
+        const property = properties.get(definition.name);
+        const targetRows = byIndex[definition.templateTarget];
+        const titles = Array.isArray(source[definition.name]) ? source[definition.name] : [source[definition.name]];
+        const ids = titles.filter(Boolean).map((title) => targetRows?.get(String(title))).filter(Boolean);
+        if (property && ids.length) values[property.id] = ids;
+      }
+      if (Object.keys(values).length) await api.patch(`/api/notes/records/${record.id}`, { values }).catch(() => {});
+    }
+  }
 }
 
 /* A template becomes a page, with each database it carries created inside it and shown in place. A template that is only one
@@ -134,11 +187,14 @@ export async function createFromTemplate(context, template, parentId = null, { o
     const created = await withError(() => api.post("/api/notes/pages", { parentId, title: template.name, icon: template.emoji, cover: template.cover || undefined, blocks }), "Could not create the page");
     if (!created) return null;
     pageId = created.id;
+    const createdDatabases = [];
     for (const block of dbBlocks) {
       const spec = dbs[block.props.dbIndex];
       const made = spec ? await buildDatabase(spec, { parentId: pageId, inline: true }) : null;
+      if (made) createdDatabases[block.props.dbIndex] = made;
       block.props = made ? { pageId: made.page_id } : {};
     }
+    if (createdDatabases.length) await resolveTemplateRelations(createdDatabases, dbs);
     if (dbBlocks.length) await api.put(`/api/notes/pages/${pageId}/blocks`, { blocks }).catch(() => toast("Some databases could not be placed"));
   }
   if (!pageId) return null;
@@ -406,6 +462,7 @@ export class DatabaseView {
     switch (property.type) {
       case "select": case "status": { const option = optionsOf(property).find((entry) => entry.id === value); return option ? chip(option) : el("span", { text: String(value) }); }
       case "multi_select": return el("span", { class: "db-chips" }, (Array.isArray(value) ? value : [value]).map((id) => { const option = optionsOf(property).find((entry) => entry.id === id); return option ? chip(option) : el("span", { text: String(id) }); }));
+      case "relation": { const count = Array.isArray(value) ? value.length : 0; return count ? el("span", { class: "db-relation-count", text: `${count} linked ${count === 1 ? "item" : "items"}` }) : null; }
       case "date": case "created_time": case "last_edited_time": return el("span", { text: dateText(value) });
       case "checkbox": return icon(value ? "check_square" : "close", 14);
       case "url": return el("a", { href: String(value), target: "_blank", rel: "noopener noreferrer", text: String(value), onclick: (event) => event.stopPropagation() });
@@ -423,6 +480,7 @@ export class DatabaseView {
     const commit = async (value) => { const ok = await this.setValue(record, property, value); if (ok) show(); };
     if (property.type === "checkbox") { node.addEventListener("click", (event) => { event.stopPropagation(); commit(!record.values[property.id]); }); return node; }
     if (SELECTY.has(property.type)) { node.addEventListener("click", (event) => { event.stopPropagation(); this.optionMenu(node, record, property, commit); }); return node; }
+    if (property.type === "relation") { node.addEventListener("click", (event) => { event.stopPropagation(); this.relationMenu(node, record, property, commit); }); return node; }
     node.addEventListener("click", (event) => {
       if (event.target.closest("a")) return;
       event.stopPropagation();
@@ -470,6 +528,23 @@ export class DatabaseView {
       }) },
       !multi || current.length ? { label: "Clear", icon: "close", onSelect: () => commit(multi ? [] : null) } : null,
     ].filter(Boolean), { align: "start", class: "db-option-menu" });
+  }
+
+  async relationMenu(anchor, record, property, commit) {
+    const targetId = property.config?.databaseId;
+    if (!targetId) { toast("This relation has no target database yet."); return; }
+    const records = await withError(() => api.get(`/api/notes/databases/${targetId}/records`), "Could not load linked records");
+    if (!records) return;
+    const selected = new Set(Array.isArray(record.values[property.id]) ? record.values[property.id] : []);
+    menu(anchor, [
+      { type: "label", label: property.name },
+      ...records.map((candidate) => ({ label: titleOf(candidate), checked: selected.has(candidate.id), keepOpen: true, onSelect: () => {
+        selected.has(candidate.id) ? selected.delete(candidate.id) : selected.add(candidate.id);
+        commit([...selected]);
+      } })),
+      { type: "separator" },
+      { label: "Clear", icon: "close", disabled: !selected.size, onSelect: () => commit([]) },
+    ], { align: "start", class: "db-option-menu" });
   }
 
   headerMenu(property, anchor) {

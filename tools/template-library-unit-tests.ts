@@ -37,5 +37,18 @@ for (const entry of TEMPLATES) {
   }
 }
 
+const relationDefinitions = TEMPLATES.flatMap((entry) => (entry.databases || []).flatMap((database: any, index: number) =>
+  database.properties.filter((property: any) => property.type === "relation").map((property: any) => ({ entry, database, index, property }))));
+check("catalogue contains native database relations", relationDefinitions.length >= 4, relationDefinitions.length);
+for (const relation of relationDefinitions) {
+  const target = relation.entry.databases?.[relation.property.templateTarget];
+  check(`${relation.entry.id}/${relation.database.name}/${relation.property.name} targets a sibling database`, Boolean(target), relation.property.templateTarget);
+  const title = target?.properties?.find((property: any) => property.type === "title")?.name;
+  const values = relation.database.records.map((record: any) => record[relation.property.name]).filter(Boolean);
+  check(`${relation.entry.id}/${relation.database.name}/${relation.property.name} seeds resolvable links`, values.every((value: any) => (Array.isArray(value) ? value : [value]).every((item: any) => target.records.some((record: any) => record[title] === item))), values);
+}
+const formulas = TEMPLATES.flatMap((entry) => (entry.databases || []).flatMap((database: any) => database.properties.filter((property: any) => property.type === "formula")));
+check("catalogue contains derived formula fields", formulas.some((property: any) => typeof property.config?.expression === "string" && property.config.expression.length > 0), formulas);
+
 if (failures) process.exitCode = 1;
 else console.log(`\nVerified ${TEMPLATES.length} templates and ${TEMPLATES.reduce((sum, entry) => sum + (entry.databases?.length || 0), 0)} live databases.`);
