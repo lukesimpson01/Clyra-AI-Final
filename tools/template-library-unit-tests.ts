@@ -16,14 +16,10 @@ const check = (label: string, pass: unknown, detail?: unknown) => {
 };
 
 console.log("\n[template library]");
-check("exactly 40 active templates", TEMPLATES.length === 40, TEMPLATES.length);
-check("exactly five categories", TEMPLATE_CATEGORIES.length === 5, TEMPLATE_CATEGORIES);
-check("category labels are unique", new Set(TEMPLATE_CATEGORIES).size === 5, TEMPLATE_CATEGORIES);
-for (const category of TEMPLATE_CATEGORIES) {
-  const templates = TEMPLATES.filter((entry) => entry.category === category);
-  check(`${category} has eight templates`, templates.length === 8, templates.map((entry) => entry.name));
-}
-check("template ids are unique", new Set(TEMPLATES.map((entry) => entry.id)).size === 40);
+check("exactly four active templates", TEMPLATES.length === 4, TEMPLATES.length);
+check("only Study & Education is active", JSON.stringify(TEMPLATE_CATEGORIES) === JSON.stringify(["Study & Education"]), TEMPLATE_CATEGORIES);
+check("template ids are unique", new Set(TEMPLATES.map((entry) => entry.id)).size === 4);
+check("the public catalogue contains the four active study templates", JSON.stringify(TEMPLATES.map((entry) => entry.name)) === JSON.stringify(["Cornell Notes", "Lecture Notes", "Reading Notes", "Study Notes Dashboard"]), TEMPLATES.map((entry) => entry.name));
 
 for (const entry of TEMPLATES) {
   const blocks = templateBlocks(entry);
@@ -36,19 +32,6 @@ for (const entry of TEMPLATES) {
     check(`${entry.id}/${database.name} has representative records`, database.records?.length > 0, database.records);
   }
 }
-
-const relationDefinitions = TEMPLATES.flatMap((entry) => (entry.databases || []).flatMap((database: any, index: number) =>
-  database.properties.filter((property: any) => property.type === "relation").map((property: any) => ({ entry, database, index, property }))));
-check("catalogue contains native database relations", relationDefinitions.length >= 4, relationDefinitions.length);
-for (const relation of relationDefinitions) {
-  const target = relation.entry.databases?.[relation.property.templateTarget];
-  check(`${relation.entry.id}/${relation.database.name}/${relation.property.name} targets a sibling database`, Boolean(target), relation.property.templateTarget);
-  const title = target?.properties?.find((property: any) => property.type === "title")?.name;
-  const values = relation.database.records.map((record: any) => record[relation.property.name]).filter(Boolean);
-  check(`${relation.entry.id}/${relation.database.name}/${relation.property.name} seeds resolvable links`, values.every((value: any) => (Array.isArray(value) ? value : [value]).every((item: any) => target.records.some((record: any) => record[title] === item))), values);
-}
-const formulas = TEMPLATES.flatMap((entry) => (entry.databases || []).flatMap((database: any) => database.properties.filter((property: any) => property.type === "formula")));
-check("catalogue contains derived formula fields", formulas.some((property: any) => typeof property.config?.expression === "string" && property.config.expression.length > 0), formulas);
 
 if (failures) process.exitCode = 1;
 else console.log(`\nVerified ${TEMPLATES.length} templates and ${TEMPLATES.reduce((sum, entry) => sum + (entry.databases?.length || 0), 0)} live databases.`);

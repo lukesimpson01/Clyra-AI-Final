@@ -10,7 +10,7 @@ export const MARKS = ["b", "i", "u", "s", "c"];
 const sameMarks = (a, b) =>
   MARKS.every((mark) => Boolean(a[mark]) === Boolean(b[mark])) &&
   a.col === b.col && a.bg === b.bg && a.href === b.href && a.page === b.page &&
-  a.date === b.date && a.eq === b.eq && a.colHex === b.colHex && a.bgHex === b.bgHex &&
+  a.date === b.date && a.eq === b.eq && a.fileRef === b.fileRef && a.fileUrl === b.fileUrl && a.colHex === b.colHex && a.bgHex === b.bgHex &&
   a.highlightId === b.highlightId && a.categoryId === b.categoryId && a.highlightNote === b.highlightNote &&
   a.font === b.font && a.size === b.size;
 
@@ -19,7 +19,7 @@ export function normalizeSpans(spans) {
   for (const span of spans || []) {
     if (!span || (!span.t && !span.eq && !span.page && !span.date && !span.person)) continue;
     const last = out[out.length - 1];
-    if (last && !last.eq && !last.page && !last.date && !last.person && !span.eq && !span.page && !span.date && !span.person && sameMarks(last, span)) {
+    if (last && !last.eq && !last.page && !last.date && !last.person && !last.fileRef && !last.fileUrl && !span.eq && !span.page && !span.date && !span.person && !span.fileRef && !span.fileUrl && sameMarks(last, span)) {
       last.t += span.t;
     } else out.push({ ...span });
   }
@@ -39,9 +39,16 @@ function renderSpan(span, context) {
   if (span.page) {
     const page = context.pageById?.(span.page);
     return el("span", {
-      class: "page-mention", "data-page": span.page, contenteditable: "false",
+      class: span.fileRef ? "file-inline-link" : "page-mention", "data-page": span.page,
+      "data-file-ref": span.fileRef ? "true" : "", "data-file-name": span.t || "", contenteditable: "false",
       onclick: (event) => { event.preventDefault(); context.onOpenPage?.(span.page, event); },
-    }, page?.icon || "", page?.title || span.t || "New page");
+    }, span.fileRef ? el("span", { class: "file-inline-icon", "aria-hidden": "true" }, page?.icon || icon("page", 18), el("span", { class: "file-inline-arrow", text: "↗" })) : page?.icon || "", page?.title || span.t || "New page");
+  }
+  if (span.fileUrl) {
+    return el("a", {
+      class: "file-inline-link", href: span.fileUrl, target: "_blank", rel: "noreferrer noopener",
+      "data-file-url": span.fileUrl, "data-file-name": span.t || "", contenteditable: "false",
+    }, el("span", { class: "file-inline-icon", "aria-hidden": "true" }, icon("file", 18), el("span", { class: "file-inline-arrow", text: "↗" })), span.t || "File");
   }
   if (span.person) {
     return el("span", { class: "person-mention", "data-person": span.person, contenteditable: "false" }, el("i", { class: "person-avatar", text: span.person.trim().charAt(0).toUpperCase() }), span.person);
@@ -100,7 +107,8 @@ export function readSpans(root) {
       if (child.nodeType !== Node.ELEMENT_NODE) continue;
       if (child.tagName === "BR") { spans.push({ ...marks, t: "\n" }); continue; }
       if (child.dataset?.eq !== undefined) { spans.push({ ...marks, t: child.textContent, eq: child.dataset.eq }); continue; }
-      if (child.dataset?.page !== undefined) { spans.push({ ...marks, t: child.textContent, page: child.dataset.page }); continue; }
+      if (child.dataset?.page !== undefined) { spans.push({ ...marks, t: child.dataset.fileName || child.textContent, page: child.dataset.page, fileRef: child.dataset.fileRef === "true" || undefined }); continue; }
+      if (child.dataset?.fileUrl !== undefined) { spans.push({ ...marks, t: child.dataset.fileName || child.textContent, fileUrl: child.dataset.fileUrl }); continue; }
       if (child.dataset?.person !== undefined) { spans.push({ ...marks, t: `@${child.dataset.person}`, person: child.dataset.person }); continue; }
       if (child.dataset?.date !== undefined) { spans.push({ ...marks, t: child.textContent, date: child.dataset.date }); continue; }
       const next = { ...marks };
@@ -133,10 +141,27 @@ export function readSpans(root) {
 export function caretOffset(root) {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return 0;
-  const range = selection.getRangeAt(0).cloneRange();
+  const selected = selection.getRangeAt(0);
+  /* Selectionchange can run after focus has moved to a menu, another note,
+     or the browser chrome. Never try to measure that range against this
+     editor — it produces both bad offsets and DOM exceptions. */
+  if (!root?.contains(selected.startContainer) || !root.contains(selected.endContainer)) return 0;
+  const range = selected.cloneRange();
   range.selectNodeContents(root);
-  range.setEnd(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset);
+  range.setEnd(selected.endContainer, selected.endOffset);
   return range.toString().length;
+}
+
+/* Geometry comes from the browser's live range, never character-width
+   estimates. `getClientRects()` handles wrapped selections/carets; the
+   bounding box is only a fallback for engines that return no line rect for an
+   empty editable. Consumers can then fall back to their own element rect. */
+export function selectionRectIn(root, selection = window.getSelection()) {
+  if (!root || !selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const rects = [...range.getClientRects()];
+  return rects.find((rect) => rect.width || rect.height) || range.getBoundingClientRect();
 }
 
 export function setCaret(root, offset) {
@@ -177,7 +202,7 @@ export function selectionRangeIn(root) {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.commonAncestorContainer)) return null;
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
   const before = range.cloneRange();
   before.selectNodeContents(root);
   before.setEnd(range.startContainer, range.startOffset);

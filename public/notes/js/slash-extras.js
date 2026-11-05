@@ -1,4 +1,4 @@
-/* The rest of Notion's "/" menu: embeds from other services, imports, emoji, inline equations, buttons, tabs, AI blocks,
+/* The remaining native "/" commands: imports, emoji, inline equations, buttons, tabs, AI blocks,
    Mermaid diagrams and the extra database views. Kept apart from slash.js so the catalogue of the basics stays short and
    readable; slash.js asks for these and adds them to the menu. */
 import { el, icon, menu, modal, toast } from "./dom.js";
@@ -7,12 +7,7 @@ import { state, refreshPages } from "./state.js";
 import { buildDatabase } from "./database.js";
 import { caretOffset, setCaret, insertSpans, spansText } from "./richtext.js";
 
-/* Embeds: each is the ordinary embed block, asked for its link with the service's name. */
-/* The first run is the complete set observed in the current Notion desktop
-   slash menu. The second is useful Clyra coverage that remains searchable,
-   without replacing or renaming the observed entries. */
-const EMBED_PROVIDERS = ["Google Drive", "Tweet", "GitHub Gist", "Google Maps", "Figma", "Abstract", "Invision", "Mixpanel", "Framer", "Whimsical", "Miro", "Sketch", "Excalidraw", "PDF", "Loom", "Typeform", "CodePen", "Replit", "Hex", "Deepnote", "Trello", "Slack", "Pitch", "OneDrive", "Dropbox", "Amplitude", "Claap", "Box", "Linear", "Lucidchart", "Lucidspark", "Eraser", "ClickUp", "Plus", "Dovetail", "Streak", "Share", "Shortcut", "SendOwl", "Zendesk", "Jira", "GitHub", "GitLab", "Asana", "Zoom", "Discord", "PagerDuty", "Adobe XD", "Google Contacts", "Microsoft Contacts"];
-const IMPORTS = ["CSV", "Text and Markdown", "Word", "Google Docs", "Confluence", "Dropbox Paper", "Evernote", "Workflowy"];
+const IMPORTS = ["CSV", "Text and Markdown", "Word", "Document", "Confluence", "Dropbox Paper", "Evernote", "Workflowy"];
 
 const EMOJI = "😀 😃 😄 😁 😆 😅 😂 🙂 😉 😊 😍 🥰 😘 😎 🤓 🤔 😴 😮 😢 😭 😡 🥳 🤯 🙌 👍 👎 👏 🙏 💪 👀 🧠 ❤️ 🧡 💛 💚 💙 💜 🔥 ✨ ⭐ 🌟 💡 ✅ ❌ ⚠️ ❓ ❗ 🎯 🚀 🎉 🏆 📌 📍 📎 📝 📚 📖 📅 ⏰ 🔔 🔒 🔑 💻 📱 🖥️ ☕ 🍕 🍎 🌱 🌍 ☀️ 🌙 ⚡ 🌈 🎵 🎨 🏠 🚗 ✈️ 💰 📈 📉 🔍 🛠️ 🧪 🔬 ➕ ➖ ➡️ ⬆️ ⬇️".split(" ");
 
@@ -147,10 +142,6 @@ export function extraCommands(editor) {
   add({ key: "inlineequation", label: "Inline equation", group: "Inline", icon: "equation", desc: "A formula inside a line of text.", keywords: "equation math latex inline formula",
     run: (block) => promptDialog({ title: "Inline equation", fields: [{ label: "Formula", placeholder: "E = mc^2" }], onSubmit: ([tex]) => insertInline(editor, block, [{ t: tex, eq: tex }, { t: " " }]) }) });
 
-  for (const provider of EMBED_PROVIDERS) {
-    add({ key: `embed-${provider}`, label: provider, group: "Embeds", icon: "embed", desc: `Embed ${provider} content.`, keywords: `embed ${provider}`,
-      run: (block) => editor.insertEmbed(block, provider) });
-  }
   for (const source of IMPORTS) {
     add({ key: `import-${source}`, label: source, group: "Import", icon: "import", desc: `Import from ${source}.`, keywords: `import ${source}`,
       run: () => window.dispatchEvent(new CustomEvent("clyra:open-import", { detail: { source } })) });

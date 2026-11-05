@@ -1,5 +1,5 @@
 /* Home. A welcome header, four ways to start, and a recent table.
-   The keyboard hint at the foot is live: Space opens AI on a fresh page and
+   The keyboard hint at the foot is live: Space starts a fresh note and
    "/" creates the first note on an empty workspace, then opens search. */
 import { el, clear, icon, modKey, append, tooltip } from "../dom.js";
 import { state } from "../state.js";
@@ -37,7 +37,7 @@ export function renderHome(host, app) {
       else openSearch();
       return;
     }
-    if (event.key === " ") { event.preventDefault(); startWithAi(app); }
+    if (event.key === " ") { event.preventDefault(); startWithNote(app); }
   };
   document.addEventListener("keydown", onKey);
   return { destroy() { document.removeEventListener("keydown", onKey); } };
@@ -45,19 +45,6 @@ export function renderHome(host, app) {
 
 function hasNotes() {
   return state.pages.some((page) => page.kind !== "record");
-}
-
-/* Space on Home means the same thing it means on a page: start writing with
-   AI. It creates the page first so the composer has somewhere to land. */
-async function startWithAi(app) {
-  const created = await app.createPage(null);
-  if (!created) return;
-  const settle = () => {
-    const view = app.currentView;
-    if (!view?.editor) { setTimeout(settle, 80); return; }
-    view.editor.openAiComposer(view.editor.blocks[0], { mount: view.quickstart });
-  };
-  setTimeout(settle, 120);
 }
 
 /* The workspace's tools, each showing what is actually in it right now.
@@ -160,14 +147,12 @@ async function startWithNote(app) {
 }
 
 function buildHint(app) {
-  const slashHint = hasNotes() ? "for commands…" : "to start your first note";
   return el("div", { class: "home-hint" },
     el("span", { class: "home-hint-key" }, icon("keyboard", 15)),
-    el("span", {}, "Press "),
-    el("kbd", { text: "space" }),
-    el("span", {}, " for AI, "),
-    el("kbd", { text: "/" }),
-    el("span", {}, ` ${slashHint}`));
+    el("span", { class: "home-hint-group" },
+      el("span", {}, "Press"), el("kbd", { text: "space" }), el("span", {}, "for a new note,")),
+    el("span", { class: "home-hint-group" },
+      el("kbd", { text: "⌘ S" }), el("span", {}, "for commands")));
 }
 
 /* Shared row and section helpers used by the other views. */

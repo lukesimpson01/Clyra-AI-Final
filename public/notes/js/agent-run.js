@@ -31,7 +31,7 @@ export async function streamAgent({ messages, notes, model, instructions, signal
 
 const TOOL_ICON = {
   web_search: "search", web_open: "page", web_find: "search", web_follow_links: "link",
-  create_note: "plus", notes_search: "search", notes_read: "page", notes_insert: "plus",
+  create_note: "plus", notes_search: "search", notes_read: "page", notes_insert: "plus", notes_edit: "pencil",
 };
 
 const todoGlyph = (status) => {
@@ -73,9 +73,9 @@ function renderTodo(todos, live, state) {
   return root;
 }
 
-function renderStep(step, { onOpenNote }) {
+function renderStep(step, { onOpenNote, enter = false }) {
   const running = step.state === "running";
-  const row = el("li", { class: `ag-row ${running ? "running" : step.state}` },
+  const row = el("li", { class: `ag-row ${running ? "running" : step.state}${enter ? " enter" : ""}` },
     el("span", { class: "ag-row-icon" }, icon(TOOL_ICON[step.tool] || "sparkle", 15)),
     el("span", { class: `ag-row-label${running ? " shimmer-text" : ""}`, text: step.label }));
   if (step.state === "failed" && step.error) row.append(el("span", { class: "ag-row-meta", title: step.error, text: step.error }));
@@ -85,14 +85,21 @@ function renderStep(step, { onOpenNote }) {
       el("a", { class: "ag-favicon", href: source.url, target: "_blank", rel: "noopener noreferrer", title: source.host },
         el("img", { src: `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(`https://${source.host}`)}&sz=64`, alt: "", width: 18, height: 18, referrerpolicy: "no-referrer" })))));
   }
-  if (step.document && onOpenNote) row.append(el("button", { class: "ag-open", type: "button", onclick: () => onOpenNote(step.document.id) }, "Open"));
+  /* The document name is already shown in the action detail; a repeated Open
+     pill created visual noise and was mistaken for unfinished work. */
   return row;
 }
 
 export function renderAgentRun(run, { live, onOpenNote, state = {} } = {}) {
   if (!run || (!run.todos.length && !run.steps.length)) return null;
   if (state.open === undefined) state.open = true;
+  state.seenSteps ||= new Set();
+  const steps = run.steps.map((step) => {
+    const enter = !state.seenSteps.has(step.id);
+    state.seenSteps.add(step.id);
+    return renderStep(step, { onOpenNote, enter });
+  });
   return el("div", { class: "ag-run" },
     run.todos.length ? renderTodo(run.todos, live, state) : null,
-    run.steps.length ? el("ul", { class: "ag-steps", "aria-label": "What Clyra did" }, run.steps.map((step) => renderStep(step, { onOpenNote }))) : null);
+    run.steps.length ? el("ul", { class: "ag-steps", "aria-label": "What Clyra did" }, steps) : null);
 }

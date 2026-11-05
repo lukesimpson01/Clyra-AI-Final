@@ -3084,7 +3084,6 @@ async function startServer() {
           notes: req.body?.notes ? {
             search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
             read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
-            insert: (id, markdown, where) => notesStore.insertMarkdown(id, markdown, where),
             linkPage: (hostId, linkedPageId) => {
               const host = notesStore.getPage(hostId); const linked = notesStore.getPage(linkedPageId);
               if (!host || !linked) return { ok: false as const, error: "Choose two existing notes." };

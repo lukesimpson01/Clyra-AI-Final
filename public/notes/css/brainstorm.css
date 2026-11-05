@@ -1,5 +1,6 @@
-/* Brainstorm board. The page sits on a quiet dotted grid; a round toolbar floats at the bottom; four points appear on any item you hover. */
-.bs { position: relative; height: 560px; overflow: hidden; border-radius: 12px; background-color: var(--background-main); background-image: radial-gradient(circle, rgba(55, 53, 47, .2) 1px, transparent 1.4px); box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .1); outline: none; touch-action: none; user-select: none; --z: 1; }
+/* Brainstorm board. It is a clean canvas rather than a dotted workspace;
+   the person can pick a colour or use a stored image as its background. */
+.bs { position: relative; height: var(--bs-height, 560px); min-height: 320px; max-height: 1600px; overflow: auto; resize: vertical; border-radius: 12px; background-color: var(--background-main); box-shadow: inset 0 0 0 1px rgba(42, 28, 0, .1); outline: none; touch-action: none; user-select: none; --z: 1; }
 .bs:focus-visible { box-shadow: inset 0 0 0 2px var(--accent, #2383e2); }
 .bs.bs-full { position: fixed; inset: 0; z-index: 9000; height: auto; border-radius: 0; box-shadow: none; animation: bs-open 260ms cubic-bezier(.22, 1, .36, 1); }
 @keyframes bs-open { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
@@ -51,7 +52,7 @@ body.bs-locked { overflow: hidden; }
 
 /* the round toolbar at the bottom: grouped tools, a quiet grey pill for the one in use, no blue fill */
 .bs { container-type: inline-size; }
-.bs-toolbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; animation: bs-rise 420ms cubic-bezier(.22, 1, .36, 1) both; max-width: calc(100% - 20px); }
+.bs-toolbar { position: absolute; left: 50%; bottom: 16px; transform: translate(-50%, 10px); display: flex; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; opacity: 0; pointer-events: none; transition: opacity 160ms ease, transform 200ms cubic-bezier(.22, 1, .36, 1); max-width: calc(100% - 20px); }
 @keyframes bs-rise { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .bs-group { display: flex; align-items: center; gap: 1px; padding: 0 4px; position: relative; }
 .bs-group + .bs-group::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 1px; background: rgba(55, 53, 47, .12); }
@@ -63,7 +64,9 @@ body.bs-locked { overflow: hidden; }
 .bs-tool::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translate(-50%, 4px); padding: 5px 8px; border-radius: 6px; background: #2c2c2b; color: #fff; font: 500 12px/1 system-ui, sans-serif; white-space: pre; opacity: 0; pointer-events: none; transition: opacity 120ms ease, transform 120ms ease; z-index: 10; }
 .bs-tool:hover::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 350ms; }
 .bs-color i { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.22); display: block; }
-.bs-pill { position: absolute; top: 12px; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; }
+.bs-pill { position: absolute; top: 12px; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .98); box-shadow: 0 0 0 1px rgba(42, 28, 0, .12); z-index: 6; opacity: 0; pointer-events: none; transform: translateY(-6px); transition: opacity 160ms ease, transform 200ms cubic-bezier(.22, 1, .36, 1); }
+.bs:hover .bs-toolbar, .bs:focus .bs-toolbar, .bs:focus-within .bs-toolbar { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.bs:hover .bs-pill, .bs:focus .bs-pill, .bs:focus-within .bs-pill { opacity: 1; pointer-events: auto; transform: none; }
 .bs-history { left: 12px; } .bs-corner { right: 12px; }
 .bs-pill .bs-tool { width: 30px; height: 30px; } .bs-pill .bs-tool::after { bottom: auto; top: calc(100% + 8px); }
 .bs-zoom-label { position: relative; height: 30px; padding: 0 10px; border: 0; border-radius: 15px; background: transparent; font: 500 12.5px/1 system-ui, sans-serif; color: var(--text-secondary); cursor: pointer; transition: background-color 140ms ease; font-variant-numeric: tabular-nums; }
@@ -79,6 +82,8 @@ body.bs-locked { overflow: hidden; }
 .bs-sel-btn:hover, .bs-sel-color:hover { background: rgba(55, 53, 47, .08); }
 .bs-sel-color i { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.25); }
 .bs-swatches { display: grid; grid-template-columns: repeat(4, 28px); gap: 8px; padding: 10px; }
+.bs-background-colour { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-width: 168px; padding: 6px 4px; color: var(--text-secondary); font-size: 13px; }
+.bs-background-picker { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .bs-swatch { width: 28px; height: 28px; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.2); transition: transform 140ms ease; } .bs-swatch:hover { transform: scale(1.12); } .bs-swatch.on { box-shadow: 0 0 0 2px #2383e2, inset 0 0 0 1.5px rgba(0,0,0,.2); }
 .bs-stamps { width: 200px; } .bs-embed { margin: 8px 0 14px; position: relative; }
 @media (prefers-reduced-motion: reduce) { .bs-toolbar, .bs.bs-full, .bs-selbar { animation: none; } .bs-pt, .bs-tool { transition: none; } }

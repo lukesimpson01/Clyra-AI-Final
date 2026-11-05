@@ -179,8 +179,15 @@ const PAGE_COLUMNS =
 
 /** Whether a page's lock needs a password to open (the hash itself never leaves the database). */
 const withLockInfo = (page: Record<string, unknown>) => {
-  const row = db.prepare("SELECT lock_hash FROM pages2 WHERE id=?").get(String(page.id)) as { lock_hash?: string | null } | undefined;
-  return { ...page, lock_has_password: Boolean(row?.lock_hash) };
+  const row = db.prepare("SELECT lock_hash, lock_kind FROM pages2 WHERE id=?").get(String(page.id)) as { lock_hash?: string | null; lock_kind?: string | null } | undefined;
+  return {
+    ...page,
+    lock_has_password: Boolean(row?.lock_hash),
+    /* Sidebar menus need the same lock type as the page view. Without it a
+       PIN-protected page was presented as a password field when unlocked
+       from its three-dot menu. */
+    lock_kind: row?.lock_hash ? row.lock_kind || "password" : null,
+  };
 };
 
 const hashPassword = (password: string, salt: string) => scryptSync(password, salt, 32).toString("hex");
@@ -250,11 +257,11 @@ export function unlockPage(id: string, password = "") {
 }
 
 export function listPages(includeTrashed = false) {
-  return db
+  return (db
     .prepare(
       `SELECT ${PAGE_COLUMNS}, (SELECT inline FROM databases d WHERE d.page_id=pages2.id) AS inline FROM pages2 ${includeTrashed ? "" : "WHERE trashed_at IS NULL"} ORDER BY sort, updated_at DESC`,
     )
-    .all() as Array<Record<string, unknown>>;
+    .all() as Array<Record<string, unknown>>).map(withLockInfo);
 }
 
 export function getPage(id: string, opts: { reveal?: boolean } = {}): Record<string, unknown> | null {
@@ -675,6 +682,48 @@ export function insertMarkdown(pageId: string, markdown: string, where: { positi
   tree.splice(index, 0, ...added);
   saveBlocks(pageId, tree);
   return { ok: true as const, title: page.title || "Untitled", landed };
+}
+
+/* Applies a previously reviewed AI edit. The chat agent never calls this
+   directly: the person sees the exact insertion/replacement and explicitly
+   accepts it in the chat first. */
+export function applyAgentEdit(pageId: string, edit: {
+  kind?: "insert" | "replace";
+  markdown?: string;
+  position?: "start" | "end" | "after";
+  afterText?: string;
+  find?: string;
+  replace?: string;
+}) {
+  if (edit.kind !== "replace") return insertMarkdown(pageId, String(edit.markdown ?? ""), { position: edit.position, afterText: edit.afterText });
+  const page = db.prepare("SELECT title, locked FROM pages2 WHERE id=? AND trashed_at IS NULL").get(pageId) as { title: string; locked: number } | undefined;
+  if (!page) return { ok: false as const, error: "That page does not exist." };
+  if (page.locked) return { ok: false as const, error: "That page is locked, so nothing was changed." };
+  const find = String(edit.find ?? "");
+  if (!find.trim()) return { ok: false as const, error: "Choose text to replace first." };
+  const replace = String(edit.replace ?? "");
+  const tree = blockTree(pageId);
+  let changed = false;
+  const visit = (blocks: Block[]) => {
+    for (const block of blocks) {
+      if (changed) return;
+      const current = spanText(block.text);
+      const at = current.indexOf(find);
+      if (at >= 0) {
+        /* A replacement intentionally becomes one unmarked span. It avoids
+           carrying the old sentence's links, highlights or code marks onto
+           new text that the person has just approved. */
+        block.text = plain(`${current.slice(0, at)}${replace}${current.slice(at + find.length)}`);
+        changed = true;
+        return;
+      }
+      if (block.children?.length) visit(block.children);
+    }
+  };
+  visit(tree);
+  if (!changed) return { ok: false as const, error: "That text changed before you approved it, so Clyra did not overwrite anything." };
+  saveBlocks(pageId, tree);
+  return { ok: true as const, title: page.title || "Untitled", landed: replace ? "the selected text" : "the selected text (removed)" };
 }
 
 /** Permanently reset Notes' user-owned workspace while preserving schema and

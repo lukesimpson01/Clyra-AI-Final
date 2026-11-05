@@ -29,10 +29,11 @@ const mapStyle = (patch) => {
 };
 
 export class PageView {
-  constructor(host, pageId, context) {
+  constructor(host, pageId, context, restoreScrollTop = 0) {
     this.host = host;
     this.pageId = String(pageId);
     this.context = context;
+    this.restoreScrollTop = Number(restoreScrollTop) || 0;
     this.render();
   }
 
@@ -129,7 +130,9 @@ export class PageView {
     const editorHost = el("div", { class: "editor-host" });
     append(column, editorHost);
     append(canvas, column);
-    this.host.append(el("div", { class: "page-scroll scroll" }, canvas));
+    const pageScroll = el("div", { class: "page-scroll scroll" }, canvas);
+    this.host.append(pageScroll);
+    if (this.restoreScrollTop) requestAnimationFrame(() => { pageScroll.scrollTop = this.restoreScrollTop; });
 
     this.editor = new Editor(editorHost, {
       page,
@@ -143,6 +146,19 @@ export class PageView {
     this.editor.onCreateChildPage = (block) => this.createChildPage(block);
     this.editor.onLinkPage = (block) => this.linkPage(block);
     this.editor.onPageStyle = (patch) => this.setMeta(mapStyle(patch));
+    /* Review-mode changes are previewed in the document itself before the
+       saved page redraws. This makes the red/green decision tangible at the
+       point it affects, rather than only in the chat sidebar. */
+    this.showAgentEdit = (edit) => {
+      const existing = editorHost.querySelector(".agent-note-change");
+      existing?.remove();
+      const before = edit.kind === "replace" && edit.find ? el("del", { text: edit.find }) : null;
+      const after = el("ins", { text: edit.kind === "insert" ? (edit.markdown || "") : (edit.replace || "") });
+      const preview = el("aside", { class: "agent-note-change", "aria-live": "polite" },
+        el("span", { class: "agent-note-change-label" }, icon("sparkle", 13), "Clyra is applying this change"), before, after);
+      editorHost.prepend(preview);
+      requestAnimationFrame(() => preview.classList.add("visible"));
+    };
     this.applyColourFocus();
     requestAnimationFrame(() => this.context.revealBlock?.());
     this.context.refreshCommentMarks?.();
@@ -197,7 +213,8 @@ export class PageView {
   buildHeadActions() {
     const row = el("div", { class: "page-head-actions" });
     append(row, el("button", { class: "text-button colour-key-trigger", type: "button", onclick: (event) => openColourLegend(this, event.currentTarget) }, icon("palette", 15), "Colour key"));
-    if (!this.page.icon) append(row, el("button", { class: "text-button", type: "button", onclick: (event) => this.iconMenu(event.currentTarget) }, icon("callout", 15), "Add icon"));
+    /* Icons identify pages in the navigation tree. Keep the editing canvas
+       quiet; change an icon from that page's sidebar overflow menu instead. */
     if (!this.page.cover) append(row, el("button", { class: "text-button", type: "button", onclick: (event) => this.coverMenu(event.currentTarget) }, icon("image", 15), "Add cover"));
     return row;
   }

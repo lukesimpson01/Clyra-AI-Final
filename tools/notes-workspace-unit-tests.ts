@@ -68,6 +68,13 @@ async function main() {
   const reloaded = store.blockTree(String(child.id));
   check("nesting persisted", reloaded[2]?.children?.[0]?.id === "b4", reloaded[2]);
   check("block text persisted", spanText(reloaded[1]!.text).includes("concentration gradient"));
+  console.log("\n[reviewed AI edits]");
+  const proposedInsert = store.applyAgentEdit(String(child.id), { kind: "insert", markdown: "## Revision\n\n- [ ] Explain osmosis" }) as any;
+  check("accepted insertion writes only after approval", proposedInsert.ok && store.pageMarkdown(String(child.id))?.includes("Explain osmosis"), proposedInsert);
+  const proposedReplace = store.applyAgentEdit(String(child.id), { kind: "replace", find: "Diffusion moves particles down a concentration gradient.", replace: "Diffusion moves particles down a concentration gradient without energy." }) as any;
+  check("accepted replacement changes the selected text", proposedReplace.ok && store.pageMarkdown(String(child.id))?.includes("without energy"), proposedReplace);
+  const staleReplace = store.applyAgentEdit(String(child.id), { kind: "replace", find: "No longer present", replace: "Anything" }) as any;
+  check("stale proposal is rejected without an overwrite", !staleReplace.ok, staleReplace);
 
   console.log("\n[search]");
   const hits = store.search("concentration gradient");
@@ -91,7 +98,23 @@ async function main() {
   store.saveBlocks(String(child.id), [] as never);
   check("blocks cleared", store.blockTree(String(child.id)).length === 0);
   store.restoreVersion(String(child.id), versionId);
-  check("version restored blocks", store.blockTree(String(child.id)).length === 3, store.blockTree(String(child.id)).length);
+  check("version restored blocks", store.blockTree(String(child.id)).length === 5, store.blockTree(String(child.id)).length);
+
+  console.log("\n[page locks]");
+  const protectedPage = store.createPage({ title: "Protected biology notes" })!;
+  const secret = "correct-horse-battery-staple";
+  store.lockPage(String(protectedPage.id), secret, "password");
+  const listedLock = store.listPages().find((page: any) => page.id === protectedPage.id) as any;
+  check("sidebar summary keeps password lock type", listedLock?.lock_has_password && listedLock?.lock_kind === "password", listedLock);
+  check("wrong password cannot unlock", !store.unlockPage(String(protectedPage.id), "not-the-password").ok);
+  check("correct password removes the lock", store.unlockPage(String(protectedPage.id), secret).ok);
+  const unlocked = store.getPage(String(protectedPage.id)) as any;
+  check("unlocked page clears password metadata", !unlocked?.locked && !unlocked?.lock_has_password && unlocked?.lock_kind === null, unlocked);
+  const pinPage = store.createPage({ title: "PIN-protected note" })!;
+  store.lockPage(String(pinPage.id), "123456", "pin6");
+  const listedPin = store.listPages().find((page: any) => page.id === pinPage.id) as any;
+  check("sidebar summary keeps PIN lock type", listedPin?.lock_has_password && listedPin?.lock_kind === "pin6", listedPin);
+  check("PIN unlock removes the lock", store.unlockPage(String(pinPage.id), "123456").ok);
 
   console.log("\n[trash]");
   const doomed = store.createPage({ title: "Scratch" })!;

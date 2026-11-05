@@ -10,9 +10,13 @@
 import { el, clear, icon, iconButton, append, toast } from "../dom.js";
 
 const TABS_KEY = "clyra-notes:browser-tabs";
-const HOME = "https://en.wikipedia.org/wiki/Special:Random";
+/* The browser is a working research surface, not a second start-page. Open
+   with Google in the native desktop view so the first interaction works like
+   a normal browser; web builds still use the safe reader proxy. */
+const HOME = "https://www.google.com";
 
 const START_LINKS = [
+  { label: "Google", url: "https://www.google.com" },
   { label: "Wikipedia", url: "https://en.wikipedia.org" },
   { label: "BBC Bitesize", url: "https://www.bbc.co.uk/bitesize" },
   { label: "Khan Academy", url: "https://www.khanacademy.org" },
@@ -36,7 +40,7 @@ const readTabs = () => {
 export function browserPanel(app) {
   /* Each tab owns its own history stack, so Back in one tab cannot walk
      into a page that was opened in another. */
-  let tabs = readTabs() || [{ id: `b${Date.now()}`, url: "", history: [], future: [] }];
+  let tabs = readTabs() || [{ id: `b${Date.now()}`, url: HOME, history: [], future: [] }];
   let activeId = tabs[0].id;
 
   const strip = el("div", { class: "wb-tabs" });
@@ -99,7 +103,7 @@ export function browserPanel(app) {
       requestAnimationFrame(() => node.classList.add("settled"));
     }
     strip.append(iconButton("plus", "New tab", () => {
-      tabs.push({ id: `b${Date.now()}`, url: "", history: [], future: [] });
+      tabs.push({ id: `b${Date.now()}`, url: HOME, history: [], future: [] });
       activeId = tabs[tabs.length - 1].id;
       persist();
       paint();

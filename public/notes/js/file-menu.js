@@ -2,7 +2,8 @@
    Choosing a note drops a link to it; choosing "Add your own file" opens a drop-zone to upload by button or drag. */
 import { el, icon, menu, modal, toast, append, clear } from "./dom.js";
 import { state } from "./state.js";
-import { uploadFile, makeBlock } from "./editor.js";
+import { uploadFile } from "./editor.js";
+import { caretOffset, insertSpans, setCaret } from "./richtext.js";
 
 const formatBytes = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -24,28 +25,44 @@ export function setBlockMedia(editor, block, props) {
 }
 
 function linkToNote(editor, block, page) {
+  const line = editor.lineOf?.(block.id);
+  if (!line) return;
   editor.push?.();
-  block.type = "link_to_page";
-  block.props = { pageId: page.id, title: page.title };
-  block.text = [];
-  block.__dirty = true;
-  editor.insertAfter(block, makeBlock());
-  editor.render();
-  editor.commit("link-note", true);
+  const at = caretOffset(line);
+  const title = page.title || "Untitled note";
+  block.text = insertSpans(block.text, at, [{ t: title, page: String(page.id), fileRef: true }, { t: " " }]);
+  editor.paint(line, block);
+  setCaret(line, at + title.length + 1);
+  editor.commit("inline-note-link", true);
 }
 
-export function openFileMenu(editor, block) {
+function linkToFile(editor, block, file) {
+  const line = editor.lineOf?.(block.id);
+  if (!line) return;
+  editor.push?.();
+  const at = caretOffset(line);
+  const name = file.name || "File";
+  block.text = insertSpans(block.text, at, [{ t: name, fileUrl: file.url }, { t: " " }]);
+  editor.paint(line, block);
+  setCaret(line, at + name.length + 1);
+  editor.commit("inline-file-link", true);
+}
+
+export async function openFileMenu(editor, block) {
   const pages = (state.pages || []).filter((page) => !page.trashed_at && page.kind !== "record" && page.id !== editor.page?.id);
+  const files = await fetch("/api/notes/files").then((response) => response.ok ? response.json() : { files: [] }).then((result) => result.files || []).catch(() => []);
   const items = [
-    { label: "Add your own file", icon: "plus", keywords: "upload attach drop computer", onSelect: () => setTimeout(() => openFileModal(editor, block), 80) /* after the menu has finished closing, or it would close the sheet too */ },
-    pages.length ? { type: "separator" } : null,
-    pages.length ? { type: "label", label: "Link to a note" } : null,
+    { label: "Upload a file…", icon: "plus", keywords: "upload attach drop computer", onSelect: () => setTimeout(() => openFileModal(editor, block), 80) /* after the menu has finished closing, or it would close the sheet too */ },
+    (pages.length || files.length) ? { type: "separator" } : null,
+    pages.length ? { type: "label", label: "Notes" } : null,
     ...pages.map((page) => ({
-      label: page.title || "Untitled", icon: "page", keywords: "note page link",
+      label: page.title || "Untitled note", icon: page.icon && !/^https?:|^\//.test(page.icon) ? page.icon : "page", keywords: "note page link",
       onSelect: () => linkToNote(editor, block, page),
     })),
+    files.length ? { type: "label", label: "Uploaded files" } : null,
+    ...files.map((file) => ({ label: file.name || "File", icon: "file", hint: formatBytes(file.size), keywords: "file attachment upload", onSelect: () => linkToFile(editor, block, file) })),
   ].filter(Boolean);
-  return menu(caretRect(editor, block), items, { class: "slash-menu file-menu", search: true, searchPlaceholder: "Search notes, or add a file…", align: "start" });
+  return menu(caretRect(editor, block), items, { class: "slash-menu file-menu", search: true, searchPlaceholder: "Search notes and files…", align: "start" });
 }
 
 /* The upload sheet: one large drop-zone (click or drag), the files already in the workspace beneath it, and a link field. */

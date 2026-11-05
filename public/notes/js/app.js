@@ -9,7 +9,7 @@ import {
 } from "./state.js";
 import { Sidebar, TabStrip, Toolbar } from "./shell.js";
 import { Rail } from "./rail.js";
-import { readPreference, prefOn } from "./preferences.js";
+import { readPreference, prefOn, shortcutMatches } from "./preferences.js";
 import { PageView } from "./page-view.js";
 import { openLockDialog } from "./passcode.js";
 import { openSearch } from "./search.js";
@@ -26,6 +26,7 @@ import { renderTemplatesView } from "./views/templates.js";
 import { openImport } from "./views/import.js";
 import { openCourses, openSettings } from "./views/settings.js";
 import { runGenerator } from "./views/generators.js";
+import { openTerminal } from "./runner.js";
 
 const TAB_LABELS = {
   home: { title: "Home", icon: "home" },
@@ -121,13 +122,18 @@ class App {
     if (!tab) return;
     const key = tab.kind === "page" ? `page:${tab.pageId}` : tab.kind;
     if (this.currentKey === key && this.currentTabId === tab.id) return;
+    /* Anchored menus belong to the view that opened them.  Leaving one on
+       screen when its toolbar is unmounted creates orphaned controls and can
+       overlap the next note or template. */
+    closeAllLayers("navigation");
+    this.captureActiveTabPreview();
     this.currentView?.destroy?.();
     this.currentKey = key;
     this.currentTabId = tab.id;
     clear(this.surface);
     state.view = { kind: tab.kind };
     if (tab.kind === "page") {
-      this.currentView = new PageView(this.surface, tab.pageId, this);
+      this.currentView = new PageView(this.surface, tab.pageId, this, tab.scrollTop || 0);
       return;
     }
     const renderers = {
@@ -136,6 +142,22 @@ class App {
     };
     const render = renderers[tab.kind] || renderHome;
     this.currentView = render(this.surface, this) || null;
+  }
+
+  /* Save the actual rendered document before its tab changes. The hover card
+     uses this source, rather than invented grey lines, and the scroll offset
+     is restored when the person comes back to the still-open tab. */
+  captureActiveTabPreview() {
+    const previous = state.tabs.find((candidate) => candidate.id === this.currentTabId);
+    if (!previous || previous.kind !== "page") return;
+    const scroller = this.surface?.querySelector?.(".page-scroll");
+    if (!scroller?.querySelector?.(".page-canvas")) return;
+    previous.scrollTop = scroller.scrollTop;
+    /* Keep the actual scroll container as well as its contents. Several page
+       blocks inherit their geometry from that container; retaining it keeps
+       tab hover previews as faithful miniature renders rather than blank
+       orphaned children. */
+    previous.preview = { html: scroller.outerHTML, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight };
   }
 
   /* ------------------------------------------------------- navigation */
@@ -471,7 +493,7 @@ class App {
 
   openTemplates(parentId) { this.openView({ kind: "templates", parentId: parentId || null }); }
   openImport(parentId) { openImport(this, parentId); }
-  openCommandPalette() { openCommandPalette(this); }
+  openCommandPalette(options) { return openCommandPalette(this, options); }
 
   /* slash menu entries for importing from other tools open the same import screen */
   listenForImport() { window.addEventListener("clyra:open-import", () => this.openImport(null)); }
@@ -517,6 +539,32 @@ class App {
       options.onRename
         ? { label: "Rename", icon: "text", shortcut: "Double-click", onSelect: () => options.onRename() }
         : { label: "Rename", icon: "text", onSelect: () => this.renameDialog(page, refresh) },
+      { type: "custom", render: () => {
+        const icons = ["📄", "📝", "📚", "💡", "🎯", "✅", "🧠", "📌", "⭐", "🔬", "💼", "🛒"];
+        const row = el("div", { class: "sidebar-icon-picker", "aria-label": "Sidebar icon" },
+          el("span", { class: "sidebar-icon-picker-label", text: "Sidebar icon" }),
+          ...icons.map((emoji) => el("button", {
+            class: `sidebar-icon-choice${page.icon === emoji ? " on" : ""}`, type: "button", "aria-label": `Use ${emoji} as sidebar icon`,
+            onclick: async () => {
+              page.icon = emoji;
+              await withError(() => api.patch(`/api/notes/pages/${id}`, { icon: emoji }), "Could not update the icon");
+              await refresh(); this.currentKey = null; this.renderSurface();
+            },
+          }, emoji)),
+          page.icon ? el("button", { class: "sidebar-icon-clear", type: "button", onclick: async () => {
+            page.icon = null;
+            await withError(() => api.patch(`/api/notes/pages/${id}`, { icon: null }), "Could not remove the icon");
+            await refresh(); this.currentKey = null; this.renderSurface();
+          } }, "Remove icon") : null,
+        );
+        return row;
+      } },
+      { label: page.locked ? "Unlock page" : "Lock page", icon: "lock", onSelect: () => this.lockDialog(page, refresh) },
+      /* Destructive actions belong close to the trigger instead of below the
+         style controls, so they are visible in the first menu viewport. The
+         confirmation in trashPage still protects against an accidental tap. */
+      { label: "Move to trash", icon: "trash", danger: true, onSelect: () => this.trashPage(page, onChange) },
+      { type: "separator" },
       { label: page.favorite ? "Remove from favourites" : "Add to favourites", icon: "star", onSelect: async () => {
         await withError(() => api.patch(`/api/notes/pages/${id}`, { favorite: !page.favorite }), "Could not update favourites");
         await refresh();
@@ -531,7 +579,6 @@ class App {
       { label: "Move to subject", icon: "book", onSelect: () => this.subjectPicker(page, anchor, refresh) },
       { type: "separator" },
       { label: "Export as Markdown", icon: "export", onSelect: () => this.exportPage(page) },
-      { label: page.locked ? "Unlock page" : "Lock page", icon: "lock", onSelect: () => this.lockDialog(page, refresh) },
       { label: "Version history", icon: "history", onSelect: () => this.versionDialog(page) },
       { type: "separator" },
       /* Notion's page style block: the typeface as chips, then two switches. Each applies at once; the menu stays open. */
@@ -563,8 +610,6 @@ class App {
         dropPage(id); await refresh(); this.currentKey = null; this.renderSurface();
       } },
       { label: "More text sizes", icon: "text", onSelect: () => this.textSizeMenu(page, anchor, refresh) },
-      { type: "separator" },
-      { label: "Move to trash", icon: "trash", danger: true, onSelect: () => this.trashPage(page, onChange) },
       { type: "separator" },
       { type: "custom", render: () => {
         const raw = page.updated_at ? new Date(`${String(page.updated_at).replace(" ", "T")}${/Z|\+/.test(String(page.updated_at)) ? "" : "Z"}`) : null;
@@ -714,36 +759,62 @@ class App {
          shell's own launcher shortcut is not listening while you are here.
          The chord is answered locally and hands the workspace back with the
          launcher already open. */
-      if (modKey(event) && event.key.toLowerCase() === "k") {
+      /* Keep the app-level chords ahead of editor typing, menus and browser
+         focus. `code` is included because a few keyboard layouts report a
+         localized `key` for the physical K/J keys. */
+      const shortcutKey = String(event.key || "").toLowerCase();
+      const shortcutCode = String(event.code || "").toLowerCase();
+      if (shortcutMatches(event, "appLauncher")) {
         event.preventDefault();
-        flushAll();
-        window.location.assign("/?launcher=1");
+        event.stopImmediatePropagation();
+        try { flushAll(); } finally { window.location.assign("/?launcher=1"); }
         return;
       }
-      if (modKey(event) && event.key.toLowerCase() === "j") {
+      if (shortcutMatches(event, "taskView")) {
         event.preventDefault();
-        flushAll();
-        window.location.assign("/?taskview=1");
+        event.stopImmediatePropagation();
+        try { flushAll(); } finally { window.location.assign("/?taskview=1"); }
         return;
       }
       /* Cmd/Ctrl+K belongs to the host app launcher. Notes deliberately does
          not intercept it; its own search remains available from the sidebar
          and Cmd/Ctrl+P. */
-      if (modKey(event) && event.key.toLowerCase() === "p" && !event.shiftKey) { event.preventDefault(); openSearch(); return; }
+      if (shortcutMatches(event, "search")) { event.preventDefault(); openSearch(); return; }
       /* Cmd/Ctrl+S is "save" everywhere else; here pages save themselves, so it opens the command palette instead. */
-      if (modKey(event) && event.key.toLowerCase() === "s" && !event.shiftKey && !event.altKey) { event.preventDefault(); if (!document.querySelector(".cp")) openCommandPalette(this); return; }
-      if (modKey(event) && event.key === "\\") {
+      if (shortcutMatches(event, "commandPalette")) {
         event.preventDefault();
-        event.shiftKey ? this.toggleRail() : this.toggleSidebar();
+        /* During the welcome tour the real palette belongs in its preview
+           column. This preserves the familiar shortcut without putting a
+           full-screen layer over the lesson. */
+        if (this.root.classList.contains("tour-mode")) {
+          document.dispatchEvent(new CustomEvent("clyra:tour-command-palette", { detail: { app: this } }));
+          return;
+        }
+        if (!document.querySelector(".cp")) openCommandPalette(this);
+        return;
+      }
+      if (shortcutMatches(event, "toggleSidebar")) {
+        event.preventDefault();
+        this.toggleSidebar();
         this.tabstrip.syncRailToggle();
         return;
       }
-      if (modKey(event) && event.key.toLowerCase() === "n" && !typing) { event.preventDefault(); this.createPage(null); return; }
-      if (modKey(event) && event.key.toLowerCase() === "t" && !event.shiftKey) { event.preventDefault(); this.openView({ kind: "home" }, { newTab: true }); return; }
-      if (modKey(event) && event.shiftKey && event.key.toLowerCase() === "t") { event.preventDefault(); reopenTab(); return; }
-      if (modKey(event) && event.key.toLowerCase() === "w") { event.preventDefault(); if (state.activeTab) closeTab(state.activeTab); return; }
-      if (modKey(event) && event.key === "[") { event.preventDefault(); this.goBack(); return; }
-      if (modKey(event) && event.key === "]") { event.preventDefault(); this.goForward(); return; }
+      if (shortcutMatches(event, "toggleTools")) { event.preventDefault(); this.toggleRail(); this.tabstrip.syncRailToggle(); return; }
+      if (shortcutMatches(event, "newPage") && !typing) { event.preventDefault(); this.createPage(null); return; }
+      if (shortcutMatches(event, "terminal")) {
+        event.preventDefault();
+        /* Palette actions remain visual-only during the tour. The terminal
+           lesson deliberately opens the real scoped drawer from its normal
+           bottom edge, so its keyboard instruction is trustworthy. */
+        const terminalLesson = document.querySelector(".wl-stage")?.dataset.preview === "terminal";
+        if (this.root.classList.contains("tour-mode") && !terminalLesson) return;
+        void openTerminal();
+        return;
+      }
+      if (shortcutMatches(event, "reopenTab")) { event.preventDefault(); reopenTab(); return; }
+      if (shortcutMatches(event, "closeTab")) { event.preventDefault(); if (state.activeTab) closeTab(state.activeTab); return; }
+      if (shortcutMatches(event, "back")) { event.preventDefault(); this.goBack(); return; }
+      if (shortcutMatches(event, "forward")) { event.preventDefault(); this.goForward(); return; }
       if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); cycleTab(1); return; }
       if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); cycleTab(-1); return; }
       if (modKey(event) && /^[1-9]$/.test(event.key) && !typing) {

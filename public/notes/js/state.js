@@ -54,7 +54,10 @@ export function restoreSession() {
   /* 300 was the old default; Notion's is 270, so anyone still on the old default moves with it */
   if (state.sidebarWidth === 300) state.sidebarWidth = 270;
   state.sidebarHidden = persisted.read("sidebarHidden", false);
-  state.railHidden = persisted.read("railHidden", true);
+  /* A reopened workspace starts with one clear writing surface. The rail can
+     still be opened per note, but a previously open tool must not take over
+     the next launch. */
+  state.railHidden = true;
   state.expanded = new Set(persisted.read("expanded", []));
   state.collapsedSections = new Set(persisted.read("collapsedSections", []));
   /* Notes always opens on Home. Previously open pages are kept as tabs to
@@ -70,7 +73,11 @@ export function restoreSession() {
 }
 
 export function saveSession() {
-  persisted.write("session", { tabs: state.tabs, activeTab: state.activeTab });
+  /* A tab preview is a live DOM snapshot, not durable workspace data. Keeping
+     it out of session storage prevents old document markup from growing the
+     session and guarantees a closed/reopened tab starts fresh. */
+  const tabs = state.tabs.map(({ preview, ...tab }) => tab);
+  persisted.write("session", { tabs, activeTab: state.activeTab });
   persisted.write("expanded", [...state.expanded]);
   persisted.write("collapsedSections", [...state.collapsedSections]);
   persisted.write("sidebarWidth", state.sidebarWidth);

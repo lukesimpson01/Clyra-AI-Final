@@ -1400,26 +1400,38 @@ function registerIpc() {
   const TERMINAL_BUFFER_LIMIT = 64 * 1024;
 
   function terminalDir(projectId) {
-    const safe = String(projectId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96);
+    const safe = String(projectId || "scratch").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96) || "scratch";
     const nativeRoot = path.join(app.getPath("userData"), "projects", safe, "files");
     const developmentRoot = path.join(process.cwd(), "projects", safe, "files");
-    const root = safe
-      ? (existsSync(nativeRoot) ? nativeRoot : existsSync(developmentRoot) ? developmentRoot : nativeRoot)
-      : path.join(app.getPath("userData"), "projects");
+    const root = existsSync(nativeRoot) ? nativeRoot : existsSync(developmentRoot) ? developmentRoot : nativeRoot;
     fs.mkdir(root, { recursive: true }).catch(() => undefined);
     return root;
+  }
+
+  function terminalEnvironment(cwd) {
+    const inherited = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SYSTEMROOT", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT"];
+    const env = { TERM: "xterm-256color", HOME: cwd, USER: "clyra", LOGNAME: "clyra", CLYRA_TERMINAL_ROOT: cwd };
+    for (const key of inherited) if (process.env[key]) env[key] = process.env[key];
+    return env;
+  }
+
+  function shellArgs(shell) {
+    const name = path.basename(shell).toLowerCase();
+    if (name === "zsh") return ["-f"];
+    if (name === "bash") return ["--noprofile", "--norc"];
+    return [];
   }
 
   function spawnTerminalShell(cwd) {
     const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
     if (nodePty) {
       try {
-        const pty = nodePty.spawn(shell, [], {
+      const pty = nodePty.spawn(shell, shellArgs(shell), {
           name: "xterm-256color",
           cols: 100,
           rows: 30,
           cwd,
-          env: { ...process.env, TERM: "xterm-256color" },
+          env: terminalEnvironment(cwd),
         });
         return {
           write: (data) => { try { pty.write(data); } catch { /* closed */ } },
@@ -1441,10 +1453,10 @@ function registerIpc() {
     // small local pseudo-terminal when node-pty's native module is unavailable.
     const expectScript = "set timeout -1; spawn -noecho $env(CLYRA_TERMINAL_SHELL) -i; interact";
     const child = process.platform === "win32"
-      ? spawn(shell, ["-NoLogo", "-NoExit"], { cwd, env: { ...process.env, TERM: "xterm-256color" }, stdio: ["pipe", "pipe", "pipe"] })
+      ? spawn(shell, ["-NoLogo", "-NoExit"], { cwd, env: terminalEnvironment(cwd), stdio: ["pipe", "pipe", "pipe"] })
       : spawn("/usr/bin/expect", ["-c", expectScript], {
           cwd,
-          env: { ...process.env, TERM: "xterm-256color", CLYRA_TERMINAL_SHELL: shell },
+          env: { ...terminalEnvironment(cwd), CLYRA_TERMINAL_SHELL: shell },
           stdio: ["pipe", "pipe", "pipe"],
         });
     const listeners = [];

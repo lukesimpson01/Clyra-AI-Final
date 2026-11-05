@@ -128,6 +128,11 @@
 .rail-tab:hover::before, .rail-tab:focus-visible::before { opacity: 1; transform: scale(1); }
 .rail-tab:hover, .rail-tab:focus-visible { color: var(--text-primary); }
 .rail-tab.selected::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
+/* A one-time, grey orientation cue for the remaining right-sidebar tabs in
+   the welcome tour. It stays quiet: no glow, colour change, or forced motion. */
+.rail.tour-hints .rail-tab:not(.selected)::before { animation: rail-tour-hint 2.4s ease-in-out infinite; }
+@keyframes rail-tour-hint { 0%, 100% { opacity: 0; transform: scale(.94); } 42%, 58% { opacity: .7; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .rail.tour-hints .rail-tab:not(.selected)::before { animation: none; opacity: .35; transform: none; } }
 
 .rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .rail-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -316,8 +321,15 @@
   .workspace.rail-hidden,
   .workspace.sidebar-hidden.rail-hidden,
   .workspace:not(.rail-hidden) { grid-template-columns: minmax(0, 1fr); }
-  .rail { position: fixed; inset: 0 0 0 auto; width: min(92vw, 380px); z-index: 40; }
-  .workspace.rail-hidden .rail { pointer-events: none; }
+  .rail {
+    position: fixed; inset: 0 0 0 auto; width: min(92vw, 380px); z-index: 40;
+    transform: translateX(0);
+    transition: transform var(--duration-panel) var(--ease-glide);
+  }
+  /* At phone widths the rail is an overlay, not a grid column.  Moving only
+     its inner content left an opaque empty sheet over the editor while the
+     rail was meant to be closed. */
+  .workspace.rail-hidden .rail { transform: translateX(100%); pointer-events: none; }
 }
 
 /* The toggle lives at the far end of the tab strip, level with the sidebar's

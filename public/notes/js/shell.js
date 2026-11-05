@@ -7,6 +7,8 @@ import {
 } from "./state.js";
 import { getPins, togglePin, listAgents } from "./chat-extras.js";
 import { createDatabase } from "./database.js";
+import { openTerminal } from "./runner.js";
+import { PageView } from "./page-view.js";
 
 /* --------------------------------------------------------------- sidebar */
 
@@ -24,8 +26,9 @@ export class Sidebar {
     this.body = el("div", { class: "sidebar-body scroll" });
     /* Content lives in a fixed-width inner shell so collapsing the sidebar
        slides it away rather than squeezing every row as the track shrinks. */
+    this.footer = this.buildFooter();
     this.host.append(
-      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), (this.nav = this.buildNav()), this.body, this.buildFooter()),
+      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), (this.nav = this.buildNav()), this.body, this.footer),
       this.buildResizer(),
     );
     this.renderBody();
@@ -73,6 +76,7 @@ export class Sidebar {
      for longer than it takes to point at it. */
   buildNav() {
     const nav = el("div", { class: "sidebar-nav" });
+    const selectedButtons = [];
     const item = (kind, label, iconName, shortcut, onClick) => {
       const selected = activeTab()?.kind === kind;
       const button = el("button", {
@@ -83,6 +87,7 @@ export class Sidebar {
         el("span", { class: "nav-icon" }, icon(iconName, 17)),
         el("span", { class: "nav-name" }, el("span", { class: "nav-name-text", text: label })),
       );
+      if (selected) selectedButtons.push(button);
       /* Pointing at a button names it in small text above; only choosing it opens its label. */
       button.dataset.tip = shortcut ? `${label} · ${shortcut}` : label;
       if (kind === "inbox" && state.inbox.some((event) => !event.read_at)) button.classList.add("has-unread");
@@ -94,18 +99,36 @@ export class Sidebar {
       item("flashcards", "Flashcards", "cards"),
       item("tests", "Tests", "check_square"),
       item("inbox", "Inbox", "inbox"),
-      item("search", "Search", "search", `${mod}+P`, () => this.context.openSearch()),
     );
+    /* A selected destination grows from its icon after it is in the layout.
+       The scroll is deliberately attached to the selected item, so a longer
+       label is never clipped in a narrow sidebar. */
+    requestAnimationFrame(() => selectedButtons.forEach((button) => {
+      button.classList.add("is-expanded");
+      button.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+    }));
     return nav;
   }
 
   /* The footer is the workspace's utilities plus one primary action. Kept as
      a distinct band so it reads as chrome rather than more page rows. */
-  buildFooter() { return null; }
+  buildFooter() {
+    const utility = (label, glyph, onClick, badge = null) => el("button", { class: "sidebar-util", type: "button", onclick: onClick },
+      el("span", { class: "sidebar-util-icon" }, icon(glyph, 15)),
+      el("span", { class: "sidebar-util-label", text: label }),
+      badge ? el("span", { class: "sidebar-util-badge", text: badge }) : null);
+    return el("footer", { class: "sidebar-footer", "aria-label": "Workspace tools" },
+      el("div", { class: "sidebar-utils" },
+        utility("Library", "book", () => this.context.openView({ kind: "library" })),
+        utility("Templates", "template", () => this.context.openTemplates(null)),
+        utility("Import", "import", () => this.context.openImport(null)),
+        utility("Trash", "trash", () => this.context.openTrash(), state.trashCount ? String(state.trashCount) : null)));
+  }
 
   renderBody() {
     /* the nav shows which view is open, so it is rebuilt with the body */
     if (this.nav?.isConnected) { const next = this.buildNav(); this.nav.replaceWith(next); this.nav = next; }
+    if (this.footer?.isConnected) { const nextFooter = this.buildFooter(); this.footer.replaceWith(nextFooter); this.footer = nextFooter; }
     clear(this.body);
     /* Before the workspace has loaded the sidebar stays quiet rather than
        claiming there are no pages. */
@@ -155,14 +178,6 @@ export class Sidebar {
       this.staticRow("Flashcards", "cards", () => this.context.openView({ kind: "flashcards" }), state.study.due ? `${state.study.due} due` : null),
       this.staticRow("Practice tests", "check_square", () => this.context.openView({ kind: "tests" })),
     ]));
-
-    /* Workspace utilities read as ordinary rows at the end of the tree, not
-       as a separate pinned band. */
-    sections.push(el("div", { class: "sidebar-section utilities" },
-      this.staticRow("Library", "book", () => this.context.openView({ kind: "library" })),
-      this.staticRow("Templates", "template", () => this.context.openTemplates(null)),
-      this.staticRow("Import", "import", () => this.context.openImport(null)),
-      this.staticRow("Trash", "trash", () => this.context.openTrash(), state.trashCount ? String(state.trashCount) : null)));
 
     append(this.body, ...sections);
   }
@@ -303,11 +318,13 @@ export class Sidebar {
       class: `page-row${selected ? " selected" : ""}`, role: "treeitem", tabindex: "0",
       draggable: "true", "data-page": id,
       style: { paddingLeft: `${6 + depth * 14}px` },
-      onclick: (event) => this.context.openPage(id, { newTab: modKey(event) }),
+      /* Sidebar navigation preserves the page you were reading. A normal
+         click opens a separate tab; middle-click remains a background tab. */
+      onclick: () => this.context.openPage(id, { newTab: true }),
       onauxclick: (event) => { if (event.button === 1) { event.preventDefault(); this.context.openPage(id, { newTab: true, background: true }); } },
       oncontextmenu: (event) => { event.preventDefault(); this.pageMenu(page, row); },
       onkeydown: (event) => {
-        if (event.key === "Enter") this.context.openPage(id);
+        if (event.key === "Enter") this.context.openPage(id, { newTab: true });
         if (event.key === "ArrowRight" && hasKids && !expanded) { state.expanded.add(id); saveSession(); this.renderBody(); }
         if (event.key === "ArrowLeft" && expanded) { state.expanded.delete(id); saveSession(); this.renderBody(); }
       },
@@ -501,12 +518,27 @@ export class TabStrip {
         iconButton("arrow_right", "Forward", () => this.context.goForward(), { shortcut: `${mod}+]` })),
       el("div", { class: "tab-list" },
         this.scroller,
-        iconButton("plus", "New page", () => this.context.createPage(null, { newTab: true }), { shortcut: `${mod}+T`, className: "tab-new" })),
+        iconButton("plus", "New note", () => this.context.createPage(null, { newTab: true }), { shortcut: `${mod}+N`, className: "tab-new tab-compose" })),
       /* The mirror of the sidebar's own toggle: same glyph flipped, same row,
          the opposite end. One shape means "show me the panel on that side". */
-      el("div", { class: "tabstrip-end" }, this.railToggle()),
+      el("div", { class: "tabstrip-end" },
+        iconButton("terminal", "Open terminal", () => openTerminal(), { className: "terminal-toggle" }),
+        this.railToggle()),
     );
     this.scroller.addEventListener("mouseleave", () => this.moveIndicator());
+    /* Measure the usable run, not the viewport. Tabs contract before the
+       strip scrolls, while the compose control stays outside that run. */
+    this.tabResize = new ResizeObserver(() => this.measureTabWidth());
+    this.tabResize.observe(this.scroller);
+  }
+
+  measureTabWidth() {
+    if (!this.scroller?.isConnected) return;
+    const count = Math.max(1, state.tabs.length);
+    const usable = Math.max(34, this.scroller.clientWidth - Math.max(0, count - 1) * 2);
+    const width = Math.max(34, Math.min(168, Math.floor(usable / count)));
+    this.host.style.setProperty("--tab-width", `${width}px`);
+    this.host.classList.toggle("tabs-icon-only", width <= 58);
   }
 
   railToggle() {
@@ -535,6 +567,7 @@ export class TabStrip {
   /* Tabs are reconciled rather than rebuilt so an opening tab can grow into
      place and a closing one can collapse before it leaves. */
   render() {
+    this.host.style.setProperty("--tab-count", String(Math.max(1, state.tabs.length)));
     const wanted = new Set(state.tabs.map((tab) => tab.id));
     for (const [id, node] of [...this.nodes]) {
       if (!wanted.has(id)) { this.retire(id, node); }
@@ -562,7 +595,7 @@ export class TabStrip {
       node.classList.toggle("active", id === state.activeTab);
       node.setAttribute("aria-selected", id === state.activeTab ? "true" : "false");
     }
-    requestAnimationFrame(() => this.moveIndicator());
+    requestAnimationFrame(() => { this.measureTabWidth(); this.moveIndicator(); });
   }
 
   retire(id, node) {
@@ -604,10 +637,23 @@ export class TabStrip {
   }
 
   tabNode(tab) {
+    let previewTimer = null;
     const node = el("div", {
       class: "tab", role: "tab", draggable: "true", tabindex: "0",
       onclick: () => selectTab(tab.id),
-      onmouseenter: () => this.moveIndicator(node),
+      onmouseenter: () => {
+        this.moveIndicator(node);
+        clearTimeout(previewTimer);
+        /* Once a preview is present, it follows across neighbouring tabs at
+           once instead of fading out and making the next card wait again. */
+        if (this.previewCard?.isConnected) this.showTabPreview(tab, node);
+        else previewTimer = setTimeout(() => this.showTabPreview(tab, node), 360);
+      },
+      onmouseleave: (event) => {
+        clearTimeout(previewTimer);
+        if (event.relatedTarget?.closest?.(".tab")) return;
+        this.hideTabPreview();
+      },
       onauxclick: (event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.id); } },
       oncontextmenu: (event) => {
         event.preventDefault();
@@ -640,6 +686,88 @@ export class TabStrip {
       this.dragTab = null;
     });
     return node;
+  }
+
+  hideTabPreview() {
+    clearTimeout(this.previewRemoveTimer);
+    if (!this.previewCard) return;
+    const card = this.previewCard;
+    this.previewCard = null;
+    card.classList.remove("visible");
+    this.previewRemoveTimer = setTimeout(() => card.remove(), 130);
+  }
+
+  positionTabPreview(card, anchor) {
+    const box = anchor.getBoundingClientRect();
+    card.style.left = `${Math.max(10, Math.min(window.innerWidth - 266, box.left + box.width / 2 - 128))}px`;
+    card.style.top = `${Math.max(42, box.bottom + 9)}px`;
+  }
+
+  async showTabPreview(tab, anchor) {
+    const label = this.context.tabLabel(tab);
+    clearTimeout(this.previewRemoveTimer);
+    const card = this.previewCard?.isConnected ? this.previewCard : el("div", { class: "tab-preview-card", role: "status", "aria-live": "polite" },
+      el("div", { class: "tab-preview-title" }),
+      el("div", { class: "tab-preview-sheet" }),
+      el("div", { class: "tab-preview-caption" }));
+    this.previewCard = card;
+    card.dataset.tabId = String(tab.id);
+    card.querySelector(".tab-preview-title").textContent = label.title || "Untitled";
+    card.querySelector(".tab-preview-caption").textContent = tab.kind === "page" ? "Loading note preview…" : label.title || "Clyra";
+    if (!card.isConnected) {
+      document.body.append(card);
+      this.positionTabPreview(card, anchor);
+      requestAnimationFrame(() => card.classList.add("visible"));
+    } else this.positionTabPreview(card, anchor);
+    if (tab.kind !== "page") return;
+    const paintSnapshot = (snapshot) => {
+      if (!snapshot?.html || this.previewCard !== card || card.dataset.tabId !== String(tab.id)) return false;
+      const viewport = card.querySelector(".tab-preview-sheet");
+      const documentCopy = el("div", { class: "tab-preview-document", html: snapshot.html });
+      /* Older in-memory tabs may have stored only the scroll contents, while
+         newer ones retain the scroll shell too. Both are real renders; reject
+         only an incomplete capture rather than painting an empty card. */
+      if (!documentCopy.querySelector(".page-canvas")) return false;
+      const scale = 0.27;
+      documentCopy.style.transform = `translateY(${-Math.max(0, Number(snapshot.scrollTop) || 0) * scale}px) scale(${scale})`;
+      viewport.replaceChildren(documentCopy);
+      card.querySelector(".tab-preview-caption").textContent = snapshot.scrollTop ? "Live view at your saved reading position" : "Live note view";
+      return true;
+    };
+    if (paintSnapshot(tab.preview)) return;
+    let previewHost = null;
+    let previewView = null;
+    try {
+      /* A restored tab may not have been visible during this browser session.
+         Render its genuine PageView out of sight once, then use the exact
+         markup the normal tab will show. This deliberately avoids a textual
+         stand-in: hover previews stay visual at every reading position. */
+      previewHost = el("div", { class: "tab-preview-render-host", "aria-hidden": "true" });
+      document.body.append(previewHost);
+      previewView = new PageView(previewHost, tab.pageId, this.context, tab.scrollTop || 0);
+      const snapshot = await new Promise((resolve, reject) => {
+        const started = performance.now();
+        const poll = () => {
+          const scroll = previewHost.querySelector(".page-scroll");
+          if (scroll?.querySelector(".page-canvas")) {
+            resolve({ html: scroll.outerHTML, scrollTop: Number(tab.scrollTop) || 0, scrollHeight: scroll.scrollHeight });
+            return;
+          }
+          if (performance.now() - started > 1800) { reject(new Error("Preview timed out")); return; }
+          requestAnimationFrame(poll);
+        };
+        poll();
+      });
+      tab.preview = snapshot;
+      paintSnapshot(snapshot);
+    } catch {
+      if (this.previewCard === card) {
+        card.querySelector(".tab-preview-caption").textContent = "Preview could not load";
+      }
+    } finally {
+      previewView?.destroy?.();
+      previewHost?.remove();
+    }
   }
 }
 
@@ -678,13 +806,8 @@ export class Toolbar {
          filtered rather than passed straight through. */
       append(actions, ...[
         el("span", { class: "save-state", text: this.saveLabel() }),
-        /* who can see it, as Notion's top bar says it: a lock and "Private", opening the same access menu as Share */
-        el("button", { class: "text-button visibility-chip", type: "button", "aria-label": "Page access: private", onclick: (event) => this.context.shareMenu(page, event.currentTarget) },
-          icon("lock", 14), el("span", { text: "Private" }), icon("chevron_down", 12)),
         iconButton("comments", "Comments", () => this.context.commentOnBlock?.(null, ""), { size: 16 }),
         el("button", { class: "text-button", type: "button", onclick: () => this.context.askAboutPage(page) }, "Ask Clyra"),
-        el("button", { class: "text-button", type: "button", onclick: (event) => this.context.shareMenu(page, event.currentTarget) }, "Share"),
-        iconButton("link", "Copy link", () => { navigator.clipboard?.writeText(`${location.origin}/notes#${page.id}`); toast("Link copied"); }),
         this.favoriteButton(page),
         iconButton("dots", "Page settings", (event) => this.context.pageMenu(page, event.currentTarget)),
       ].filter(Boolean));

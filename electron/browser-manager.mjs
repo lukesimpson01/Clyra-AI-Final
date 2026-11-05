@@ -6,6 +6,7 @@ import { agentChromeScript } from "./agent-chrome-script.mjs";
 
 const HOME_URL = "https://www.google.com/";
 const MAX_TABS = 16;
+const HIDDEN_SURFACE_BOUNDS = { x: -20_000, y: -20_000, width: 2, height: 2 };
 
 // Runs *inside* the target page (injected via executeJavaScript, never given
 // node/ipc access) to drive Snip Mode entirely with real DOM events, so the
@@ -416,9 +417,9 @@ export class ChromiumBrowserManager {
     };
     this.tabs.set(id, tab);
     this.window.contentView.addChildView(view);
-    // Hidden tabs still need a real layout viewport for DOM/accessibility
-    // inspection and warm navigation. Visibility only controls compositing.
-    view.setBounds(this.surface.bounds);
+    // Keep a hidden native view physically outside the window too. Chromium
+    // can otherwise retain a stale compositor frame above the renderer.
+    view.setBounds(HIDDEN_SURFACE_BOUNDS);
     view.setVisible(false);
     this.wireTab(tab);
     // `nativeTheme.themeSource = "light"` is inherited by Chromium renderers.
@@ -670,8 +671,13 @@ export class ChromiumBrowserManager {
     }
     for (const [id, tab] of this.tabs) {
       const show = this.surface.visible && id === this.activeTabId;
-      tab.view.setBounds(this.surface.bounds);
-      tab.view.setVisible(show);
+      if (show) {
+        tab.view.setBounds(this.surface.bounds);
+        tab.view.setVisible(true);
+      } else {
+        tab.view.setVisible(false);
+        tab.view.setBounds(HIDDEN_SURFACE_BOUNDS);
+      }
       tab.view.webContents.setBackgroundThrottling(!show);
       if (show) {
         tab.view.setBounds(this.surface.bounds);
@@ -1324,7 +1330,7 @@ export class ChromiumBrowserManager {
       } finally {
         if (needsCoveredPaint && tab && !tab.view.webContents.isDestroyed()) {
           tab.view.setVisible(false);
-          tab.view.setBounds(this.surface.bounds);
+          tab.view.setBounds(HIDDEN_SURFACE_BOUNDS);
           tab.view.webContents.setBackgroundThrottling(true);
         }
         this.frameCapture = null;

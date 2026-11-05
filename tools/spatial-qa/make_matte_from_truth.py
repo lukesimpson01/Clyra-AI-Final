@@ -20,4 +20,12 @@ for a in range((count + per - 1) // per):
         if i >= count: break
         r, c = divmod(j, cols); t = tile(i); atlas[r * h:(r + 1) * h, c * w:(c + 1) * w, :3] = t[..., None]
     cv2.imwrite(str(d / f'atlas-{a}.png'), atlas)
-print('wrote', (count + per - 1) // per, 'atlases')
+# the editor's subject pass also wants each frame's box and foot line (proxy pixels), as the detector would report them
+info = []
+for i in range(count):
+    t = min(frames, key=lambda k: abs(k - i / fps * 1000)); wk = frames[t]['walker']
+    if not wk: info.append(None); continue
+    b = [(wk['x'] - wk['halfWidth']) * sx, wk['top'] * sy, (wk['x'] + wk['halfWidth']) * sx, wk['bottom'] * sy]
+    info.append({'box': b, 'foot': b[3], 'area': (b[2] - b[0]) * (b[3] - b[1]) / (w * h)})
+m['frames'] = info; json.dump(m, open(d / 'matte.json', 'w'))
+print('wrote', (count + per - 1) // per, 'atlases and', sum(1 for x in info if x), 'subject boxes')

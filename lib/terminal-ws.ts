@@ -32,6 +32,24 @@ const SESSION_TTL_MS = 90_000;
 const MAX_SESSION_LIFETIME_MS = 6 * 60 * 60 * 1000;
 const WS_OPEN = 1;
 
+function terminalEnvironment(cwd: string): NodeJS.ProcessEnv {
+  /* A terminal is a workspace tool, not a view into Clyra's server process.
+     Start from an explicit allow-list so API keys and development credentials
+     never appear in `env`, and point HOME at the project sandbox so `~`, the
+     prompt and an ordinary `ls` remain inside the user's project files. */
+  const inherited = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SYSTEMROOT", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT"];
+  const env: NodeJS.ProcessEnv = { TERM: "xterm-256color", HOME: cwd, USER: "clyra", LOGNAME: "clyra", CLYRA_TERMINAL_ROOT: cwd };
+  for (const key of inherited) if (process.env[key]) env[key] = process.env[key];
+  return env;
+}
+
+function shellArgs(shell: string) {
+  const name = path.basename(shell).toLowerCase();
+  if (name === "zsh") return ["-f"];
+  if (name === "bash") return ["--noprofile", "--norc"];
+  return [];
+}
+
 function spawnShell(cwd: string): PtyLike | null {
   const shell =
     process.platform === "win32"
@@ -40,12 +58,12 @@ function spawnShell(cwd: string): PtyLike | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pty = require("node-pty");
-    const process_ = pty.spawn(shell, [], {
+    const process_ = pty.spawn(shell, shellArgs(shell), {
       name: "xterm-256color",
       cols: 100,
       rows: 30,
       cwd,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: terminalEnvironment(cwd),
     });
     return {
       write: (data) => {
@@ -78,12 +96,12 @@ function spawnShell(cwd: string): PtyLike | null {
     const child = isWindows
       ? spawn(shell, ["-NoLogo", "-NoExit"], {
           cwd,
-          env: { ...process.env, TERM: "xterm-256color" },
+          env: terminalEnvironment(cwd),
           stdio: ["pipe", "pipe", "pipe"],
         })
       : spawn("/usr/bin/expect", ["-c", expectScript], {
       cwd,
-      env: { ...process.env, TERM: "xterm-256color", CLYRA_TERMINAL_SHELL: shell },
+          env: { ...terminalEnvironment(cwd), CLYRA_TERMINAL_SHELL: shell },
       stdio: ["pipe", "pipe", "pipe"],
       });
     const listeners: Array<(data: string) => void> = [];
@@ -118,14 +136,16 @@ function spawnShell(cwd: string): PtyLike | null {
 }
 
 function resolveProjectDirectory(projectId: string) {
-  const candidates = [
-    clyraDataPath("projects", projectId, "files"),
-    clyraResourcePath("projects", projectId, "files"),
-    clyraDataPath("projects"),
-  ];
-  return candidates.find((candidate) => {
-    try { return fs.existsSync(candidate); } catch { return false; }
-  }) ?? clyraDataPath("projects");
+  const safeId = String(projectId || "scratch").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96) || "scratch";
+  /* Never fall back to the shared projects directory: an ordinary `ls` must
+     show only this tool's files, not adjacent Notes/Vibe workspaces or app
+     data. The resource path is only retained for packaged, read-only starter
+     projects; newly created files always have a writable data root. */
+  const writable = clyraDataPath("projects", safeId, "files");
+  const bundled = clyraResourcePath("projects", safeId, "files");
+  try { if (fs.existsSync(writable)) return writable; } catch { /* use writable target */ }
+  try { if (fs.existsSync(bundled)) return bundled; } catch { /* create writable target */ }
+  return writable;
 }
 
 type TerminalSession = {
@@ -170,9 +190,7 @@ export function attachTerminalWebSocket(server: Server) {
       .slice(0, 64) || "default";
     // A terminal must never wait for project discovery. When no project is
     // selected yet, start a useful shell immediately in the user's home folder.
-    const dir = projectId
-      ? resolveProjectDirectory(projectId)
-      : (process.env.HOME || process.env.USERPROFILE || clyraDataPath("projects"));
+    const dir = resolveProjectDirectory(projectId || "scratch");
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch {

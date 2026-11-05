@@ -1,13 +1,11 @@
-/* The active catalogue is deliberately small and explicit: forty independent
-   Clyra-native systems across five shelves. A template remains a normal page
-   plus normal databases, so creating one never introduces a second editor or
-   persistence model. The legacy catalogue files stay on disk as a reversible
-   migration backup, but are not imported by this public registry. */
+/* The active catalogue is deliberately small and explicit: four Clyra-native
+   study templates. A template remains a normal page, so creating one never
+   introduces a second editor or persistence model. */
 import { table } from "./template-kit.js";
 import { TEMPLATE_LIBRARY_V2, TEMPLATE_LIBRARY_V2_CATEGORIES } from "./template-library-v2.js";
 
-export const TEMPLATE_GROUPS = ["Work", "Life", "School"];
-/* Exactly five shelves, each with eight original Clyra-native systems. */
+export const TEMPLATE_GROUPS = ["School"];
+/* One active shelf, supplied by the active template registry. */
 export const TEMPLATE_CATEGORIES = TEMPLATE_LIBRARY_V2_CATEGORIES;
 
 /* A template whose page is only a database previews as a table of its sample records. */

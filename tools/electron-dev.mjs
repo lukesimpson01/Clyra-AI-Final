@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import net from "node:net";
 import path from "node:path";
 import { patchClyraElectron } from "./patch-electron-macos-privacy.mjs";
 
@@ -26,9 +27,29 @@ const electronBinary = path.resolve("node_modules", ".bin", process.platform ===
 // Load the ABI-correct better-sqlite3 build for Electron's Node so the
 // desktop service can run alongside the web dev server (tools/sqlite-abi).
 const sqlitePreload = path.resolve("tools", "sqlite-abi-preload.cjs");
+
+/* A background Electron process can legitimately still own the normal CDP
+   port (for example while an OS-level shortcut remains enabled). Find a free
+   local port for this development window instead of emitting Chromium's
+   distracting "address already in use" error. An explicit port remains an
+   explicit request, which keeps focused desktop smoke tests deterministic. */
+const canListen = (port) => new Promise((resolve) => {
+  const probe = net.createServer();
+  probe.once("error", () => resolve(false));
+  probe.listen({ host: "127.0.0.1", port }, () => probe.close(() => resolve(true)));
+});
+const configuredCdpPort = Number(process.env.CLYRA_CDP_PORT || 9_223);
+let cdpPort = configuredCdpPort;
+if (!process.env.CLYRA_CDP_PORT) {
+  for (let candidate = configuredCdpPort; candidate < configuredCdpPort + 20; candidate += 1) {
+    if (await canListen(candidate)) { cdpPort = candidate; break; }
+  }
+}
+if (cdpPort !== configuredCdpPort) console.log(`[electron-dev] DevTools port ${configuredCdpPort} is busy; using ${cdpPort}.`);
 const env = {
   ...process.env,
   CLYRA_ELECTRON_DEV: "1",
+  CLYRA_CDP_PORT: String(cdpPort),
   NODE_OPTIONS: [`--require "${sqlitePreload}"`, process.env.NODE_OPTIONS].filter(Boolean).join(" "),
 };
 // Cursor/agent shells can inherit ELECTRON_RUN_AS_NODE from helper processes.

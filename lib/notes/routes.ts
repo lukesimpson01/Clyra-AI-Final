@@ -284,6 +284,7 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   }));
   app.patch("/api/notes/pages/:id", wrap((req) => store.updatePage(req.params.id, req.body)));
   app.put("/api/notes/pages/:id/blocks", wrap((req) => store.saveBlocks(req.params.id, (req.body.blocks || []) as Block[])));
+  app.post("/api/notes/pages/:id/agent-edit", wrap((req) => store.applyAgentEdit(req.params.id, req.body || {})));
   app.post("/api/notes/pages/:id/move", wrap((req) => store.movePage(req.params.id, req.body.parentId ?? null, Number(req.body.index ?? 0))));
   app.post("/api/notes/pages/:id/duplicate", wrap((req) => store.duplicatePage(req.params.id)));
   app.delete("/api/notes/pages/:id", wrap((req) => store.trashPage(req.params.id)));
@@ -592,9 +593,11 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
       const blocked = /deny|sameorigin/.test(frameOptions) || (ancestors && !/\*/.test(ancestors));
       const html = /html/.test(response.headers.get("content-type") || "") ? (await response.text()).slice(0, 60_000) : "";
       const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim().slice(0, 140);
-      return { embeddable: response.ok && !blocked, title, reason: blocked ? "This site does not allow itself to be shown inside other pages." : response.ok ? undefined : `The site answered ${response.status}.` };
+      return { reachable: true, embeddable: response.ok && !blocked, title, reason: blocked ? "This site does not allow itself to be shown inside other pages." : response.ok ? undefined : `The site answered ${response.status}.` };
     } catch (error) {
-      return { embeddable: false, reason: error instanceof Error ? error.message : "The site could not be reached." };
+      /* The editor needs to distinguish a page that forbids framing (where
+         the reader proxy can still help) from no network at all. */
+      return { reachable: false, embeddable: false, reason: error instanceof Error ? error.message : "The site could not be reached." };
     }
   }));
 

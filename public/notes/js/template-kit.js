@@ -21,6 +21,7 @@ export const callout = (icon, text, color = "blue") => b("callout", text, { icon
 export const toggle = (text, children = [p("")]) => b("toggle", text, { collapsed: false }, children);
 export const term = (name, definition) => b("key_term", definition, { term: name });
 export const objective = (text) => b("objective", text);
+export const focusTimer = (minutes = 25) => b("focus_timer", "", { minutes, remaining: minutes * 60, running: false });
 export const summary = (text) => b("study_summary", text);
 export const checklist = (title, items) => b("exam_checklist", "", { title }, items.map((item) => todo(item)));
 export const columns = (...cols) => b("columns", "", {}, cols.map((children) => b("column", "", {}, children)));
@@ -48,8 +49,12 @@ export const cover = (index) => { const [a, c] = COVERS[index % COVERS.length]; 
    `database` makes the template a real database: properties (the first is the title), sample records, and views. */
 let counter = 0;
 export function template(spec) {
-  const index = counter++;
-  return { ...spec, cover: cover(index), library: true, category: spec.subject };
+  counter += 1;
+  /* Templates should start as clean documents rather than a wall of tinted
+     covers. Individual templates can opt in with `cover` when a real visual
+     identity helps the workflow; the catalogue itself does not manufacture
+     colour just to distinguish cards. */
+  return { ...spec, cover: spec.cover ?? null, library: true, category: spec.subject };
 }
 
 /* Database helpers. Options are written as plain names and get ids and colours when the database is built. */

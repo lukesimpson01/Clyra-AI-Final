@@ -3,7 +3,7 @@
    It exists only while a selection does, which is what keeps AI actions out
    of the page until the student actually asks for them. */
 import { el, icon, iconButton, menu, modal, position, pushLayer, toast, mod, append } from "./dom.js";
-import { markState, spansText, sliceSpans } from "./richtext.js";
+import { markState, spansText, sliceSpans, selectionRectIn } from "./richtext.js";
 import { BLOCK_TYPES, TURN_INTO, COLORS } from "./block-types.js";
 import { state } from "./state.js";
 import { openColourPalette } from "./colour-coding.js";
@@ -29,8 +29,8 @@ export function openInlineToolbar({ editor, block, line, range }) {
     return button;
   };
 
-  const dropdown = (label, title, onOpen) => el("button", {
-    class: "text-button", type: "button", "aria-label": title, title,
+  const dropdown = (label, title, onOpen, className = "") => el("button", {
+    class: `text-button ${className}`.trim(), type: "button", "aria-label": title, title,
     onclick: (event) => onOpen(event.currentTarget),
   }, label, icon("chevron_down", 11));
 
@@ -40,36 +40,21 @@ export function openInlineToolbar({ editor, block, line, range }) {
   }, icon(block.props?.textAlign === "center" ? "align_center" : block.props?.textAlign === "right" ? "align_right" : "align_left", 15));
 
   append(node,
-    el("button", {
+    /* One intentional AI entry point keeps the selection toolbar short.
+       It opens the real Clyra sidebar with the selection attached, rather
+       than offering three competing ways to do the same thing. */
+    state.aiConfigured ? el("button", {
       class: "text-button ask-clyra", type: "button", title: "Ask Clyra about the selection",
       onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "ask"); },
-    }, icon("sparkle", 15), "Ask Clyra"),
-    state.aiConfigured ? el("button", {
-      class: "text-button ai", type: "button",
-      /* Opens the composer with the selection attached, so a typed
-         instruction rewrites the highlighted text. The presets sit under the
-         input rather than replacing it. */
-      onclick: () => {
-        closeInlineToolbar();
-        editor.openAiComposer(block, {
-          selection: { line, range },
-          seedText: spansText(sliceSpans(block.text, range.start, range.end)),
-          suggestions: AI_ACTIONS,
-        });
-      },
-    }, icon("sparkle", 15), "Ask AI") : null,
-    state.aiConfigured ? el("button", {
-      class: "text-button", type: "button", title: "Attach the selection to the Clyra chat",
-      onclick: () => { const text = spansText(sliceSpans(block.text, range.start, range.end)); closeInlineToolbar(); editor.onAskClyra?.(text, "add"); },
-    }, icon("comment", 15), "Add to chat") : null,
+    }, icon("sparkle", 15), "Ask Clyra") : null,
     el("div", { class: "sep" }),
-    dropdown(BLOCK_TYPES[block.type]?.label || "Text", "Turn into", (anchor) =>
+    dropdown("Format", "Text format", (anchor) =>
       menu(anchor, TURN_INTO.map((type) => ({
         label: BLOCK_TYPES[type].label, icon: BLOCK_TYPES[type].icon,
         checked: block.type === type, keywords: BLOCK_TYPES[type].keywords,
         onSelect: () => editor.turnInto(block, type),
-      })), { search: true, searchPlaceholder: "Turn into…" })),
-    dropdown("Aa", "Font and size", (anchor) => styleMenu(editor, block, line, anchor)),
+      })), { side: "bottom", align: "start", class: "toolbar-menu", search: true, searchPlaceholder: "Search formats…" }), "toolbar-format"),
+    dropdown("Font", "Font", (anchor) => fontMenu(editor, block, line, anchor), "toolbar-font"),
     alignButton,
     el("div", { class: "sep" }),
     markButton("bold", "Bold", "b", `${mod}+B`),
@@ -88,15 +73,15 @@ export function openInlineToolbar({ editor, block, line, range }) {
       closeInlineToolbar();
       editor.onComment?.(block, text);
     }, { size: 15 }),
-    iconButton("palette", "Colour and highlight", (event) => colorMenu(editor, block, line, event.currentTarget), { size: 15 }),
-    el("button", { class: "text-button smart-highlight-button", type: "button", "aria-label": "Highlight / Colour Code", onclick: (event) => openColourPalette(editor, block, line, event.currentTarget, range) }, icon("highlight", 14), "Highlight", icon("chevron_down", 11)),
+    colourButton("text", "Text colour", (event) => colorMenu(editor, block, line, event.currentTarget, "text")),
+    colourButton("highlight", "Highlight colour", (event) => colorMenu(editor, block, line, event.currentTarget, "bg")),
+    iconButton("dots", "More text options", (event) => openColourPalette(editor, block, line, event.currentTarget, range), { size: 15 }),
   );
 
   const entry = pushLayer(node, { closeOnOutside: false, onClose: () => { current = null; } });
   current = entry;
 
-  const selection = window.getSelection();
-  const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : line.getBoundingClientRect();
+  const rect = selectionRectIn(line) || line.getBoundingClientRect();
   position(node, rect, { side: "top", align: "center", gap: 8 });
 
   const dismiss = (event) => {
@@ -127,7 +112,7 @@ function alignmentMenu(editor, block, line, anchor) {
     { label: "Align left", icon: "align_left", checked: current === "left", onSelect: () => editor.setTextAlign(block, line, "left") },
     { label: "Align centre", icon: "align_center", checked: current === "center", onSelect: () => editor.setTextAlign(block, line, "center") },
     { label: "Align right", icon: "align_right", checked: current === "right", onSelect: () => editor.setTextAlign(block, line, "right") },
-  ], { align: "center" });
+  ], { side: "bottom", align: "start", class: "toolbar-menu", search: true, searchPlaceholder: "Search fonts and formatting…" });
 }
 
 function promptLink(editor, block, line, range, anchor) {
@@ -157,7 +142,12 @@ function promptLink(editor, block, line, range, anchor) {
 
 /* A swatch grid rather than two lists of twenty rows: colour is chosen by
    eye, so the menu should be scannable at a glance. */
-function colorMenu(editor, block, line, anchor) {
+function colourButton(kind, label, onClick) {
+  const glyph = kind === "text" ? el("span", { class: "toolbar-colour-letter", text: "A" }) : icon("highlight", 16);
+  return el("button", { class: `icon-button toolbar-colour toolbar-colour-${kind}`, type: "button", title: label, "aria-label": label, onclick: onClick }, glyph);
+}
+
+function colorMenu(editor, block, line, anchor, kind) {
   const swatchGrid = (kind) => {
     const grid = el("div", { class: "swatch-grid" });
     for (const color of COLORS) {
@@ -178,14 +168,11 @@ function colorMenu(editor, block, line, anchor) {
     editor.applyColor(block, line, patch);
     entry?.close("custom-colour");
   };
+  const isText = kind === "text";
   entry = menu(anchor, [
-    { type: "label", label: "Text" },
-    { type: "custom", render: () => swatchGrid("text") },
-    { type: "custom", render: () => customColourField("Text", "#337ea9", (hex) => applyCustom({ colorHex: hex })) },
-    { type: "separator" },
-    { type: "label", label: "Highlight" },
-    { type: "custom", render: () => swatchGrid("bg") },
-    { type: "custom", render: () => customColourField("Highlight", "#fff0a8", (hex) => applyCustom({ backgroundHex: hex })) },
+    { type: "label", label: isText ? "Text colour" : "Highlight colour" },
+    { type: "custom", render: () => swatchGrid(kind) },
+    { type: "custom", render: () => customColourField(isText ? "Text" : "Highlight", isText ? "#37352f" : "#fff0a8", (hex) => applyCustom(isText ? { colorHex: hex } : { backgroundHex: hex })) },
   ], { align: "center", class: "color-menu" });
 }
 
@@ -203,33 +190,14 @@ function customColourField(label, value, onPick) {
 
 /* Font and text size belong to the page, so the menu labels them that way
    rather than implying they apply only to the selection. */
-function styleMenu(editor, block, line, anchor) {
-  const page = editor.page;
-  const apply = (patch) => editor.onPageStyle?.(patch);
+function fontMenu(editor, block, line, anchor) {
   menu(anchor, [
     { type: "label", label: "Selection font" },
     ...[["inherit", "Default"], ["Georgia, serif", "Serif"], ["ui-monospace, monospace", "Mono"]].map(([value, label]) => ({ label, onSelect: () => editor.applyTextStyle(block, line, { font: value === "inherit" ? null : value }) })),
     { type: "separator" },
     { type: "label", label: "Selection size" },
     ...[["0.875em", "Small"], ["1em", "Medium"], ["1.18em", "Large"]].map(([size, label]) => ({ label, onSelect: () => editor.applyTextStyle(block, line, { size }) })),
-    { type: "separator" },
-    { type: "label", label: "Page font" },
-    ...[["default", "Default"], ["serif", "Serif"], ["mono", "Mono"], ["rounded", "Rounded"]].map(([value, label]) => ({
-      label, checked: (page.font_style || "default") === value,
-      icon: el("span", { class: `font-preview ${value}`, text: "Ag" }),
-      onSelect: () => apply({ fontStyle: value }),
-    })),
-    { type: "separator" },
-    { type: "label", label: "Page text size" },
-    ...[["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["xl", "Extra large"]].map(([value, label]) => ({
-      label, checked: (page.text_size || "medium") === value,
-      icon: "type_size",
-      onSelect: () => apply({ textSize: value }),
-    })),
-    { type: "separator" },
-    { label: "Full width", icon: "panel", checked: Boolean(page.full_width),
-      onSelect: () => apply({ fullWidth: !page.full_width }) },
-  ], { align: "center" });
+  ], { side: "bottom", align: "start", class: "toolbar-menu", search: true, searchPlaceholder: "Search font or size…" });
 }
 
 const AI_ACTIONS = [

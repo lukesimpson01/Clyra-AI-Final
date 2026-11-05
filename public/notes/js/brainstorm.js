@@ -37,15 +37,23 @@ const fileSize = (bytes) => (bytes > 1_000_000 ? `${(bytes / 1_000_000).toFixed(
 const uid = () => Math.random().toString(36).slice(2, 9);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* A board background is a stored image asset, never arbitrary CSS. */
+const safeBackgroundUrl = (value) => {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value, window.location.href);
+    return ["http:", "https:", "blob:"].includes(url.protocol) || (url.protocol === "data:" && /^data:image\//i.test(value)) ? url.href.replace(/"/g, "%22") : "";
+  } catch { return ""; }
+};
 
-export const emptyBoard = () => ({ items: [], edges: [], cam: { x: 0, y: 0, z: 1 } });
+export const emptyBoard = () => ({ items: [], edges: [], cam: { x: 0, y: 0, z: 1 }, background: { color: "#ffffff", image: "" } });
 
 export class Brainstorm {
-  constructor(host, { data, onChange, openPage, readOnly = false }) {
+  constructor(host, { data, onChange, onResize, openPage, readOnly = false }) {
     this.host = host;
     this.data = { items: [], edges: [], cam: { x: 0, y: 0, z: 1 }, ...(data || {}) };
     this.data.items = this.data.items || []; this.data.edges = this.data.edges || [];
-    this.onChange = onChange; this.openPage = openPage; this.readOnly = readOnly;
+    this.onChange = onChange; this.onResize = onResize; this.openPage = openPage; this.readOnly = readOnly;
     this.tool = "select"; this.color = "white"; this.shape = "rect";
     this.selection = new Set(); this.nodes = new Map(); this.history = []; this.future = []; this.clipboard = [];
     this.space = false; this.saveTimer = 0; this.editing = null; this.titles = new Map();
@@ -85,7 +93,16 @@ export class Brainstorm {
     this.root.addEventListener("dragover", (event) => event.preventDefault());
     this.root.addEventListener("drop", (event) => this.onDrop(event));
     this.root.addEventListener("paste", (event) => this.onPaste(event));
-    this.resizeObserver = new ResizeObserver(() => this.applyCam());
+    this.lastHeight = Math.round(this.root.getBoundingClientRect().height);
+    this.resizeObserver = new ResizeObserver(() => {
+      this.applyCam();
+      const height = Math.round(this.root.getBoundingClientRect().height);
+      if (height && Math.abs(height - this.lastHeight) > 2) {
+        this.lastHeight = height;
+        clearTimeout(this.resizeSaveTimer);
+        this.resizeSaveTimer = setTimeout(() => this.onResize?.(height), 220);
+      }
+    });
     this.resizeObserver.observe(this.root);
   }
 
@@ -110,7 +127,7 @@ export class Brainstorm {
         tool("connect", "connect", "Connector", "C"), tool("pen", "pen", "Draw", "P"), tool("frame", "frame", "Frame", "F")),
       group(tool("note", "note", "Add a note", "N", () => this.addNoteCard()), tool("image", "image", "Add a picture", "I", () => this.pickImage()), tool("file", "file", "Attach a file", "", () => this.pickFile()),
         tool("stamp", "stamp", "Stamp", "", (button) => menu(button, STICKERS.map((g) => ({ label: g, icon: g, onSelect: () => this.placeAtCenter({ type: "emoji", text: g, w: 56, h: 56 }) })), { side: "top", align: "center", class: "bs-stamps" }))),
-      group(this.colorDot),
+      group(this.colorDot, tool("background", "image", "Canvas background", "", (button) => this.backgroundMenu(button))),
     );
     return bar;
   }
@@ -132,6 +149,27 @@ export class Brainstorm {
     entry = menu(anchor, [{ type: "custom", render }], { side: "top", align: "center", class: "bs-swatch-menu" });
   }
 
+  backgroundMenu(anchor) {
+    let entry;
+    const current = this.data.background?.color || "#ffffff";
+    const colourPicker = () => {
+      const field = el("input", { class: "bs-background-picker", type: "color", value: current, "aria-label": "Canvas colour" });
+      field.addEventListener("input", () => { this.setBackground({ color: field.value }); });
+      return el("label", { class: "bs-background-colour" }, el("span", { text: "Canvas colour" }), field);
+    };
+    entry = menu(anchor, [
+      { type: "custom", render: colourPicker },
+      { label: "Upload background photo", icon: "image", onSelect: () => this.pickBackground() },
+      ...(this.data.background?.image ? [{ label: "Remove background photo", icon: "close", onSelect: () => this.setBackground({ image: "" }) }] : []),
+    ], { side: "top", align: "center", class: "bs-background-menu" });
+  }
+
+  setBackground(patch) {
+    this.data.background = { color: "#ffffff", image: "", ...(this.data.background || {}), ...patch };
+    this.applyCam();
+    this.queue();
+  }
+
   toggleFull() {
     const full = this.root.classList.toggle("bs-full");
     document.body.classList.toggle("bs-locked", full);
@@ -146,9 +184,12 @@ export class Brainstorm {
   applyCam() {
     const c = this.cam();
     this.world.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.z})`;
-    const g = 24 * c.z;
-    this.root.style.backgroundSize = `${g}px ${g}px`;
-    this.root.style.backgroundPosition = `${c.x}px ${c.y}px`;
+    const background = this.data.background || {};
+    this.root.style.backgroundColor = background.color || "#ffffff";
+    const image = safeBackgroundUrl(background.image);
+    this.root.style.backgroundImage = image ? `linear-gradient(rgba(255,255,255,.22), rgba(255,255,255,.22)), url("${image}")` : "none";
+    this.root.style.backgroundSize = image ? "cover" : "auto";
+    this.root.style.backgroundPosition = "center";
     this.zoomLabel.textContent = `${Math.round(c.z * 100)}%`;
     this.root.style.setProperty("--z", String(c.z));
     this.positionSelbar();
@@ -196,18 +237,18 @@ export class Brainstorm {
   selected() { return this.data.items.filter((item) => this.selection.has(item.id)); }
   item(id) { return this.data.items.find((entry) => entry.id === id); }
 
-  snapshot() { return JSON.stringify({ items: this.data.items, edges: this.data.edges }); }
+  snapshot() { return JSON.stringify({ items: this.data.items, edges: this.data.edges, cam: this.data.cam, background: this.data.background }); }
   mutate(change) {
     this.history.push(this.snapshot()); if (this.history.length > 80) this.history.shift(); this.future = [];
     change();
     this.render(); this.queue();
   }
-  restore(json) { const { items, edges } = JSON.parse(json); this.data.items = items; this.data.edges = edges; this.selection = new Set([...this.selection].filter((id) => this.item(id))); this.render(); this.queue(); }
+  restore(json) { const { items, edges, cam, background } = JSON.parse(json); this.data.items = items; this.data.edges = edges; if (cam) this.data.cam = cam; if (background) this.data.background = background; this.selection = new Set([...this.selection].filter((id) => this.item(id))); this.render(); this.queue(); }
   undo() { if (!this.history.length) return; this.future.push(this.snapshot()); this.restore(this.history.pop()); }
   redo() { if (!this.future.length) return; this.history.push(this.snapshot()); this.restore(this.future.pop()); }
-  queue() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.onChange?.({ items: this.data.items, edges: this.data.edges, cam: this.data.cam }), 400); }
-  flush() { clearTimeout(this.saveTimer); this.onChange?.({ items: this.data.items, edges: this.data.edges, cam: this.data.cam }); }
-  destroy() { this.flush(); this.resizeObserver?.disconnect(); document.body.classList.remove("bs-locked"); this.root.remove(); }
+  queue() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.onChange?.({ items: this.data.items, edges: this.data.edges, cam: this.data.cam, background: this.data.background }), 400); }
+  flush() { clearTimeout(this.saveTimer); this.onChange?.({ items: this.data.items, edges: this.data.edges, cam: this.data.cam, background: this.data.background }); }
+  destroy() { this.flush(); clearTimeout(this.resizeSaveTimer); this.resizeObserver?.disconnect(); document.body.classList.remove("bs-locked"); this.root.remove(); }
 
   /* ------------------------------------------------------------- render */
   render() {
@@ -602,6 +643,20 @@ export class Brainstorm {
   pickImage() {
     const input = el("input", { type: "file", accept: "image/*", multiple: "true", style: { display: "none" } });
     input.addEventListener("change", () => { const files = [...input.files]; input.remove(); files.forEach((file) => this.addFile(file)); });
+    document.body.append(input); input.click();
+  }
+  pickBackground() {
+    const input = el("input", { type: "file", accept: "image/*", style: { display: "none" } });
+    input.addEventListener("change", async () => {
+      const [file] = input.files || [];
+      input.remove();
+      if (!file) return;
+      try {
+        toast(`Uploading ${file.name}…`);
+        const stored = await this.upload(file);
+        this.setBackground({ image: stored.url || "" });
+      } catch (error) { toast(error?.message || "Could not add that background"); }
+    });
     document.body.append(input); input.click();
   }
   pickFile() {

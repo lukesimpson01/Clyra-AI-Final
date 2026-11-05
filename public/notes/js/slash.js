@@ -4,14 +4,14 @@
 import { openFileMenu } from "./file-menu.js";
 import { el, icon, matchScore, menu, position, pushLayer, toast } from "./dom.js";
 import { BLOCK_TYPES } from "./block-types.js";
-import { caretOffset, setCaret, spansText, sliceSpans, spansLength } from "./richtext.js";
+import { caretOffset, setCaret, spansText, sliceSpans, spansLength, selectionRectIn } from "./richtext.js";
 import { state, refreshPages } from "./state.js";
 import { buildDatabase } from "./database.js";
 import { openSearch } from "./search.js";
 import { insertSpans } from "./richtext.js";
 import { extraCommands } from "./slash-extras.js";
 
-const GROUP_ORDER = ["Suggested", "Basic blocks", "Media", "Database", "Advanced blocks", "Inline", "Embeds", "Import", "AI", "Study"];
+const GROUP_ORDER = ["Suggested", "Basic blocks", "Media", "Database", "Advanced blocks", "Inline", "Import", "AI", "Study"];
 
 export function slashCommands(editor) {
   const commands = [];
@@ -47,7 +47,10 @@ export function slashCommands(editor) {
     });
   }
   /* blocks with their own setup (a database, tabs, a button, an AI block) have dedicated commands below */
-  const HAND_BUILT = new Set(["database", "tabs", "button", "ai_block", "synced", "brainstorm"]);
+  /* Blocks with a setup flow are offered explicitly below. HTML remains a
+     normal, non-executing code block; Embed gets its own URL and framing
+     check rather than creating an unverified iframe directly. */
+  const HAND_BUILT = new Set(["database", "tabs", "button", "ai_block", "synced", "brainstorm", "embed", "html"]);
   for (const [type, meta] of Object.entries(BLOCK_TYPES)) {
     if (HAND_BUILT.has(type)) continue;
     commands.push({
@@ -63,9 +66,14 @@ export function slashCommands(editor) {
     run: () => editor.onGenerate?.("lecture", { pageId: editor.page.id }),
   });
   commands.push({
-    key: "html", label: "HTML", group: "Suggested", icon: "code", hint: "Embeds", badge: "New",
-    desc: "Run a small piece of HTML on the page.", keywords: "embed widget iframe snippet",
-    run: (block) => insertType(editor, block, "html"),
+    key: "html", label: "HTML", group: "Suggested", icon: "code", hint: "Code", badge: "New",
+    desc: "Start a normal code block with a basic HTML document.", keywords: "html code snippet document doctype",
+    run: (block) => insertHtmlDocument(editor, block),
+  });
+  commands.push({
+    key: "embed", label: "Embed", group: "Media", icon: "embed",
+    desc: "Paste a link to show an embeddable page in this note.", keywords: "embed website iframe link page",
+    run: (block) => insertType(editor, block, "embed"),
   });
   /* Databases: a view of records inside the page, or a page of their own. */
   for (const [kind, label, glyph] of [["table", "Table view", "table"], ["board", "Board view", "panel"], ["gallery", "Gallery view", "image"], ["list", "List view", "list"], ["calendar", "Calendar view", "calendar"]]) {
@@ -105,6 +113,20 @@ export function slashCommands(editor) {
   return commands;
 }
 
+const BASIC_HTML_DOCUMENT = "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Untitled document</title>\n</head>\n<body>\n  <main>\n    <h1>Hello, Clyra</h1>\n    <p>Start building your page here.</p>\n  </main>\n</body>\n</html>";
+
+/* HTML is just code: it gets the same renderer, language picker and copy
+   controls as every other code block. It never mounts an iframe or runs it. */
+function insertHtmlDocument(editor, block) {
+  editor.turnInto(block, "code");
+  block.props = { ...block.props, language: "html" };
+  block.text = [{ t: BASIC_HTML_DOCUMENT }];
+  block.__dirty = true;
+  editor.insertAfter(block, editor.blank());
+  editor.render({ id: block.id, offset: "end" });
+  editor.commit("html-code", true);
+}
+
 const VIEW_NAME = { table: "Table", board: "Board", gallery: "Gallery", list: "List", calendar: "Calendar" };
 
 /* Make a new database and put it where the "/" was: as a view inside the page, or as its own page with a link here. */
@@ -131,6 +153,16 @@ function insertType(editor, block, type) {
   if (type === "link_to_page") { editor.onLinkPage?.(block); return; }
   if (type === "columns") { editor.splitIntoColumns(block); return; }
   editor.turnInto(block, type);
+  /* A dropdown begins as the two places people expect: an always-visible
+     heading and a separate detail line nested underneath it. The second line
+     is what hides, never the heading itself. */
+  if (type.startsWith("toggle")) {
+    block.props = { ...block.props, collapsed: false };
+    if (!(block.children || []).length) block.children = [editor.blank()];
+    editor.render({ id: block.id, offset: "end" });
+    editor.commit("toggle", true);
+    return;
+  }
   /* Media blocks ask for their file or address straight away, instead of leaving an empty chip to click. For "File" that
      picker lists the files already in the workspace first. */
   if (type === "file") setTimeout(() => openFileMenu(editor, block), 160);
@@ -151,12 +183,8 @@ export function openSlashMenu({ editor, block, line, triggerOffset, onClose }) {
   let entry;
 
   const anchorRect = () => {
-    const selection = window.getSelection();
-    if (selection?.rangeCount) {
-      const rect = selection.getRangeAt(0).getBoundingClientRect();
-      if (rect.width || rect.height || rect.top) return rect;
-    }
-    return line.getBoundingClientRect();
+    const rect = selectionRectIn(line);
+    return rect && (rect.width || rect.height) ? rect : line.getBoundingClientRect();
   };
 
   const visible = () => {

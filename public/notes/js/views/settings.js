@@ -11,7 +11,7 @@
 import { el, clear, icon, iconButton, modal, toast, confirmDialog, append } from "../dom.js";
 import { api } from "../api.js";
 import { state, loadWorkspace, refreshPages, withError, saveSession } from "../state.js";
-import { PREFERENCES, readPreference, writePreference, prefOn } from "../preferences.js";
+import { PREFERENCES, readPreference, writePreference, prefOn, SHORTCUTS, shortcutLabel, shortcutValue, writeShortcut, resetShortcuts } from "../preferences.js";
 import { empty } from "./home.js";
 
 export function applyNotesPreferences() {
@@ -295,27 +295,38 @@ function dataPage(app, close) {
 }
 
 function shortcutsPage() {
-  const rows = [
-    [`${modKeyLabel} P`, "Open the command palette"],
-    ["/", "Insert a block"],
-    ["@", "Reference a note in chat"],
-    ["Space", "Ask AI on an empty line"],
-    [`${modKeyLabel} \\`, "Show or hide the sidebar"],
-    [`${modKeyLabel} ⇧ \\`, "Show or hide the tools panel"],
-    [`${modKeyLabel} T`, "New note in a new tab"],
-    [`${modKeyLabel} Z`, "Undo, including table and block edits"],
-    ["Esc", "Select the block you are in"],
-    ["Backspace", "Delete the selected block"],
-  ];
+  const controls = new Map();
+  const capture = (id, label) => {
+    const input = el("input", { class: "settings-shortcut-input", value: shortcutLabel(id), "aria-label": `${label} shortcut`, readOnly: "" });
+    controls.set(id, input);
+    input.addEventListener("keydown", (event) => {
+      if (["Tab", "Escape"].includes(event.key)) return;
+      if (!event.metaKey && !event.ctrlKey) return;
+      event.preventDefault();
+      const key = event.key === "\\" ? "backslash" : event.key.toLowerCase();
+      if (["meta", "control", "alt", "shift"].includes(key)) return;
+      const pieces = ["meta", event.altKey ? "alt" : "", event.shiftKey ? "shift" : "", key].filter(Boolean);
+      writeShortcut(id, pieces.join("+"));
+      input.value = shortcutLabel(id);
+    });
+    return input;
+  };
+  const reset = el("button", { class: "button", type: "button", onclick: () => {
+    resetShortcuts();
+    SHORTCUTS.forEach(([id]) => { const control = controls.get(id); if (control) control.value = shortcutLabel(id); });
+  } }, "Reset defaults");
   return {
     title: "Shortcuts",
-    lead: "The keys worth learning.",
+    lead: "Choose the chords Notes listens for everywhere. Changes apply immediately and the tour updates too.",
     body: [
-      sectionBlock("Everywhere", rows.map(([keys, label]) =>
+      sectionBlock("Workspace shortcuts", SHORTCUTS.map(([id, label]) =>
+        settingRow(label, "Click the key field, then press a modifier and key.", capture(id, label)))),
+      sectionBlock("Editor keys", [["/", "Insert a block"], ["@", "Reference a note in chat"], ["Space", "Ask AI on an empty line"], ["Esc", "Select the block you are in"], ["Backspace", "Delete the selected block"]].map(([keys, label]) =>
         el("div", { class: "setting-row shortcut-row" },
           el("div", { class: "setting-copy" },
             el("div", { class: "setting-label" }, el("span", { text: label }))),
           el("div", { class: "setting-control" }, el("kbd", { class: "settings-kbd", text: keys }))))),
+      el("div", { class: "settings-actions" }, reset),
     ],
   };
 }

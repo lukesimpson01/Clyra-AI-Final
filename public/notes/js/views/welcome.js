@@ -5,11 +5,13 @@
    thing to try is the real thing: the same editor, "/" menu, AI composer, chat, database, whiteboard and tools you will use on
    your own pages. The last step asks for your first note and opens it. Finish the tour once and Welcome says everything is sorted;
    close it half way and it starts over the next time. The practice page it writes to is an ordinary page called "Practice page". */
-import { el, clear, icon, append, toast } from "../dom.js";
+import { el, clear, icon, append, menu } from "../dom.js";
 import { api } from "../api.js";
 import { state } from "../state.js";
-import { Brainstorm } from "../brainstorm.js";
 import { TEMPLATES } from "../templates-data.js";
+import { progressLoader } from "./generation.js";
+import { closeTerminal } from "../runner.js";
+import { shortcutLabel } from "../preferences.js";
 
 const WAVE = "\u{1F44B}";
 /* Whether the tour has been seen and finished lives with the workspace (not in one browser), so Notes in the browser and in the
@@ -60,145 +62,285 @@ export function renderWelcome(host, app) {
   let busy = false;
   let started = Boolean(resume);
   let sorted = !resume && finished();
+  let finishCreate = null;
+  let autoAdvance = null;
+  let sortedTimer = null;
+  let sortedTicker = null;
+  let sortedMomentVersion = 0;
+  let celebrationTimer = null;
+  let leaving = false;
 
-  const mark = (id) => { if (done[id]) return; done[id] = true; paintTasks(true); };
+  /* A checked item has a moment to settle before the next lesson arrives. This
+     keeps the tour feeling responsive without making the completion feedback
+     flash past the person who just did the action. */
+  const mark = (id) => {
+    if (done[id]) return;
+    done[id] = true;
+    paintTasks(true);
+    const step = STEPS[index];
+    if (!step?.tasks?.length || !step.tasks.every(([taskId]) => done[taskId])) return;
+    clearTimeout(autoAdvance);
+    /* Completion is acknowledged before moving forward, but never holds the
+       learner on a finished interaction long enough to feel stalled. */
+    const settle = step?.id === "selection" ? 1000 : 760;
+    autoAdvance = setTimeout(() => {
+      if (!busy && STEPS[index] === step) go(index + 1);
+    }, reduced() ? 0 : settle);
+  };
   const openRail = (panel) => { if (!app.railOpen?.()) app.toggleRail?.(); app.showRailPanel?.(panel); };
 
   /* ------------------------------------------------------------- steps */
-  const inTab = (view, note = true) => { app.openView(view, { newTab: true }); if (note) toast("Opened in a new tab. Come back to Welcome to carry on."); };
-  const chord = (key, { shift = false, ctrl = false } = {}) => (event) => event.key.toLowerCase() === key && event.shiftKey === shift && (ctrl ? event.ctrlKey && !event.metaKey : event.metaKey || event.ctrlKey);
-  const sidebarItem = (label) => () => [...document.querySelectorAll(".sidebar .page-row, .sidebar .nav-item, .sidebar button")].filter((node) => (node.getAttribute("aria-label") || node.textContent || "").trim().startsWith(label)).slice(0, 1);
-  const railKey = (key) => chord(key, { shift: true, ctrl: true });
-  const tool = (id, panel, label, key) => [id, label, { run: () => openRail(panel), keys: `⌃ ⇧ ${key.toUpperCase()}` }];
-
-  /* The slash menu, played on a loop: the "/" key is pressed, the real list opens, the highlight moves down and one block is chosen.
-     Nothing is typed. */
-  const slashDemo = async (stage) => {
-    const LIST = [["Text", "text"], ["Heading 1", "h1"], ["Heading 2", "h2"], ["Bulleted list", "list"], ["To-do list", "check_square"], ["Toggle list", "chevron_right"], ["Quote", "quote"], ["Callout", "comment"], ["Table", "table"], ["Code", "code"]];
-    const SHOWS = [{ downs: 2, type: "h2", text: "Heading" }, { downs: 4, type: "todo", text: "Task" }, { downs: 6, type: "quote", text: "A quote" }];
-    const line = el("div", { class: "wl-sd-line" });
-    const menuNode = el("div", { class: "wl-sd-menu", hidden: true });
-    const key = el("kbd", { class: "wl-sd-key", text: "/" });
-    stage.append(el("div", { class: "wl-sd" }, el("div", { class: "wl-sd-card" }, line, menuNode), el("p", { class: "wl-sd-cap" }, "Press ", key, " on any line")));
-    let alive = true;
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const rows = (active) => {
-      clear(menuNode);
-      LIST.slice(0, 8).forEach(([name, glyph]) => menuNode.append(el("div", { class: `wl-sd-row${name === active ? " on" : ""}` }, icon(glyph, 16), el("span", { text: name }))));
-    };
-    const play = async () => {
-      for (let round = 0; alive; round = (round + 1) % SHOWS.length) {
-        const show = SHOWS[round];
-        clear(line); line.className = "wl-sd-line";
-        const body = el("span", { class: "wl-sd-text" }); line.append(body, el("i", { class: "wl-sd-caret" }));
-        await sleep(900); if (!alive) return;
-        key.classList.add("down"); body.textContent = "/"; await sleep(160); key.classList.remove("down");
-        menuNode.hidden = false; menuNode.classList.remove("out"); rows(LIST[0][0]);
-        await sleep(1000);
-        for (let step = 1; step <= show.downs; step += 1) { if (!alive) return; rows(LIST[step][0]); await sleep(480); }
-        await sleep(350); if (!alive) return;
-        menuNode.querySelector(".wl-sd-row.on")?.classList.add("hit");
-        await sleep(380);
-        menuNode.classList.add("out"); await sleep(200); menuNode.hidden = true;
-        body.textContent = show.text; line.classList.add(`as-${show.type}`, "made");
-        if (show.type === "todo") line.prepend(el("span", { class: "wl-sd-box" }));
-        await sleep(2000);
-        line.classList.add("fade"); await sleep(450);
-      }
-    };
-    play();
-    return () => { alive = false; };
-  };
-
-  /* The command palette, played on a loop: it eases in, a few letters narrow it, the top result is chosen. */
-  const paletteDemo = async (stage) => {
-    const ALL = [["New page", "plus", "Create"], ["New database", "table", "Create"], ["New brainstorm board", "target", "Create"], ["New to-do list", "check_square", "Create"], ["Daily note", "calendar", "Create"], ["Go to Templates", "template", "Go to"], ["Go to Flashcards", "cards", "Go to"], ["Toggle sidebar", "panel", "View"], ["Export all notes", "export", "Workspace"]];
-    const QUERIES = ["board", "go to", "new"];
-    const input = el("div", { class: "wl-pd-input" }, icon("search", 15), el("span", { class: "wl-pd-text" }), el("i", { class: "wl-sd-caret" }));
-    const listNode = el("div", { class: "wl-pd-list" });
-    const panel = el("div", { class: "wl-pd out" }, input, listNode, el("div", { class: "wl-pd-foot" }, el("span", { text: "↑ ↓ move" }), el("span", { text: "↵ run" })));
-    stage.append(el("div", { class: "wl-pdwrap" }, panel, el("p", { class: "wl-sd-cap", text: "One box for every action" })));
-    const text = input.querySelector(".wl-pd-text");
-    let alive = true;
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const draw = (query, hit) => {
-      clear(listNode);
-      const shown = ALL.filter(([name, , group]) => !query || name.toLowerCase().includes(query) || group.toLowerCase().includes(query)).slice(0, 6);
-      let last = "";
-      shown.forEach(([name, glyph, group], i) => {
-        if (group !== last) { last = group; listNode.append(el("div", { class: "wl-pd-head", text: group })); }
-        listNode.append(el("div", { class: `wl-pd-row${i === 0 ? " on" : ""}${i === 0 && hit ? " hit" : ""}` }, icon(glyph, 15), el("span", { text: name })));
+  /* These previews deliberately start empty: the menu appears only after the
+     real shortcut. Neither has a pretend editor/input underneath it. */
+  const slashDemo = (stage) => {
+    const shell = el("div", { class: "wl-menu-preview", "aria-live": "polite" });
+    stage.append(shell);
+    let menu = null;
+    let active = 0;
+    const commands = [["Text", "text"], ["Heading 1", "h1"], ["Heading 2", "h2"], ["Bulleted list", "list"], ["To-do list", "check_square"], ["Quote", "quote"], ["Callout", "comment"], ["Table", "table"]];
+    const paint = () => {
+      menu?.querySelectorAll(".wl-sd-row").forEach((row, position) => {
+        const current = position === active;
+        row.classList.toggle("on", current);
+        row.setAttribute("aria-selected", String(current));
       });
     };
-    const play = async () => {
-      for (let round = 0; alive; round = (round + 1) % QUERIES.length) {
-        text.textContent = ""; draw("", false);
-        panel.classList.remove("out"); await sleep(1300); if (!alive) return;
-        for (const char of QUERIES[round]) { if (!alive) return; text.textContent += char; draw(text.textContent.toLowerCase(), false); await sleep(210); }
-        await sleep(900); if (!alive) return;
-        draw(text.textContent.toLowerCase(), true); await sleep(520);
-        panel.classList.add("out"); await sleep(900);
-      }
+    const select = () => {
+      if (!menu) return;
+      const row = menu.querySelectorAll(".wl-sd-row")[active];
+      row?.classList.add("chosen");
+      shell.dataset.selected = "true";
+      mark("sl-select");
     };
-    play();
-    return () => { alive = false; };
+    stage.revealTourSlash = () => {
+      if (menu) return;
+      shell.dataset.open = "true";
+      menu = el("div", { class: "wl-sd-menu wl-sd-menu--real", role: "listbox", "aria-label": "Slash commands" });
+      menu.append(el("div", { class: "wl-menu-label", text: "Suggested" }), ...commands.map(([label, glyph], position) => el("button", {
+        class: `wl-sd-row${position === 0 ? " on" : ""}`, type: "button", role: "option", "aria-selected": String(position === 0),
+        onclick: () => { active = position; paint(); mark("sl-move"); select(); },
+      }, icon(glyph, 16), el("span", { text: label }))));
+      shell.append(menu);
+      paint();
+    };
+    stage.handleTourSlashKey = (event) => {
+      if (!menu) return false;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        active = (active + (event.key === "ArrowDown" ? 1 : commands.length - 1)) % commands.length;
+        paint();
+        mark("sl-move");
+        return true;
+      }
+      if (event.key === "Enter") { event.preventDefault(); select(); return true; }
+      if (event.key === "Escape") { event.preventDefault(); menu.remove(); menu = null; delete shell.dataset.open; return true; }
+      return false;
+    };
+    return () => { delete stage.revealTourSlash; delete stage.handleTourSlashKey; };
+  };
+
+  /* Command palette is deliberately a preview in the tour. It uses the real
+     command names and visual hierarchy, but cannot focus, run, or mutate a
+     workspace. The production palette remains unchanged once the tour ends. */
+  const palettePreview = (stage) => {
+    const shell = el("div", { class: "wl-menu-preview", "aria-live": "polite" });
+    stage.append(shell);
+    let panel = null;
+    const show = () => {
+      if (panel) return;
+      const commands = [
+        ["plus", "New page", "A blank page"],
+        ["search", "Search pages", "Find anything by words"],
+        ["template", "Templates", "Browse the library"],
+        ["comment", "Ask Clyra", "Open a new AI chat"],
+      ];
+      panel = el("div", { class: "cp cp-embedded cp-tour-readonly", role: "status", "aria-label": "Command palette preview" },
+        el("div", { class: "cp-field" }, icon("search", 16), el("span", { class: "cp-tour-query", text: "Command palette" }), el("kbd", { class: "cp-esc", text: "Tour" })),
+        el("div", { class: "cp-list" },
+          el("div", { class: "cp-head" }, el("span", { text: "Preview" })),
+          ...commands.map(([glyph, title, detail]) => el("div", { class: "cp-option", "aria-disabled": "true" },
+            el("span", { class: "cp-ico" }, icon(glyph, 15)),
+            el("span", { class: "cp-text" }, el("span", { class: "cp-name", text: title }), el("span", { class: "cp-desc", text: detail }))))),
+        el("div", { class: "cp-foot cp-tour-foot" }, "Preview only — commands are ready after the tour."));
+      shell.dataset.open = "true";
+      shell.append(panel);
+    };
+    stage.revealTourPalette = show;
+    stage.handleTourPaletteKey = (event) => {
+      if (!panel || !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return false;
+      event.preventDefault();
+      return true;
+    };
+    return () => { delete stage.revealTourPalette; delete stage.handleTourPaletteKey; };
+  };
+
+  /* A local, no-network simulation of the same note → configuration →
+     generation flow used by Notes. It lets the welcome tour teach the shape of
+     the workflow without creating a deck or requiring an AI key. */
+  const studyPreview = (stage) => {
+    const flow = el("div", { class: "wl-study-flow", "aria-live": "polite" });
+    const timers = [];
+    const clearFlow = () => clear(flow);
+    const config = () => {
+      flow.classList.remove("is-switching");
+      clearFlow();
+      const generate = el("button", { class: "wl-study-generate", type: "button" }, icon("sparkle", 15), "Generate deck");
+      generate.addEventListener("click", () => {
+        if (flow.dataset.generating) return;
+        flow.dataset.generating = "true";
+        const loader = progressLoader({
+          title: "Making your flashcards",
+          stages: ["Reading your note", "Choosing what to test", "Writing the cards", "Checking for duplicates"],
+          art: "cards",
+        });
+        flow.classList.add("is-switching");
+        timers.push(setTimeout(() => {
+          clearFlow();
+          flow.classList.remove("is-switching");
+          flow.append(loader.node);
+          /* Short, distinct progress beats keep the demo moving without
+             pretending an actual network generation has completed. */
+          timers.push(setTimeout(() => loader.advance(1), 620));
+          timers.push(setTimeout(() => loader.advance(2), 1240));
+          timers.push(setTimeout(() => loader.advance(3), 1860));
+        }, reduced() ? 0 : 110));
+        timers.push(setTimeout(() => {
+          flow.dataset.done = "true";
+          loader.finish("Deck ready · 12 cards");
+          mark("study-generate");
+        }, reduced() ? 0 : 2800));
+      });
+      flow.append(
+        el("div", { class: "wl-study-flow-head" }, icon("cards", 17), el("span", { text: "Generate flashcards" })),
+        el("div", { class: "wl-study-note picked" }, icon("page", 15), el("span", { text: "Biology · cell division" }), tick(13)),
+        el("div", { class: "wl-study-fields" },
+          el("label", {}, el("span", { text: "Cards" }), el("input", { value: "12", type: "number", readOnly: true })),
+          el("label", {}, el("span", { text: "Difficulty" }), el("select", {}, el("option", { text: "Mixed difficulty" }))),
+          el("label", {}, el("span", { text: "Style" }), el("select", {}, el("option", { text: "Question & answer" })))),
+        generate,
+      );
+    };
+    const pick = () => {
+      mark("study-note");
+      flow.classList.add("is-switching");
+      setTimeout(config, reduced() ? 0 : 180);
+    };
+    flow.append(
+      el("div", { class: "wl-study-flow-head" }, icon("cards", 17), el("span", { text: "Generate flashcards" })),
+      el("p", { class: "wl-study-hint", text: "Choose a note to turn into a deck." }),
+      el("button", { class: "wl-study-note", type: "button", onclick: pick }, icon("page", 15), el("span", { text: "Biology · cell division" }), el("span", { class: "wl-study-note-meta", text: "842 words" })),
+      el("button", { class: "wl-study-note", type: "button", onclick: pick }, icon("page", 15), el("span", { text: "Chemistry · atoms" }), el("span", { class: "wl-study-note-meta", text: "516 words" })),
+    );
+    stage.append(flow);
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  };
+
+  /* The same small interaction model as the production selection toolbar:
+     nothing appears until a real text range exists, and it leaves as soon as
+     that range is cleared. This keeps the lesson tactile without editing a
+     workspace page during onboarding. */
+  const selectionToolbarDemo = (stage) => {
+    const demo = el("div", { class: "wl-selection-demo" });
+    const text = el("p", { class: "wl-selection-copy", contenteditable: "true", spellcheck: "false" },
+      "Click and drag across a few words in this short note to reveal Clyra’s formatting toolbar.");
+    const colour = (kind, label, task) => el("button", { class: `icon-button toolbar-colour toolbar-colour-${kind} wl-attention`, type: "button", title: label, "aria-label": label, onclick: (event) => {
+      const swatches = kind === "text"
+        ? [["Default", "var(--text-primary)"], ["Blue", "#1e6fff"], ["Green", "#198754"], ["Red", "#c54949"], ["Purple", "#805ad5"]]
+        : [["Yellow", "#f5dc79"], ["Green", "#b8e4c8"], ["Blue", "#bfd7ff"], ["Pink", "#f5c7d8"], ["Clear", "transparent"]];
+      menu(event.currentTarget, swatches.map(([name, value]) => ({ label: name, onSelect: () => {
+        if (kind === "text") text.style.color = value;
+        else text.style.background = value;
+        mark(task);
+      } })), { align: "end", class: "toolbar-menu" });
+    } },
+      kind === "text" ? el("span", { class: "toolbar-colour-letter", text: "A" }) : icon("highlight", 16));
+    const drop = (label, items, onPick) => el("button", { class: `text-button wl-toolbar-drop wl-toolbar-${label.toLowerCase()}`, type: "button", onclick: (event) => menu(event.currentTarget, items.map(([name, value]) => ({ label: name, onSelect: () => onPick(value) })), { align: "start", class: "toolbar-menu" }) }, label, icon("chevron_down", 11));
+    const toolbar = el("div", { class: "inline-toolbar wl-selection-toolbar", role: "toolbar", "aria-label": "Formatting toolbar preview", hidden: true },
+      el("button", { class: "wl-selection-ask", type: "button", title: "Ask Clyra", onclick: () => mark("selection-highlight") }, icon("sparkle", 14), "Ask Clyra"),
+      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
+      drop("Format", [["Paragraph", "paragraph"], ["Heading", "heading"], ["Quote", "quote"]], (value) => { text.dataset.format = value; mark("selection-highlight"); }),
+      drop("Font", [["Default", "inherit"], ["Serif", "Georgia, serif"], ["Mono", "ui-monospace, monospace"]], (value) => { text.style.fontFamily = value; mark("selection-highlight"); }),
+      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
+      el("button", { class: "icon-button", type: "button", title: "Text alignment", "aria-label": "Text alignment" }, icon("align_left", 14)),
+      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
+      ...[["bold", "Bold"], ["italic", "Italic"], ["underline", "Underline"], ["strike", "Strikethrough"], ["code", "Inline code"], ["equation", "Equation"]].map(([glyph, label]) => el("button", { class: "icon-button", type: "button", title: label, "aria-label": label }, icon(glyph, 14))),
+      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
+      ...[["link", "Link"], ["comment", "Comment"]].map(([glyph, label]) => el("button", { class: "icon-button", type: "button", title: label, "aria-label": label }, icon(glyph, 14))),
+      colour("text", "Change text colour", "selection-text-colour"),
+      colour("highlight", "Change highlight colour", "selection-highlight-colour"),
+      el("button", { class: "icon-button", type: "button", title: "More formatting", "aria-label": "More formatting" }, icon("dots", 14)));
+    const hint = el("span", { class: "wl-selection-hint", text: "Click and drag across text to continue" });
+    /* Reserve this line before selection so the paragraph does not jump when
+       the toolbar appears on mouse release. */
+    demo.append(text, el("div", { class: "wl-selection-toolbar-slot" }, toolbar), hint);
+    stage.append(demo);
+
+    const rangeIsInside = (range) => {
+      const node = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+      return node && text.contains(node);
+    };
+    const paint = (released = false) => {
+      const selected = window.getSelection();
+      const active = Boolean(selected?.rangeCount && !selected.isCollapsed && rangeIsInside(selected.getRangeAt(0)));
+      if (!released && active) return;
+      toolbar.hidden = !active;
+      demo.classList.toggle("selected", active);
+      if (active) {
+        hint.textContent = "Toolbar ready — choose text colour and highlight";
+        mark("selection-highlight");
+      } else hint.textContent = "Click and drag across text to continue";
+    };
+    const release = () => paint(true);
+    const keyboardRelease = (event) => { if (event.key.startsWith("Arrow") || event.key === "Shift") paint(true); };
+    document.addEventListener("selectionchange", paint);
+    text.addEventListener("mouseup", release);
+    text.addEventListener("keyup", keyboardRelease);
+    return () => {
+      document.removeEventListener("selectionchange", paint);
+      text.removeEventListener("mouseup", release);
+      text.removeEventListener("keyup", keyboardRelease);
+    };
   };
 
   const STEPS = [
     { id: "hello", title: "Welcome", hero: true },
 
-    { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action in one search box. Make a page, a board or a daily note, jump anywhere, hide panels, export.",
-      tasks: [["cp", "Open the command palette", { run: () => app.openCommandPalette?.(), keys: "⌘ S" }]], watch: [[".cp", "cp"]], chords: [[chord("s"), "cp"]],
-      tips: ["Type a few letters, then Enter.", "What you use most rises to Recent.", "It finds pages by title too."], mount: paletteDemo },
+    { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action lives in one search box. During the tour it stays safely paused, so nothing here can change your workspace.",
+      tips: [`Press ${shortcutLabel("commandPalette")} to peek at it, then use it normally once the tour is complete.`, "Your most-used commands appear in Recent."], mount: palettePreview },
 
-    { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, type / to turn it into a block: headings, lists, quotes, tables, media, databases and more.",
-      tasks: [["sl-try", "Press / on a new note", { run: () => app.createPage?.(null, { newTab: true }), keys: "/" }]], watch: [[".slash-menu", "sl-try"]],
-      tips: ["Use ↑ ↓ to move and Enter to pick.", "Esc closes it.", "Space on a blank line asks AI instead."], mount: slashDemo },
+    { id: "terminal", kicker: "Workspace", title: "Terminal", text: "A scoped terminal is available whenever you need it, without leaving Notes.",
+      tips: [`Press ${shortcutLabel("terminal")} now to open the real terminal from the bottom edge.`, "It is a separate workspace tool, not a command-palette action."] },
+
+    { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, press / to choose headings, lists, quotes, tables, media, databases and more.",
+      tasks: [["sl-try", "Press / to open the slash menu"], ["sl-move", "Use ↑ or ↓ to move through commands"], ["sl-select", "Press Enter to choose the highlighted command"]],
+      tips: ["Arrow keys move through choices. Enter inserts one.", "Esc closes it."], mount: slashDemo },
 
     { id: "rail", kicker: "Tools", title: "Right sidebar", railButton: true, listLabel: "Press each tab",
-      text: "Tools beside the page you are writing. Press the sidebar button at the top right of the window, then press each tab.",
+      text: "Tools beside the page you are writing. Press the sidebar button on the right edge, then press each tab.",
       button: { run: () => { if (!app.railOpen?.()) app.toggleRail?.(); app.tabstrip?.syncRailToggle?.(); app.showRailPanel?.(null); } },
       tasks: [["r-calc", "Calculator"], ["r-browser", "Browser"], ["r-outline", "Outline"], ["r-links", "Linked notes"], ["r-comments", "Comments"], ["r-chat", "Chat"]],
       observe: () => { const panel = document.querySelector(".rail-title")?.textContent?.trim(); const id = { Calculator: "r-calc", Browser: "r-browser", Outline: "r-outline", "Linked notes": "r-links", Comments: "r-comments", Chat: "r-chat" }[panel]; if (id) mark(id); },
       tips: ["The chat is saved with the page you are on.", "Close the sidebar with the cross at its top right."] },
 
-    { id: "brainstorm", kicker: "Create", title: "Brainstorm", text: "A whiteboard inside any page. Stickies, shapes, notes, pictures and files, joined by connectors.",
-      tasks: [["bs-add", "Add a sticky from the bar below"], ["bs-link", "Drag from a dot to connect two"]],
-      tips: ["Hover an item and four dots appear on its sides.", "Drop a connector on empty space for a new sticky.", "Type /brainstorm on any page to add one."],
+    { id: "templates", kicker: "Create", title: "Cornell Notes", text: "A focused Cornell page with a topic header, cue column, notes field, summary and review prompts.",
+      tips: ["Choose it and it is copied into your notes.", "Everything in it is yours to change."],
       mount: async (stage) => {
-        const box = el("div", { class: "wl-board" });
-        stage.append(box);
-        const seed = { items: [
-          { id: "t1", type: "sticky", x: 28, y: 70, w: 140, h: 100, color: "white", text: "Idea", z: 1 },
-          { id: "t2", type: "sticky", x: 196, y: 150, w: 140, h: 100, color: "white", text: "Next step", z: 2 },
-        ], edges: [], cam: { x: 0, y: 0, z: 1 } };
-        const board = new Brainstorm(box, { data: seed, openPage: (id, options) => app.openPage(id, options), onChange: (data) => {
-          if (data.items.length > 2) mark("bs-add");
-          if (data.edges.length > 0) mark("bs-link");
-        } });
-        return () => board?.destroy?.();
-      } },
-
-    { id: "templates", kicker: "Create", title: "Templates", text: "Fifty ready-made pages from planners to CRMs, each with its databases already set up.",
-      tasks: [["templates", "Open the template gallery", { run: () => inTab({ kind: "templates", parentId: null }) }]],
-      tips: ["Pick one and it is copied into your notes.", "Everything in it is yours to change."],
-      mount: async (stage) => {
-        const wanted = ["weekly-planner", "class-notes", "finance-tracker", "habit-tracker", "gantt-chart", "sales-crm"];
-        const found = wanted.map((id) => TEMPLATES.find((t) => t.id === id)).filter(Boolean);
-        const list = found.length >= 4 ? found : TEMPLATES.filter((t) => t.id !== "blank").slice(0, 6);
+        const list = TEMPLATES;
         stage.append(el("div", { class: "wl-page wl-gallery" }, el("div", { class: "wl-gallery-grid" }, list.map((template, i) => el("div", { class: "wl-gcard", style: { "--i": String(i) } },
           el("span", { class: "wl-gimg" }, el("img", { src: `/notes/img/templates/${template.id}.png`, alt: "", loading: "lazy" })),
           el("span", { class: "wl-gname" }, el("span", { text: template.emoji || "" }), template.name))))));
         return () => {};
       } },
 
-    { id: "study", kicker: "Study", title: "Flashcards and tests", text: "Turn any page into flashcards that come back on a schedule, or into a graded practice test.",
-      tasks: [["cards", "Open Flashcards", { run: () => inTab({ kind: "flashcards" }) }], ["tests", "Open Practice tests", { run: () => inTab({ kind: "tests" }) }]],
-      tips: ["Rate each card Again, Hard, Good or Easy.", "Wrong answers can become flashcards."] },
+    { id: "study", kicker: "Study", title: "Flashcards and tests", text: "Choose a note, set the deck options, then generate. This guided preview never creates study material in your workspace.",
+      tasks: [["study-note", "Choose a note"], ["study-generate", "Generate the 12-card deck"]],
+      tips: ["Rate each card Again, Hard, Good or Easy.", "Wrong answers can become flashcards."], mount: studyPreview },
 
-    { id: "search", kicker: "Navigate", title: "Search", text: "Find any page by its title or what is written in it, plus your flashcards and study material.",
-      tasks: [["s-open", "Open search", { run: () => app.openSearch?.(), keys: "⌘ P" }]], watch: [[".search-input", "s-open"]], chords: [[chord("p"), "s-open"]],
-      tips: ["Arrows and Enter open a result.", "Filters narrow it to pages, databases or study material."] },
+    { id: "selection", kicker: "Writing", title: "Make text your own", text: "Click and drag across a few words. The real compact toolbar only appears once text is selected.",
+      tasks: [["selection-highlight", "Click and drag to highlight text"], ["selection-text-colour", "Change the text colour"], ["selection-highlight-colour", "Add a highlight colour"]],
+      tips: ["The tour pauses for five seconds once the checklist is complete.", "Use the compact toolbar to format, link or ask Clyra about the selected text."], mount: selectionToolbarDemo },
+
+    { id: "sorted", title: "Everything is sorted", sortedMoment: true },
 
     { id: "finish", title: "Make your first note", finish: true },
   ];
@@ -206,11 +348,28 @@ export function renderWelcome(host, app) {
   const LAST = STEPS.length - 1;
 
   /* ------------------------------------------------------------ layout */
-  /* The sidebar button, where it lives in the app: top right. Pressed, it slides the real sidebar in and steps aside. */
-  const railBtn = el("button", { class: "wl-railbtn", type: "button", "aria-label": "Open the right sidebar", hidden: true, onclick: () => {
-    try { STEPS[index].button?.run(); } catch { /* reports its own trouble */ }
-    railBtn.classList.add("pressed"); setTimeout(() => { railBtn.hidden = true; }, 480);
-  } }, icon("panel", 19));
+  /* The exact sidebar control from Notes, positioned beside the tour so it can
+     open the real rail without an imitation interface. */
+  const railBtn = el("button", { class: "wl-railbtn icon-button rail-toggle", type: "button", "aria-label": "Open the right sidebar", "aria-expanded": "false", hidden: true }, icon("panel", 19));
+  /* This is the production rail, not a tour imitation. Keeping the trigger
+     around after it opens gives a clear route back to the launcher and, more
+     importantly, means it never becomes a tiny one-shot target at the edge. */
+  const syncTourRailButton = () => {
+    const open = Boolean(app.railOpen?.());
+    railBtn.classList.toggle("pressed", open);
+    railBtn.classList.toggle("active", open);
+    railBtn.setAttribute("aria-expanded", String(open));
+    railBtn.setAttribute("aria-pressed", String(open));
+    railBtn.setAttribute("aria-label", open ? "Show all right-sidebar tools" : "Open the right sidebar");
+  };
+  railBtn.addEventListener("click", () => {
+    if (STEPS[index]?.id !== "rail") return;
+    try {
+      if (!app.railOpen?.()) app.toggleRail?.();
+      app.showRailPanel?.(null);
+      requestAnimationFrame(syncTourRailButton);
+    } catch { /* the rail owns any display errors */ }
+  });
   const barFill = el("i");
   const bar = el("div", { class: "wl-bar", role: "progressbar", "aria-label": "Tour progress", "aria-valuemin": "0", "aria-valuemax": "100" }, barFill);
   const counter = el("span", { class: "wl-counter" });
@@ -235,8 +394,22 @@ export function renderWelcome(host, app) {
   if (app.railOpen?.()) { app.toggleRail?.(); app.tabstrip?.syncRailToggle?.(); }
   requestAnimationFrame(() => workspace?.classList.add("tour-mode"));
 
-  /* Skipping leaves the tour unfinished so it starts over next time; "later" on the last step counts as done. */
-  function leave(complete) { if (complete) saveTour({ done: true }); app.goHome?.(); }
+  function revealShell() {
+    workspace?.classList.add("tour-returning");
+    workspace?.classList.remove("tour-mode");
+  }
+
+  /* Skipping leaves the tour unfinished so it starts over next time; "later"
+     counts as done. Reveal the app chrome before replacing the tour, so the
+     sidebar and tabs return as a composed transition instead of a zoom. */
+  function leave(complete) {
+    if (leaving) return;
+    leaving = true;
+    if (complete) saveTour({ done: true });
+    root.classList.add("is-leaving");
+    revealShell();
+    setTimeout(() => app.goHome?.(), reduced() ? 0 : 260);
+  }
 
   function paintTasks(pop) {
     const list = root.querySelector(".wl-tasks");
@@ -259,6 +432,8 @@ export function renderWelcome(host, app) {
     });
     const count = root.querySelector(".wl-count");
     if (count) count.textContent = `${step.tasks.filter(([id]) => done[id]).length} of ${step.tasks.length}`;
+    const rail = document.querySelector(".rail");
+    rail?.classList.toggle("tour-hints", step.id === "rail" && step.tasks.some(([id]) => done[id]));
     const all = step.tasks.length && step.tasks.every(([id]) => done[id]);
     next.classList.toggle("ready", Boolean(all));
   }
@@ -275,7 +450,7 @@ export function renderWelcome(host, app) {
     clear(dots);
     STEPS.forEach((entry, i) => { if (i > 0) dots.append(el("button", { class: `wl-dot${i === index ? " active" : ""}${i < index ? " past" : ""}`, type: "button", role: "tab", "aria-selected": String(i === index), "aria-label": entry.title, onclick: () => go(i) })); });
     back.classList.toggle("ghost", index <= 1);
-    nav.hidden = intro || last;
+    nav.hidden = intro || last || Boolean(step.sortedMoment);
     next.classList.remove("ready");
     clear(next);
     next.append("Next", icon("chevron_right", 14));
@@ -287,22 +462,34 @@ export function renderWelcome(host, app) {
     if (reduced()) return;
     const palette = ["#2383e2", "#f6c343", "#ee7aa8", "#52b788", "#a78bfa", "#ff9a5c"];
     const layer = el("div", { class: "wl-confetti", "aria-hidden": "true" });
-    for (let i = 0; i < 34; i += 1) {
-      const angle = (Math.PI * 2 * i) / 34 + Math.random() * 0.3, distance = 90 + Math.random() * 150;
-      layer.append(el("i", { style: { "--x": `${Math.cos(angle) * distance}px`, "--y": `${Math.sin(angle) * distance - 40}px`, "--r": `${Math.round(Math.random() * 540 - 270)}deg`, "--c": palette[i % palette.length], "--d": `${Math.round(Math.random() * 120)}ms` } }));
+    for (let i = 0; i < 58; i += 1) {
+      const angle = (Math.PI * 2 * i) / 58 + Math.random() * 0.24, distance = 100 + Math.random() * 190;
+      layer.append(el("i", { style: { "--x": `${Math.cos(angle) * distance}px`, "--y": `${Math.sin(angle) * distance - 48}px`, "--r": `${Math.round(Math.random() * 720 - 360)}deg`, "--c": palette[i % palette.length], "--d": `${Math.round(Math.random() * 180)}ms`, "--s": `${Math.round(5 + Math.random() * 5)}px` } }));
     }
     parent.append(layer);
-    setTimeout(() => layer.remove(), 1600);
+    setTimeout(() => layer.remove(), 1900);
   }
 
   const bigTick = () => { const orb = el("div", { class: "wl-orb done", "aria-hidden": "true" }, tick(30)); return orb; };
+  const bigThumb = () => el("div", { class: "wl-celebrate-emoji", "aria-hidden": "true", text: "👍" });
+  function celebrate() {
+    copy.classList.add("wl-celebration-build");
+    clearTimeout(celebrationTimer);
+    celebrationTimer = setTimeout(() => {
+      copy.classList.add("wl-celebration-live");
+      confetti(copy);
+    }, reduced() ? 0 : 360);
+  }
 
   function buildIntro() {
     append(copy,
-      el("div", { class: "wl-wave", "aria-hidden": "true" }, el("span", { text: WAVE })),
-      el("h1", { class: "wl-title hero" }, ...words("Welcome")),
-      el("p", { class: "wl-text hero" }, "Study smarter or manage your notes, projects and ideas, all in one calm place."),
-      el("button", { class: "wl-press", type: "button", onclick: () => begin() }, "Press ", el("kbd", { text: "Space" }), " to continue"));
+      el("div", { class: "wl-intro-emoji", "aria-hidden": "true" }, el("div", { class: "wl-wave" }, el("span", { text: WAVE }))),
+      el("span", { class: "wl-intro-kicker", text: "Notes that stay in motion" }),
+      el("h1", { class: "wl-title hero wl-intro-title" }, ...words("Welcome to Clyra")),
+      el("p", { class: "wl-text hero wl-intro-copy" }, "A quiet home for notes, study and the ideas you want to keep moving."),
+      el("div", { class: "wl-intro-actions" }, el("button", { class: "wl-press", type: "button", onclick: () => begin() }, "Press", el("kbd", { text: "Space" }), "to start")),
+      el("div", { class: "wl-intro-meta", "aria-label": "Tour details" }, el("span", { text: "Write" }), el("i", { "aria-hidden": "true" }), el("span", { text: "Organise" }), el("i", { "aria-hidden": "true" }), el("span", { text: "Study" })),
+      el("p", { class: "wl-intro-hint", text: "A short hands-on tour · about 1 minute" }));
   }
 
   function buildSorted() {
@@ -313,46 +500,71 @@ export function renderWelcome(host, app) {
         el("button", { class: "wl-button primary", type: "button", onclick: () => app.createPage?.(null) }, icon("plus", 14), "New note"),
         el("button", { class: "wl-button", type: "button", onclick: () => app.openTemplates?.(null) }, "Templates"),
         el("button", { class: "wl-button", type: "button", onclick: () => replay() }, icon("history", 14), "Replay the tour")));
-    requestAnimationFrame(() => confetti(copy));
+    requestAnimationFrame(celebrate);
+  }
+
+  function buildSortedMoment() {
+    const version = ++sortedMomentVersion;
+    const countdown = el("strong", { class: "wl-countdown", text: "5" });
+    append(copy,
+      bigThumb(),
+      el("span", { class: "wl-kicker", text: "Complete" }),
+      el("h1", { class: "wl-title hero" }, ...words("Everything is sorted")),
+      el("p", { class: "wl-text hero" }, "Your workspace is ready. Your first note opens in ", countdown, " seconds."));
+    requestAnimationFrame(celebrate);
+    const startedAt = Date.now();
+    sortedTicker = setInterval(() => {
+      const remaining = Math.max(0, 5 - Math.floor((Date.now() - startedAt) / 1000));
+      countdown.textContent = String(remaining);
+    }, 180);
+    sortedTimer = setTimeout(() => {
+      if (root.isConnected && document.querySelector(".wl-root") === root && version === sortedMomentVersion && !busy && STEPS[index]?.id === "sorted") go(index + 1);
+    }, 5000);
   }
 
   function buildFinish() {
-    const field = el("input", { class: "wl-input", type: "text", placeholder: "Untitled", "aria-label": "Title of your first note", maxlength: "120" });
-    const make = el("button", { class: "wl-button primary big", type: "button" }, icon("plus", 14), "Create my note");
+    const make = el("button", { class: "wl-button primary wl-finish-create", type: "button" }, icon("plus", 15), "Create my first note");
     const create = async () => {
       if (make.disabled) return;
       make.disabled = true;
-      const title = field.value.trim() || "My first note";
       saveTour({ done: true });
-      const page = await app.createPage?.(null, { title });
-      if (!page) { make.disabled = false; return; }
+      root.classList.add("is-leaving");
+      revealShell();
+      await new Promise((resolve) => setTimeout(resolve, reduced() ? 0 : 280));
+      const page = await app.createPage?.(null, { title: "My first note" });
+      if (!page) { root.classList.remove("is-leaving"); make.disabled = false; }
     };
+    finishCreate = create;
     make.addEventListener("click", create);
-    field.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); create(); } });
     append(copy,
-      el("div", { class: "wl-wave", "aria-hidden": "true" }, el("span", { text: "✍️" })),
+      el("div", { class: "wl-finish-emoji", "aria-hidden": "true" }, el("span", { text: "✍️" })),
+      el("span", { class: "wl-finish-kicker", text: "Your workspace is ready" }),
       el("h1", { class: "wl-title hero" }, ...words("Make your first note")),
-      el("p", { class: "wl-text hero" }, "That was the tour. Give your first note a name and it opens ready to write."),
-      el("div", { class: "wl-first" }, field, make),
-      el("div", { class: "wl-cta" }, el("button", { class: "wl-link", type: "button", onclick: () => leave(true) }, "I will do it later")));
-    requestAnimationFrame(() => field.focus());
+      el("p", { class: "wl-text hero" }, "A clean page is waiting. Give it a thought, a title, or a first line."),
+      el("p", { class: "wl-finish-hint" }, "Choose how you would like to begin."),
+      el("div", { class: "wl-finish-actions" }, make, el("button", { class: "wl-button wl-finish-later", type: "button", onclick: () => leave(true) }, "I’ll do it later")));
+    requestAnimationFrame(celebrate);
   }
 
   function buildCopy(step) {
+    copy.classList.remove("wl-celebration-build", "wl-celebration-live");
+    clearTimeout(celebrationTimer);
     clear(copy);
     if (sorted) { buildSorted(); return; }
     if (step.hero) { buildIntro(); return; }
+    if (step.sortedMoment) { buildSortedMoment(); return; }
     if (step.finish) { buildFinish(); return; }
-    const keyed = step.tasks.filter(([, , opts]) => opts?.keys).map(([id, label, opts]) => [opts.keys, label, id]);
+    const tasks = step.tasks || [];
+    const keyed = tasks.filter(([, , opts]) => opts?.keys).map(([id, label, opts]) => [opts.keys, label, id]);
     append(copy,
       step.kicker ? el("span", { class: "wl-kicker", text: step.kicker }) : null,
       el("h1", { class: "wl-title" }, ...words(step.title)),
       el("p", { class: "wl-text", text: step.text }),
       keyed.length ? el("div", { class: "wl-hotkeys", "aria-label": "Keyboard shortcuts" }, keyed.map(([keys, label], i) => el("div", { class: "wl-hotkey", style: { "--i": String(i) } },
         el("span", { class: "wl-keys-cap" }, ...keys.split(" ").map((key) => el("kbd", { text: key }))), el("span", { class: "wl-hotkey-label", text: label })))) : null,
-      step.tasks.length ? el("div", { class: "wl-actions wl-under" }, el("div", { class: "wl-tasks-head" }, el("span", { text: step.listLabel || "Try it" }), el("span", { class: "wl-count" })), el("ul", { class: "wl-tasks" })) : null,
+      tasks.length ? el("div", { class: "wl-actions wl-under" }, el("div", { class: "wl-tasks-head" }, el("span", { text: step.listLabel || "Checklist" }), el("span", { class: "wl-count" })), el("ul", { class: "wl-tasks" })) : null,
       step.tips?.length ? el("ul", { class: "wl-tips" }, step.tips.slice(0, 2).map((tip, i) => el("li", { style: { "--i": String(i) }, text: tip }))) : null);
-    paintTasks();
+    if (tasks.length) paintTasks();
   }
 
   let release = null;
@@ -371,37 +583,55 @@ export function renderWelcome(host, app) {
   }
 
   async function show(step) {
+    sortedMomentVersion += 1;
+    clearTimeout(autoAdvance); autoAdvance = null;
+    clearTimeout(sortedTimer); sortedTimer = null;
+    clearInterval(sortedTicker); sortedTicker = null;
     release?.(); release = null;
-    const plain = !step.hero && !step.finish && !sorted;
+    /* A real terminal belongs to its own lesson only, then closes cleanly as
+       the tour moves on so it cannot obscure another interaction. */
+    if (step.id !== "terminal") closeTerminal();
+    const plain = !step.hero && !step.finish && !step.sortedMoment && !sorted;
 
     buildCopy(step);
+    if (!step.finish) finishCreate = null;
     clear(stage);
-    const poster = Boolean(sorted || step.hero || step.finish);
+    const poster = Boolean(sorted || step.hero || step.sortedMoment || step.finish);
     const solo = !poster && !step.mount;
     stage.hidden = poster || solo;
     main.classList.toggle("poster", poster);
     main.classList.toggle("solo", solo);
     main.classList.toggle("centered", Boolean(plain && solo));
-    railBtn.classList.remove("pressed"); railBtn.hidden = !(plain && step.railButton) || Boolean(app.railOpen?.());
+    root.classList.toggle("wl-menu-step", step.id === "palette" || step.id === "slash" || step.id === "study");
+    stage.dataset.preview = step.id;
+    railBtn.hidden = !(plain && step.railButton);
+    syncTourRailButton();
     if (!poster) attach(step);
     cleanup = !poster && step.mount ? await step.mount(stage) : null;
   }
 
-  /* One step out, the next in: fade and drift, then build the new one. */
+  /* One short, springy handoff between lessons. It uses compositor-friendly
+     transforms only, making quick keyboard completion feel light rather than
+     theatrical. */
   async function go(target) {
     if (busy || sorted || target < 1 || target > LAST || target === index) return;
     busy = true;
     const forward = target > index;
     const nodes = [main];
-    const SLIDE = 120, EASE = "cubic-bezier(.65, 0, .35, 1)";
-    if (!reduced()) await Promise.all(nodes.map((node) => node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${forward ? -SLIDE : SLIDE}px)` }], { duration: 520, easing: EASE, fill: "forwards" }).finished.catch(() => {})));
+    const SLIDE = 30, EASE = "cubic-bezier(.22, 1, .36, 1)";
+    if (!reduced()) await Promise.all(nodes.map((node) => node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${forward ? -SLIDE : SLIDE}px)` }], { duration: 190, easing: EASE, fill: "forwards" }).finished.catch(() => {})));
+    /* A tool panel belongs to its lesson. Let it glide away before the next
+       lesson takes its full-width canvas instead of leaking into it. */
+    if (STEPS[index]?.id === "rail" && app.railOpen?.()) app.toggleRail?.();
+    if (STEPS[index]?.id === "terminal" && target !== index) closeTerminal();
+    document.querySelector(".rail")?.classList.remove("tour-hints");
     try { await cleanup?.(); } catch { /* a step that cannot clean up is replaced anyway */ }
     cleanup = null;
     index = target;
     const step = paintChrome();
     await show(step);
     nodes.forEach((node) => node.getAnimations().forEach((animation) => animation.cancel()));
-    if (!reduced()) nodes.forEach((node) => node.animate([{ opacity: 0, transform: `translateX(${forward ? SLIDE : -SLIDE}px)` }, { opacity: 1, transform: "none" }], { duration: 760, easing: EASE, fill: "backwards" }));
+    if (!reduced()) nodes.forEach((node) => node.animate([{ opacity: 0, transform: `translateX(${forward ? SLIDE : -SLIDE}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: EASE, fill: "backwards" }));
     busy = false;
   }
 
@@ -422,14 +652,21 @@ export function renderWelcome(host, app) {
     copy.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], { duration: 420, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
   }
 
-  /* Real shortcuts tick their task whether or not the pointer was used. */
-  const onChord = (event) => { for (const [test, id] of STEPS[index].chords || []) if (test(event)) { if (typeof id === "function") id(); else mark(id); } };
-  document.addEventListener("keydown", onChord, { signal, capture: true });
+  document.addEventListener("clyra:tour-command-palette", () => {
+    if (STEPS[index].id !== "palette") return;
+    stage.revealTourPalette?.();
+  }, { signal });
   const onKey = (event) => {
+    /* The embedded palette owns the keystroke itself. The tour only observes
+       it so its checklist follows the same Arrow / Enter sequence as the
+       real command palette rather than inventing a second control. */
+    if (STEPS[index].id === "palette" && stage.handleTourPaletteKey?.(event)) return;
     if (event.target?.closest?.("input, textarea, select, [contenteditable='true']") || document.querySelector(".layer, .modal, .cp")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (index === 0 && !sorted && (event.key === " " || event.key === "Enter")) { event.preventDefault(); begin(); return; }
-    if (event.key === "ArrowRight") go(index + 1); else if (event.key === "ArrowLeft") go(index - 1);
+    if (STEPS[index].id === "slash" && stage.handleTourSlashKey?.(event)) return;
+    if (STEPS[index].id === "slash" && event.key === "/") { event.preventDefault(); stage.revealTourSlash?.(); mark("sl-try"); return; }
+    if (STEPS[index].finish && (event.key === " " || event.key === "Enter")) { event.preventDefault(); finishCreate?.(); return; }
   };
   document.addEventListener("keydown", onKey, { signal });
 
@@ -439,7 +676,14 @@ export function renderWelcome(host, app) {
 
   return { destroy() {
     workspace?.classList.remove("tour-mode");
+    workspace?.classList.remove("tour-returning");
+    clearTimeout(autoAdvance);
+    clearTimeout(sortedTimer);
+    clearInterval(sortedTicker);
+    clearTimeout(celebrationTimer);
     abort.abort();
+    closeTerminal();
+    document.querySelector(".rail")?.classList.remove("tour-hints");
     try { cleanup?.(); } catch { /* ignore */ }
     release?.();
     session = started && !sorted && index > 0 && state.tabs.some((tab) => tab.id === tabId && tab.kind === "welcome") ? { index, done, tabId } : null;

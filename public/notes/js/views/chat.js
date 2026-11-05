@@ -162,7 +162,7 @@ export function renderChat(host, app, options = {}) {
   const paintAttached = () => {
     clear(attached);
     const chat = currentChat();
-    const id = compact ? boundId : (chat?.page_id || null);
+    const id = compact ? boundId : (boundId || chat?.page_id || null);
     const info = pageInfo(id) || (id && chat ? { id, title: chat.page_title || "Untitled", icon: chat.page_icon } : null);
     attached.classList.toggle("on", Boolean(info));
     if (info) {
@@ -378,7 +378,7 @@ export function renderChat(host, app, options = {}) {
      page does not litter the history with empty chats. */
   const ensureChat = async () => {
     if (chatId) return chatId;
-    const created = await withError(() => api.post("/api/notes/chats", { pageId: compact ? boundId : null }), "Could not start a chat");
+    const created = await withError(() => api.post("/api/notes/chats", { pageId: boundId || null }), "Could not start a chat");
     chatId = created?.id ?? null;
     return chatId;
   };
@@ -396,10 +396,27 @@ export function renderChat(host, app, options = {}) {
 
   const syncSend = () => { send.disabled = busy || !input.value.trim(); composer.classList.toggle("has-text", Boolean(input.value.trim())); };
   const grow = () => { input.style.height = "auto"; input.style.height = `${Math.min(140, input.scrollHeight)}px`; };
+  const addMention = (page) => {
+    const id = String(page.page_id || page.id);
+    if (sources.some((source) => source.pageId === id)) return;
+    sources.push({ pageId: id, title: page.title || "New page", manual: true });
+    paintSources();
+    input.focus();
+  };
+  /* @ is a quick local picker, not a second full-screen search flow. It is
+     deliberately short, anchored to the composer, and keeps the question in
+     place while someone adds one or two notes as context. */
+  const openMentionMenu = () => {
+    const candidates = state.pages.filter((page) => page.kind !== "record").slice(0, 9);
+    menu(input, candidates.length ? candidates.map((page) => ({
+      label: page.title || "Untitled note", icon: page.icon && !/^https?:|^\//.test(page.icon) ? page.icon : "page",
+      hint: page.parent_id ? "Subpage" : "Note", onSelect: () => addMention(page),
+    })) : [{ label: "No notes yet", disabled: true }], { side: "top", align: "start", class: "chat-mention-menu" });
+  };
   input.addEventListener("input", () => {
     grow();
     syncSend();
-    if (input.value.endsWith("@")) { input.value = input.value.slice(0, -1); addSource(); }
+    if (input.value.endsWith("@")) { input.value = input.value.slice(0, -1); grow(); syncSend(); openMentionMenu(); }
   });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); ask(); }
@@ -418,6 +435,19 @@ export function renderChat(host, app, options = {}) {
     else if (type === "delete") { const chat = chats.find((entry) => entry.id === id); if (chat) removeChat(chat); }
   };
   window.addEventListener("clyra:chat-action", onSidebar);
+  /* A command-palette query opens the full chat deliberately.  The event
+     carries the note that was visible before the view changed, so the new
+     chat is genuinely attached to that note rather than losing its context. */
+  const onPrefill = (event) => {
+    if (compact) return;
+    const { prompt = "", pageId = null, sendNow = false } = event.detail || {};
+    boundId = pageId ? String(pageId) : null;
+    if (prompt) { input.value = prompt; grow(); syncSend(); }
+    paintAttached();
+    if (sendNow && prompt) queueMicrotask(() => ask());
+    else input.focus();
+  };
+  window.addEventListener("clyra:prefill-chat", onPrefill);
   /* Text selected in a page: "Add to chat" attaches it as context; "Ask Clyra" attaches it and starts the question. */
   const onQuote = (event) => {
     const { text, mode } = event.detail || {};
@@ -451,11 +481,7 @@ export function renderChat(host, app, options = {}) {
   const addSource = () => openSearch({
     title: "Add context",
     onSelect: (page) => {
-      const id = String(page.page_id || page.id);
-      if (sources.some((source) => source.pageId === id)) return;
-      sources.push({ pageId: id, title: page.title || "New page", manual: true });
-      paintSources();
-      input.focus();
+      addMention(page);
     },
   });
 
@@ -511,8 +537,93 @@ export function renderChat(host, app, options = {}) {
     while (host_.children.length > want.length) host_.lastElementChild.remove();
     return host_;
   };
+  /* Network chunks are irregular: rendering each one immediately makes prose
+     jump in bursts. A tiny local queue makes every reply read as typing while
+     still keeping up with a fast model. */
+  const queueText = (message, chunk) => {
+    message.targetText = `${message.targetText || message.text || ""}${chunk}`;
+    if (message.typingTimer) return;
+    const tick = () => {
+      const target = message.targetText || "";
+      const visible = message.text || "";
+      if (visible.length >= target.length) {
+        message.typingTimer = 0;
+        const waiters = message.typingWaiters || [];
+        message.typingWaiters = [];
+        waiters.forEach((resolve) => resolve());
+        return;
+      }
+      /* A very short phrase per frame keeps long answers responsive without
+         presenting whole paragraphs at once. */
+      message.text = target.slice(0, Math.min(target.length, visible.length + 2));
+      if (message.liveEl?.isConnected) liveText(message); else paintSoon();
+      message.typingTimer = window.setTimeout(tick, 18);
+    };
+    tick();
+  };
+  const waitForTyping = (message) => new Promise((resolve) => {
+    if (!message.typingTimer && (message.text || "").length >= (message.targetText || "").length) resolve();
+    else (message.typingWaiters ||= []).push(resolve);
+  });
   let paintQueued = 0;
   const paintSoon = () => { if (paintQueued) return; paintQueued = requestAnimationFrame(() => { paintQueued = 0; paint(); }); };
+  /* A tool run can emit several state updates at once. Rendering each one by
+     itself used to repeatedly rebuild the surrounding thread. Keep live prose
+     immediate, while giving structural updates a calm half-second cadence. */
+  let structuralPaintAt = 0;
+  let structuralPaintTimer = 0;
+  const paintStructural = () => {
+    const wait = Math.max(0, 700 - (Date.now() - structuralPaintAt));
+    if (structuralPaintTimer) return;
+    structuralPaintTimer = window.setTimeout(() => {
+      structuralPaintTimer = 0;
+      structuralPaintAt = Date.now();
+      paint();
+    }, wait);
+  };
+
+  /* Server-sent events can arrive in one network packet even though the work
+     completed one action at a time. Release structural events in a short,
+     steady sequence so the checklist, research and note actions feel causal
+     rather than suddenly materialising as a completed wall of UI. */
+  const actionQueue = [];
+  let actionTimer = 0;
+  let actionFlushing = false;
+  let actionDrain = [];
+  const settleActionDrain = () => {
+    if (actionQueue.length || actionTimer || actionFlushing) return;
+    const waiting = actionDrain; actionDrain = [];
+    waiting.forEach((resolve) => resolve());
+  };
+  const applyActionEvent = (answer, event) => {
+    if (event.type === "todos") answer.run.todos = event.items;
+    else if (event.type === "step") {
+      const index = answer.run.steps.findIndex((step) => step.id === event.id);
+      if (index >= 0) answer.run.steps[index] = event; else answer.run.steps.push(event);
+    } else if (event.type === "edit") {
+      answer.edits = answer.edits || [];
+      const index = answer.edits.findIndex((edit) => edit.id === event.edit.id);
+      if (index >= 0) answer.edits[index] = { ...answer.edits[index], ...event.edit };
+      else answer.edits.push({ ...event.edit, status: "pending" });
+    }
+    paintStructural();
+  };
+  const pumpActions = () => {
+    if (actionTimer || actionFlushing) return;
+    const next = actionQueue.shift();
+    if (!next) { settleActionDrain(); return; }
+    actionFlushing = true;
+    applyActionEvent(next.answer, next.event);
+    actionFlushing = false;
+    /* Tool events can arrive as one packet. A measured cadence lets each
+       completed action land before the next one changes the run. */
+    actionTimer = window.setTimeout(() => { actionTimer = 0; pumpActions(); }, next.event.type === "todos" ? 620 : 740);
+  };
+  const queueAction = (answer, event) => { actionQueue.push({ answer, event }); pumpActions(); };
+  const waitForActions = () => new Promise((resolve) => {
+    if (!actionQueue.length && !actionTimer && !actionFlushing) resolve();
+    else actionDrain.push(resolve);
+  });
 
   const workRow = (label, kind) =>
     el("div", { class: `chat-work ${kind}` },
@@ -526,7 +637,43 @@ export function renderChat(host, app, options = {}) {
         el("span", { class: "chat-action-tick" }, icon("check_square", 12)),
         el("span", { class: index === activeIndex ? "shimmer-text" : "", text: step }))));
 
+  const editProposal = (edit) => {
+    const additions = edit.kind === "insert" ? edit.markdown : edit.replace;
+    const removals = edit.kind === "replace" ? edit.find : "";
+    const settled = edit.status && edit.status !== "pending";
+    const accept = async () => {
+      if (settled || edit.applying) return;
+      edit.applying = true; paint();
+      if (String(app.currentPageId?.() || "") === String(edit.pageId)) app.currentView?.showAgentEdit?.(edit);
+      const result = await withError(() => api.post(`/api/notes/pages/${encodeURIComponent(edit.pageId)}/agent-edit`, {
+        kind: edit.kind, markdown: edit.markdown, position: edit.position, afterText: edit.afterText, find: edit.find, replace: edit.replace,
+      }), "Could not apply that change");
+      edit.applying = false;
+      if (!result?.ok) { edit.error = result?.error || "The note changed before this could be applied."; paint(); return; }
+      edit.status = "accepted";
+      await refreshPages();
+      if (String(app.currentPageId?.() || "") === String(edit.pageId)) {
+        /* Opening an already-open page intentionally does not reload it; an
+           accepted edit must, otherwise the second edit appears to do nothing. */
+        app.reloadView?.();
+      } else app.openPage(edit.pageId);
+      toast(`Updated ${result.title || edit.title}`);
+      paint();
+    };
+    const decline = () => { if (!settled) { edit.status = "declined"; paint(); } };
+    return el("section", { class: `chat-edit-proposal ${settled ? `is-${edit.status}` : ""}`, "aria-label": `Proposed change to ${edit.title}` },
+      el("div", { class: "chat-edit-head" }, icon("pencil", 14), el("span", { text: `Proposed change · ${edit.title}` }), settled ? el("span", { class: "chat-edit-state", text: edit.status === "accepted" ? "Applied" : "Declined" }) : null),
+      removals ? el("del", { class: "chat-edit-remove", text: removals }) : null,
+      additions ? el("ins", { class: "chat-edit-add", text: additions }) : null,
+      edit.error ? el("p", { class: "chat-edit-error", text: edit.error }) : null,
+      !settled ? el("div", { class: "chat-edit-actions" },
+        el("button", { class: "chat-edit-accept", type: "button", disabled: Boolean(edit.applying), onclick: accept }, edit.applying ? "Applying…" : "Accept changes"),
+        el("button", { class: "chat-edit-decline", type: "button", disabled: Boolean(edit.applying), onclick: decline }, "Decline")) : null);
+  };
+
   const paint = () => {
+    const wasNearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 52;
+    const scrollBefore = thread.scrollTop;
     const wasLanding = chatView.classList.contains("landing");
     const composerBefore = wasLanding ? composer.getBoundingClientRect() : null;
     const viewBefore = wasLanding ? chatView.getBoundingClientRect() : null;
@@ -583,10 +730,20 @@ export function renderChat(host, app, options = {}) {
         /* What is shown is what is happening: the plan and each tool call as it runs, then the answer as it streams. */
         message.runState = message.runState || {};
         append(body,
+          message.prelude ? (() => { const intro = el("div", { class: "chat-answer-text chat-prelude" }); revealAnswer(intro, message.prelude, false); return intro; })() : null,
           renderAgentRun(message.run, { live: true, onOpenNote: (id) => app.openPage(id), state: message.runState }),
-          message.text ? liveText(message) : null,
+          /* Keep a stable live host in the document. Text chunks update it in
+             place below the work that produced them, without rebuilding the
+             surrounding thread (the source of the visible flicker). */
+          message.liveEl || (message.liveEl = el("div", { class: "chat-stream chat-live" })),
           !message.run?.todos.length && !message.run?.steps.length && !message.text ? workRow("Thinking", "think") : null);
+        if (message.text) liveText(message);
       } else {
+        if (message.prelude) {
+          const intro = el("div", { class: "chat-answer-text chat-prelude" });
+          revealAnswer(intro, message.prelude, !message.restored);
+          body.append(intro);
+        }
         if (message.run) {
           message.runState = message.runState || {};
           const view = renderAgentRun(message.run, { live: false, onOpenNote: (id) => app.openPage(id), state: message.runState });
@@ -622,10 +779,11 @@ export function renderChat(host, app, options = {}) {
           if (citation?.pageId) app.openPage(citation.pageId, { blockId: citation.blockId });
         });
         if (message.citations?.length) answerHost.innerHTML = linkCitations(answerHost.innerHTML, message.citations);
+        if (message.edits?.length) body.append(...message.edits.map(editProposal));
       }
       thread.append(el("div", { class: "chat-column chat-row assistant" }, wrapper));
     }
-    thread.scrollTop = thread.scrollHeight;
+    thread.scrollTop = wasNearBottom ? thread.scrollHeight : scrollBefore;
     /* Entering the chat: the welcome lifts away and the composer glides down to the foot of the page. */
     if (wasLanding && messages.length && !compact && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       const after = composer.getBoundingClientRect();
@@ -649,15 +807,17 @@ export function renderChat(host, app, options = {}) {
     if (!retryOf) await remember({ role: "user", text: question, sources: attachedNow });
     const answer = retryOf || { role: "assistant", question, sources: [...sources] };
     if (!retryOf) messages.push(answer);
-    Object.assign(answer, { pending: true, error: null, steps: null, searching: null, stepIndex: 0 });
+    Object.assign(answer, { pending: true, error: null, steps: null, searching: null, stepIndex: 0, finishEvent: null });
+    /* Only the agent's update_todos calls create a plan. A scripted generic
+       row falsely implied that every request had been planned. */
+    answer.run = { todos: [], steps: [] };
     busy = true;
     syncSend();
     paint();
 
     const controller = new AbortController();
     askAbort = controller;
-    answer.run = { todos: [], steps: [] };
-    answer.text = "";
+    answer.text = ""; answer.targetText = ""; answer.prelude = ""; answer.edits = [];
     answer.liveEl = null; answer.liveFor = null; answer.streamedLive = false;
     let roundText = "";
     let finished = false;
@@ -674,7 +834,10 @@ export function renderChat(host, app, options = {}) {
     quotes = [];
     files = [];
     paintSources();
-    const attachedId = compact ? boundId : (currentChat()?.page_id || null);
+    /* The visible note wins over a historical chat attachment. That keeps an
+       AI request made from a note pointed at that note, even after switching
+       tabs or returning to an existing conversation. */
+    const attachedId = compact ? boundId : (boundId || app.currentPageId?.() || currentChat()?.page_id || null);
     const pageIds = [...new Set([...sources.map((source) => source.pageId), ...(attachedId ? [String(attachedId)] : app.currentPageId?.() ? [String(app.currentPageId())] : [])])];
     try {
       await streamAgent({
@@ -684,27 +847,46 @@ export function renderChat(host, app, options = {}) {
         notes: { pageIds, currentPageId: attachedId ? String(attachedId) : app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {
-          if (event.type === "todos") answer.run.todos = event.items;
-          else if (event.type === "step") {
-            roundText = ""; answer.text = ""; // words before a tool call were commentary on that step
-            const index = answer.run.steps.findIndex((step) => step.id === event.id);
-            if (index >= 0) answer.run.steps[index] = event; else answer.run.steps.push(event);
-          } else if (event.type === "text") { roundText += event.text; answer.text = roundText; paintSoon(); return; }
+          if (event.type === "todos" || event.type === "step" || event.type === "edit") {
+            queueAction(answer, event);
+          } else if (event.type === "text") {
+            if (event.placement === "before") {
+              answer.prelude += event.text;
+              paintSoon();
+              return;
+            }
+            roundText += event.text;
+            queueText(answer, event.text);
+            /* Once the live host exists, update only its message. The rest of
+               the chat stays painted and stable while the response arrives. */
+            if (answer.liveEl?.isConnected) liveText(answer);
+            else paintSoon();
+            return;
+          }
           else if (event.type === "done") {
             finished = true;
-            answer.pending = false;
-            answer.text = event.text;
-            answer.sources = (event.citations || []).map((c) => ({ pageId: "", title: c.title || c.host, url: c.url }));
-            answer.citations = [];
-            answer.searched = answer.run.steps.find((step) => step.tool === "web_search")?.query || null;
+            answer.finishEvent = event;
           } else if (event.type === "error") {
             finished = true;
             answer.pending = false;
             answer.error = event.code === "credits" ? "Clyra's model account is out of credits. Add credits, then press Retry." : event.code === "cancelled" ? "Stopped." : event.message || "Clyra couldn't finish this reply.";
           }
-          paint();
+          paintStructural();
         },
       });
+      /* Do not collapse the final answer over actions still travelling from
+         the event stream. The completion state is held until the visible run
+         has caught up. */
+      await waitForActions();
+      await waitForTyping(answer);
+      answer.searched = answer.run.steps.find((step) => step.tool === "web_search")?.query || answer.searched || null;
+      if (answer.finishEvent) {
+        answer.pending = false;
+        answer.targetText = answer.finishEvent.text;
+        if (answer.text !== answer.targetText) { queueText(answer, ""); await waitForTyping(answer); }
+        answer.sources = (answer.finishEvent.citations || []).map((c) => ({ pageId: "", title: c.title || c.host, url: c.url }));
+        answer.citations = [];
+      }
       if (!finished) { answer.pending = false; if (!answer.text) answer.error = "Clyra couldn't finish this reply."; }
       if (!answer.error) {
         await remember({ role: "assistant", text: answer.text, sources: answer.sources, citations: [], searched: answer.searched });
@@ -718,6 +900,7 @@ export function renderChat(host, app, options = {}) {
       askAbort = null;
       busy = false;
       syncSend();
+      if (structuralPaintTimer) { clearTimeout(structuralPaintTimer); structuralPaintTimer = 0; }
       paint();
       if (compact && wantedId !== undefined && wantedId !== boundId) setPage(wantedId);
     }
@@ -790,7 +973,7 @@ export function renderChat(host, app, options = {}) {
         source.pageId && !seen.has(source.pageId) && seen.add(source.pageId));
       paintSources();
     },
-    destroy() { window.removeEventListener("clyra:chat-action", onSidebar); window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); },
+    destroy() { window.removeEventListener("clyra:chat-action", onSidebar); window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); window.removeEventListener("clyra:prefill-chat", onPrefill); },
   };
 }
 

@@ -39,7 +39,6 @@ export type AgentDeps = {
 export type NotesDeps = {
   search: (query: string) => Array<{ id: string; title: string; snippet: string }>;
   read: (id: string) => { title: string; markdown: string } | null;
-  insert: (id: string, markdown: string, where: { position?: "start" | "end" | "after"; afterText?: string }) => { ok: true; title: string; landed: string } | { ok: false; error: string };
   /** Adds the same durable Link to page block that the slash menu creates. */
   linkPage?: (hostId: string, linkedPageId: string) => { ok: true; hostTitle: string; linkedTitle: string } | { ok: false; error: string };
   /** Pages the person attached or is looking at, read up front so answers are grounded in them. */
@@ -178,7 +177,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "create_note",
-      description: "Create a finished, well-designed page in the person's Notes app. Use it whenever they ask you to make, write, plan, list or organise something (a to-do list, plan, schedule, essay, summary, study guide, itinerary, tracker, meeting notes) instead of printing it in chat. Layout rules for the markdown: a short callout summary first (> [!tip] ...), # / ## headings that group the content, - [ ] checklists for tasks, | tables | for comparisons or schedules, bullets and numbered steps for the rest, --- between big sections. Put [S#] markers after claims taken from opened pages.",
+      description: "Create a finished, well-designed NEW page in the person's Notes app. Use this only when they explicitly ask for a new, separate, child or standalone note. If a current note is supplied and the person asks to add, change, rewrite, organise or improve that page, use notes_insert instead. Layout rules for new-page markdown: a short callout summary first (> [!tip] ...), # / ## headings that group the content, - [ ] checklists for tasks, | tables | for comparisons or schedules, bullets and numbered steps for the rest, --- between big sections. Put [S#] markers after claims taken from opened pages.",
       parameters: { type: "object", properties: { title: { type: "string" }, icon: { type: "string", description: "One emoji for the page icon that fits its subject" }, markdown: { type: "string" }, parent_id: { type: "string", description: "Make it a sub-page of this note page id" } }, required: ["title", "markdown"] },
     },
   },
@@ -206,12 +205,20 @@ const NOTES_TOOLS = [
     type: "function",
     function: {
       name: "notes_insert",
-      description: "Add markdown to an existing note page, exactly where the person asked: position 'start', 'end', or 'after' a heading or sentence (give after_text). Never removes anything. If they named no place, use 'end'.",
+      description: "Prepare an ADDITION to an existing note page, exactly where the person asked: position 'start', 'end', or 'after' a heading or sentence (give after_text). The person sees a green proposed diff and must accept it before anything changes. Never removes anything. If they named no place, use 'end'.",
       parameters: {
         type: "object",
         properties: { page_id: { type: "string" }, markdown: { type: "string" }, position: { type: "string", enum: ["start", "end", "after"] }, after_text: { type: "string" } },
         required: ["page_id", "markdown"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "notes_edit",
+      description: "Prepare a precise replacement or removal in an existing note. Use only when the person asked to change, rewrite or remove existing text. find must be an exact phrase from the note you read; replace is the new text (use an empty string only to remove it). The person sees red removed text and green replacement text, then chooses whether to accept it.",
+      parameters: { type: "object", properties: { page_id: { type: "string" }, find: { type: "string" }, replace: { type: "string" } }, required: ["page_id", "find", "replace"] },
     },
   },
   {
@@ -230,7 +237,7 @@ function systemPrompt(now: Date, notes?: NotesDeps) {
   const index = notes?.index?.length ? `\n\nEvery note in their workspace (title, id). Use notes_read with an id to open any of them, or notes_search to find by content:\n${notes.index.slice(0, 250).map((p) => `- ${p.icon ? `${p.icon} ` : ""}${p.title || "Untitled"}${p.parentTitle ? ` (in ${p.parentTitle})` : ""} — ${p.id}`).join("\n")}` : "";
   const inNotes = notes ? `\n\nYou are inside the person's Notes app and you have context from ALL of their notes. Their own pages are the first source of truth for questions about their material: use notes_search / notes_read, and say which note a fact came from. Never claim you added something unless the tool said it did.
 
-Use initiative with notes. When they ask you to make, write, plan, list or organise something (a to-do list, a plan, a schedule, an essay, a summary, a study guide, an itinerary, a tracker, meeting notes), do not print it in the chat: put it on a note, then say in one or two lines what you made. If they are on a page and the request is about that page ("add a to-do list", "tidy this", "summarise this above"), add it there with notes_insert at the place they asked for (default 'end'). Otherwise call create_note with a fitting emoji icon and a designed layout: a callout summary first, headings that group the content, - [ ] checklists for tasks, tables for schedules and comparisons, numbered steps for procedures, dividers between big sections. Never leave a note plain or as one block of text. When someone explicitly asks for a collection of notes, make a hub plus the individual child notes with repeated create_note calls (using parent_id), then use notes_link_page to place native page links in the hub. Pull in facts from their other notes when they help, and name those notes. For a quick question, just answer in chat.${notes.context.length ? `\n\nPages in context (read these first):\n${notes.context.map((c) => `--- ${c.title} (id ${c.id})${c.current ? " [the page they are on]" : ""}\n${c.markdown.slice(0, 9000)}`).join("\n\n")}` : ""}${index}` : "";
+Use initiative with notes. When they ask you to make, write, plan, list or organise something (a to-do list, a plan, a schedule, an essay, a summary, a study guide, an itinerary, a tracker, meeting notes), do not print it in the chat: prepare it for Notes, then say in one or two lines what you proposed. A supplied current page is the default destination: requests such as “add”, “put”, “change”, “edit”, “rewrite”, “organise”, “improve”, “summarise”, “turn this into”, or “make this page” must target that current page unless the person clearly asks for a new/separate page. Use notes_insert for a new section and notes_edit for a precise replacement or removal after reading the page. These tools make reviewable proposals; never say a note changed until the person accepts the diff. Do not stop after describing a note action: read the target, prepare every requested addition or exact edit, and only then give a concise completion message. For a multi-part note request, keep the plan current until every requested part has a corresponding proposal. Only call create_note when they explicitly ask for a new note, separate page, child page, or collection of notes. For a new page, use a fitting emoji icon and a designed layout: a callout summary first, headings that group the content, - [ ] checklists for tasks, tables for schedules and comparisons, numbered steps for procedures, dividers between big sections. Never leave a note plain or as one block of text. When someone explicitly asks for a collection of notes, make a hub plus the individual child notes with repeated create_note calls (using parent_id), then use notes_link_page to place native page links in the hub. Pull in facts from their other notes when they help, and name those notes. For a quick question, just answer in chat.${notes.context.length ? `\n\nPages in context (read these first):\n${notes.context.map((c) => `--- ${c.title} (id ${c.id})${c.current ? " [the page they are on]" : ""}\n${c.markdown.slice(0, 9000)}`).join("\n\n")}` : ""}${index}` : "";
   return `You are Clyra, working for the person in their chat. Today is ${now.toDateString()}.
 
 You have tools. Use them for real: never say you searched, opened, read or wrote something unless a tool call did it.
@@ -258,7 +265,9 @@ export async function runChatAgent(
   const ledger = new EvidenceLedger();
   const call = deps.callModel ?? defaultModelCall;
   const now = deps.now?.() ?? new Date();
-  const maxSteps = options.maxSteps ?? 14;
+  /* Real note work can require a read, a proposal, links and a final check.
+     Keep it bounded without rewarding an unfinished first action. */
+  const maxSteps = options.maxSteps ?? 20;
   const budget = { searches: options.maxSearches ?? 10, opens: options.maxOpens ?? 14, searchesUsed: 0, opensUsed: 0, toolCalls: 0 };
   let todos: TodoItem[] = [];
   let stepCounter = 0;
@@ -370,15 +379,31 @@ export async function runChatAgent(
         const markdown = String(args.markdown ?? "").trim();
         if (!markdown) return JSON.stringify({ error: "markdown is required" });
         const noteId = String(args.page_id ?? "");
-        const noteTitle = deps.notes.context.find((page) => page.id === noteId)?.title
+        const note = deps.notes.read(noteId);
+        if (!note) return JSON.stringify({ error: "That note does not exist." });
+        const noteTitle = note.title
           || deps.notes.index?.find((page) => page.id === noteId)?.title
           || "this note";
-        step({ id, tool: "notes_insert", label: `Editing note “${clip(noteTitle, 60)}”`, state: "running", document: { id: noteId, title: noteTitle } });
+        step({ id, tool: "notes_insert", label: `Preparing an edit for “${clip(noteTitle, 60)}”`, state: "running", document: { id: noteId, title: noteTitle } });
         const checked = validateCitations(markdown, ledger);
-        const result = deps.notes.insert(noteId, checked.text, { position: args.position, afterText: args.after_text ? String(args.after_text) : undefined });
-        if (!result.ok) { step({ id, tool: "notes_insert", label: "Couldn’t add to the note", state: "failed", error: result.error }); return JSON.stringify({ error: result.error }); }
-        step({ id, tool: "notes_insert", label: `Added to “${clip(result.title, 50)}”`, state: "done", detail: result.landed, document: { id: String(args.page_id), title: result.title } });
-        return JSON.stringify({ ok: true, landed: result.landed });
+        const position = ["start", "end", "after"].includes(String(args.position)) ? args.position as "start" | "end" | "after" : "end";
+        emit({ type: "edit", edit: { id: `edit-${id}`, pageId: noteId, title: noteTitle, kind: "insert", markdown: checked.text, position, afterText: args.after_text ? String(args.after_text) : undefined } });
+        step({ id, tool: "notes_insert", label: `Prepared a change for “${clip(noteTitle, 50)}”`, state: "done", detail: "Waiting for your approval", document: { id: noteId, title: noteTitle } });
+        return JSON.stringify({ ok: true, proposed: true, note_id: noteId, note_title: noteTitle, approval: "The person must accept the displayed diff before this is written." });
+      }
+      case "notes_edit": {
+        if (!deps.notes) return JSON.stringify({ error: "Notes are not available here." });
+        const noteId = String(args.page_id ?? "");
+        const note = deps.notes.read(noteId);
+        if (!note) return JSON.stringify({ error: "That note does not exist." });
+        const find = String(args.find ?? "");
+        const replace = String(args.replace ?? "");
+        if (!find.trim() || !note.markdown.includes(find)) return JSON.stringify({ error: "find must be exact text from the note. Read the page and try again." });
+        step({ id, tool: "notes_edit", label: `Preparing an edit for “${clip(note.title, 60)}”`, state: "running", document: { id: noteId, title: note.title } });
+        const checked = validateCitations(replace, ledger);
+        emit({ type: "edit", edit: { id: `edit-${id}`, pageId: noteId, title: note.title, kind: "replace", find, replace: checked.text } });
+        step({ id, tool: "notes_edit", label: `Prepared a change for “${clip(note.title, 50)}”`, state: "done", detail: "Waiting for your approval", document: { id: noteId, title: note.title } });
+        return JSON.stringify({ ok: true, proposed: true, note_id: noteId, approval: "The person must accept the displayed diff before this is written." });
       }
       case "notes_link_page": {
         if (!deps.notes?.linkPage) return JSON.stringify({ error: "Native page links are not available here." });
@@ -411,13 +436,16 @@ export async function runChatAgent(
   }
 
   try {
-    let streamed = "";
     for (let round = 0; round < maxSteps; round += 1) {
       if (options.signal?.aborted) { emit({ type: "error", code: "cancelled", message: "Stopped." }); return; }
       let roundText = "";
-      const result = await call({ messages, tools: [...TOOLS, ...(deps.notes ? NOTES_TOOLS : [])] as unknown as unknown[], model: options.model, signal: options.signal, onText: (chunk) => { roundText += chunk; streamed += chunk; emit({ type: "text", text: chunk }); } });
+      const roundChunks: string[] = [];
+      const result = await call({ messages, tools: [...TOOLS, ...(deps.notes ? NOTES_TOOLS : [])] as unknown as unknown[], model: options.model, signal: options.signal, onText: (chunk) => { roundText += chunk; roundChunks.push(chunk); } });
       if (!result.toolCalls.length) {
-        const checked = validateCitations(result.content || streamed, ledger);
+        /* The model's final prose follows the completed tools. Emit its
+           original chunks only now that we know it is the actual answer. */
+        roundChunks.forEach((text) => emit({ type: "text", text, placement: "after" }));
+        const checked = validateCitations(result.content || roundText, ledger);
         emit({
           type: "done",
           text: checked.text,
@@ -426,12 +454,16 @@ export async function runChatAgent(
         });
         return;
       }
-      // Text the model wrote before calling tools is commentary on the step, not the answer: the client drops it when a step arrives.
+      /* Tool-call commentary really happened before the following actions.
+         Preserve it as such instead of placing it underneath the run. */
+      roundChunks.forEach((text) => emit({ type: "text", text, placement: "before" }));
       messages.push({ role: "assistant", content: result.content || null, tool_calls: result.toolCalls });
-      const outputs = await Promise.all(result.toolCalls.map((tc) => runTool(tc)));
+      /* Tool results are causal: one completed action can inform the next.
+         Running a burst in parallel made multi-step note work look finished
+         before the agent had actually followed through. */
+      const outputs: string[] = [];
+      for (const toolCall of result.toolCalls) outputs.push(await runTool(toolCall));
       result.toolCalls.forEach((tc, i) => messages.push({ role: "tool", tool_call_id: tc.id, content: clip(outputs[i], 9000) }));
-      streamed = "";
-      void roundText;
     }
     // out of rounds: make the model answer from what it has, with no tools
     const final = await call({ messages: [...messages, { role: "user", content: "Answer now from what you have gathered. If something could not be verified, say so." }], tools: [], model: options.model, signal: options.signal, onText: (chunk) => emit({ type: "text", text: chunk }) });

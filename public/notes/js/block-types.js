@@ -11,7 +11,7 @@ export const BLOCK_TYPES = {
   bulleted:    { label: "Bulleted list", icon: "bullet", group: "Basic blocks", desc: "A simple bulleted list.", keywords: "unordered ul point", md: "-" },
   numbered:    { label: "Numbered list", icon: "numbers", group: "Basic blocks", desc: "A list with numbering.", keywords: "ordered ol steps", md: "1." },
   todo:        { label: "To-do list", icon: "check_square", group: "Basic blocks", desc: "Track tasks with a checkbox.", keywords: "task checkbox tick", md: "[]" },
-  toggle:      { label: "Toggle list", icon: "toggle", group: "Basic blocks", desc: "Hide content inside a toggle.", keywords: "collapse fold details" },
+  toggle:      { label: "Drop down", icon: "toggle", group: "Basic blocks", desc: "A title with details you can expand or collapse.", keywords: "collapse fold details dropdown" },
   toggle_h1:   { label: "Toggle heading 1", icon: "toggle", group: "Advanced blocks", desc: "Large heading that collapses.", keywords: "collapse heading", md: ">#" },
   toggle_h2:   { label: "Toggle heading 2", icon: "toggle", group: "Advanced blocks", desc: "Medium heading that collapses.", keywords: "collapse heading", md: ">##" },
   toggle_h3:   { label: "Toggle heading 3", icon: "toggle", group: "Advanced blocks", desc: "Small heading that collapses.", keywords: "collapse heading", md: ">###" },
@@ -21,8 +21,8 @@ export const BLOCK_TYPES = {
   code:        { label: "Code", icon: "code", group: "Media", desc: "Code with a language label.", keywords: "snippet pre monospace", md: "```" },
   equation:    { label: "Block equation", icon: "equation", group: "Advanced blocks", desc: "A block-level formula.", keywords: "math latex tex formula" },
   image:       { label: "Image", icon: "image", group: "Media", desc: "Upload or embed an image.", keywords: "picture photo png jpg" },
-  video:       { label: "Video", icon: "video", group: "Media", desc: "Embed a video or YouTube link.", keywords: "mp4 youtube movie" },
-  audio:       { label: "Audio", icon: "audio", group: "Media", desc: "Embed an audio recording.", keywords: "sound mp3 recording" },
+  video:       { label: "Video", icon: "video", group: "Media", desc: "Upload or attach a video file.", keywords: "mp4 mov movie local upload" },
+  audio:       { label: "Audio", icon: "audio", group: "Media", desc: "Upload or attach an audio recording.", keywords: "sound mp3 recording local upload" },
   file:        { label: "File", icon: "file", group: "Media", desc: "Attach any file.", keywords: "attachment document" },
   pdf:         { label: "PDF", icon: "file", group: "Media", desc: "Embed a PDF to read in place.", keywords: "document slides" },
   bookmark:    { label: "Web bookmark", icon: "bookmark", group: "Media", desc: "Save a link with a preview.", keywords: "url link website" },
@@ -32,7 +32,9 @@ export const BLOCK_TYPES = {
   breadcrumb:  { label: "Breadcrumb", icon: "move", group: "Advanced blocks", desc: "Show where this page sits.", keywords: "path parents nav" },
   toc:         { label: "Table of contents", icon: "list", group: "Advanced blocks", desc: "Build a list of headings.", keywords: "outline contents toc" },
   table:       { label: "Table", icon: "table", group: "Basic blocks", desc: "A simple table of rows and columns.", keywords: "grid rows columns spreadsheet" },
-  html:        { label: "HTML", icon: "code", group: "Embeds", desc: "Run a small piece of HTML on the page.", keywords: "embed widget iframe snippet new" },
+  /* Legacy only: older documents may still render this safely. New HTML is
+     created through slash.js as a normal, non-executing code block. */
+  html:        { label: "Legacy HTML", icon: "code", group: "Advanced blocks", desc: "Legacy HTML preview from an older note.", keywords: "legacy html" },
   button:      { label: "Button", icon: "plus", group: "Advanced blocks", desc: "A button that adds content to the page.", keywords: "button action" },
   tabs:        { label: "Tabs", icon: "panel", group: "Advanced blocks", desc: "Show one pane at a time under tabs.", keywords: "tabs panes" },
   ai_block:    { label: "AI Block", icon: "sparkle", group: "Advanced blocks", desc: "A summary or answer that updates on demand.", keywords: "ai summary" },
@@ -44,6 +46,7 @@ export const BLOCK_TYPES = {
   key_term:    { label: "Key term", icon: "book", group: "Study", desc: "A term with its definition.", keywords: "definition glossary vocabulary" },
   study_summary:{ label: "Study summary", icon: "target", group: "Study", desc: "A summary panel for revision.", keywords: "recap revision overview" },
   objective:   { label: "Learning objective", icon: "target", group: "Study", desc: "What you should be able to do.", keywords: "goal outcome objective" },
+  focus_timer:{ label: "Focus timer", icon: "target", group: "Advanced blocks", desc: "Run a focused work session without leaving the page.", keywords: "pomodoro countdown focus session timer" },
   exam_checklist:{ label: "Exam checklist", icon: "check_square", group: "Study", desc: "Track what is revised.", keywords: "revision checklist exam" },
   source:      { label: "Source", icon: "link", group: "Study", desc: "Cite where material came from.", keywords: "citation reference bibliography" },
 };

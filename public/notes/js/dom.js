@@ -52,6 +52,10 @@ const PATHS = {
   cards: "M4 7.5A1.5 1.5 0 0 1 5.5 6h9A1.5 1.5 0 0 1 16 7.5v9A1.5 1.5 0 0 1 14.5 18h-9A1.5 1.5 0 0 1 4 16.5v-9ZM8 3.5h10A2.5 2.5 0 0 1 20.5 6v10",
   check_square: "M9 11.5 11.5 14 15.5 9.5M5 4.5h14a.5.5 0 0 1 .5.5v14a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5Z",
   check: "m5 12.5 4.5 4.5L19 7",
+  /* A proper highlighter mark — used by both the live selection toolbar and
+     its guided-tour twin. Keeping it here prevents a silent empty SVG when a
+     toolbar is assembled from icon names. */
+  highlight: "M5 19.5h14M13.8 5.2l5 5M6.2 17.8l2.2-5.5L14.8 5.9a1.7 1.7 0 0 1 2.4 0l.9.9a1.7 1.7 0 0 1 0 2.4l-6.4 6.4-5.5 2.2Z",
   flag: "M6 21V4.5h11l-2 4 2 4H6",
   inbox: "M3.5 13.5h4l1.5 3h6l1.5-3h4M3.5 13.5 6 5h12l2.5 8.5v5a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5v-5Z",
   page: "M6 3.5h7l5 5v12a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5ZM13 3.5v5h5",
@@ -407,7 +411,7 @@ export function menu(anchor, items, options = {}) {
     /* Only a menu that genuinely produced nothing is empty — a menu built
        entirely from custom sections has content even with no rows. */
     if (!rendered) node.append(el("div", { class: "menu-empty", text: options.emptyLabel || "No results" }));
-    position(node, anchor, options);
+    position(node, anchor, { ...options, side: options.side || "bottom" });
     setActive(0);
   };
 

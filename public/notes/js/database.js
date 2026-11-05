@@ -116,6 +116,21 @@ export async function buildDatabase(spec, { parentId = null, inline = false, ico
     if (view.date && byName.get(view.date)) config.dateProperty = byName.get(view.date).id;
     if (view.chart) config.chart = view.chart;
     if (view.sort && byName.get(view.sort)) config.sorts = [{ property: byName.get(view.sort).id, direction: "ascending" }];
+    /* Template specs use readable property names. Persist view filters with the
+       instance-local IDs so every copy has real, independent saved views. */
+    const remapFilter = (filter) => {
+      if (!filter) return filter;
+      if (Array.isArray(filter.conditions)) return { ...filter, conditions: filter.conditions.map(remapFilter) };
+      const property = byName.get(filter.property);
+      if (!property) return filter;
+      /* Definitions use readable option names, while an instantiated
+         database stores option ids. Resolve them here so seeded template tabs
+         filter real records instead of only looking like saved views. */
+      const options = Array.isArray(property.config?.options) ? property.config.options : [];
+      const option = options.find((candidate) => candidate.id === filter.value || candidate.name === filter.value);
+      return { ...filter, property: property.id, value: option?.id || filter.value };
+    };
+    if (view.filter) config.filter = remapFilter(view.filter);
     return config;
   };
   const views = spec.views?.length ? spec.views : [{ name: "Table", type: "table" }];
@@ -144,6 +159,28 @@ async function resolveTemplateRelations(created, specs) {
       if (!property || !target) continue;
       const config = { ...(property.config || {}), databaseId: target.id };
       delete config.templateTarget;
+      const updated = await api.patch(`/api/notes/properties/${property.id}`, { config }).catch(() => null);
+      if (updated) property.config = updated.config;
+    }
+  }
+  /* Rollups are declared with readable property names in a template. Convert
+     those names only after relation properties have received their fresh IDs. */
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const made = created[index];
+    if (!spec || !made) continue;
+    const properties = new Map((made.properties || []).map((property) => [property.name, property]));
+    for (const definition of spec.properties || []) {
+      if (definition.type !== "rollup" || !definition.config?.templateRelation) continue;
+      const property = properties.get(definition.name);
+      const relationProperty = properties.get(definition.config.templateRelation);
+      const relationDefinition = spec.properties.find((candidate) => candidate.name === definition.config.templateRelation);
+      const target = Number.isInteger(relationDefinition?.templateTarget) ? created[relationDefinition.templateTarget] : made;
+      const targetProperty = (target?.properties || []).find((candidate) => candidate.name === definition.config.templateTargetProperty);
+      if (!property || !relationProperty || !targetProperty) continue;
+      const config = { ...(property.config || {}), relationProperty: relationProperty.id, targetProperty: targetProperty.id };
+      delete config.templateRelation;
+      delete config.templateTargetProperty;
       const updated = await api.patch(`/api/notes/properties/${property.id}`, { config }).catch(() => null);
       if (updated) property.config = updated.config;
     }

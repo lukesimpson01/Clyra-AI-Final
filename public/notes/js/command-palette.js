@@ -12,6 +12,7 @@ import { openSearch } from "./search.js";
 import { openPersonalize, openAgentEditor } from "./chat-extras.js";
 import { emptyBoard } from "./brainstorm.js";
 import { resetTour } from "./views/welcome.js";
+import { SHORTCUTS, shortcutLabel } from "./preferences.js";
 
 const RECENT = "clyra-notes:palette-recent";
 const readRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT) || "[]"); } catch { return []; } };
@@ -34,7 +35,7 @@ export function paletteCommands(app) {
   const day = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
   const C = (id, group, label, desc, glyph, run, shortcut = "", keywords = "") => ({ id, group, label, desc, glyph, run, shortcut, keywords: `${label} ${desc} ${keywords}` });
   const list = [
-    C("new-page", "Create", "New page", "A blank page", "plus", () => app.createPage(null), `${mod}N`, "blank note write"),
+    C("new-page", "Create", "New page", "A blank page", "plus", () => app.createPage(null), shortcutLabel("newPage"), "blank note write"),
     C("new-database", "Create", "New database", "Table, board, calendar and more", "table", () => createDatabase(app, null), "", "tracker list records"),
     C("new-board", "Create", "New brainstorm board", "A whiteboard for ideas", "target", () => newPage(app, { title: "Brainstorm", icon: "\u{1F9E0}", blocks: [["brainstorm", "", { board: emptyBoard(), tall: true }], ["text"]] }), "", "whiteboard canvas sticky figjam miro mind map"),
     C("new-todo", "Create", "New to-do list", "A page with a checklist ready", "check_square", () => newPage(app, { title: "To-do", icon: "✅", blocks: [["h2", "Today"], ["todo"], ["todo"], ["todo"], ["h2", "This week"], ["todo"], ["todo"]] }), "", "tasks checklist"),
@@ -55,7 +56,7 @@ export function paletteCommands(app) {
     C("go-library", "Go to", "Library", "Files and sources", "book", () => app.openView({ kind: "library" })),
     C("go-templates", "Go to", "Templates", "Browse the gallery", "template", () => app.openTemplates(null)),
     C("go-trash", "Go to", "Trash", "Restore or delete pages", "trash", () => app.openTrash()),
-    C("go-search", "Go to", "Search pages", "Find anything by words", "search", () => openSearch(), `${mod}P`),
+    C("go-search", "Go to", "Search pages", "Find anything by words", "search", () => openSearch(), shortcutLabel("search")),
     C("go-settings", "Go to", "Settings", "Preferences and subjects", "settings", () => app.openSettings()),
     C("go-back", "Go to", "Go back", "To the previous page", "arrow_left", () => app.goBack(), `${mod}[`),
     C("go-forward", "Go to", "Go forward", "To the next page", "arrow_right", () => app.goForward(), `${mod}]`),
@@ -98,11 +99,14 @@ export function paletteCommands(app) {
 }
 
 function openShortcuts() {
-  const rows = [["Command palette", `${mod} S`], ["Search pages", `${mod} P`], ["New page", `${mod} N`], ["Insert a block", "/"], ["Mention a page or date", "@"], ["Ask AI on a blank line", "Space"], ["Toggle sidebar", `${mod} \\`], ["Toggle tools panel", `${mod} ⇧ \\`], ["Chat panel", "⌃ ⇧ J"], ["Calculator", "⌃ ⇧ K"], ["Web browser", "⌃ ⇧ B"], ["Comments", "⌃ ⇧ M"], ["Bold, italic, underline", `${mod} B / I / U`], ["Undo, redo", `${mod} Z / ⇧ ${mod} Z`], ["Back, forward", `${mod} [ / ]`], ["Close tab", `${mod} W`]];
+  const rows = [...SHORTCUTS.map(([id, label]) => [label, shortcutLabel(id)]), ["Insert a block", "/"], ["Mention a page or date", "@"], ["Ask AI on a blank line", "Space"], ["Chat panel", "⌃ ⇧ J"], ["Calculator", "⌃ ⇧ K"], ["Web browser", "⌃ ⇧ B"], ["Comments", "⌃ ⇧ M"], ["Bold, italic, underline", `${mod} B / I / U`], ["Undo, redo", `${mod} Z / ⇧ ${mod} Z`]];
   modal({ title: "Keyboard shortcuts", width: 460, body: el("div", { class: "cp-shortcuts" }, rows.map(([label, keys]) => el("div", { class: "cp-srow" }, el("span", { text: label }), el("kbd", { text: keys })))) });
 }
 
-export function openCommandPalette(app) {
+/* `mount` is used by the welcome tour. It is deliberately the same command
+   palette, command data and keyboard behavior, simply constrained to the
+   tour's preview column instead of being pushed into a screen-wide layer. */
+export function openCommandPalette(app, { mount = null, onOpen = null } = {}) {
   const commands = paletteCommands(app);
   const recent = readRecent();
   let query = "";
@@ -112,7 +116,7 @@ export function openCommandPalette(app) {
 
   const input = el("input", { class: "cp-input", type: "text", placeholder: "Type a command or search your pages…", "aria-label": "Command palette", spellcheck: "false", autocomplete: "off" });
   const list = el("div", { class: "cp-list", role: "listbox" });
-  const node = el("div", { class: "cp", role: "dialog", "aria-modal": "true", "aria-label": "Command palette" },
+  const node = el("div", { class: `cp${mount ? " cp-embedded" : ""}`, role: "dialog", "aria-modal": mount ? "false" : "true", "aria-label": "Command palette" },
     el("div", { class: "cp-field" }, icon("search", 16), input, el("kbd", { class: "cp-esc", text: "esc" })),
     list,
     el("div", { class: "cp-foot" }, el("span", {}, el("kbd", { text: "↑" }), el("kbd", { text: "↓" }), " move"), el("span", {}, el("kbd", { text: "↵" }), " run"), el("span", { class: "cp-count" })));
@@ -138,7 +142,11 @@ export function openCommandPalette(app) {
     shown = compute();
     active = Math.min(active, Math.max(0, shown.length - 1));
     clear(list);
-    if (!shown.length) list.append(el("div", { class: "cp-empty", text: `Nothing matches "${query}"` }));
+    if (!shown.length) {
+      list.append(el("div", { class: "cp-empty" },
+        el("span", { text: `Nothing matches "${query}"` }),
+        el("button", { class: "cp-ask-ai", type: "button", onclick: () => askClyra() }, icon("sparkle", 14), "Ask Clyra instead")));
+    }
     let lastGroup = null;
     shown.forEach((c, index) => {
       if (c.group !== lastGroup) { lastGroup = c.group; list.append(el("div", { class: "cp-head" }, el("span", { text: c.group }))); }
@@ -160,16 +168,32 @@ export function openCommandPalette(app) {
     setTimeout(() => { try { const result = command.run(); if (result?.catch) result.catch((error) => toast(error?.message || "That did not work")); } catch (error) { toast(error?.message || "That did not work"); } }, 60);
   };
 
+  const askClyra = () => {
+    const prompt = query.trim();
+    if (!prompt) return;
+    /* Capture this before navigating away from a page tab. */
+    const pageId = app.currentPageId?.() || null;
+    entry.close("ask-ai");
+    setTimeout(() => {
+      app.openView({ kind: "chat" });
+      requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("clyra:prefill-chat", { detail: { prompt, pageId, sendNow: true } })));
+    }, 70);
+  };
+
   input.addEventListener("input", () => { query = input.value; active = 0; paint(); });
   input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); active = Math.min(active + 1, shown.length - 1); markActive(); }
     else if (event.key === "ArrowUp") { event.preventDefault(); active = Math.max(active - 1, 0); markActive(); }
-    else if (event.key === "Enter") { event.preventDefault(); if (shown[active]) run(shown[active]); }
+    else if (event.key === "Enter") { event.preventDefault(); if (shown[active]) run(shown[active]); else askClyra(); }
     else if (event.key === "Escape") { event.preventDefault(); entry.close("escape"); }
   });
 
-  entry = pushLayer(node, { scrim: true });
+  entry = mount
+    ? { close: () => node.remove() }
+    : pushLayer(node, { scrim: true });
+  if (mount) mount.append(node);
   paint();
+  onOpen?.(entry);
   requestAnimationFrame(() => input.focus());
   return entry;
 }

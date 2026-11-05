@@ -5,8 +5,8 @@
    uses. Generating them here rather than drawing an approximation means a
    preview cannot describe a page the template does not actually produce.
 
-   Usage:  node tools/notes-template-shots.mjs [--url http://localhost:3060] [--only id,id]
-   The dev server must already be running (npm run dev:source). */
+   Usage:  node tools/notes-template-shots.mjs [--url http://localhost:3000] [--only id,id]
+   The dev server must already be running (npm run dev). */
 import { chromium } from "playwright";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -19,17 +19,34 @@ const arg = (name, fallback) => {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : fallback;
 };
-const base = (arg("url", process.env.NOTES_URL || "http://localhost:3060")).replace(/\/$/, "");
+const base = (arg("url", process.env.NOTES_URL || "http://localhost:3000")).replace(/\/$/, "");
 
-/* The active registry is the source of truth. Read its ids rather than the
-   archived catalogue so previews can never silently be produced for retired
-   templates. */
+/* The active registry is the source of truth. Read the export list—not every
+   `id:` in this archival source file—so inactive definitions can never yield
+   public gallery captures. Avoid importing it here because the browser editor
+   module graph deliberately has a registry↔database cycle that Node cannot
+   initialise as a standalone preview utility. */
 async function templateIds() {
   const source = await readFile(path.join(root, "public", "notes", "js", "template-library-v2.js"), "utf8");
-  return [...source.matchAll(/\bid:\s*"([a-z0-9-]+)"/g)].map((match) => match[1]);
+  const active = source.match(/export const TEMPLATE_LIBRARY_V2\s*=\s*\[([\s\S]*?)\];/);
+  if (!active) throw new Error("Could not read the active template registry");
+  const names = [...active[1].matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((match) => match[1]);
+  return names.map((name) => {
+    const declaration = source.match(new RegExp(`const\\s+${name}\\s*=\\s*make\\(\\{\\s*id:\\s*"([a-z0-9-]+)"`));
+    if (!declaration) throw new Error(`Could not resolve active template ${name}`);
+    return declaration[1];
+  });
 }
 
 const FRAME = { width: 720, height: 500 };
+/* The gallery is a set of real viewports into the same rendered template:
+   opening context, the next useful section, and the working area further
+   down. These are captures of the actual page, never drawn stand-ins. */
+const VIEWS = [
+  { suffix: "", offset: 0 },
+  { suffix: "-detail", offset: 260 },
+  { suffix: "-workflow", offset: 520 },
+];
 
 async function main() {
   const only = arg("only", "");
@@ -52,15 +69,19 @@ async function main() {
       try {
         await page.goto(url, { waitUntil: "networkidle" });
         await page.waitForSelector("body[data-ready='true']", { timeout: 10_000 });
-        /* Clipped rather than full-page: the card only ever shows the top of
-           the document, and a 3000px tall image would be wasted bytes. */
-        const buffer = await page.screenshot({
-          clip: { x: 0, y: 0, width: FRAME.width, height: FRAME.height },
-          type: "png",
-        });
-        const file = path.join(outDir, `${id}${theme === "dark" ? "-dark" : ""}.png`);
-        await writeFile(file, buffer);
-        process.stdout.write(`  ${path.relative(root, file)}  ${(buffer.length / 1024).toFixed(0)} KB\n`);
+        const height = await page.evaluate(() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+        for (const view of VIEWS) {
+          /* Clamp short pages so their later gallery images remain truthful
+             captures rather than blank panels below the document. */
+          const y = Math.max(0, Math.min(view.offset, height - FRAME.height));
+          const buffer = await page.screenshot({
+            clip: { x: 0, y, width: FRAME.width, height: FRAME.height },
+            type: "png",
+          });
+          const file = path.join(outDir, `${id}${view.suffix}${theme === "dark" ? "-dark" : ""}.png`);
+          await writeFile(file, buffer);
+          process.stdout.write(`  ${path.relative(root, file)}  ${(buffer.length / 1024).toFixed(0)} KB\n`);
+        }
       } catch (error) {
         failures.push(`${id} (${theme}): ${error.message}`);
       }
@@ -74,7 +95,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`\nCaptured ${ids.length * 2} previews for ${ids.length} templates.`);
+  console.log(`\nCaptured ${ids.length * 2 * VIEWS.length} real views for ${ids.length} templates.`);
 }
 
 main().catch((error) => {

@@ -2,9 +2,7 @@
    which is why every template inherits the editor's behaviour for free.
 
    Previews are real screenshots of the page each template builds, captured by
-   tools/notes-template-shots.mjs from the same renderer the editor uses. A
-   drawn sketch stands in if a shot is missing, so the modal still works on a
-   checkout where the images have not been generated. */
+   tools/notes-template-shots.mjs from the same renderer the editor uses. */
 import { el, clear, icon, modal, toast, append } from "../dom.js";
 import { api } from "../api.js";
 import { refreshPages, withError } from "../state.js";
@@ -13,45 +11,7 @@ import { TEMPLATES, TEMPLATE_CATEGORIES, templateBlocks } from "../templates-dat
 
 export { TEMPLATES, TEMPLATE_CATEGORIES };
 
-const shotUrl = (template, theme) => `/notes/img/templates/${template.id}${theme === "dark" ? "-dark" : ""}.png`;
-
-/* Draws a template as a miniature page. Only used when a screenshot has not
-   been generated; it reads the same block tree the template inserts, so the
-   sketch cannot describe a page the template does not build. */
-function templateSketch(template) {
-  const sheet = el("div", { class: "tpl-sheet" });
-  sheet.append(el("div", { class: "tpl-title" }));
-  const draw = (blocks, depth = 0) => {
-    for (const block of blocks) {
-      if (sheet.childElementCount > 15) return;
-      if (["h1", "h2", "h3"].includes(block.type)) sheet.append(el("div", { class: `tpl-h ${block.type}` }));
-      else if (block.type === "table") {
-        const rows = block.props?.rows || [];
-        const columns = Math.max(2, rows[0]?.length || 2);
-        const grid = el("div", { class: "tpl-table", style: { gridTemplateColumns: `repeat(${columns}, 1fr)` } });
-        for (let index = 0; index < columns * Math.min(3, Math.max(2, rows.length)); index += 1) {
-          grid.append(el("div", { class: `tpl-cell${index < columns ? " head" : ""}` }));
-        }
-        sheet.append(grid);
-      } else if (block.type === "callout") {
-        sheet.append(el("div", { class: "tpl-callout" }, el("div", { class: "tpl-callout-dot" }), el("div", { class: "tpl-line w80" })));
-      } else if (block.type === "todo" || block.type === "exam_checklist") {
-        sheet.append(el("div", { class: "tpl-row" }, el("div", { class: "tpl-check" }), el("div", { class: "tpl-line w70" })));
-      } else if (["bulleted", "numbered", "toggle"].includes(block.type)) {
-        sheet.append(el("div", { class: "tpl-row" },
-          el("div", { class: `tpl-marker${block.type === "numbered" ? " num" : ""}` }),
-          el("div", { class: "tpl-line w60" })));
-      } else if (["quote", "study_summary", "objective"].includes(block.type)) {
-        sheet.append(el("div", { class: "tpl-quote" }, el("div", { class: "tpl-line w75" })));
-      } else if (block.type === "divider") sheet.append(el("div", { class: "tpl-divider" }));
-      else sheet.append(el("div", { class: "tpl-line w85" }));
-      if (block.children?.length && depth < 1) draw(block.children, depth + 1);
-    }
-  };
-  draw(template.blocks());
-  if (sheet.childElementCount === 1) sheet.append(el("div", { class: "tpl-empty-hint" }));
-  return sheet;
-}
+const shotUrl = (template, theme, view = "") => `/notes/img/templates/${template.id}${view}${theme === "dark" ? "-dark" : ""}.png`;
 
 export function templatePreview(template) {
   const canvas = el("div", {
@@ -60,17 +20,11 @@ export function templatePreview(template) {
   });
   const light = el("img", { class: "tpl-shot light", src: shotUrl(template, "light"), alt: "", loading: "lazy", decoding: "async" });
   const dark = el("img", { class: "tpl-shot dark", src: shotUrl(template, "dark"), alt: "", loading: "lazy", decoding: "async" });
-  /* One missing shot retires both, so a half-generated set can never show a
-     light screenshot inside a dark card. */
-  const fallback = () => {
-    if (canvas.classList.contains("sketching")) return;
-    canvas.classList.add("sketching");
-    light.remove();
-    dark.remove();
-    canvas.append(templateSketch(template));
-  };
-  light.addEventListener("error", fallback);
-  dark.addEventListener("error", fallback);
+  /* Never substitute a made-up miniature for a missing capture. A missing
+     capture stays obvious and is caught by the screenshot verification job. */
+  const missing = () => canvas.classList.add("missing-shot");
+  light.addEventListener("error", missing);
+  dark.addEventListener("error", missing);
   append(canvas, light, dark);
   return canvas;
 }
@@ -82,7 +36,58 @@ const CATEGORY_ICONS = {
   "Work & Business": "template",
   "Life & Finance": "bookmark",
   "Dashboards & Knowledge": "page",
+  "Résumés & Cover Letters": "page",
+  "Official Documents": "template",
 };
+
+/* Built-in templates are intentionally recognisable at a glance. These are
+   app icons, not decorative cover banners, so they remain quiet beside real
+   screenshots and retain their meaning in compact lists. */
+const CATEGORY_EMOJI = {
+  "Study & Education": "📘",
+  "Planning & Productivity": "🗓️",
+  "Work & Business": "💼",
+  "Life & Finance": "🔖",
+  "Dashboards & Knowledge": "🧠",
+  "Résumés & Cover Letters": "📄",
+  "Official Documents": "📑",
+};
+
+/* The gallery should help a person understand the actual working surface
+   before they create it. These labels are derived from the template's real
+   editable blocks and database views — never from a decorative mockup. */
+function templateSignals(template, limit = 4) {
+  const types = new Set();
+  const walk = (blocks = []) => blocks.forEach((block) => {
+    types.add(block.type);
+    walk(block.children || []);
+  });
+  walk(template.blocks?.() || []);
+  const databases = template.databases || [];
+  const viewTypes = new Set(databases.flatMap((database) => (database.views || []).map((view) => view.type)));
+  const relations = databases.flatMap((database) => database.properties || []).some((property) => property.type === "relation");
+  const signals = [];
+  if (databases.length) signals.push({ icon: "table", label: `${databases.length} ${databases.length === 1 ? "database" : "databases"}` });
+  if (relations) signals.push({ icon: "link", label: "Linked records" });
+  if (viewTypes.has("board")) signals.push({ icon: "template", label: "Board view" });
+  if (viewTypes.has("calendar")) signals.push({ icon: "calendar", label: "Calendar view" });
+  if (viewTypes.has("timeline")) signals.push({ icon: "timeline", label: "Timeline" });
+  if (viewTypes.has("gallery")) signals.push({ icon: "cards", label: "Gallery view" });
+  if (types.has("todo")) signals.push({ icon: "check_square", label: "Checklist" });
+  if (types.has("table")) signals.push({ icon: "table", label: "Editable table" });
+  if (types.has("columns")) signals.push({ icon: "template", label: "Structured layout" });
+  if (types.has("toggle")) signals.push({ icon: "chevron_right", label: "Folded guidance" });
+  if (types.has("callout")) signals.push({ icon: "callout", label: "Quick guidance" });
+  if (types.has("h2")) signals.push({ icon: "list", label: "Guided sections" });
+  return signals.slice(0, limit);
+}
+
+function signalRow(template, className = "") {
+  const signals = templateSignals(template);
+  if (!signals.length) return null;
+  return el("div", { class: `as-signals ${className}`.trim(), "aria-label": "Template contents" },
+    signals.map(({ icon: glyph, label }) => el("span", { class: "as-signal" }, icon(glyph, 12), el("span", { text: label }))));
+}
 
 /* App Store style "Get" control: a pill that collapses into a progress ring while the page is created, then
    reopens as "Open". Clicking Open takes the reader to the new page. */
@@ -114,9 +119,7 @@ function appIcon(template, size = 44) {
   return el("span", {
     class: "as-icon", "aria-hidden": "true",
     style: { width: `${size}px`, height: `${size}px`, "--tpl-accent": template.accent || "#2383e2" },
-  }, template.emoji
-    ? el("span", { class: "as-emoji", style: { fontSize: `${Math.round(size * 0.52)}px` }, text: template.emoji })
-    : icon(template.icon || "page", Math.round(size * 0.46)));
+  }, el("span", { class: "as-emoji", style: { fontSize: `${Math.round(size * 0.52)}px` }, text: template.emoji || CATEGORY_EMOJI[template.category] || "📝" }));
 }
 
 /* The gallery as a page of the workspace, where notes are shown, rather than a pop-up over one. */
@@ -142,10 +145,16 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     const started = Date.now();
     if (template.databases?.length) {
       /* some of these pages hold databases: they are made inside the page and shown in place */
-      const made = await createFromTemplate(app, template, parentId || null, { open: false });
+      let made = null;
+      try {
+        made = await createFromTemplate(app, template, parentId || null, { open: false });
+      } catch (error) {
+        console.error("Template creation failed", error);
+      }
       await new Promise((resolve) => setTimeout(resolve, Math.max(0, 900 - (Date.now() - started))));
       state.busy.delete(template.id);
       if (made) { state.created.set(template.id, made.pageId); await refreshPages(); toast(`${template.name} is ready`); }
+      else toast(`Could not create ${template.name}. Nothing was added.`);
       repaintButtons();
       return;
     }
@@ -176,24 +185,90 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     app.openPage(id);
   };
 
+  /* This is a read-only, rendered capture from the same page renderer used
+     to create the template. It gives the person a proper look before Get,
+     without accidentally creating a mutable note. */
+  const preview = (template) => {
+    const image = el("img", { class: "as-live-preview-shot", src: shotUrl(template, "light"), alt: `${template.name} template preview` });
+    modal({
+      title: `${template.name} preview`, width: 1600, className: "as-live-preview-modal fullscreen-modal",
+      body: el("div", { class: "as-live-preview" }, image, el("p", { class: "as-live-preview-note", text: "Preview only — choose Get to create an editable copy in your workspace." })),
+    });
+  };
+
   const showDetail = (template) => { detail = template; paint(); };
 
   const detailScreen = (template) => {
     const back = el("button", { class: "as-detail-back", type: "button", onclick: () => { detail = null; paint(); } }, icon("chevron_left", 15), "Back");
-    const shots = el("div", { class: "as-detail-shots", "aria-label": `${template.name} previews` },
-      el("div", { class: "as-detail-shot hero" }, templatePreview(template)),
-      el("div", { class: "as-detail-shot" }, templatePreview(template)),
-      el("div", { class: "as-detail-shot" }, templatePreview(template)));
+    const slides = [
+      ["Overview", "The opening view", ""],
+      ["Details", "The next section of this real page", "-detail"],
+      ["Workflow", "The working area further down the same page", "-workflow"],
+    ];
+    const shots = el("div", { class: "as-detail-gallery", "aria-label": `${template.name} previews` });
+    const track = el("div", { class: "as-detail-shots", role: "region", tabindex: "0", "aria-label": "Template preview carousel" });
+    const figures = slides.map(([label, note, view]) => el("figure", { class: "as-detail-shot" },
+      (() => {
+        const canvas = el("div", { class: "tpl-preview", "aria-hidden": "true" });
+        canvas.append(
+          el("img", { class: "tpl-shot light", src: shotUrl(template, "light", view), alt: "", decoding: "async" }),
+          el("img", { class: "tpl-shot dark", src: shotUrl(template, "dark", view), alt: "", decoding: "async" }),
+        );
+        return canvas;
+      })(),
+      el("figcaption", {}, el("strong", { text: label }), el("span", { text: note }))
+    ));
+    figures.forEach((figure) => track.append(figure));
+    let activeSlide = 0;
+    let previousArrow = null;
+    let nextArrow = null;
+    let dots = [];
+    const setActive = (next, { move = false } = {}) => {
+      activeSlide = Math.max(0, Math.min(figures.length - 1, next));
+      figures.forEach((figure, position) => figure.classList.toggle("is-active", position === activeSlide));
+      if (previousArrow) previousArrow.hidden = activeSlide === 0;
+      if (nextArrow) nextArrow.hidden = activeSlide === figures.length - 1;
+      dots.forEach((dot, position) => {
+        const current = position === activeSlide;
+        dot.classList.toggle("is-active", current);
+        dot.setAttribute("aria-current", current ? "true" : "false");
+      });
+      if (move) figures[activeSlide]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    };
+    nextArrow = el("button", { class: "as-gallery-arrow as-gallery-next", type: "button", "aria-label": "Next preview", onclick: () => setActive(activeSlide + 1, { move: true }) }, icon("chevron_right", 17));
+    previousArrow = el("button", { class: "as-gallery-arrow as-gallery-prev", type: "button", "aria-label": "Previous preview", onclick: () => setActive(activeSlide - 1, { move: true }) }, icon("chevron_left", 17));
+    const dotRow = el("div", { class: "as-gallery-dots", role: "tablist", "aria-label": "Preview position" });
+    dots = figures.map((_, position) => el("button", {
+      class: "as-gallery-dot", type: "button", role: "tab",
+      "aria-label": `Show preview ${position + 1} of ${figures.length}`,
+      onclick: () => setActive(position, { move: true }),
+    }));
+    dots.forEach((dot) => dotRow.append(dot));
+    track.addEventListener("scroll", () => {
+      const centre = track.getBoundingClientRect().left + track.clientWidth / 2;
+      let nearest = 0; let distance = Infinity;
+      figures.forEach((figure, position) => { const box = figure.getBoundingClientRect(); const delta = Math.abs(box.left + box.width / 2 - centre); if (delta < distance) { nearest = position; distance = delta; } });
+      setActive(nearest);
+    }, { passive: true });
+    track.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight") { event.preventDefault(); setActive(activeSlide + 1, { move: true }); }
+      if (event.key === "ArrowLeft") { event.preventDefault(); setActive(activeSlide - 1, { move: true }); }
+    });
+    setActive(0);
+    shots.append(track, previousArrow, nextArrow, dotRow);
     return el("article", { class: "as-detail", style: { "--tpl-accent": template.accent || "var(--accent)" } },
       back,
       el("header", { class: "as-detail-head" },
         appIcon(template, 72),
         el("div", { class: "as-detail-title" }, el("h2", { text: template.name }), el("p", { text: `${template.category} · Clyra template` })),
-        getButton(template, state, create, open, { large: true })),
+        el("div", { class: "as-detail-actions" },
+          el("button", { class: "as-preview-button", type: "button", onclick: () => preview(template) }, icon("page", 14), "Preview"),
+          getButton(template, state, create, open, { large: true }))),
       shots,
       el("section", { class: "as-detail-copy" },
         el("h3", { text: "About this template" }),
         el("p", { text: template.desc }),
+        signalRow(template, "as-detail-signals"),
         el("p", { class: "as-detail-note", text: "Preview before adding it. Nothing is created until you press Get." })));
   };
 
@@ -211,6 +286,7 @@ export function openTemplates(app, parentId, { host = null } = {}) {
           el("span", { class: "as-name", text: template.name }),
           el("span", { class: "as-sub", text: template.desc })),
         getButton(template, state, create, open)),
+      signalRow(template, "as-card-signals"),
     );
     return node;
   };

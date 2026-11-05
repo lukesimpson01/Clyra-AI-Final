@@ -329,8 +329,8 @@ button.wl-task-btn:hover .wl-task-go { opacity: 1; transform: none; }
 /* ---- every step: instructions on the left with the checklist under them; a demo, when there is one, on the right ---- */
 .wl-main.solo, .wl-main.centered { grid-template-columns: minmax(0, 520px); justify-content: center; }
 .wl-main.solo .wl-side, .wl-main.centered .wl-side { display: none; }
-.wl-main.centered .wl-copy { max-width: none; align-items: flex-start; text-align: left; }
-.wl-main.centered .wl-text { max-width: none; margin-bottom: 20px; }
+.wl-main.centered .wl-copy { max-width: none; align-items: center; text-align: center; }
+.wl-main.centered .wl-text { max-width: 470px; margin-bottom: 20px; }
 .wl-copy { gap: 0; } .wl-kicker { margin-bottom: 14px; }
 .wl-title { font-size: 42px; margin-bottom: 14px; }
 .wl-text { font-size: 17px; line-height: 1.55; margin-bottom: 18px; max-width: 420px; }
@@ -360,7 +360,7 @@ button.wl-task-btn { cursor: pointer; }
 @container (max-width: 900px) { .wl-main.solo, .wl-main.centered { grid-template-columns: minmax(0, 1fr); } .wl-title { font-size: 30px; } .wl-root.is-intro .wl-title.hero { font-size: 64px; } .wl-root.is-intro .wl-wave { font-size: 84px; } .wl-root.is-intro .wl-text.hero { font-size: 19px; } .wl-root.is-intro .wl-press { font-size: 16px; } .wl-actions.wl-under { max-width: none; } }
 
 .wl-top { min-height: 56px; box-sizing: border-box; }
-.wl-main.centered .wl-kicker, .wl-main.centered .wl-tips { align-self: flex-start; text-align: left; }
+.wl-main.centered .wl-kicker, .wl-main.centered .wl-tips { align-self: center; text-align: center; }
 
 /* the sidebar button sits on its own row under the progress bar, top right, and glows until it is pressed */
 .wl-railrow { position: absolute; top: 62px; right: 40px; z-index: 5; }
@@ -394,6 +394,11 @@ button.wl-task-btn { cursor: pointer; }
 .wl-stage .cp.cp-embedded { position: absolute; left: 50%; right: auto; top: 50%; width: min(360px, calc(100% - 40px)); max-height: min(390px, calc(100% - 24px)); transform: translate(-50%, -50%); z-index: 1; }
 .wl-stage .cp.cp-embedded .cp-list { max-height: 265px; }
 .wl-stage .cp.cp-embedded .cp-option { min-height: 33px; }
+.wl-stage .cp.cp-tour-readonly { user-select: none; }
+.wl-stage .cp-tour-readonly .cp-option { cursor: default; }
+.wl-stage .cp-tour-readonly .cp-option:hover { background: transparent; }
+.cp-tour-query { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.cp-tour-foot { justify-content: center; color: var(--text-tertiary); font-size: 11px; }
 @keyframes wl-cp-embedded-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(.985); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 .wl-stage .cp.cp-embedded { animation: wl-cp-embedded-in 180ms var(--wl-ease) both; }
 
@@ -415,7 +420,7 @@ button.wl-task-btn { cursor: pointer; }
    belongs to the tour; only the real setup surface gets elevation. */
 .wl-study-flow { width: min(390px, calc(100% - 32px)); margin: auto; padding: 18px; border-radius: 14px; background: var(--background-main); box-shadow: 0 14px 34px rgba(24,39,60,.1), 0 0 0 1px rgba(42,28,0,.08); box-sizing: border-box; animation: wl-study-in 260ms var(--wl-ease) both; }
 @keyframes wl-study-in { from { opacity: 0; transform: translateY(8px) scale(.985); } }
-.wl-study-flow.is-switching { opacity: .45; transform: translateY(-4px); transition: opacity 160ms ease, transform 160ms var(--wl-ease); }
+.wl-study-flow.is-switching { opacity: 1; transform: translateY(-2px) scale(.992); transition: transform 160ms var(--wl-ease); }
 .wl-study-flow-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--text-primary); font-size: 14px; font-weight: 600; }
 .wl-study-flow-head svg { color: var(--wl-blue); }.wl-study-hint { margin: -4px 0 12px; color: var(--text-secondary); font-size: 12.5px; }
 .wl-study-note { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; margin: 5px 0; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background-color 140ms ease, transform 160ms var(--wl-ease); }
@@ -585,6 +590,43 @@ button.wl-task-btn { cursor: pointer; }
 .wl-finish-emoji { font-size: 64px; }
 .wl-celebrate-emoji { font-size: 52px; }
 
+/* Terminal lesson — compact, tangible, and intentionally distinct from the
+   command palette. It is a small terminal window at the same scale as the
+   other right-hand previews, with the production drawer available underneath
+   for real commands. */
+.wl-terminal-preview {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 0;
+  width: min(100%, 430px); min-height: 250px; overflow: hidden;
+  border: 1px solid rgba(30, 32, 36, .14); border-radius: 14px;
+  background: #fbfbfc; box-shadow: 0 18px 42px rgba(15, 23, 42, .09);
+  opacity: .58; transform: translateY(7px) scale(.985);
+  transition: opacity 260ms ease, transform 360ms var(--wl-spring), box-shadow 360ms ease;
+}
+.wl-terminal-preview.is-open { opacity: 1; transform: none; box-shadow: 0 20px 46px rgba(15, 23, 42, .12); }
+.wl-terminal-head { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 8px 0 10px; border-bottom: 1px solid rgba(0,0,0,.06); background: #fff; }
+.wl-terminal-tabs { display: flex; align-items: center; gap: 3px; min-width: 0; flex: 1; overflow: hidden; }
+.wl-terminal-tab, .wl-terminal-new, .wl-terminal-open, .wl-terminal-rename-button { border: 0; font: inherit; cursor: pointer; }
+.wl-terminal-tab { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 116px; height: 25px; padding: 0 8px; border-radius: 7px; background: transparent; color: #73757a; font-size: 11.5px; transition: background 150ms ease, color 150ms ease; }
+.wl-terminal-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-terminal-tab:hover, .wl-terminal-tab.active { background: rgba(0,0,0,.055); color: #282a2f; }
+.wl-terminal-new { display: grid; place-items: center; flex: none; width: 25px; height: 25px; border-radius: 7px; background: transparent; color: #74767c; transition: background 150ms ease, color 150ms ease; }
+.wl-terminal-new:hover { background: rgba(0,0,0,.06); color: #282a2f; }
+.wl-terminal-open { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 26px; padding: 0 9px; border-radius: 7px; background: rgba(35,131,226,.1); color: #176ab8; font-size: 11.5px; font-weight: 600; transition: background 160ms ease, transform 180ms var(--wl-spring); }
+.wl-terminal-open:hover { background: rgba(35,131,226,.16); transform: translateY(-1px); }
+.wl-terminal-output { min-height: 116px; padding: 12px 13px; overflow: auto; background: #fcfcfd; color: #303238; font: 12px/1.58 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.wl-terminal-muted { color: #96989d; }
+.wl-terminal-prompt, .wl-terminal-line b { color: #177444; font-weight: 600; }
+.wl-terminal-line { margin-top: 5px; animation: wl-terminal-line 230ms var(--wl-spring) both; }
+.wl-terminal-result { margin: 2px 0 0 2px; color: #8a8c92; animation: wl-terminal-line 260ms var(--wl-spring) both; }
+@keyframes wl-terminal-line { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.wl-terminal-entry { display: flex; align-items: center; gap: 7px; min-height: 37px; padding: 0 13px; border-top: 1px solid rgba(0,0,0,.06); background: #fff; color: #177444; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.wl-terminal-input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #292b30; font: inherit; }
+.wl-terminal-input::placeholder { color: #aaaeb4; }
+.wl-terminal-input:disabled { cursor: not-allowed; }
+.wl-terminal-rename-button { justify-self: start; margin: 8px 10px 10px; padding: 0; background: transparent; color: #74767c; font-size: 11.5px; text-decoration: underline; text-underline-offset: 3px; }
+.wl-terminal-rename-button:hover { color: #24262b; }
+.wl-terminal-rename { width: 76px; border: 0; outline: 0; background: transparent; color: #292b30; font: inherit; font-size: 11.5px; }
+
 /* The initial Space action is an invitation, not a permanent primary button.
    It becomes a quiet grey pill only while someone is pointing at it. */
 .wl-intro-actions .wl-press {
@@ -606,6 +648,42 @@ button.wl-task-btn { cursor: pointer; }
 .wl-sd-menu--real .wl-sd-row.on, .wl-sd-menu--real .wl-sd-row:hover { background: rgba(35, 131, 226, .1); }
 .wl-stage .cp.cp-embedded { border-color: rgba(55, 53, 47, .15); background: color-mix(in srgb, var(--background-main) 98%, white); box-shadow: 0 18px 38px rgba(24, 39, 60, .15), 0 2px 6px rgba(24, 39, 60, .06); }
 .wl-stage .cp.cp-embedded .cp-option { color: var(--text-primary); }
+
+/* Selection lesson: a quiet editable line and the same compact floating
+   formatting vocabulary used in Notes. The toolbar never occupies space
+   until an actual browser selection is present. */
+.wl-selection-demo { position: relative; display: grid; place-content: center; gap: 16px; min-height: 100%; padding: 34px; box-sizing: border-box; }
+.wl-selection-copy { width: min(100%, 500px); margin: 0; padding: 0; color: var(--text-primary); font-size: clamp(19px, 2vw, 25px); font-weight: 500; line-height: 1.42; outline: 0; caret-color: var(--accent); }
+.wl-selection-copy::selection { color: inherit; background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.wl-selection-toolbar-slot { width: min(100%, 680px); min-height: 48px; }
+.wl-selection-toolbar { position: static; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; width: min(100%, 680px); min-height: 38px; box-sizing: border-box; padding: 4px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--background-menu); box-shadow: 0 14px 35px rgba(26, 30, 38, .13), 0 2px 8px rgba(26, 30, 38, .08); animation: wl-selection-in 180ms var(--wl-ease) both; }
+.wl-selection-toolbar[hidden] { display: none; }
+.wl-selection-toolbar .icon-button { width: 28px; height: 28px; border-radius: 8px; }
+.wl-selection-toolbar .icon-button:hover { background: var(--background-hover); }
+.wl-selection-toolbar .text-button { height: 28px; }
+.wl-selection-toolbar .toolbar-colour { position: relative; overflow: visible; }
+.wl-selection-toolbar .toolbar-colour::after { content: ""; position: absolute; right: 6px; bottom: 4px; left: 6px; height: 2px; border-radius: 99px; background: var(--text-primary); }
+.wl-selection-toolbar .toolbar-colour-highlight::after { background: #f1d677; }
+.wl-selection-toolbar .toolbar-colour-letter { font: 600 18px/1 var(--font-ui); letter-spacing: -.04em; }
+.wl-selection-toolbar .wl-attention { animation: wl-soft-attention 2.2s ease-in-out infinite; }
+@keyframes wl-soft-attention { 0%, 100% { background: rgba(55, 53, 47, .025); color: var(--text-secondary); } 50% { background: rgba(55, 53, 47, .13); color: var(--text-primary); } }
+.wl-selection-ask { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--accent-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.wl-selection-ask:hover { background: var(--background-hover); }
+.wl-selection-sep { width: 1px; height: 18px; margin: 0 2px; background: var(--border-soft); }
+.wl-selection-hint { color: var(--text-tertiary); font-size: 13px; transition: color 160ms ease; }
+.wl-selection-demo.selected .wl-selection-hint { color: var(--accent-text); }
+@keyframes wl-selection-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .wl-selection-toolbar, .wl-selection-toolbar .wl-attention { animation: none; } }
+
+/* Terminal lesson has only one source of truth: the live drawer at the bottom
+   of the page. This compact launch card is explanatory, not a lookalike. */
+.wl-terminal-stage-note { display: inline-flex; align-items: center; gap: 9px; max-width: 360px; margin: auto; padding: 10px 13px; border-radius: 10px; color: var(--text-secondary); background: var(--background-subtle); font-size: 13px; line-height: 1.45; }
+.wl-terminal-stage-note svg { flex: none; color: var(--accent-text); }
+.wl-terminal-launch { display: grid; justify-items: start; align-content: center; gap: 10px; min-height: 230px; max-width: 390px; margin: 0 auto; padding: 28px; box-sizing: border-box; border: 1px solid var(--border-soft); border-radius: 18px; background: var(--background-main); box-shadow: 0 14px 34px rgba(26,30,38,.08); }
+.wl-terminal-launch-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; background: var(--background-subtle); color: var(--text-primary); }
+.wl-terminal-launch strong { color: var(--text-primary); font-size: 16px; letter-spacing: -.01em; }
+.wl-terminal-launch p { margin: 0; color: var(--text-secondary); font-size: 13.5px; line-height: 1.5; }
+.wl-terminal-launch .wl-terminal-open { margin-top: 6px; }
 
 /* A slightly faster flashcard demo has an unmistakable, continuously moving
    sheen on only the active step; completed and waiting steps stay still. */

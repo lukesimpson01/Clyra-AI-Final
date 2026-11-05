@@ -13,7 +13,7 @@ import { executeBlock, isExecutable, isPreviewable, runnerLabel } from "./runner
 import { detectCodeLanguage, solveMath, evaluateMathFunction } from "./smart-input.js";
 import {
   insertSpans, renderSpans, readSpans, plain, spansText, spansLength, sliceSpans, applyMark,
-  markState, caretOffset, setCaret, selectionRangeIn, normalizeSpans, replaceRange,
+  markState, caretOffset, setCaret, selectionRangeIn, selectionRectIn, normalizeSpans, replaceRange,
 } from "./richtext.js";
 import {
   BLOCK_TYPES, TEXT_BLOCKS, CONTAINER_BLOCKS, LIST_BLOCKS, HEADINGS,
@@ -78,6 +78,12 @@ export class Editor {
     this.historyTimer = null;
     this.lastColourCategory = null;
     this.typingBurst = false;
+    this.focusTimers = new Map();
+    /* Composition owns the editable DOM until it finishes. Repainting or
+       applying shortcuts mid-composition is the common cause of duplicate
+       characters, broken IME candidates, and a jumping caret. */
+    this.composingLines = new WeakSet();
+    this.codeHighlightTimers = new Map();
     this.baseline = cloneTree(this.blocks);
     this.container = el("div", { class: "blocks" });
     this.dropIndicator = null;
@@ -174,6 +180,11 @@ export class Editor {
     const node = el("div", { class: "block", "data-block": block.id, "data-type": block.type });
     if (block.props?.tc) node.dataset.tc = block.props.tc;
     if (block.props?.bg) node.dataset.bg = block.props.bg;
+    /* Template-only hooks keep specialised document structure local to the
+       page that needs it; they do not change the editor's default typography
+       or layout. */
+    if (block.props?.templateStyle) node.dataset.templateStyle = block.props.templateStyle;
+    if (block.props?.templateRole) node.dataset.templateRole = block.props.templateRole;
     node.__type = block.type;
     node.__block = block;
 
@@ -257,6 +268,7 @@ export class Editor {
     if (block.type === "source") { append(content, this.renderSource(block)); return { leading }; }
     if (block.type === "transcript") { append(content, this.renderTranscript(block)); return { leading }; }
     if (block.type === "exam_checklist") { append(content, this.renderChecklistHeader(block)); return { leading }; }
+    if (block.type === "focus_timer") { append(content, this.renderFocusTimer(block)); return { leading }; }
 
     /* ---- text bearing blocks ---- */
     if (block.type === "numbered") leading.push(el("div", { class: "block-marker", text: "1." }));
@@ -272,7 +284,7 @@ export class Editor {
           box.setAttribute("aria-checked", block.props.checked ? "true" : "false");
           this.commit("todo");
         },
-      }, icon("check_square", 11));
+      }, icon("check", 13));
       if (block.props?.checked) node.classList.add("done");
       leading.push(box);
     }
@@ -312,7 +324,8 @@ export class Editor {
       return { leading };
     }
     if (block.type === "code") {
-      const wrapper = el("div", { class: "code-block" },
+      const codeWidth = Number(block.props?.width);
+      const wrapper = el("div", { class: "code-block", style: codeWidth ? { width: `${Math.max(28, Math.min(100, codeWidth))}%` } : {} },
         el("button", {
           class: "code-lang", type: "button",
           onclick: (event) => menu(event.currentTarget, CODE_LANGUAGES.map((language) => ({
@@ -336,6 +349,7 @@ export class Editor {
         ),
         line,
       );
+      if (!this.readOnly) this.addMediaResizeHandle(wrapper, block);
       append(content, wrapper);
       return { leading };
     }
@@ -366,6 +380,43 @@ export class Editor {
        block-level annotation used by equations and study panels. */
     append(content, line, block.type === "text" ? this.buildSmartInlineAnswer(block) : this.buildSmartAnswer(block));
     return { leading };
+  }
+
+  renderFocusTimer(block) {
+    const minutes = Math.max(1, Number(block.props?.minutes) || 25);
+    const readRemaining = () => block.props?.running && block.props?.endsAt
+      ? Math.max(0, Math.ceil((Number(block.props.endsAt) - Date.now()) / 1000))
+      : Math.max(0, Number(block.props?.remaining ?? minutes * 60));
+    const label = el("strong", { class: "focus-timer-clock", text: "" });
+    const stateLabel = el("span", { class: "focus-timer-state", text: "" });
+    const start = el("button", { class: "focus-timer-action", type: "button" });
+    const reset = el("button", { class: "focus-timer-reset", type: "button", text: "Reset" });
+    const paint = () => {
+      const remaining = readRemaining();
+      label.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+      stateLabel.textContent = block.props?.running ? "Focusing" : remaining === minutes * 60 ? "Ready" : "Paused";
+      start.textContent = block.props?.running ? "Pause" : remaining ? "Start" : "Start again";
+      if (block.props?.running && !remaining) {
+        block.props = { ...block.props, running: false, endsAt: null, remaining: minutes * 60 };
+        this.commit("focus-complete");
+        toast("Focus session complete");
+      }
+    };
+    const stop = () => { const timer = this.focusTimers.get(block.id); if (timer) clearInterval(timer); this.focusTimers.delete(block.id); };
+    const ensureTicking = () => {
+      stop();
+      if (block.props?.running) this.focusTimers.set(block.id, setInterval(() => { paint(); if (!block.props?.running) stop(); }, 500));
+    };
+    start.addEventListener("click", () => {
+      const remaining = readRemaining() || minutes * 60;
+      block.props = block.props?.running
+        ? { ...block.props, running: false, endsAt: null, remaining }
+        : { ...block.props, running: true, endsAt: Date.now() + remaining * 1000, remaining };
+      ensureTicking(); paint(); this.commit("focus-timer");
+    });
+    reset.addEventListener("click", () => { block.props = { ...block.props, running: false, endsAt: null, remaining: minutes * 60 }; stop(); paint(); this.commit("focus-reset"); });
+    paint(); ensureTicking();
+    return el("section", { class: "focus-timer", "aria-label": "Focus timer" }, el("span", { class: "focus-timer-kicker", text: `${minutes}-minute session` }), label, stateLabel, el("div", { class: "focus-timer-actions" }, start, reset));
   }
 
   /* A calculation is presented as a local result rather than silently
@@ -451,12 +502,26 @@ export class Editor {
     });
     this.paint(line, block);
     line.__block = block;
+    const onCompositionStart = () => this.composingLines.add(line);
+    const onCompositionEnd = () => {
+      this.composingLines.delete(line);
+      if (block.type === "code") this.onCodeInput(block, line, { settled: true });
+      else this.onInput(block, line, { settled: true });
+    };
+    line.addEventListener("compositionstart", onCompositionStart);
+    line.addEventListener("compositionend", onCompositionEnd);
     if (block.type === "code") {
-      line.addEventListener("input", () => this.onCodeInput(block, line));
+      line.addEventListener("input", (event) => {
+        if (event.isComposing || this.composingLines.has(line)) return;
+        this.onCodeInput(block, line);
+      });
       line.addEventListener("keydown", (event) => this.onCodeKeyDown(event, block, line));
-      line.addEventListener("blur", () => this.closeCompletions());
+      line.addEventListener("blur", () => { this.flushCodeHighlight(block, line); this.closeCompletions(); });
     } else {
-      line.addEventListener("input", () => this.onInput(block, line));
+      line.addEventListener("input", (event) => {
+        if (event.isComposing || this.composingLines.has(line)) return;
+        this.onInput(block, line);
+      });
       line.addEventListener("keydown", (event) => this.onKeyDown(event, block, line));
     }
     line.addEventListener("paste", (event) => this.onPaste(event, block, line));
@@ -624,7 +689,25 @@ export class Editor {
     };
     const pages = [...state.pages].filter((page) => page.kind !== "record" && String(page.id) !== String(this.page.id))
       .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || ""))).slice(0, 500);
-    menu(line, [
+    const uploadInlineFile = () => {
+      const picker = el("input", { type: "file", style: { display: "none" } });
+      picker.addEventListener("change", async () => {
+        const file = picker.files?.[0];
+        picker.remove();
+        if (!file) return;
+        try {
+          const uploaded = await uploadFile(file);
+          insert({ t: uploaded.name || file.name, fileUrl: uploaded.url });
+        } catch (error) { toast(error.message || "Could not upload that file", "error"); }
+      });
+      document.body.append(picker);
+      picker.click();
+    };
+    const show = (files = []) => menu(line, [
+      { type: "label", label: "Files & notes" },
+      { label: "Upload a file…", icon: "plus", keywords: "file upload attachment", onSelect: uploadInlineFile },
+      ...files.map((file) => ({ label: file.name || "File", icon: "file", hint: formatBytes(file.size), keywords: "file attachment upload", onSelect: () => insert({ t: file.name || "File", fileUrl: file.url }) })),
+      ...(files.length || pages.length ? [{ type: "separator" }] : []),
       { type: "label", label: "Dates" },
       dayItem("Today", 0), dayItem("Tomorrow", 1), dayItem("Yesterday", -1),
       { label: "Pick a date\u2026", icon: "calendar", keywords: "date calendar", onSelect: () => {
@@ -647,9 +730,12 @@ export class Editor {
         input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } });
         setTimeout(() => input.focus(), 40);
       } },
-      { type: "label", label: "Pages" },
+      { type: "label", label: "Notes" },
       ...pages.map((page) => ({ label: page.title || "Untitled", icon: page.kind === "database" ? "table" : "page", keywords: "page link mention", onSelect: () => insert({ t: page.title || "Untitled", page: String(page.id) }) })),
-    ], { search: true, searchPlaceholder: "Mention a person, page or date\u2026", class: "mention-menu", onClose: () => { this.mentionOpen = false; } });
+    ], { search: true, searchPlaceholder: "Search files, notes or dates…", class: "mention-menu", onClose: () => { this.mentionOpen = false; } });
+    fetch("/api/notes/files").then((response) => response.ok ? response.json() : { files: [] })
+      .then((result) => show(result.files || []))
+      .catch(() => show([]));
   }
 
   checkSlash(block, line) {
@@ -735,6 +821,7 @@ export class Editor {
 
   onKeyDown(event, block, line) {
     if (this.readOnly) return;
+    if (event.isComposing || event.keyCode === 229 || this.composingLines.has(line)) return;
     const offset = caretOffset(line);
     const length = line.textContent.length;
     const selection = selectionRangeIn(line);
@@ -777,14 +864,6 @@ export class Editor {
       line.blur();
       this.selection = new Set([block.id]);
       this.updateSelectionStyles();
-      return;
-    }
-
-    /* Space on an untouched line opens the AI composer — the fastest path
-       from a blank page to a draft, and the reason the hint says so. */
-    if (event.key === " " && !length && isTextBlock(block) && state.aiConfigured) {
-      event.preventDefault();
-      this.openAiComposer(block);
       return;
     }
 
@@ -1277,7 +1356,12 @@ export class Editor {
   destroy() {
     this.closeCompletions();
     clearTimeout(this.historyTimer);
+    for (const timer of this.focusTimers.values()) clearInterval(timer);
+    this.focusTimers.clear();
+    for (const timer of this.codeHighlightTimers.values()) clearTimeout(timer);
+    this.codeHighlightTimers.clear();
     if (this.onDocumentKey) document.removeEventListener("keydown", this.onDocumentKey);
+    if (this.onDocumentSelectionChange) document.removeEventListener("selectionchange", this.onDocumentSelectionChange);
   }
 
   commit(reason, structural = false) {
@@ -1539,6 +1623,25 @@ Object.assign(Editor.prototype, {
       this.deleteBlocks([...this.selection]);
     };
     document.addEventListener("keydown", this.onDocumentKey);
+    /* Native drag selections pass through tables and attachments with no
+       selectable text. Mirror multi-block native selections into the block
+       set so Delete removes the full run, including those non-text blocks. */
+    this.onDocumentSelectionChange = () => {
+      if (this.readOnly || !this.host.isConnected) return;
+      const native = window.getSelection();
+      if (!native?.rangeCount || native.isCollapsed) return;
+      const range = native.getRangeAt(0);
+      if (!this.container.contains(range.commonAncestorContainer)) return;
+      const selected = [...this.nodes.entries()]
+        .filter(([, node]) => node.parentElement === this.container && range.intersectsNode(node))
+        .map(([id]) => id);
+      if (selected.length < 2) return;
+      const next = new Set(selected);
+      if (next.size === this.selection.size && selected.every((id) => this.selection.has(id))) return;
+      this.selection = next;
+      this.updateSelectionStyles();
+    };
+    document.addEventListener("selectionchange", this.onDocumentSelectionChange);
   },
 
   insertMenu(block, anchor) {
@@ -1867,12 +1970,19 @@ Object.assign(Editor.prototype, {
 
   /* A brainstorm board: the canvas lives in the block's props, so it is saved, restored and versioned with the page. */
   renderBrainstormBlock(block) {
-    const host = el("div", { class: `bs-embed${block.props?.tall ? " tall" : ""}` });
+    const storedHeight = Number(block.props?.boardHeight);
+    const host = el("div", { class: `bs-embed${block.props?.tall ? " tall" : ""}`, style: Number.isFinite(storedHeight) && storedHeight >= 320 ? { "--bs-height": `${Math.min(1600, storedHeight)}px` } : {} });
     const board = new Brainstorm(host, {
       data: block.props?.board,
       readOnly: this.readOnly,
       openPage: (id) => this.onNavigate?.(id),
       onChange: (data) => { block.props = { ...block.props, board: data }; this.commit("brainstorm"); },
+      onResize: (height) => {
+        if (Math.abs(Number(block.props?.boardHeight || 560) - height) < 3) return;
+        block.props = { ...block.props, boardHeight: height };
+        block.__dirty = true;
+        this.commit("brainstorm-resize");
+      },
     });
     host.__board = board;
     return host;
@@ -1880,7 +1990,7 @@ Object.assign(Editor.prototype, {
 
   insertBrainstorm(block) {
     this.turnInto(block, "brainstorm");
-    block.props = { board: { items: [], edges: [], cam: { x: 0, y: 0, z: 1 } } };
+    block.props = { board: { items: [], edges: [], cam: { x: 0, y: 0, z: 1 }, background: { color: "#ffffff", image: "" } }, boardHeight: 560 };
     block.__dirty = true;
     this.insertAfter(block, this.blank());
     this.render();
@@ -2035,7 +2145,8 @@ Object.assign(Editor.prototype, {
 
   renderMedia(block) {
     const url = block.props?.url;
-    const wrapper = el("div", { class: "media-block" });
+    const width = Number(block.props?.width);
+    const wrapper = el("div", { class: "media-block", style: width ? { width: `${Math.max(28, Math.min(100, width))}%` } : {} });
     if (!url) {
       append(wrapper, el("button", {
         class: "file-chip", type: "button",
@@ -2052,14 +2163,33 @@ Object.assign(Editor.prototype, {
     } else if (block.type === "audio") append(wrapper, el("audio", { src: url, controls: true, preload: "metadata" }));
     else if (block.type === "pdf") append(wrapper, el("iframe", { class: "media-frame", src: url, loading: "lazy", title: block.props?.caption || "PDF", style: { aspectRatio: "3 / 4" } }));
     else if (block.type === "embed") {
-      if (block.props?.embeddable === false) {
-        append(wrapper, el("div", { class: "embed-card" },
-          el("div", { class: "embed-card-main" },
-            el("div", { class: "bookmark-title", text: block.props?.title || url }),
-            el("div", { class: "bookmark-url", text: url }),
-            el("div", { class: "embed-card-note", text: block.props?.reason || "This site does not allow itself to be shown inside other pages." })),
-          el("a", { class: "button", href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site")));
-      } else append(wrapper, el("iframe", { class: "media-frame", src: url, loading: "lazy", title: block.props?.caption || "Embed", referrerpolicy: "no-referrer" }));
+      const fullScreen = () => {
+        const request = wrapper.requestFullscreen?.bind(wrapper);
+        if (request) request().catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+        else window.open(url, "_blank", "noopener,noreferrer");
+      };
+      const header = () => el("div", { class: "embed-proxy-head" },
+        el("span", {}, icon("embed", 14), el("span", { text: block.props?.title || url })),
+        el("span", { class: "embed-proxy-actions" },
+          iconButton("pencil", "Edit website address", () => this.mediaPrompt(block, null), { size: 14, className: "embed-fullscreen" }),
+          iconButton("expand", "Full screen", fullScreen, { size: 14, className: "embed-fullscreen" }),
+          el("a", { href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site", icon("arrow_right", 12))));
+      if (block.props?.offline) {
+        /* Offline is a useful state, not an empty iframe. Keep the embed's
+           footprint so the page layout does not jump, explain the next step,
+           and leave the original address available when connectivity returns. */
+        append(wrapper, header(), el("section", { class: "embed-offline", role: "status" },
+          el("span", { class: "embed-offline-icon" }, icon("embed", 22)),
+          el("strong", { text: "You need an internet connection to show this website." }),
+          el("p", { text: "Reconnect, then refresh or open the original site." }),
+          el("a", { href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site", icon("arrow_right", 13))));
+      } else if (block.props?.embeddable === false) {
+        /* A direct iframe is blocked by sites such as Google. The Notes
+           reader proxy is an honest embedded reading view instead of an
+           empty rectangle; the original site remains one click away. */
+        append(wrapper, header(),
+          el("iframe", { class: "media-frame embed-proxy-frame", src: `/api/notes/browse?url=${encodeURIComponent(url)}`, loading: "lazy", title: block.props?.caption || "Embedded website", referrerpolicy: "no-referrer", allowfullscreen: true }));
+      } else append(wrapper, header(), el("iframe", { class: "media-frame embed-proxy-frame", src: url, loading: "lazy", title: block.props?.caption || "Embedded website", referrerpolicy: "no-referrer", allowfullscreen: true }));
     }
     else if (block.type === "bookmark") {
       append(wrapper, el("a", { class: "bookmark", href: url, target: "_blank", rel: "noreferrer noopener" },
@@ -2082,12 +2212,47 @@ Object.assign(Editor.prototype, {
       caption.textContent = block.props?.caption || "";
       append(wrapper, caption);
     }
+    /* Moving stays on the block gutter; this separate corner grip resizes
+       without stealing playback or ordinary clicks from the media itself. */
+    /* Website, video, audio and document blocks keep their natural document
+       width. They can still move with the normal block drag handle. Images
+       are the one visual medium where a deliberate size control is useful. */
+    if (!this.readOnly && block.type === "image") this.addMediaResizeHandle(wrapper, block);
     return wrapper;
+  },
+
+  addMediaResizeHandle(wrapper, block) {
+    const grip = el("button", { class: "media-resize", type: "button", "aria-label": "Resize media" }, icon("grip", 13));
+    wrapper.append(grip);
+    grip.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const parentWidth = Math.max(1, wrapper.parentElement?.getBoundingClientRect().width || wrapper.getBoundingClientRect().width);
+      const startX = event.clientX;
+      const startWidth = wrapper.getBoundingClientRect().width;
+      let nextWidth = Math.round((startWidth / parentWidth) * 100);
+      grip.setPointerCapture?.(event.pointerId);
+      wrapper.classList.add("is-resizing");
+      const move = (moveEvent) => {
+        nextWidth = Math.max(28, Math.min(100, Math.round(((startWidth + moveEvent.clientX - startX) / parentWidth) * 100)));
+        wrapper.style.width = `${nextWidth}%`;
+      };
+      const finish = () => {
+        window.removeEventListener("pointermove", move);
+        wrapper.classList.remove("is-resizing");
+        if (Number(block.props?.width) === nextWidth) return;
+        this.push();
+        block.props = { ...block.props, width: nextWidth };
+        this.commit("resize-media", true);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish, { once: true });
+    });
   },
 
   mediaPrompt(block, anchor) {
     const accept = { image: "image/*", video: "video/*", audio: "audio/*", pdf: "application/pdf", file: "*/*" }[block.type];
-    const urlField = el("input", { class: "input", placeholder: block.props?.provider ? `Paste a ${block.props.provider} link…` : "Paste a link…", type: "url" });
+    const urlField = el("input", { class: "input", value: block.props?.url || "", placeholder: block.props?.provider ? `Paste a ${block.props.provider} link…` : "Paste a link…", type: "url" });
     const fileField = accept ? el("input", { type: "file", accept, class: "input" }) : null;
     let entry;
     const apply = (props) => {
@@ -2118,7 +2283,7 @@ Object.assign(Editor.prototype, {
       body: el("div", {},
         fileField ? el("label", { class: "field" }, el("span", { class: "field-label", text: "Upload a file" }), fileField) : null,
         block.type === "file" ? existingFiles : null,
-        el("label", { class: "field" }, el("span", { class: "field-label", text: "Or paste a link" }), urlField)),
+        el("label", { class: "field" }, el("span", { class: "field-label", text: block.type === "embed" ? "Website address" : "Or paste a link" }), urlField)),
       footer: [
         el("button", { class: "button", type: "button", onclick: () => entry.close("cancel") }, "Cancel"),
         el("button", {
@@ -2145,7 +2310,13 @@ Object.assign(Editor.prototype, {
               const check = await fetch(`/api/notes/embed-check?url=${encodeURIComponent(url)}`).then((r) => r.json()).catch(() => null);
               button.disabled = false;
               button.textContent = "Add";
-              apply({ url, title: check?.title || url, embeddable: check ? Boolean(check.embeddable) : true, reason: check?.reason });
+              apply({
+                url,
+                title: check?.title || url,
+                embeddable: check ? Boolean(check.embeddable) : false,
+                offline: !check || check.reachable === false,
+                reason: check?.reason,
+              });
               return;
             }
             apply({ url, title: url });
@@ -2889,16 +3060,38 @@ Object.assign(Editor.prototype, {
     this.detectCodeLanguageForBlock(block, line);
     line.innerHTML = highlight(text, block.props?.language || "plain");
     setCaret(line, caret);
-    this.commit("code");
+    /* Code text is still ordinary typing for undo/history and autosave. */
+    this.commit("type");
   },
 
-  onCodeInput(block, line) {
+  onCodeInput(block, line, options = {}) {
     const caret = caretOffset(line);
     block.text = plain(this.codeText(line));
     this.detectCodeLanguageForBlock(block, line);
-    this.repaintCode(block, line, caret);
     this.commit("code");
     this.showCompletions(block, line);
+    /* Syntax paint replaces the editable DOM. Let native input settle first
+       and paint once after a short pause, rather than replacing that DOM on
+       every keystroke and making the caret visibly jump. */
+    if (options.settled) this.flushCodeHighlight(block, line, caret);
+    else this.scheduleCodeHighlight(block, line, caret);
+  },
+
+  scheduleCodeHighlight(block, line, caret) {
+    clearTimeout(this.codeHighlightTimers.get(block.id));
+    this.codeHighlightTimers.set(block.id, setTimeout(() => {
+      this.codeHighlightTimers.delete(block.id);
+      if (!line.isConnected || this.composingLines.has(line)) return;
+      this.repaintCode(block, line, caretOffset(line));
+    }, 140));
+  },
+
+  flushCodeHighlight(block, line, caret = caretOffset(line)) {
+    const timer = this.codeHighlightTimers.get(block.id);
+    if (timer) clearTimeout(timer);
+    this.codeHighlightTimers.delete(block.id);
+    if (!line.isConnected || this.composingLines.has(line)) return;
+    this.repaintCode(block, line, caret);
   },
 
   /* A pasted or transformed code block is not frozen to the language it had
@@ -2927,6 +3120,7 @@ Object.assign(Editor.prototype, {
 
   onCodeKeyDown(event, block, line) {
     if (this.readOnly) return;
+    if (event.isComposing || event.keyCode === 229 || this.composingLines.has(line)) return;
     if (this.completionsOpen && this.handleCompletionKey(event, block, line)) return;
 
     if (modKey(event) && !event.shiftKey && event.key.toLowerCase() === "z") { event.preventDefault(); this.undo(); return; }
@@ -3022,9 +3216,8 @@ Object.assign(Editor.prototype, {
         el("span", { class: "completion-label", text: item.label }),
         el("span", { class: "completion-detail", text: item.detail || item.kind })));
     });
-    const selection = window.getSelection();
-    const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : line.getBoundingClientRect();
-    position(this.completionsNode, rect.width || rect.height ? rect : line.getBoundingClientRect(), { gap: 6 });
+    const rect = selectionRectIn(line);
+    position(this.completionsNode, rect && (rect.width || rect.height) ? rect : line.getBoundingClientRect(), { gap: 6 });
   },
 
   closeCompletions() {

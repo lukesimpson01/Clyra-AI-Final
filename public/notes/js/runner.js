@@ -151,19 +151,24 @@ const TERM_THEME = {
 
 /* ------------------------------------------------------- terminal drawer */
 
-/* One drawer for the whole app. Reopening it reuses the same shell and the
-   same scrollback, exactly like the chat's Run drawer — so a second Run
-   appends to the session rather than starting a fresh, empty terminal. */
+/* One drawer for the whole app. Each tab owns a real scoped shell and its
+   scrollback, matching the Vibe Coder terminal rather than presenting Notes
+   as a second, reduced terminal. */
 const term = {
   root: null,
   mount: null,
   status: null,
+  tabs: null,
   xterm: null,
   fit: null,
-  socket: null,
-  connecting: null,
+  sessions: new Map(),
+  activeTab: "notes-run-1",
+  nextTab: 1,
+  renamingTab: null,
   observer: null,
-  height: 320,
+  /* Keep the terminal useful without taking over the note: roughly two
+     thirds of its former opening height. It can still be resized deliberately. */
+  height: 216,
 };
 
 function terminalStatus(text, tone = "idle") {
@@ -181,9 +186,7 @@ function buildDrawer() {
   }
   term.mount = el("div", { class: "code-terminal-mount" });
   term.status = el("span", { class: "code-terminal-status" });
-  /* Notes owns one shared run shell. Its header borrows Vibe Coder's panel
-     spacing and palette, without implying that this page has terminal tabs
-     or separate terminal sessions to manage. */
+  term.tabs = el("div", { class: "code-terminal-tabs", role: "tablist", "aria-label": "Terminal sessions" });
   term.root = el("section", {
     class: "code-terminal",
     role: "dialog",
@@ -192,20 +195,115 @@ function buildDrawer() {
   },
     el("div", { class: "code-terminal-resize", onpointerdown: startTerminalResize, "aria-hidden": "true" }),
     el("header", { class: "code-terminal-head" },
-      el("span", { class: "code-terminal-title" },
-        icon("terminal", 14),
-        el("span", { text: "Terminal" }),
-      ),
+      term.tabs,
       term.status,
+      iconButton("refresh", "Restart active terminal", restartActiveTerminal, { size: 14, className: "code-terminal-close" }),
       iconButton("close", "Close terminal", closeTerminal, { size: 16, className: "code-terminal-close" }),
     ),
     term.mount,
   );
   document.body.append(term.root);
+  createTerminalTab();
   // The drawer animates from its own translated state; a frame between insert
   // and class flip is what makes the transition run rather than snap.
   requestAnimationFrame(() => term.root.classList.add("open"));
   return term.root;
+}
+
+function terminalLabel() {
+  if (navigator.userAgent.includes("Windows")) return "PowerShell";
+  if (navigator.userAgent.includes("Linux")) return "bash";
+  return "zsh";
+}
+
+function activeSession() {
+  return term.sessions.get(term.activeTab) || null;
+}
+
+function renderTerminalTabs() {
+  if (!term.tabs) return;
+  term.tabs.replaceChildren();
+  for (const [id, session] of term.sessions) {
+    const selected = id === term.activeTab;
+    const editing = term.renamingTab === id;
+    const label = editing
+      ? el("input", {
+        class: "code-terminal-tab-input", value: session.label, "aria-label": "Rename terminal tab",
+        onblur: (event) => finishTabRename(id, event.currentTarget.value),
+        onkeydown: (event) => {
+          if (event.key === "Enter") finishTabRename(id, event.currentTarget.value);
+          if (event.key === "Escape") { term.renamingTab = null; renderTerminalTabs(); }
+        },
+      })
+      : el("span", { class: "code-terminal-tab-label", text: session.label });
+    const rename = !editing
+      ? iconButton("pencil", `Rename ${session.label}`, (event) => { event.stopPropagation(); term.renamingTab = id; renderTerminalTabs(); queueMicrotask(() => term.tabs?.querySelector(".code-terminal-tab-input")?.select()); }, { size: 11, className: "code-terminal-tab-close code-terminal-tab-rename" })
+      : null;
+    const close = term.sessions.size > 1
+      ? iconButton("close", `Close ${session.label}`, (event) => { event.stopPropagation(); closeTerminalTab(id); }, { size: 12, className: "code-terminal-tab-close" })
+      : null;
+    term.tabs.append(el("div", {
+      class: `code-terminal-tab${selected ? " active" : ""}`, role: "tab", tabindex: "0",
+      "aria-selected": selected ? "true" : "false", onclick: () => activateTerminalTab(id),
+      ondblclick: () => { term.renamingTab = id; renderTerminalTabs(); queueMicrotask(() => term.tabs?.querySelector(".code-terminal-tab-input")?.focus()); },
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activateTerminalTab(id); } },
+    }, icon("terminal", 13), label, rename, close));
+  }
+  term.tabs.append(iconButton("plus", "New terminal tab", () => createTerminalTab(), { size: 15, className: "code-terminal-new-tab" }));
+}
+
+function finishTabRename(id, value) {
+  const session = term.sessions.get(id);
+  if (session && String(value || "").trim()) session.label = String(value).trim().slice(0, 40);
+  term.renamingTab = null;
+  renderTerminalTabs();
+  document.dispatchEvent(new CustomEvent("clyra:terminal-tab-renamed", { detail: { id } }));
+}
+
+function createTerminalTab() {
+  const id = `notes-run-${term.nextTab++}`;
+  term.sessions.set(id, { id, label: terminalLabel(), socket: null, connecting: null, output: "" });
+  activateTerminalTab(id);
+  if (term.sessions.size > 1) document.dispatchEvent(new CustomEvent("clyra:terminal-tab-created", { detail: { id } }));
+  return id;
+}
+
+function closeTerminalTab(id) {
+  const session = term.sessions.get(id);
+  if (!session || term.sessions.size < 2) return;
+  try { session.socket?.close(); } catch { /* already closed */ }
+  term.sessions.delete(id);
+  term.renamingTab = null;
+  if (term.activeTab === id) term.activeTab = term.sessions.keys().next().value;
+  renderTerminalTabs();
+  void activateTerminalTab(term.activeTab);
+}
+
+function restartActiveTerminal() {
+  const session = activeSession();
+  if (!session) return;
+  try { session.socket?.close(); } catch { /* already closed */ }
+  session.socket = null;
+  session.connecting = null;
+  session.output = "";
+  term.xterm?.reset();
+  terminalStatus("Restarting…", "busy");
+  void connectTerminal().then(() => terminalStatus("Connected", "ok"))
+    .catch((error) => terminalStatus(String(error?.message || "Terminal unavailable"), "error"));
+}
+
+async function activateTerminalTab(id) {
+  const session = term.sessions.get(id);
+  if (!session) return;
+  term.activeTab = id;
+  renderTerminalTabs();
+  if (term.xterm) {
+    term.xterm.reset();
+    if (session.output) term.xterm.write(session.output);
+  }
+  try { await connectTerminal(id); } catch { /* state is shown in the header */ }
+  fitTerminal();
+  term.xterm?.focus();
 }
 
 function startTerminalResize(event) {
@@ -215,7 +313,7 @@ function startTerminalResize(event) {
   const startHeight = term.root.getBoundingClientRect().height;
   term.root.classList.add("resizing");
   const move = (moveEvent) => {
-    const height = Math.min(520, Math.max(140, startHeight + startY - moveEvent.clientY));
+    const height = Math.min(360, Math.max(140, startHeight + startY - moveEvent.clientY));
     term.height = height;
     term.root.style.height = `${height}px`;
     fitTerminal();
@@ -233,16 +331,19 @@ function fitTerminal() {
   if (!term.fit || !term.xterm) return;
   try {
     term.fit.fit();
-    if (term.socket?.readyState === WebSocket.OPEN) {
-      term.socket.send(JSON.stringify({ type: "resize", cols: term.xterm.cols, rows: term.xterm.rows }));
+    const session = activeSession();
+    if (session?.socket?.readyState === WebSocket.OPEN) {
+      session.socket.send(JSON.stringify({ type: "resize", cols: term.xterm.cols, rows: term.xterm.rows }));
     }
   } catch { /* the drawer can be mid-transition and have no stable box yet */ }
 }
 
-async function connectTerminal() {
-  if (term.socket?.readyState === WebSocket.OPEN) return;
-  if (term.connecting) return term.connecting;
-  term.connecting = (async () => {
+async function connectTerminal(tabId = term.activeTab) {
+  const session = term.sessions.get(tabId);
+  if (!session) return;
+  if (session.socket?.readyState === WebSocket.OPEN) return;
+  if (session.connecting) return session.connecting;
+  session.connecting = (async () => {
     const { Terminal, FitAddon } = await ensureXterm();
     if (!term.xterm) {
       term.xterm = new Terminal({
@@ -267,8 +368,11 @@ async function connectTerminal() {
       // terminal whenever its visible surface is clicked, like Vibe Coder.
       term.mount.addEventListener("pointerdown", () => term.xterm?.focus());
       term.xterm.onData((data) => {
-        if (term.socket?.readyState === WebSocket.OPEN) {
-          term.socket.send(JSON.stringify({ type: "input", data }));
+        if (data) document.dispatchEvent(new CustomEvent("clyra:terminal-input", { detail: { data } }));
+        if (data.includes("\r")) document.dispatchEvent(new CustomEvent("clyra:terminal-command"));
+        const active = activeSession();
+        if (active?.socket?.readyState === WebSocket.OPEN) {
+          active.socket.send(JSON.stringify({ type: "input", data }));
         }
       });
       // The drawer is resizable and the window is not fixed; refit on both.
@@ -280,27 +384,30 @@ async function connectTerminal() {
 
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(
-      `${protocol}://${window.location.host}/api/terminal?projectId=notes&tabId=notes-run`,
+      `${protocol}://${window.location.host}/api/terminal?projectId=notes&tabId=${encodeURIComponent(tabId)}`,
     );
-    term.socket = socket;
+    session.socket = socket;
     socket.onmessage = (message) => {
       try {
         const payload = JSON.parse(String(message.data));
-        if (payload.type === "data" && payload.data) term.xterm.write(payload.data);
+        if (payload.type === "data" && payload.data) {
+          session.output = (session.output + payload.data).slice(-64 * 1024);
+          if (term.activeTab === tabId) term.xterm?.write(payload.data);
+        }
         if (payload.type === "exit") terminalStatus("Session ended", "idle");
       } catch { /* ignore malformed frames */ }
     };
     socket.onclose = () => {
-      if (term.socket === socket) term.socket = null;
-      terminalStatus("Disconnected", "error");
+      if (session.socket === socket) session.socket = null;
+      if (term.activeTab === tabId) terminalStatus("Disconnected", "error");
     };
     await new Promise((resolve, reject) => {
       socket.addEventListener("open", () => resolve(), { once: true });
       socket.addEventListener("error", () => reject(new Error("Terminal connection failed.")), { once: true });
     });
     fitTerminal();
-  })().finally(() => { term.connecting = null; });
-  return term.connecting;
+  })().finally(() => { session.connecting = null; });
+  return session.connecting;
 }
 
 export function closeTerminal() {
@@ -312,14 +419,50 @@ export function closeTerminal() {
   // without exposing terminal-session tabs in Notes.
 }
 
+/** Open a scoped shell without needing a code block first. `announce: false`
+ * is reserved for a guided visual reveal, where the actual user hotkey still
+ * needs to count as the completed action. */
+export async function openTerminal({ announce = true } = {}) {
+  buildDrawer();
+  if (announce) document.dispatchEvent(new CustomEvent("clyra:terminal-opened"));
+  terminalStatus("Connecting…", "busy");
+  try {
+    await connectTerminal();
+    terminalStatus("Connected", "ok");
+    term.xterm?.focus();
+  } catch (error) {
+    terminalStatus(String(error?.message || "Terminal unavailable"), "error");
+  }
+}
+
+/**
+ * Sends deliberate user-entered text to the active Notes shell.  Keeping this
+ * beside `openTerminal` means guided entry points (such as Welcome) use the
+ * very same scoped terminal rather than presenting a simulated command box.
+ */
+export async function sendTerminalInput(input) {
+  const command = String(input || "").trim();
+  if (!command) return false;
+  await openTerminal();
+  const session = activeSession();
+  if (!session?.socket || session.socket.readyState !== WebSocket.OPEN) {
+    terminalStatus("Terminal is still connecting", "busy");
+    return false;
+  }
+  session.socket.send(JSON.stringify({ type: "input", data: `${command}\n` }));
+  term.xterm?.focus();
+  terminalStatus("Running command", "busy");
+  window.setTimeout(() => terminalStatus("Connected", "ok"), 750);
+  return true;
+}
+
 /** Opens the drawer (if needed) and runs one snippet in the shared shell. */
 export async function runInTerminal(language, code) {
   if (!isRunnable(language)) {
     toast(`${language} cannot be run here`, "error");
     return;
   }
-  buildDrawer();
-  terminalStatus("Connecting…", "busy");
+  await openTerminal();
   let command;
   try {
     [command] = await Promise.all([buildRunCommand(language, code), connectTerminal()]);
@@ -328,9 +471,10 @@ export async function runInTerminal(language, code) {
     return;
   }
   // The drawer can be closed while the request is in flight.
-  if (!term.socket || term.socket.readyState !== WebSocket.OPEN) return;
+  const session = activeSession();
+  if (!session?.socket || session.socket.readyState !== WebSocket.OPEN) return;
   terminalStatus(`Running ${RUNNERS[String(language).toLowerCase()].name}`, "busy");
-  term.socket.send(JSON.stringify({ type: "input", data: command }));
+  session.socket.send(JSON.stringify({ type: "input", data: command }));
   term.xterm.focus();
   // The shell owns the run from here; the label settles rather than pretending
   // to track an exit code the socket does not report per command.

@@ -1,5 +1,9 @@
 import { session, WebContentsView } from "electron";
 
+// Electron can retain the last painted frame of a hidden child view above the
+// renderer. Visibility alone is therefore not a sufficient hiding mechanism.
+const HIDDEN_SURFACE_BOUNDS = { x: -20_000, y: -20_000, width: 2, height: 2 };
+
 function isAllowedUrl(value) {
   try {
     return ["http:", "https:", "data:", "about:"].includes(new URL(value).protocol);
@@ -38,6 +42,7 @@ export class ChromiumSurfaceManager {
     });
     this.surfaces.set(id, record);
     this.window.contentView.addChildView(view);
+    view.setBounds(HIDDEN_SURFACE_BOUNDS);
     view.setVisible(false);
     view.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
       void view.webContents.loadURL(popupUrl);
@@ -83,7 +88,13 @@ export class ChromiumSurfaceManager {
       }
     }
     record.visible = Boolean(visible);
-    record.view.setVisible(record.visible);
+    if (record.visible) {
+      if (record.bounds) record.view.setBounds(record.bounds);
+      record.view.setVisible(true);
+    } else {
+      record.view.setVisible(false);
+      record.view.setBounds(HIDDEN_SURFACE_BOUNDS);
+    }
     return { id, visible: record.visible, url: record.url };
   }
 
@@ -92,12 +103,14 @@ export class ChromiumSurfaceManager {
     if (!record) return;
     record.visible = false;
     record.view.setVisible(false);
+    record.view.setBounds(HIDDEN_SURFACE_BOUNDS);
   }
 
   hideAll() {
     for (const record of this.surfaces.values()) {
       record.visible = false;
       record.view.setVisible(false);
+      record.view.setBounds(HIDDEN_SURFACE_BOUNDS);
     }
   }
 
