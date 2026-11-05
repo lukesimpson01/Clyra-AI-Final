@@ -1,0 +1,8 @@
+[submodule "vendor/whisper.cpp"]
+	path = vendor/whisper.cpp
+	url = https://github.com/lukesimpson01/whisper.cpp.git
+	branch = clyra-clyra-backup
+[submodule "apps/shorts/openfilm"]
+	path = apps/shorts/openfilm
+	url = https://github.com/lukesimpson01/openfilm.git
+	branch = clyra/spatial-tracking-editor
