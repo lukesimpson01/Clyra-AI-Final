@@ -180,7 +180,11 @@ function terminalStatus(text, tone = "idle") {
 function buildDrawer() {
   if (term.root) {
     term.root.removeAttribute("aria-hidden");
-    requestAnimationFrame(() => term.root?.classList.add("open"));
+    term.root.classList.remove("is-closing");
+    requestAnimationFrame(() => {
+      term.root?.classList.add("open", "is-opening");
+      window.setTimeout(() => term.root?.classList.remove("is-opening"), 320);
+    });
     fitTerminal();
     return term.root;
   }
@@ -206,7 +210,10 @@ function buildDrawer() {
   createTerminalTab();
   // The drawer animates from its own translated state; a frame between insert
   // and class flip is what makes the transition run rather than snap.
-  requestAnimationFrame(() => term.root.classList.add("open"));
+  requestAnimationFrame(() => {
+    term.root.classList.add("open", "is-opening");
+    window.setTimeout(() => term.root?.classList.remove("is-opening"), 320);
+  });
   return term.root;
 }
 
@@ -252,6 +259,15 @@ function renderTerminalTabs() {
   term.tabs.append(iconButton("plus", "New terminal tab", () => createTerminalTab(), { size: 15, className: "code-terminal-new-tab" }));
 }
 
+function animateTerminalChange() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  term.tabs?.animate([{ opacity: .58, transform: "translateX(4px)" }, { opacity: 1, transform: "translateX(0)" }], { duration: 180, easing: "cubic-bezier(.22, 1, .36, 1)" });
+  term.mount?.classList.remove("is-switching");
+  void term.mount?.offsetWidth;
+  term.mount?.classList.add("is-switching");
+  window.setTimeout(() => term.mount?.classList.remove("is-switching"), 190);
+}
+
 function finishTabRename(id, value) {
   const session = term.sessions.get(id);
   if (session && String(value || "").trim()) session.label = String(value).trim().slice(0, 40);
@@ -263,6 +279,7 @@ function finishTabRename(id, value) {
 function createTerminalTab() {
   const id = `notes-run-${term.nextTab++}`;
   term.sessions.set(id, { id, label: terminalLabel(), socket: null, connecting: null, output: "" });
+  animateTerminalChange();
   activateTerminalTab(id);
   if (term.sessions.size > 1) document.dispatchEvent(new CustomEvent("clyra:terminal-tab-created", { detail: { id } }));
   return id;
@@ -275,6 +292,7 @@ function closeTerminalTab(id) {
   term.sessions.delete(id);
   term.renamingTab = null;
   if (term.activeTab === id) term.activeTab = term.sessions.keys().next().value;
+  animateTerminalChange();
   renderTerminalTabs();
   void activateTerminalTab(term.activeTab);
 }
@@ -296,6 +314,7 @@ async function activateTerminalTab(id) {
   const session = term.sessions.get(id);
   if (!session) return;
   term.activeTab = id;
+  animateTerminalChange();
   renderTerminalTabs();
   if (term.xterm) {
     term.xterm.reset();
@@ -412,8 +431,11 @@ async function connectTerminal(tabId = term.activeTab) {
 
 export function closeTerminal() {
   if (!term.root) return;
+  term.root.classList.remove("is-opening");
+  term.root.classList.add("is-closing");
   term.root.classList.remove("open");
   term.root.setAttribute("aria-hidden", "true");
+  window.setTimeout(() => term.root?.classList.remove("is-closing"), 320);
   // Keep the one Notes shell alive while it is collapsed. Reopening resumes
   // its scrollback and working directory, exactly like Vibe Coder does, but
   // without exposing terminal-session tabs in Notes.

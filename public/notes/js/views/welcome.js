@@ -306,9 +306,11 @@ export function renderWelcome(host, app) {
     { id: "hello", title: "Welcome", hero: true },
 
     { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action lives in one search box. During the tour it stays safely paused, so nothing here can change your workspace.",
+      tasks: [["palette-open", "Open the command palette", { keys: shortcutLabel("commandPalette") }]],
       tips: [`Press ${shortcutLabel("commandPalette")} to peek at it, then use it normally once the tour is complete.`, "Your most-used commands appear in Recent."], mount: palettePreview },
 
     { id: "terminal", kicker: "Workspace", title: "Terminal", text: "A scoped terminal is available whenever you need it, without leaving Notes.",
+      tasks: [["terminal-open", "Open the terminal from the bottom edge", { keys: shortcutLabel("terminal") }]],
       tips: [`Press ${shortcutLabel("terminal")} now to open the real terminal from the bottom edge.`, "It is a separate workspace tool, not a command-palette action."] },
 
     { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, press / to choose headings, lists, quotes, tables, media, databases and more.",
@@ -323,12 +325,14 @@ export function renderWelcome(host, app) {
       tips: ["The chat is saved with the page you are on.", "Close the sidebar with the cross at its top right."] },
 
     { id: "templates", kicker: "Create", title: "Cornell Notes", text: "A focused Cornell page with a topic header, cue column, notes field, summary and review prompts.",
+      tasks: [["template-preview", "Look through the template previews"]],
       tips: ["Choose it and it is copied into your notes.", "Everything in it is yours to change."],
       mount: async (stage) => {
         const list = TEMPLATES;
         stage.append(el("div", { class: "wl-page wl-gallery" }, el("div", { class: "wl-gallery-grid" }, list.map((template, i) => el("div", { class: "wl-gcard", style: { "--i": String(i) } },
           el("span", { class: "wl-gimg" }, el("img", { src: `/notes/img/templates/${template.id}.png`, alt: "", loading: "lazy" })),
-          el("span", { class: "wl-gname" }, el("span", { text: template.emoji || "" }), template.name))))));
+          el("span", { class: "wl-gname" }, el("span", { text: template.emoji || "" }), template.name),
+          el("button", { class: "wl-gcard-hit", type: "button", "aria-label": `Preview ${template.name}`, onclick: () => mark("template-preview") }))))));
         return () => {};
       } },
 
@@ -655,6 +659,10 @@ export function renderWelcome(host, app) {
   document.addEventListener("clyra:tour-command-palette", () => {
     if (STEPS[index].id !== "palette") return;
     stage.revealTourPalette?.();
+    mark("palette-open");
+  }, { signal });
+  document.addEventListener("clyra:terminal-opened", () => {
+    if (STEPS[index]?.id === "terminal") mark("terminal-open");
   }, { signal });
   const onKey = (event) => {
     /* The embedded palette owns the keystroke itself. The tour only observes

@@ -535,8 +535,9 @@ export class TabStrip {
   measureTabWidth() {
     if (!this.scroller?.isConnected) return;
     const count = Math.max(1, state.tabs.length);
-    const usable = Math.max(34, this.scroller.clientWidth - Math.max(0, count - 1) * 2);
-    const width = Math.max(34, Math.min(168, Math.floor(usable / count)));
+    const usable = Math.max(46, this.scroller.clientWidth - Math.max(0, count - 1) * 2);
+    /* A compact tab still needs a genuinely clickable close affordance. */
+    const width = Math.max(46, Math.min(168, Math.floor(usable / count)));
     this.host.style.setProperty("--tab-width", `${width}px`);
     this.host.classList.toggle("tabs-icon-only", width <= 58);
   }
@@ -638,6 +639,7 @@ export class TabStrip {
 
   tabNode(tab) {
     let previewTimer = null;
+    const isWithinTab = (target) => target instanceof Node && node.contains(target);
     const node = el("div", {
       class: "tab", role: "tab", draggable: "true", tabindex: "0",
       onclick: () => selectTab(tab.id),
@@ -649,9 +651,12 @@ export class TabStrip {
         if (this.previewCard?.isConnected) this.showTabPreview(tab, node);
         else previewTimer = setTimeout(() => this.showTabPreview(tab, node), 360);
       },
-      onmouseleave: (event) => {
+      /* Pointer events preserve the hover session while the pointer crosses
+         the close control. Some webviews fire mouse-out for descendants,
+         which made a live preview blink away at exactly the wrong time. */
+      onpointerleave: (event) => {
         clearTimeout(previewTimer);
-        if (event.relatedTarget?.closest?.(".tab")) return;
+        if (isWithinTab(event.relatedTarget) || event.relatedTarget?.closest?.(".tab")) return;
         this.hideTabPreview();
       },
       onauxclick: (event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.id); } },
@@ -660,6 +665,11 @@ export class TabStrip {
         menu(node, [
           { label: "Close tab", icon: "close", onSelect: () => closeTab(tab.id) },
           { label: "Close other tabs", onSelect: () => state.tabs.filter((other) => other.id !== tab.id).forEach((other) => closeTab(other.id)) },
+          ...(tab.kind === "page" ? [
+            { type: "separator" },
+            { label: "Split right", icon: "panel", onSelect: () => this.context.splitTab?.(tab.id, "right") },
+            { label: "Split below", icon: "panel", onSelect: () => this.context.splitTab?.(tab.id, "bottom") },
+          ] : []),
           { label: "Reopen closed tab", shortcut: `${mod}+Shift+T`, onSelect: () => this.context.reopenTab() },
         ]);
       },
@@ -676,7 +686,15 @@ export class TabStrip {
     node.addEventListener("transitionend", (event) => {
       if (event.propertyName === "max-width") this.moveIndicator();
     });
-    node.addEventListener("dragstart", () => { this.dragTab = tab.id; });
+    node.addEventListener("dragstart", (event) => {
+      this.dragTab = tab.id;
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", tab.id);
+      }
+      this.context.beginTabTearOff?.(tab.id);
+    });
+    node.addEventListener("dragend", () => { this.dragTab = null; this.context.clearSplitTargets?.(); });
     node.addEventListener("dragover", (event) => { event.preventDefault(); node.classList.add("drag-over"); });
     node.addEventListener("dragleave", () => node.classList.remove("drag-over"));
     node.addEventListener("drop", (event) => {

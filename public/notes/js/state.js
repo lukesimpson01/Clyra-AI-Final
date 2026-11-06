@@ -53,7 +53,10 @@ export function restoreSession() {
   state.sidebarWidth = persisted.read("sidebarWidth", 270);
   /* 300 was the old default; Notion's is 270, so anyone still on the old default moves with it */
   if (state.sidebarWidth === 300) state.sidebarWidth = 270;
-  state.sidebarHidden = persisted.read("sidebarHidden", false);
+  /* Notes always opens with navigation available. The reading tools are
+     deliberately not restored: the left sidebar orients the workspace,
+     while the right rail remains an optional working surface. */
+  state.sidebarHidden = false;
   /* A reopened workspace starts with one clear writing surface. The rail can
      still be opened per note, but a previously open tool must not take over
      the next launch. */
@@ -145,8 +148,10 @@ export function openTab(target, { newTab = false, background = false } = {}) {
     state.activeTab = current.id;
   } else {
     const tab = { id: newTabId(), ...target };
-    const index = current ? state.tabs.indexOf(current) + 1 : state.tabs.length;
-    state.tabs.splice(index, 0, tab);
+    /* A new document is the newest window in this workspace, so it belongs at
+       the far right of the strip. Inserting after a background tab made the
+       visible order feel arbitrary once several notes were open. */
+    state.tabs.push(tab);
     if (!background) state.activeTab = tab.id;
   }
   saveSession();

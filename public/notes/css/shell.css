@@ -367,8 +367,18 @@
 }
 .tab.settled { max-width: var(--tab-width, 168px); opacity: 1; padding: 0 6px 0 8px; }
 .tabstrip.tabs-icon-only .tab { justify-content: center; gap: 0; padding-left: 8px; padding-right: 8px; }
-.tabstrip.tabs-icon-only .tab-label,
-.tabstrip.tabs-icon-only .tab-close { max-width: 0; opacity: 0; pointer-events: none; margin: 0; }
+.tabstrip.tabs-icon-only .tab-label { max-width: 0; opacity: 0; pointer-events: none; margin: 0; }
+/* Compact tabs never discard their close affordance. It floats over the
+   icon at rest and becomes fully legible as soon as the tab is targeted. */
+.tabstrip.tabs-icon-only .tab-close {
+  position: absolute; right: 3px; width: 18px; height: 18px; max-width: 18px;
+  margin: 0; opacity: 0; pointer-events: auto; background: var(--background-main);
+  box-shadow: 0 0 0 1px var(--border-soft);
+}
+.tabstrip.tabs-icon-only .tab:hover .tab-close,
+.tabstrip.tabs-icon-only .tab.active .tab-close,
+.tabstrip.tabs-icon-only .tab-close:focus-visible { opacity: 1; }
+.tabstrip.tabs-icon-only .tab:hover .tab-icon { opacity: .22; }
 /* The fill is painted on the tab itself while it is opening, so a sliding
    tab is grey for the whole journey instead of turning grey on arrival. */
 .tab.active { background: var(--background-selected); }
@@ -429,6 +439,65 @@
 .save-state { font-size: 12.5px; color: var(--text-tertiary); padding: 0 6px; }
 
 .surface { flex: 1; min-height: 0; position: relative; }
+
+/* Split notes are real PageViews arranged in two deliberate panes. The thin
+   divider is structural rather than decorative, so either document still
+   reads like a full editing surface. */
+.split-surface { display: grid; min-width: 0; min-height: 0; gap: 1px; overflow: hidden; background: var(--border-soft); }
+.split-surface.horizontal { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.split-surface.vertical { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.split-pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--background-main); transition: background-color 180ms var(--ease), box-shadow 220ms var(--ease-out); }
+.split-pane.active { box-shadow: inset 0 2px 0 var(--accent); }
+.split-pane-head { display: flex; align-items: center; gap: 7px; flex: none; height: 32px; padding: 0 7px 0 10px; border-bottom: 1px solid var(--border-soft); color: var(--text-secondary); font-size: 12.5px; font-weight: 500; user-select: none; }
+.split-pane-icon { display: grid; place-items: center; width: 16px; height: 16px; flex: none; font-size: 13px; }
+.split-pane-icon svg { width: 14px; height: 14px; }
+.split-pane-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-pane-close { width: 24px; height: 24px; opacity: 0; }
+.split-pane:hover .split-pane-close, .split-pane.active .split-pane-close, .split-pane-close:focus-visible { opacity: 1; }
+.split-pane-body { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+
+/* Drop targets stay out of the way until a tab is genuinely being moved.
+   Their inner ghost responds continuously to the edge below the pointer. */
+.split-drop-overlay { position: absolute; inset: 0; z-index: 120; pointer-events: none; }
+.split-drop-overlay::before { content: ""; position: absolute; z-index: -1; border: 1px solid color-mix(in srgb, var(--accent) 62%, white); border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 14%, transparent); opacity: 0; transition: inset 180ms var(--ease-out), opacity 120ms ease; }
+.split-drop-overlay[data-edge]::before { opacity: 1; }
+.split-drop-overlay[data-edge="left"]::before { inset: 12px 51% 12px 12px; }
+.split-drop-overlay[data-edge="right"]::before { inset: 12px 12px 12px 51%; }
+.split-drop-overlay[data-edge="top"]::before { inset: 12px 12px 51% 12px; }
+.split-drop-overlay[data-edge="bottom"]::before { inset: 51% 12px 12px 12px; }
+.split-drop-zone { position: absolute; pointer-events: auto; }
+.split-drop-zone.left, .split-drop-zone.right { top: 0; bottom: 0; width: 26%; }
+.split-drop-zone.left { left: 0; }.split-drop-zone.right { right: 0; }
+.split-drop-zone.top, .split-drop-zone.bottom { right: 26%; left: 26%; height: 28%; }
+.split-drop-zone.top { top: 0; }.split-drop-zone.bottom { bottom: 0; }
+
+/* Once there are two panes, sidebars keep their comfortable dimensions and
+   become spatial overlays. The documents do not reflow underneath them;
+   a modest dim only signals that a temporary layer is above the workspace. */
+.workspace.has-split { position: relative; isolation: isolate; overflow: hidden; grid-template-columns: minmax(0, 1fr) !important; }
+.workspace.has-split .main { position: relative; z-index: 1; }
+.workspace.has-split::after { content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: rgba(18, 22, 30, .10); opacity: 0; transition: opacity 180ms ease; }
+.workspace.has-split.split-panels-dimmed::after { opacity: 1; }
+.workspace.has-split .sidebar, .workspace.has-split .rail { position: absolute; top: 0; bottom: 0; z-index: 3; min-width: 0; overflow: hidden; box-shadow: 0 18px 44px rgba(15, 23, 42, .16); transition: transform var(--duration-panel) var(--ease-glide), box-shadow 180ms ease; }
+.workspace.has-split .sidebar { left: 0; width: var(--sidebar-width); transform: translateX(-100%); border-right-color: var(--border-soft); }
+.workspace.has-split .rail { right: 0; width: var(--rail-width); transform: translateX(100%); border-left-color: var(--border-soft); }
+.workspace.has-split.split-sidebar-open .sidebar, .workspace.has-split.split-rail-open .rail { transform: translateX(0); pointer-events: auto; }
+.workspace.has-split .sidebar-inner, .workspace.has-split .rail-inner { transform: none !important; opacity: 1 !important; }
+.workspace.has-split .sidebar { pointer-events: none; }
+.workspace.has-split .rail { pointer-events: none; }
+/* The sidebar's normal trigger travels away with the overlay, so keep its
+   mirrored tab-strip trigger available while working in a split. */
+.workspace.has-split .sidebar-menu { display: grid; }
+
+@media (max-width: 760px) {
+  .split-surface.horizontal { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .workspace.has-split .sidebar { width: min(88vw, var(--sidebar-width)); }
+  .workspace.has-split .rail { width: min(92vw, var(--rail-width)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .split-pane, .split-drop-overlay::before, .workspace.has-split::after, .workspace.has-split .sidebar, .workspace.has-split .rail { transition: none; }
+}
 
 /* -------------------------------------------------------------- menus */
 

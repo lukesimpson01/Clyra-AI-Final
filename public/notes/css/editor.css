@@ -991,6 +991,12 @@
 :root:has(.workspace.sidebar-hidden) .code-terminal { left: 0; }
 
 .code-terminal.open { transform: translateY(0); }
+.code-terminal.is-opening { animation: code-terminal-settle 320ms cubic-bezier(.22, 1, .36, 1); }
+.code-terminal.is-closing { pointer-events: none; }
+@keyframes code-terminal-settle {
+  from { opacity: .55; }
+  to { opacity: 1; }
+}
 .code-terminal.resizing { transition: none; }
 
 /* Same lightweight top-edge resize affordance as Vibe Coder's terminal. */
@@ -1063,9 +1069,22 @@
 }
 
 .code-terminal-mount .xterm { height: 100%; }
+.code-terminal-mount.is-switching { animation: code-terminal-switch 190ms cubic-bezier(.22, 1, .36, 1); }
+@keyframes code-terminal-switch {
+  from { opacity: .3; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The guided terminal lesson has no visible sidebars, so the real drawer
+   owns the complete bottom edge rather than inheriting a stale sidebar gap. */
+.workspace.tour-mode ~ .code-terminal { left: 0; }
 
 @media (max-width: 860px) {
   .code-terminal { left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-terminal.is-opening, .code-terminal-mount.is-switching { animation: none; }
 }
 
 /* The preview rises into the middle of the window rather than appearing at

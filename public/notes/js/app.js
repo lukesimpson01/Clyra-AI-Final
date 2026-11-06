@@ -45,6 +45,9 @@ class App {
     this.history = [];
     this.forward = [];
     this.currentView = null;
+    this.paneViews = new Map();
+    this.split = null;
+    this.splitPanels = null;
   }
 
   async start() {
@@ -98,10 +101,11 @@ class App {
     this.toolbarHost = el("div", { class: "doc-toolbar" });
     this.surface = el("main", { class: "surface" });
     const railHost = el("aside", { class: "rail", "aria-label": "Tools" });
+    this.main = el("div", { class: "main" }, this.tabstripHost, this.toolbarHost, this.surface);
     this.root.append(
       sidebarHost,
       el("div", { class: "sidebar-scrim", onclick: () => this.closeMobileSidebar() }),
-      el("div", { class: "main" }, this.tabstripHost, this.toolbarHost, this.surface),
+      this.main,
       railHost,
     );
     this.sidebar = new Sidebar(sidebarHost, this);
@@ -120,6 +124,8 @@ class App {
   renderSurface() {
     const tab = activeTab();
     if (!tab) return;
+    this.reconcileSplit();
+    if (this.split) { this.renderSplitSurface(); return; }
     const key = tab.kind === "page" ? `page:${tab.pageId}` : tab.kind;
     if (this.currentKey === key && this.currentTabId === tab.id) return;
     /* Anchored menus belong to the view that opened them.  Leaving one on
@@ -130,6 +136,7 @@ class App {
     this.currentView?.destroy?.();
     this.currentKey = key;
     this.currentTabId = tab.id;
+    this.surface.className = "surface";
     clear(this.surface);
     state.view = { kind: tab.kind };
     if (tab.kind === "page") {
@@ -144,20 +151,167 @@ class App {
     this.currentView = render(this.surface, this) || null;
   }
 
+  /* A split is intentionally limited to two real note pages. Each pane owns
+     a normal PageView, so text editing, autosave, scrolling and block tools
+     remain the same implementation rather than a static preview. */
+  renderSplitSurface() {
+    const { primary, secondary, orientation } = this.split;
+    const active = activeTab();
+    const key = `split:${primary}:${secondary}:${orientation}:${active?.id || ""}`;
+    if (this.currentKey === key) return;
+    closeAllLayers("navigation");
+    this.captureSplitPreviews();
+    /* On a pane change both views are already tracked in paneViews. Destroying
+       currentView first as well can double-unsubscribe the active editor. */
+    if (this.paneViews.size) {
+      for (const view of this.paneViews.values()) view?.destroy?.();
+    } else {
+      this.currentView?.destroy?.();
+    }
+    this.paneViews.clear();
+    clear(this.surface);
+    this.surface.className = `surface split-surface ${orientation}`;
+    this.currentKey = key;
+    this.currentTabId = active?.id || null;
+    state.view = { kind: active?.kind || "page" };
+    [primary, secondary].forEach((tabId) => {
+      const paneTab = state.tabs.find((entry) => entry.id === tabId);
+      if (!paneTab || paneTab.kind !== "page") return;
+      const label = this.tabLabel(paneTab);
+      const pane = el("section", {
+        class: `split-pane${paneTab.id === active?.id ? " active" : ""}`,
+        dataset: { tabId: paneTab.id },
+        onpointerdown: () => { if (state.activeTab !== paneTab.id) selectTab(paneTab.id); },
+      },
+        el("header", { class: "split-pane-head" },
+          el("span", { class: "split-pane-icon", text: label.emoji || "" }, label.emoji ? null : icon(label.icon, 14)),
+          el("span", { class: "split-pane-title", text: label.title }),
+          el("button", {
+            class: "icon-button split-pane-close", type: "button", "aria-label": "Close split view",
+            onpointerdown: (event) => event.stopPropagation(),
+            onclick: (event) => { event.stopPropagation(); this.exitSplit(); },
+          }, icon("close", 13))),
+      );
+      const host = el("div", { class: "split-pane-body" });
+      pane.append(host);
+      this.surface.append(pane);
+      const view = new PageView(host, paneTab.pageId, this, paneTab.scrollTop || 0);
+      this.paneViews.set(paneTab.id, view);
+      if (paneTab.id === active?.id) this.currentView = view;
+    });
+  }
+
+  captureTabPreview(tab, host) {
+    if (!tab || tab.kind !== "page") return;
+    const scroller = host?.querySelector?.(".page-scroll");
+    if (!scroller?.querySelector?.(".page-canvas")) return;
+    tab.scrollTop = scroller.scrollTop;
+    tab.preview = { html: scroller.outerHTML, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight };
+  }
+
+  captureSplitPreviews() {
+    if (!this.split) return;
+    for (const tabId of [this.split.primary, this.split.secondary]) {
+      const tab = state.tabs.find((entry) => entry.id === tabId);
+      this.captureTabPreview(tab, this.surface.querySelector(`.split-pane[data-tab-id="${CSS.escape(tabId)}"]`));
+    }
+  }
+
   /* Save the actual rendered document before its tab changes. The hover card
      uses this source, rather than invented grey lines, and the scroll offset
      is restored when the person comes back to the still-open tab. */
   captureActiveTabPreview() {
     const previous = state.tabs.find((candidate) => candidate.id === this.currentTabId);
-    if (!previous || previous.kind !== "page") return;
-    const scroller = this.surface?.querySelector?.(".page-scroll");
-    if (!scroller?.querySelector?.(".page-canvas")) return;
-    previous.scrollTop = scroller.scrollTop;
-    /* Keep the actual scroll container as well as its contents. Several page
-       blocks inherit their geometry from that container; retaining it keeps
-       tab hover previews as faithful miniature renders rather than blank
-       orphaned children. */
-    previous.preview = { html: scroller.outerHTML, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight };
+    this.captureTabPreview(previous, this.surface);
+  }
+
+  reconcileSplit() {
+    if (!this.split) return;
+    const alive = new Set(state.tabs.map((tab) => tab.id));
+    if (alive.has(this.split.primary) && alive.has(this.split.secondary)) return;
+    const survivor = alive.has(this.split.primary) ? this.split.primary : this.split.secondary;
+    this.split = null;
+    this.splitPanels = null;
+    this.root.classList.remove("has-split", "split-sidebar-open", "split-rail-open", "split-panels-dimmed");
+    this.currentKey = null;
+    for (const view of this.paneViews.values()) view?.destroy?.();
+    this.paneViews.clear();
+    this.currentView = null;
+    if (survivor && state.activeTab !== survivor) {
+      state.activeTab = survivor;
+      saveSession();
+    }
+  }
+
+  splitTab(tabId, edge) {
+    const moved = state.tabs.find((tab) => tab.id === tabId);
+    if (!moved || moved.kind !== "page") { toast("Only note tabs can be placed beside another note"); return; }
+    const active = activeTab();
+    const retained = active?.id !== tabId && active?.kind === "page"
+      ? active
+      : state.tabs.find((tab) => tab.id !== tabId && tab.kind === "page");
+    if (!retained) { toast("Open another note first, then drag a tab to split the view"); return; }
+    this.captureActiveTabPreview();
+    this.split = {
+      primary: retained.id,
+      secondary: moved.id,
+      orientation: edge === "top" || edge === "bottom" ? "vertical" : "horizontal",
+    };
+    this.splitPanels = { sidebar: false, rail: false };
+    this.root.classList.add("has-split");
+    this.syncSplitPanels();
+    this.currentKey = null;
+    if (state.activeTab !== moved.id) selectTab(moved.id);
+    else emit("tabs");
+  }
+
+  exitSplit() {
+    if (!this.split) return;
+    this.captureSplitPreviews();
+    for (const view of this.paneViews.values()) view?.destroy?.();
+    this.paneViews.clear();
+    this.currentView = null;
+    this.split = null;
+    this.splitPanels = null;
+    this.root.classList.remove("has-split", "split-sidebar-open", "split-rail-open", "split-panels-dimmed");
+    this.currentKey = null;
+    emit("tabs");
+  }
+
+  beginTabTearOff(tabId) {
+    const tab = state.tabs.find((entry) => entry.id === tabId);
+    if (!tab || tab.kind !== "page") return;
+    this.clearSplitTargets();
+    const overlay = el("div", { class: "split-drop-overlay", "aria-label": "Split view targets" });
+    const zones = [["left", "Left"], ["right", "Right"], ["top", "Top"], ["bottom", "Bottom"]];
+    for (const [edge, label] of zones) {
+      const zone = el("div", { class: `split-drop-zone ${edge}`, dataset: { edge }, role: "button", "aria-label": `Place ${this.tabLabel(tab).title} on the ${label.toLowerCase()}` });
+      zone.addEventListener("dragenter", (event) => { event.preventDefault(); overlay.dataset.edge = edge; });
+      zone.addEventListener("dragover", (event) => { event.preventDefault(); overlay.dataset.edge = edge; });
+      zone.addEventListener("drop", (event) => { event.preventDefault(); this.clearSplitTargets(); this.splitTab(tabId, edge); });
+      overlay.append(zone);
+    }
+    overlay.addEventListener("dragleave", (event) => { if (!overlay.contains(event.relatedTarget)) delete overlay.dataset.edge; });
+    overlay.addEventListener("dragover", (event) => event.preventDefault());
+    this.surface.append(overlay);
+    this.splitDropOverlay = overlay;
+  }
+
+  clearSplitTargets() {
+    this.splitDropOverlay?.remove();
+    this.splitDropOverlay = null;
+  }
+
+  syncSplitPanels() {
+    if (!this.split) return;
+    const sidebar = Boolean(this.splitPanels?.sidebar);
+    const rail = Boolean(this.splitPanels?.rail);
+    this.root.classList.toggle("split-sidebar-open", sidebar);
+    this.root.classList.toggle("split-rail-open", rail);
+    this.root.classList.toggle("split-panels-dimmed", sidebar || rail);
+    if (!rail) this.rail?.hideAll();
+    else { this.rail?.refresh(); this.rail?.showCurrent(); }
+    this.tabstrip?.syncRailToggle();
   }
 
   /* ------------------------------------------------------- navigation */
@@ -266,6 +420,11 @@ class App {
   closeMobileSidebar() { this.root.classList.remove("sidebar-open"); }
 
   toggleSidebar() {
+    if (this.split) {
+      this.splitPanels.sidebar = !this.splitPanels.sidebar;
+      this.syncSplitPanels();
+      return;
+    }
     if (window.matchMedia("(max-width: 860px)").matches) {
       this.root.classList.toggle("sidebar-open");
       return;
@@ -278,6 +437,11 @@ class App {
   /* The right sidebar is the left one's mirror: same collapse, same glide,
      same persisted preference. */
   toggleRail() {
+    if (this.split) {
+      this.splitPanels.rail = !this.splitPanels.rail;
+      this.syncSplitPanels();
+      return;
+    }
     state.railHidden = state.railHidden === false;
     saveSession();
     this.root.classList.toggle("rail-hidden", state.railHidden);
@@ -294,7 +458,7 @@ class App {
     this.rail?.showCurrent();
   }
 
-  railOpen() { return state.railHidden === false; }
+  railOpen() { return this.split ? Boolean(this.splitPanels?.rail) : state.railHidden === false; }
 
   showRailPanel(id) { this.rail?.show(id); }
 
