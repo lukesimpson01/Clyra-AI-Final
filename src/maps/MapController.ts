@@ -4,6 +4,7 @@ import { TILE_CATEGORIES } from "./categories";
 import type { TransitLeg } from "../../lib/maps/transit";
 import type { CameraFrame } from "../navigation/NavigationCameraController";
 import { RouteFlyover } from "./routeFlyover";
+import { installTilePoiLayer } from "./tilePoiLayer";
 
 const ROUTE_SOURCE = "clyra-route";
 const ROUTE_CASING_LAYER = "clyra-route-casing";
@@ -109,6 +110,8 @@ export class MapController {
 
   ensureLayers() {
     const map = this.map;
+    // draw the map's own places as quiet grey glyphs (under any route we draw), replacing the base style's coloured badges
+    try { installTilePoiLayer(map); } catch { /* a style without place tiles keeps its own */ }
 
     if (!map.getSource(ROUTE_SOURCE)) {
       map.addSource(ROUTE_SOURCE, { type: "geojson", data: emptyFC() });

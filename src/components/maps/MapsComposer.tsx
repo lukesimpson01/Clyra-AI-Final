@@ -84,6 +84,19 @@ export function MapsComposer({ onSubmit, onSearch, onSuggestionPick, fetchSugges
     else onSearch(text);
   };
   const recents = value.trim().length < 2 ? recentPlaces() : [];
+  /* The dropdown's height follows its content on an ease, so a changing result list glides rather than jumps. */
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [dropHeight, setDropHeight] = useState(0);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setDropHeight(el.offsetHeight));
+    ro.observe(el);
+    setDropHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
+  /* a new set of results fades in over the old instead of replacing it in one frame */
+  const listKey = suggestions.map((p) => p.id).join("|") || "none";
   const showDrop = open && !thinking && (suggestions.length > 0 || recents.length > 0 || value.trim().length >= 2);
   useEffect(() => { onOpenChange?.(showDrop); }, [showDrop]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -153,9 +166,10 @@ export function MapsComposer({ onSubmit, onSearch, onSuggestionPick, fetchSugges
           </div>
         ) : null}
 
-        <div className="mx-drop" data-open={showDrop}>
+        <div className="mx-drop" data-open={showDrop} style={{ height: showDrop ? dropHeight : 0 }}>
           <div className="mx-drop__inner">
-            <div className="mx-drop__body">
+            <div className="mx-drop__body" ref={bodyRef}>
+              <div className="mx-drop__list" key={listKey}>
               {recents.length ? <p className="px-4 pb-1 pt-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recents</p> : null}
               {recents.map((place) => (
                 <button
@@ -204,6 +218,7 @@ export function MapsComposer({ onSubmit, onSearch, onSuggestionPick, fetchSugges
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-slate-900">Ask Clyra: “{value.trim()}”</span>
                 </button>
               ) : null}
+              </div>
             </div>
           </div>
         </div>

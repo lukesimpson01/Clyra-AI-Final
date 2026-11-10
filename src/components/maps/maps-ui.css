@@ -189,12 +189,15 @@
 .mx-review + .mx-review { margin-top: 6px; box-shadow: inset 0 1px 0 var(--mx-line); }
 .mx-review b { color: var(--mx-ink); font-weight: 600; }
 
-/* search dropdown: height glides on a grid track, rows never remount, nothing blinks between keystrokes */
-.mx-drop { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .34s var(--mx-ease), opacity .22s ease; }
-.mx-drop[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
-.mx-drop__inner { min-height: 0; overflow: hidden; }
+/* search dropdown: its height follows its content on an ease; a new list fades in over the old one */
+.mx-drop { overflow: hidden; opacity: 0; transition: height .32s var(--mx-ease), opacity .2s ease; will-change: height; }
+.mx-drop[data-open="true"] { opacity: 1; }
+.mx-drop__inner { overflow: hidden; }
 .mx-drop__body { border-top: 1px solid var(--mx-line); padding-bottom: 4px; }
 .mx-drop[data-open="false"] .mx-drop__body { pointer-events: none; }
+.mx-drop__list { animation: mx-list-in .22s ease both; }
+@keyframes mx-list-in { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .mx-drop, .mx-drop__list { transition: none !important; animation: none !important; } }
 
 /* one menu at a time: while the search dropdown is open, or a flyover plays, the left cards step aside */
 .mx-sheet { transition: opacity .26s ease, transform .34s var(--mx-ease); }
