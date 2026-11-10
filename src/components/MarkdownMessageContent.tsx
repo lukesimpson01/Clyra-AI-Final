@@ -491,7 +491,7 @@ export function MarkdownMessageContent({
   return (
     <Markdown
       /* only $$…$$ is maths: a single $ is money far more often ("$0.20 per 1M tokens and $1.20…") */
-      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }]]}
       rehypePlugins={[[rehypeKatex, { throwOnError: false, errorColor: "#15171C", strict: false }]]}
       components={components}
     >
