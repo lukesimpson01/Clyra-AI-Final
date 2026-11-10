@@ -12,3 +12,7 @@
 
 - answer as a note in my Notes titled "Node LTS check"  <!-- mem_8bc7c6e52812432c80ba · explicit · 0.9 confidence · updated 2026-11-01 10:46:04 -->
 - User is interested in entrepreneurs Iman Gadzhi and Alex Hormozi.  <!-- mem_8a7f986cea36471c9679 · learning · 0.8 confidence · updated 2026-10-31 07:45:27 -->
+
+## Goals and projects
+
+- User is considering renting or buying a flat in London with a planned stay of 7 years.  <!-- mem_73237e977a654a39965c · learning · 0.9 confidence · updated 2026-11-10 13:54:49 -->
