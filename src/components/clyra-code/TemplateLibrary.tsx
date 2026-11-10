@@ -459,8 +459,12 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
           </AnimatePresence>
         </div>
       </div>
-      <div className="mt-3 flex justify-center gap-1.5" role="tablist" aria-label="Featured apps">
+      <div className="mt-3 flex items-center justify-center gap-3">
+        <button type="button" aria-label="Previous featured app" onClick={() => setIndex((i) => (i - 1 + entries.length) % entries.length)} className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(55,53,47,0.06)] text-[#2C2C2B]/70 transition-colors hover:bg-[rgba(55,53,47,0.1)]"><ChevronRight className="h-4 w-4 rotate-180" /></button>
+      <div className="flex justify-center gap-1.5" role="tablist" aria-label="Featured apps">
         {entries.map((item, i) => <button key={item.id} type="button" role="tab" aria-selected={i === index} aria-label={`Show ${item.name}`} onClick={() => setIndex(i)} className={cn("h-1.5 rounded-full transition-all duration-300", i === index ? "w-5 bg-[#2C2C2B]/70" : "w-1.5 bg-[rgba(55,53,47,0.16)] hover:bg-[rgba(55,53,47,0.3)]")} />)}
+      </div>
+        <button type="button" aria-label="Next featured app" onClick={() => setIndex((i) => (i + 1) % entries.length)} className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(55,53,47,0.06)] text-[#2C2C2B]/70 transition-colors hover:bg-[rgba(55,53,47,0.1)]"><ChevronRight className="h-4 w-4" /></button>
       </div>
     </section>
   );

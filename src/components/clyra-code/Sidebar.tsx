@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, ArrowDownUp, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, ArrowDownUp, LayoutGrid, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { VibeProject } from "./api";
 
@@ -87,6 +87,9 @@ type SidebarProps = {
   onOpenProjectFolder: (projectId: string) => void;
   onRenameProject?: (projectId: string, name: string) => void;
   onSetProjectPinned?: (projectId: string, pinned: boolean) => void;
+  /** Projects already in Clyra's app launcher, and the toggle that adds or removes one. */
+  launcherProjectIds?: readonly string[];
+  onToggleLauncher?: (projectId: string, name: string, add: boolean) => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   /** Expanded width in px. The rail uses it directly; the drawer ignores it and uses its own width. */
@@ -106,7 +109,7 @@ export function Sidebar({
   projects, threadsByProject, activeProjectId, activeSessionId, runningSessionId = null,
   failedSessionId = null, waitingSessionId = null,
   onSelectProject, onSelectChat, onNewProject, onNewChat, onOpenExisting, newProjectLabel = "New project", noun = "Projects",
-  onRenameChat, onDeleteChat, onRemoveProject, onOpenProjectFolder, onRenameProject, onSetProjectPinned,
+  onRenameChat, onDeleteChat, onRemoveProject, onOpenProjectFolder, onRenameProject, onSetProjectPinned, launcherProjectIds, onToggleLauncher,
   collapsed = false, onToggleCollapsed, width = SIDEBAR_DEFAULT_WIDTH, onResizeWidth,
   variant = "rail", macInset = false, sort = "recent", onSortChange,
 }: SidebarProps) {
@@ -645,6 +648,7 @@ export function Sidebar({
             { label: "New task", icon: FilePlus2, action: () => { setMenu(null); onNewChat(menu.projectId); } },
             ...(onSetProjectPinned ? [{ label: menuProject.pinned ? "Unpin" : "Pin to top", icon: Pin, action: () => { setMenu(null); onSetProjectPinned(menu.projectId, !menuProject.pinned); } }] : []),
             ...(onRenameProject ? [{ label: "Rename", icon: Pencil, action: () => { setMenu(null); setEditing({ kind: "project", projectId: menu.projectId, value: menuProject.name || "" }); } }] : []),
+            ...(onToggleLauncher ? [{ label: launcherProjectIds?.includes(menu.projectId) ? "Remove from Clyra launcher" : "Add to Clyra launcher", icon: LayoutGrid, action: () => { setMenu(null); onToggleLauncher(menu.projectId, menuProject.name || "Untitled app", !launcherProjectIds?.includes(menu.projectId)); } }] : []),
             { label: "Open folder", icon: FolderOpen, action: () => { setMenu(null); onOpenProjectFolder(menu.projectId); } },
             { label: "Remove from sidebar", icon: Trash2, action: () => { setMenu(null); onRemoveProject(menu.projectId); }, destructive: true },
           ]} />

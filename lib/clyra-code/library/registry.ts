@@ -47,6 +47,8 @@ export type TemplateManifest = {
   sourceScreenshots: SourceScreenshot[];
   /** The project's own app icon, copied into /library-icons; null falls back to the owner's avatar. */
   iconUrl: string | null;
+  /** True when the app's headline features call an AI model API (the agent then asks which API to use). */
+  aiPowered: boolean;
   /** Lower numbers appear first in the Featured section; null is not featured. */
   featuredRank: number | null;
   captureProvenance: string | null;
@@ -191,6 +193,7 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
     capabilitiesPlanned: [description],
     sourceScreenshots: [],
     iconUrl: null,
+    aiPowered: false,
     featuredRank: null,
     captureProvenance: null,
     compatibility: [
@@ -317,6 +320,11 @@ const CAPTURED: Record<string, Array<[file: string, alt: string]>> = {
   "saas-starter": [["saas-starter-1.jpg", "SaaS Starter landing page"], ["saas-starter-2.jpg", "SaaS Starter team settings dashboard"], ["saas-starter-3.jpg", "SaaS Starter general settings"], ["saas-starter-4.jpg", "SaaS Starter activity log"]],
   umami: [["umami-1.jpg", "Umami overview with visitors, views and traffic chart"], ["umami-2.jpg", "Umami breakdown by page path"], ["umami-3.jpg", "Umami sessions list with browser and location"], ["umami-4.jpg", "Umami period comparison"]],
   "stirling-pdf": [["stirling-pdf-1.jpg", "Stirling-PDF home with the PDF tool list"], ["stirling-pdf-2.jpg", "Stirling-PDF library with two uploaded PDFs"], ["stirling-pdf-3.jpg", "Stirling-PDF compress tool with settings"]],
+  "anything-llm": [["anything-llm-3.jpg", "AnythingLLM chat workspace with composer"], ["anything-llm-1.jpg", "AnythingLLM welcome screen"], ["anything-llm-2.jpg", "AnythingLLM provider choice during setup"], ["anything-llm-4.jpg", "AnythingLLM LLM provider settings"], ["anything-llm-5.jpg", "AnythingLLM vector database settings"]],
+  flowise: [["flowise-3.jpg", "Flowise template canvas with a start node and an agent"], ["flowise-1.jpg", "Flowise chatflows home"], ["flowise-2.jpg", "Flowise marketplace of ready-made flows"], ["flowise-4.jpg", "Flowise tools"]],
+  slidev: [["slidev-2.jpg", "Slidev slide with feature list"], ["slidev-1.jpg", "Slidev title slide"], ["slidev-3.jpg", "Slidev notes view"], ["slidev-4.jpg", "Slidev presenter view"]],
+  "monaco-editor": [["monaco-editor-1.jpg", "Monaco Editor playground with code"], ["monaco-editor-2.jpg", "Monaco Editor site home"], ["monaco-editor-3.jpg", "Monaco Monarch tokenizer playground"]],
+  "chatbot-ui-lite": [["chatbot-ui-lite-1.jpg", "Chatbot UI Lite single chat screen"], ["chatbot-ui-lite-2.jpg", "Chatbot UI Lite with a message typed in the composer"]],
   "uptime-kuma": [["uptime-kuma-1.jpg", "Uptime Kuma dashboard with monitors up and one down"], ["uptime-kuma-2.jpg", "Uptime Kuma monitor detail with response-time chart"], ["uptime-kuma-3.jpg", "Uptime Kuma monitor in the down state"], ["uptime-kuma-4.jpg", "Uptime Kuma add-monitor form"]],
   "vercel-chatbot": [["vercel-chatbot-1.jpg", "Vercel AI Chatbot empty chat with suggestions"], ["vercel-chatbot-2.jpg", "Vercel AI Chatbot model picker"], ["vercel-chatbot-3.jpg", "Vercel AI Chatbot register page"]],
   wekan: [["wekan-1.jpg", "WeKan kanban board with four lists"], ["wekan-2.jpg", "WeKan card detail panel"], ["wekan-3.jpg", "WeKan all-boards view"]],
@@ -362,6 +370,11 @@ const VERIFIED: Record<string, Verified> = {
   "vercel-chatbot": { license: "Apache-2.0", status: "requires-setup", port: 3000, dev: "pnpm dev", build: ["pnpm install", "pnpm db:migrate"], commit: "a8989b5", secrets: ["POSTGRES_URL", "AUTH_SECRET", "AI_GATEWAY_API_KEY"], footprint: "pnpm install ~6 s; Postgres in Docker.", verified: ["Install and migrations", "Chat UI as a guest"], notes: ["Licence verified: Apache-2.0.", "Replies need an AI Gateway key (not tested)."] },
   wekan: { license: "MIT", status: "requires-setup", port: 80, dev: "docker compose (MongoDB 7 + wekanteam/wekan)", commit: "bc69880", footprint: "Docker: MongoDB + app ~2.5 GB.", verified: ["Stack runs", "Registration, boards, lists and cards"], notes: ["The default compose uses ghcr.io images and a FerretDB download; Docker Hub wekanteam/wekan with MongoDB 7 was used.", "The placeholder MAIL_URL crashes start-up; set a valid smtp:// URL."] },
   "stirling-pdf": { license: "License review", status: "requires-setup", port: 8080, dev: "docker run -p 8080:8080 stirlingtools/stirling-pdf", commit: "0b7d3a4", footprint: "Docker image ~1 GB.", verified: ["Official image runs", "Upload and tool panels"], notes: ["LICENSE is MIT for the core, but app/proprietary, app/saas, engine and parts of the frontend editor carry their own licences: review before distributing.", "Verified via the official Docker image; default login admin/stirling unless security is disabled (done for the test)."] },
+  slidev: { license: "MIT", status: "runnable-now", port: 3030, dev: "pnpm run demo:dev", build: ["pnpm install --frozen-lockfile", "pnpm run build"], commit: "437f139", footprint: "pnpm install ~22 s.", verified: ["Install and build", "Demo deck, notes and presenter views"], notes: ["Needs Node 22.22+.", "A cypress postinstall download fails on restricted networks but does not stop the demo."] },
+  "monaco-editor": { license: "MIT", status: "requires-setup", port: 8091, dev: "serve website/dist statically", build: ["npm ci", "npm run build-lsp", "npm run build-monaco-editor", "(website) npm ci && npm run typedoc && npm run build-webpack"], commit: "5359a33", footprint: "~1 min of builds.", verified: ["Editor build and playground site"], notes: ["The website dev server (webpack serve) failed on a schema error in this environment; the production build was served statically.", "The playground preview pane loads Monaco from a CDN, so it stays blank offline.", "Ship ThirdPartyNotices.txt with any distribution."] },
+  "chatbot-ui-lite": { license: "MIT", status: "requires-setup", port: 3000, dev: "npm run dev", build: ["npm install"], commit: "3cb41ac", secrets: ["OPENAI_API_KEY"], footprint: "npm install ~14 s.", verified: ["Install and dev server", "Single chat screen renders"], notes: ["Basic single-screen demo last updated in March 2023 on Next 13 and the OpenAI v3 SDK; not production-ready.", "Replies need an OpenAI key (not tested)."] },
+  "anything-llm": { license: "MIT", status: "requires-setup", port: 3001, dev: "docker run -p 3001:3001 mintplexlabs/anythingllm", commit: "ace9dad", secrets: ["A model provider API key"], footprint: "Docker image ~1.5 GB; embedded SQLite and LanceDB.", verified: ["Official image runs", "Onboarding, chat workspace and settings"], notes: ["Verified via the official Docker image (needs --cap-add SYS_ADMIN and a storage volume).", "Chatting needs your own model API key (not tested); DeepSeek is a built-in provider."] },
+  flowise: { license: "License review", status: "requires-setup", port: 3002, dev: "docker run -p 3000:3000 flowiseai/flowise:3.1.3", commit: "9291856", secrets: ["A model provider API key"], footprint: "Docker image ~1.3 GB; SQLite.", verified: ["Official image runs (3.1.3)", "Account setup, chatflows, marketplace templates"], notes: ["Apache-2.0 except packages/server/src/enterprise and files with an explicit notice, which are under a commercial licence: exclude them.", "The latest Docker tag (3.1.4) failed to start (ERR_PACKAGE_PATH_NOT_EXPORTED); 3.1.3 was used and still logs that error for two agent nodes.", "Has a dedicated DeepSeek chat-model node."] },
   opencut: { license: "MIT", status: "requires-setup", port: 5173, dev: "bun run dev (apps/web)", build: ["bun install"], commit: "e668010", footprint: "bun install ~6 s.", verified: ["Install and dev server start"], notes: ["The default branch is a rewrite in progress: apps/web renders only a placeholder page, so no screenshots were taken.", "The README points to opencut-classic as the working editor."] },
 };
 
@@ -370,14 +383,31 @@ const FEATURED_ORDER = ["openfilm", "photocraft", "filmcraft", "wordcraft", "gri
 /** Own app icons copied from each project (see public/library-icons/ATTRIBUTION.md). */
 const OWN_ICONS = new Set(FEATURED_ORDER);
 
+/** The most representative capture of each app (its main working screen), used as the card's cover. */
+const COVER: Record<string, string> = {
+  actual: "actual-2.jpg", "code-server": "code-server-3.jpg", excalidraw: "excalidraw-2.jpg", formbricks: "formbricks-4.jpg",
+  gitea: "gitea-2.jpg", hoppscotch: "hoppscotch-2.jpg", hycanvas: "hycanvas-3.jpg", navidrome: "navidrome-3.jpg",
+  "saas-starter": "saas-starter-2.jpg", "stirling-pdf": "stirling-pdf-3.jpg", "anything-llm": "anything-llm-3.jpg", flowise: "flowise-3.jpg",
+  slidev: "slidev-2.jpg", wekan: "wekan-1.jpg",
+};
+
+/** Apps whose main features need an AI model API. On import the agent offers Clyra AI or the user's own key. */
+const AI_POWERED = new Set([
+  "librechat", "vercel-chatbot", "perplexica", "openhands", "bolt-diy", "anything-llm", "flowise", "langflow", "chatbot-ui-lite",
+  "funclip", "ai-youtube-shorts-generator", "onlook", "dyad", "cline", "aider", "continue", "browser-use", "hycanvas", "openfilm", "natively",
+]);
+
 function withCaptures(manifestIn: TemplateManifest): TemplateManifest {
   const rank = FEATURED_ORDER.indexOf(manifestIn.id);
   const manifest: TemplateManifest = {
     ...manifestIn,
     featuredRank: rank >= 0 ? rank : null,
+    aiPowered: AI_POWERED.has(manifestIn.id),
     iconUrl: OWN_ICONS.has(manifestIn.id) ? `/library-icons/${manifestIn.id}.png` : null,
   };
-  const shots = CAPTURED[manifest.id];
+  const rawShots = CAPTURED[manifest.id];
+  const cover = COVER[manifest.id];
+  const shots = rawShots && cover ? [...rawShots.filter(([file]) => file === cover), ...rawShots.filter(([file]) => file !== cover)] : rawShots;
   const facts = VERIFIED[manifest.id];
   let out = manifest;
   if (facts) {

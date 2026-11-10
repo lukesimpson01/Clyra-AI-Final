@@ -78,6 +78,8 @@ import {
 } from "./lib/vibe-coder/preview/preview-runner";
 import { detectProjectTargets } from "./lib/clyra-code/targets/detect";
 import { displayNameFor, htmlTitleOf } from "./lib/clyra-code/projects/display-name";
+import { CLYRA_AI_DEFAULT_MODEL, CLYRA_AI_MODELS, clyraAiAvailable, createProjectAiToken, isDotenvPath, readProjectAiConfig, restoreMaskedDotenv, verifyProjectAiToken, writeProjectEnv } from "./lib/clyra-code/security/project-ai";
+import { sanitizeToolOutputForModel } from "./lib/clyra-code/security/environment";
 import { listDesignSystems, listDesignTemplates, readDesignSystem, readDesignTemplate } from "./lib/clyra-design/catalog";
 import { DESIGN_FILES_DIR } from "./lib/clyra-design/directive";
 import { resolvePreview } from "./lib/clyra-code/preview/resolver";
@@ -455,7 +457,7 @@ async function listProjectFiles(id: string) {
         await walk(full);
       } else if (entry.isFile()) {
         const rel = path.relative(root, full).replaceAll(path.sep, "/");
-        files.push({ path: rel, content: await fs.readFile(full, "utf8") });
+        files.push({ path: rel, content: sanitizeToolOutputForModel(await fs.readFile(full, "utf8")) });
       }
     }
   }
@@ -5227,6 +5229,88 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     }
   });
 
+  // ── Clyra AI for apps made in Vibe Coder ─────────────────────────────────────────────────────────
+  // An app that needs a model API gets a project-scoped token and the address of this proxy. The real
+  // DeepSeek key stays in this process: it is never written to a project, an env file, a response or a log.
+  const aiHits = new globalThis.Map<string, { count: number; resetAt: number }>();
+  const aiCors = (res: express.Response) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
+    res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  };
+  app.options("/api/clyra-ai/v1/*", (_req, res) => { aiCors(res); res.status(204).end(); });
+  app.get("/api/clyra-ai/v1/models", (req, res) => {
+    aiCors(res);
+    const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    if (!verifyProjectAiToken(token)) return res.status(401).json({ error: { message: "Invalid Clyra AI token." } });
+    res.json({ object: "list", data: CLYRA_AI_MODELS.map((id) => ({ id, object: "model", owned_by: "clyra" })) });
+  });
+  app.post("/api/clyra-ai/v1/chat/completions", async (req, res) => {
+    aiCors(res);
+    const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    const projectId = verifyProjectAiToken(token);
+    if (!projectId) return res.status(401).json({ error: { message: "Invalid Clyra AI token." } });
+    const apiKey = process.env.DEEPSEEK_API_KEY || process.env.MY_LLM_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: { message: "Clyra AI is not available on this device." } });
+    const now = Date.now();
+    const hit = aiHits.get(projectId);
+    if (!hit || hit.resetAt < now) aiHits.set(projectId, { count: 1, resetAt: now + 60_000 });
+    else if (++hit.count > 60) return res.status(429).json({ error: { message: "Too many requests. Try again in a minute." } });
+    const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+    const model = (CLYRA_AI_MODELS as readonly string[]).includes(String(body.model)) ? String(body.model) : CLYRA_AI_DEFAULT_MODEL;
+    const payload = { ...body, model, max_tokens: Math.min(Number(body.max_tokens) || 2048, 4096) };
+    try {
+      const upstream = await fetch(`${String(process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(payload),
+      });
+      res.status(upstream.status);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/json");
+      if (!upstream.body) return res.end();
+      const reader = upstream.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
+    } catch {
+      if (!res.headersSent) res.status(502).json({ error: { message: "Clyra AI could not be reached." } });
+      else res.end();
+    }
+  });
+  // Which AI mode a project uses, and whether a key is set. Values are never returned.
+  app.get("/api/clyra-code/projects/:id/ai-config", async (req, res) => {
+    const projectId = safeProjectId(String(req.params.id ?? ""));
+    const metadata = await readProjectMetadata(projectId);
+    if (!metadata) return res.status(404).json({ error: "Project not found" });
+    res.json({ ...(await readProjectAiConfig(path.join(projectRoot(projectId), "files"))), clyraAiAvailable: clyraAiAvailable() });
+  });
+  app.post("/api/clyra-code/projects/:id/ai-config", async (req, res) => {
+    const projectId = safeProjectId(String(req.params.id ?? ""));
+    const metadata = await readProjectMetadata(projectId);
+    if (!metadata) return res.status(404).json({ error: "Project not found" });
+    const filesDir = path.join(projectRoot(projectId), "files");
+    const mode = String(req.body?.mode ?? "");
+    if (mode === "clyra") {
+      const token = createProjectAiToken(projectId);
+      if (!token) return res.status(503).json({ error: "Clyra AI is not available on this device." });
+      const base = `${req.protocol}://${req.get("host")}/api/clyra-ai/v1`;
+      await writeProjectEnv(filesDir, { CLYRA_AI_BASE_URL: base, OPENAI_BASE_URL: base, OPENAI_API_BASE: base, OPENAI_API_KEY: token, CLYRA_AI_MODEL: CLYRA_AI_DEFAULT_MODEL });
+      return res.json({ ok: true, mode: "clyra" });
+    }
+    if (mode === "own") {
+      const apiKey = String(req.body?.apiKey ?? "").trim();
+      if (apiKey.length < 8 || apiKey.length > 400 || /\s/.test(apiKey)) return res.status(400).json({ error: "That does not look like an API key." });
+      const baseUrl = String(req.body?.baseUrl ?? "").trim();
+      if (baseUrl && !/^https:\/\/[^\s]+$/i.test(baseUrl)) return res.status(400).json({ error: "The base URL must start with https://." });
+      await writeProjectEnv(filesDir, { OPENAI_API_KEY: apiKey, ...(baseUrl ? { OPENAI_BASE_URL: baseUrl, OPENAI_API_BASE: baseUrl } : {}) });
+      return res.json({ ok: true, mode: "own" });
+    }
+    res.status(400).json({ error: "mode must be clyra or own." });
+  });
+
   // Source exports stream directly from the project root. This keeps the
   // Vibe Coder export control useful on both Electron and the browser without
   // exposing the host filesystem or including caches, Git metadata or secrets.
@@ -5263,7 +5347,11 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
     if (!metadata) return res.status(404).json({ error: "Project not found" });
     try {
       const filePath = projectFilePath(projectId, String(req.body?.path ?? ""));
-      const content = String(req.body?.content ?? "");
+      let content = String(req.body?.content ?? "");
+      // The workbench shows secrets masked; a masked value that comes back is restored from disk, never saved as a placeholder.
+      if (isDotenvPath(String(req.body?.path ?? ""))) {
+        content = restoreMaskedDotenv(await fs.readFile(filePath, "utf8").catch(() => ""), content);
+      }
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, content, "utf8");
       res.json({ ok: true, files: await listProjectFiles(projectId) });

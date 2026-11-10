@@ -64,7 +64,8 @@ await test("launch-tested records carry captures, a date and a non-empty note li
   }
   const captured = TEMPLATE_LIBRARY.filter((item) => item.sourceScreenshots.length > 0);
   assert.ok(captured.length >= 25);
-  assert.ok(captured.every((entry) => entry.sourceScreenshots.length >= 3), "every captured app has at least three screenshots");
+  assert.ok(captured.every((entry) => entry.sourceScreenshots.length >= 2), "every captured app has at least two screenshots (one-screen apps such as Chatbot UI Lite have two)");
+  assert.ok(captured.filter((entry) => entry.sourceScreenshots.length >= 3).length >= captured.length - 1);
 });
 
 await test("licences found in the repository files replace the generic review placeholders", () => {
@@ -93,6 +94,17 @@ await test("featured entries lead with OpenFilm, then the Adobe-style and Micros
 
 await test("every featured icon file exists on disk", async () => {
   for (const entry of TEMPLATE_LIBRARY.filter((item) => item.iconUrl)) await access(path.join(process.cwd(), "public", entry.iconUrl!));
+});
+
+await test("AI-powered apps are flagged so the agent can ask which API to use; plain apps are not", () => {
+  for (const id of ["librechat", "chatbot-ui-lite", "anything-llm", "flowise", "bolt-diy"]) assert.equal(getTemplateManifest(id)?.aiPowered, true, id);
+  for (const id of ["excalidraw", "gitea", "slidev", "umami"]) assert.equal(getTemplateManifest(id)?.aiPowered, false, id);
+});
+
+await test("a captured app's cover is its main working screen, not a welcome or login page", () => {
+  assert.match(getTemplateManifest("actual")?.sourceScreenshots[0]?.url ?? "", /actual-2\.jpg$/);
+  assert.match(getTemplateManifest("anything-llm")?.sourceScreenshots[0]?.url ?? "", /anything-llm-3\.jpg$/);
+  assert.match(getTemplateManifest("flowise")?.sourceScreenshots[0]?.url ?? "", /flowise-3\.jpg$/);
 });
 
 await test("the bounded checkout scan discovers notices and scripts without executing them", async () => {

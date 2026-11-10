@@ -14,6 +14,7 @@ import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } 
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Bloub, type BloubHandle } from "./bloub/Bloub";
 import { shortcut } from "../lib/platform";
+import { USER_APP_BADGE, useUserApps, type UserApp } from "../lib/user-apps";
 export type LauncherToolId =
   | "chat"
   | "vibe"
@@ -28,6 +29,8 @@ export type LauncherToolId =
 
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
+  /** Opens an app the user made in Vibe Coder. */
+  onOpenUserApp?: (app: UserApp) => void;
   onClose: () => void;
 }
 
@@ -108,8 +111,9 @@ function readLastTool(): LauncherToolId {
   return tools.some((tool) => tool.id === stored) ? stored! : "chat";
 }
 
-export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
+export function AppLauncher({ onOpenTool, onOpenUserApp, onClose }: AppLauncherProps) {
   const reduceMotion = useReducedMotion();
+  const userApps = useUserApps();
   const initialToolIndex = Math.max(0, tools.findIndex((tool) => tool.id === readLastTool()));
   const [activeIndex, setActiveIndex] = useState(initialToolIndex);
   const highlightTarget = useMotionValue(initialToolIndex * SLICE_ANGLE);
@@ -191,6 +195,33 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
       aria-label="Clyra app launcher"
       onClick={onClose}
     >
+      {userApps.length && onOpenUserApp ? (
+        <aside
+          aria-label="Your apps"
+          onClick={(event) => event.stopPropagation()}
+          className="absolute bottom-5 left-1/2 z-20 flex w-[min(92vw,640px)] -translate-x-1/2 flex-col gap-2 lg:bottom-auto lg:left-auto lg:right-6 lg:top-1/2 lg:w-[232px] lg:-translate-x-0 lg:-translate-y-1/2"
+        >
+          <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Your apps</p>
+          <ul className="flex gap-2 overflow-x-auto pb-1 lg:max-h-[56vh] lg:flex-col lg:overflow-y-auto lg:overflow-x-visible">
+            {userApps.slice(0, 12).map((app) => (
+              <li key={app.id} className="shrink-0 lg:shrink">
+                <button
+                  type="button"
+                  onClick={() => onOpenUserApp(app)}
+                  className="flex w-[196px] items-center gap-2.5 rounded-[14px] border border-slate-200/80 bg-white/90 p-2 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_18px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 lg:w-full"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-slate-900 text-[13px] font-semibold text-white" aria-hidden>{app.name.trim().charAt(0).toUpperCase() || "A"}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-semibold text-slate-900">{app.name}</span>
+                    <span className="mt-0.5 inline-block rounded-full bg-blue-50 px-1.5 py-[1px] text-[9.5px] font-semibold uppercase tracking-[0.04em] text-blue-600">{USER_APP_BADGE}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      ) : null}
+
       {/* Light grid — opacity only, not animated */}
       <div className="pointer-events-none absolute inset-0 opacity-[0.28] [background-image:linear-gradient(rgba(15,23,42,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,.035)_1px,transparent_1px)] [background-size:40px_40px]" />
 
