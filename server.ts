@@ -3145,7 +3145,7 @@ async function startServer() {
           } : undefined,
         },
         send,
-        { model: typeof req.body?.model === "string" ? req.body.model : undefined, instructions: typeof req.body?.instructions === "string" ? req.body.instructions : undefined, signal: controller.signal },
+        { model: typeof req.body?.model === "string" ? req.body.model : undefined, effort: ["light", "medium", "high", "max"].includes(req.body?.effort) ? req.body.effort : undefined, instructions: typeof req.body?.instructions === "string" ? req.body.instructions : undefined, signal: controller.signal },
       );
     } catch (error) {
       send({ type: "error", code: "failed", message: error instanceof Error ? error.message : "The agent could not finish." });

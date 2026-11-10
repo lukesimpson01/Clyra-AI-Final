@@ -408,11 +408,21 @@ function compact(messages: ModelMessage[]) {
   }
 }
 
+export type AgentEffort = "light" | "medium" | "high" | "max";
+/** What a run may spend at each effort level, and how the agent is told to work. The model still decides every step;
+ *  the level sets the room it has and the standard it is held to. */
+const EFFORT_PROFILE: Record<AgentEffort, { maxSteps: number; searches: number; opens: number; guidance: string }> = {
+  light: { maxSteps: 16, searches: 3, opens: 4, guidance: "Effort: light. Be quick and economical. One or two searches at most, open only the single best page, answer as soon as the question is supported. Skip reviews and long plans unless the task is a multi-part write." },
+  medium: { maxSteps: 48, searches: 8, opens: 12, guidance: "Effort: standard. Plan with update_todos for multi-step work, search with a few complementary queries, open the pages that matter, and review your work once before finishing." },
+  high: { maxSteps: 90, searches: 14, opens: 20, guidance: "Effort: extended. Work thoroughly. Plan precisely, gather evidence from several independent sources, cross-check every important claim against a second source, look for what a first pass would miss (edge cases, counter-evidence, newer information), review_work against the request line by line, and fix every gap before you reply. If something is uncertain, say exactly what and why." },
+  max: { maxSteps: 140, searches: 20, opens: 30, guidance: "Effort: maximum. Be exhaustive and skeptical. Break the request into every sub-question, investigate each from independent primary sources, actively try to disprove your own conclusions, reconcile conflicting sources explicitly, verify numbers and quotes against the page, run review_work more than once, and only finish when each requirement is demonstrably met. Prefer depth and correctness over speed; never stop early." },
+};
+
 export async function runChatAgent(
   turns: ChatTurn[],
   deps: AgentDeps,
   emit: (event: AgentEvent) => void,
-  options: { model?: string; instructions?: string; signal?: AbortSignal; maxSteps?: number; maxSearches?: number; maxOpens?: number; agent?: { id: string; name: string }; depth?: number; board?: Array<{ from: string; text: string }>; ledger?: EvidenceLedger } = {},
+  options: { model?: string; effort?: AgentEffort; instructions?: string; signal?: AbortSignal; maxSteps?: number; maxSearches?: number; maxOpens?: number; agent?: { id: string; name: string }; depth?: number; board?: Array<{ from: string; text: string }>; ledger?: EvidenceLedger } = {},
 ) {
   const ledger = options.ledger ?? new EvidenceLedger();
   const depth = options.depth ?? 0;
@@ -422,7 +432,8 @@ export async function runChatAgent(
   const now = deps.now?.() ?? new Date();
   /* Real note work can require a read, a proposal, links and a final check.
      Keep it bounded without rewarding an unfinished first action. */
-  const maxSteps = options.maxSteps ?? 80;
+  const profile = EFFORT_PROFILE[options.effort ?? "medium"];
+  const maxSteps = options.maxSteps ?? profile.maxSteps;
   let nudges = 0;
   let workCalls = 0;
   let workAtLastPlan = 0;
@@ -430,7 +441,7 @@ export async function runChatAgent(
   let verified = false;
   const lastUser = [...turns].reverse().find((turn) => turn.role === "user")?.content ?? "";
   const taskMode = looksLikeTask(lastUser);
-  const budget = { searches: options.maxSearches ?? 10, opens: options.maxOpens ?? 14, searchesUsed: 0, opensUsed: 0, toolCalls: 0 };
+  const budget = { searches: options.maxSearches ?? profile.searches, opens: options.maxOpens ?? profile.opens, searchesUsed: 0, opensUsed: 0, toolCalls: 0 };
   let todos: TodoItem[] = [];
   let stepCounter = 0;
   /* Everything this run has actually done, kept so the agent can review its
@@ -479,7 +490,7 @@ export async function runChatAgent(
     organised: work.organised,
     named_but_unchanged: untouched().map((page) => ({ id: page.id, title: page.title })),
   });
-  const messages: ModelMessage[] = [{ role: "system", content: systemPrompt(now, deps.notes) + (options.instructions?.trim() ? `\n\nThe person has set standing instructions. Follow them unless they conflict with being accurate or safe:\n${options.instructions.trim().slice(0, 4000)}` : "") }, ...turns.map((t) => ({ role: t.role, content: t.content }) as ModelMessage)];
+  const messages: ModelMessage[] = [{ role: "system", content: systemPrompt(now, deps.notes) + `\n\n${profile.guidance}` + (options.instructions?.trim() ? `\n\nThe person has set standing instructions. Follow them unless they conflict with being accurate or safe:\n${options.instructions.trim().slice(0, 4000)}` : "") }, ...turns.map((t) => ({ role: t.role, content: t.content }) as ModelMessage)];
   for (const turn of turns) if (turn.role === "user") ledger.allowUserUrls(turn.content);
 
   /* Real durations: a step is timed from its running event to its done or failed one. */

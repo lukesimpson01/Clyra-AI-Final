@@ -46,7 +46,8 @@ export interface ComposerEffortOption {
   value: string;
   label: string;
   hint: string;
-  icon: ReactNode;
+  /** Levels are named, not pictured: no per-level symbol is drawn. */
+  icon?: ReactNode;
   onPick: () => void;
 }
 
@@ -2471,17 +2472,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       background: effortMenuOpen ? "#F1F2F4" : "transparent",
                     }}
                   >
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 18,
-                        height: 18,
-                      }}
-                    >
-                      {currentEffortOption?.icon}
-                    </span>
+                    
                     {currentEffortOption?.label}
                     <svg
                       width={11}

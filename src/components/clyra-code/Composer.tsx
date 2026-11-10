@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { BorderBeam } from "border-beam";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, Clipboard, Feather, File as FileIcon, FileSearch, Flame, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X, Zap } from "lucide-react";
+import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
 import { ChevronDown14 } from "./harness";
@@ -286,19 +286,10 @@ export function Composer({
   const attached = attachments.length > 0 || contexts.length > 0;
   const activeEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[1];
   const effortOptions: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (id: "low" | "medium" | "high") =>
-      id === "low" ? (
-        <Feather size={15} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
-      ) : id === "medium" ? (
-        <Zap size={15} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
-      ) : (
-        <Flame size={15} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
-      );
     return EFFORT_LEVELS.map((level) => ({
       value: level.id,
       label: level.name,
       hint: level.detail,
-      icon: iconFor(level.id),
       onPick: () => onEffortChange?.(level.id),
     }));
   }, [onEffortChange]);

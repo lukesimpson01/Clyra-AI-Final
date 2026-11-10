@@ -47,13 +47,9 @@ import {
   Code2,
   BookOpen,
   Earth,
-  Feather,
-  Flame,
   Gift,
   MapPin,
-  Rocket,
   Scissors,
-  Zap,
   ArrowUpIcon,
   Check,
   Copy,
@@ -3784,28 +3780,10 @@ export default function App() {
       });
   }, [chats, currentChatId, messages]);
   const shellEfforts: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (kind: ChatEffort, size = 15) =>
-      kind === "light" ? (
-        <Feather size={size} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
-      ) : kind === "medium" ? (
-        <Zap size={size} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
-      ) : kind === "high" ? (
-        /* the top level on offer is the "supercharged" one: its icon shimmers */
-        <span className="clyra-effort-max" aria-hidden>
-          <Flame size={size} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
-          <i /><i /><i />
-        </span>
-      ) : (
-        <span className="clyra-effort-max" aria-hidden>
-          <Rocket size={size} strokeWidth={1.8} color="#DC2626" strokeLinecap="round" strokeLinejoin="round" />
-          <i /><i /><i />
-        </span>
-      );
     return CHAT_EFFORTS.map((v) => ({
       value: v,
       label: CHAT_EFFORT_LABEL[v],
       hint: CHAT_EFFORT_HINT[v],
-      icon: iconFor(v),
       onPick: () => setChatEffort(v),
     }));
   }, []);
@@ -7607,6 +7585,7 @@ Please analyze the code you just wrote and fix this error.`;
           await streamChatAgent({
             messages: history,
             model: CHAT_EFFORT_MODEL[chatEffort],
+            effort: chatEffort,
             signal: streamController.signal,
             onEvent: (event) => {
               if (event.type === "todos") { run.todos = event.items; patch(); }

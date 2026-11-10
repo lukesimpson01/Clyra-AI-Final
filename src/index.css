@@ -11575,17 +11575,6 @@ body,
 /* Conversation precision — final cascade. Kept at EOF so unrelated workspace
    styling cannot reintroduce a second chat gutter or cap the scroll viewport. */
 
-/* Max effort: the rocket "supercharges" — a light sweep, a pulsing glow and tiny rising sparks. */
-.clyra-effort-max { position: relative; display: inline-grid; place-items: center; line-height: 0; border-radius: 50%; isolation: isolate; animation: clyra-effort-max-glow 2.4s ease-in-out infinite; }
-.clyra-effort-max::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,.95) 50%, transparent 65%); background-size: 260% 100%; background-position: 160% 0; mix-blend-mode: overlay; animation: clyra-effort-max-sheen 2.2s cubic-bezier(.4,0,.2,1) infinite; pointer-events: none; }
-.clyra-effort-max > i { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: #FDBA74; opacity: 0; animation: clyra-effort-max-spark 1.8s ease-out infinite; pointer-events: none; }
-.clyra-effort-max > i:nth-of-type(1) { left: 1px; bottom: 1px; }
-.clyra-effort-max > i:nth-of-type(2) { left: 5px; bottom: -1px; animation-delay: .6s; }
-.clyra-effort-max > i:nth-of-type(3) { left: -1px; bottom: 5px; animation-delay: 1.2s; }
-@keyframes clyra-effort-max-glow { 0%,100% { filter: drop-shadow(0 0 0 rgba(239,68,68,0)); } 50% { filter: drop-shadow(0 0 3px rgba(249,115,22,.65)); } }
-@keyframes clyra-effort-max-sheen { 0% { background-position: 160% 0; } 60%,100% { background-position: -60% 0; } }
-@keyframes clyra-effort-max-spark { 0% { opacity: 0; transform: translate(0,0) scale(1); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(-5px,6px) scale(.4); } }
-@media (prefers-reduced-motion: reduce) { .clyra-effort-max, .clyra-effort-max::after, .clyra-effort-max > i { animation: none; } .clyra-effort-max > i { display: none; } }
 
 /* Words found by a search: blue text, no highlighter box. */
 .clyra-search-hit { background: transparent; color: #0066ff; font-weight: 600; padding: 0; transition: color .2s ease; }
