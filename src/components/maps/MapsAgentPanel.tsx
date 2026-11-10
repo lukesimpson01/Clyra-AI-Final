@@ -1,5 +1,5 @@
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, MapPin, MessageCircle, Mic, PanelRightOpen, Square, X } from "lucide-react";
+import { ArrowUp, Bookmark, Check, ChevronDown, Clock, Compass, Globe, Home, MapPin, MessageCircle, Mic, PanelRightOpen, Plus, Route as RouteIcon, Search, Share2, Square, Star, Timer, UtensilsCrossed, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   assistantBubbleInnerStyle,
@@ -17,7 +17,7 @@ import { canStartDictation, formatDictationElapsed, isDictationHold, isDictation
 /** One exchange in the map chat. Tool steps and places are attached to the
  * assistant turn that produced them, so the thread reads like the Clyra chat. */
 export type MapsAgentStep =
-  | { kind: "tool"; name: string; ok: boolean; summary: string }
+  | { kind: "tool"; name: string; ok: boolean; summary: string; label?: string }
   | { kind: "map"; label: string };
 
 export interface ComparisonRow {
@@ -539,10 +539,10 @@ function StepsLog({ steps, working, status, reduced }: { steps: MapsAgentStep[];
           >
             {steps.map((st, i) => (
               <motion.li key={i} initial={reduced ? false : { opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24, ease: SHELL_EASE }} className="maps-step" data-state={st.kind === "map" ? "map" : st.ok ? "ok" : "error"}>
-                <span className="maps-step-node" aria-hidden>{st.kind === "map" ? <MapPin className="h-2.5 w-2.5" /> : st.ok ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : "!"}</span>
+                <span className="maps-step-node" aria-hidden>{st.kind === "map" ? <MapPin className="h-2.5 w-2.5" /> : st.ok ? <ToolIcon name={st.name} /> : "!"}</span>
                 <span className="min-w-0">
-                  {st.kind === "map" ? st.label : toolLabel(st.name)}
-                  {st.kind === "tool" && st.summary ? <span className="text-[#9a9ca3]"> · {st.summary}</span> : null}
+                  {st.kind === "map" ? st.label : st.label ?? toolLabel(st.name)}
+                  {st.kind === "tool" && st.summary && st.summary !== "done" ? <span className="text-[#9a9ca3]"> · {st.summary}</span> : null}
                 </span>
               </motion.li>
             ))}
@@ -588,6 +588,26 @@ function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
       <p className="px-2.5 py-1.5 text-[10.5px] text-[#6b7079]">Distances are straight-line from you. Hours are from OpenStreetMap.</p>
     </div>
   );
+}
+
+/** A small icon for what a step did, so a long run reads at a glance. */
+function ToolIcon({ name }: { name: string }) {
+  const p = { className: "h-2.5 w-2.5", strokeWidth: 2.6 } as const;
+  switch (name) {
+    case "search_places": case "search_nearby": case "search_along_route": return <Search {...p} />;
+    case "read_website": case "web_search": return <Globe {...p} />;
+    case "research_place": return <UtensilsCrossed {...p} />;
+    case "place_reviews": return <Star {...p} />;
+    case "check_hours": return <Clock {...p} />;
+    case "get_route": case "plan_trip": case "get_transit": return <RouteIcon {...p} />;
+    case "edit_trip": return <Plus {...p} />;
+    case "travel_times": return <Timer {...p} />;
+    case "save_place": case "add_to_guide": return <Bookmark {...p} />;
+    case "set_home_or_work": return <Home {...p} />;
+    case "share_trip": return <Share2 {...p} />;
+    case "inspect_place": case "identify_point": case "select_result": return <Compass {...p} />;
+    default: return <Check {...p} />;
+  }
 }
 
 function toolLabel(name: string): string {

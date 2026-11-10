@@ -6,7 +6,7 @@ import { PlaceResultsList } from "./PlaceResultsList";
 import { PlaceDetailSheet } from "./PlaceDetailSheet";
 import { RouteOverviewPanel, type TransitState, type TransitWhen } from "./RouteOverviewPanel";
 import { LookAroundViewer } from "./LookAroundViewer";
-import { addToGuide, createGuide, readLibrary } from "../../maps/library";
+import { addToGuide, createGuide, readLibrary, setSlot } from "../../maps/library";
 import { fetchTilePois } from "../../maps/tilePois";
 import { downloadArea, saveArea } from "../../maps/offline";
 import type { TransitItinerary } from "../../../lib/maps/transit";
@@ -102,7 +102,11 @@ type AgentAction =
   | { type: "save_preference"; key: "travel_mode" | "avoid_tolls"; value: string | boolean }
   | { type: "show_transit"; itineraries: TransitItinerary[]; destinationName: string; destination: Coordinate }
   | { type: "map_command"; command: "satellite" | "default_map" | "driving_map" | "tilt_3d" | "flat_2d" | "flyover" | "stop_flyover" | "start_navigation" | "look_around" | "locate_me" | "offline_download" }
-  | { type: "add_to_guide"; place: ClyraPlace; guide: string };
+  | { type: "add_to_guide"; place: ClyraPlace; guide: string }
+  | { type: "edit_trip"; op: "add_stop" | "remove_stop" | "clear" | "set_mode"; place?: ClyraPlace; index?: number; mode?: TravelMode }
+  | { type: "save_place"; place: ClyraPlace }
+  | { type: "set_slot"; slot: "home" | "work"; place: ClyraPlace }
+  | { type: "share"; text: string };
 
 type AgentEvent =
   | { type: "status"; label: string }
@@ -653,8 +657,8 @@ export function ClyraMapsWorkspace() {
 
   /* ------------------------------ Ask Clyra agent ------------------------------ */
   // Latest selection/route/results for the agent request, without re-creating handlers.
-  const liveRef = useRef({ selectedPlace, route, places, nearby, mode });
-  liveRef.current = { selectedPlace, route, places, nearby, mode };
+  const liveRef = useRef({ selectedPlace, route, places, nearby, mode, stops });
+  liveRef.current = { selectedPlace, route, places, nearby, mode, stops };
 
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentTurns, setAgentTurns] = useState<MapsAgentTurn[]>([]);
@@ -793,6 +797,49 @@ export function ClyraMapsWorkspace() {
         step(`Added ${action.place.name} to “${action.guide}”`);
         return;
       }
+      case "edit_trip": {
+        if (action.op === "clear") { clearRoute(); step("Cleared the route"); return; }
+        if (action.op === "set_mode" && action.mode) {
+          setMode(action.mode);
+          writePrefs({ ...readPrefs(), mode: action.mode });
+          const dest = destRef.current;
+          if (dest) void computeRoute(dest, action.mode, true);
+          step(`Switched to ${action.mode}`);
+          return;
+        }
+        if (action.op === "add_stop" && action.place && isPlace(action.place)) {
+          changeStops([...stopsRef.current, action.place]);
+          step(`Added ${action.place.name} as stop ${stopsRef.current.length + 1}`);
+          return;
+        }
+        if (action.op === "remove_stop" && typeof action.index === "number") {
+          const removed = stopsRef.current[action.index];
+          changeStops(stopsRef.current.filter((_, i) => i !== action.index));
+          if (removed) step(`Removed ${removed.name} from the trip`);
+        }
+        return;
+      }
+      case "save_place": {
+        if (!isPlace(action.place)) return;
+        try {
+          const list: ClyraPlace[] = JSON.parse(localStorage.getItem("clyra.savedPlaces") || "[]");
+          if (!list.some((p) => p.id === action.place.id)) localStorage.setItem("clyra.savedPlaces", JSON.stringify([action.place, ...list].slice(0, 200)));
+          window.dispatchEvent(new Event("clyra-maps-recents"));
+        } catch { /* storage unavailable: the save simply isn't remembered */ }
+        step(`Saved ${action.place.name} to favourites`);
+        return;
+      }
+      case "set_slot": {
+        if (!isPlace(action.place)) return;
+        setSlot(action.slot, action.place);
+        step(`Set ${action.place.name} as ${action.slot}`);
+        return;
+      }
+      case "share": {
+        void navigator.clipboard?.writeText(action.text).catch(() => undefined);
+        step("Copied a share link");
+        return;
+      }
       default:
         return;
     }
@@ -823,6 +870,8 @@ export function ClyraMapsWorkspace() {
       activeRoute: live.route ?? undefined,
       shownPlaces: live.places.length ? live.places : live.nearby,
       mode: live.mode,
+      stops: live.stops.length ? live.stops : undefined,
+      destination: destRef.current && live.route ? { id: "trip-destination", name: destRef.current.name, coordinates: destRef.current.coordinates, categories: [], sourceLinks: [] } : undefined,
     };
 
     try {
@@ -848,7 +897,7 @@ export function ClyraMapsWorkspace() {
           if (!line) continue;
           const event = JSON.parse(line) as AgentEvent;
           if (event.type === "status") setAgentStatus(event.label);
-          else if (event.type === "tool") patch((t) => ({ ...t, steps: [...(t.steps ?? []), { kind: "tool" as const, name: event.name, ok: event.ok, summary: event.summary }] }));
+          else if (event.type === "tool") patch((t) => ({ ...t, steps: [...(t.steps ?? []), { kind: "tool" as const, name: event.name, ok: event.ok, summary: event.summary, label: event.label }] }));
           else if (event.type === "actions") for (const action of event.actions) applyAgentAction(action, patch);
           else if (event.type === "final") patch((t) => ({ ...t, text: event.reply }));
           else if (event.type === "error") patch((t) => ({ ...t, error: event.message }));

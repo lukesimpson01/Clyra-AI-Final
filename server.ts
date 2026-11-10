@@ -4256,6 +4256,11 @@ async function startServer() {
         const research = await runWebSearchResearch({ query, maxResults: 6, fetchTop: 3 });
         return buildWebSearchPrompt({ query, research });
       },
+      readPage: async (url) => {
+        const page = await mapsFetchUrl(url).catch(() => null);
+        return page && !page.blocked ? page.text : "";
+      },
+      webFacts: (input) => lookupWeb(input, mapsPlacePages),
       enrich: (place) =>
         enrichPlace(
           {
