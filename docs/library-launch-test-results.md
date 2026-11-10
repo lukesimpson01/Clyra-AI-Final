@@ -41,3 +41,15 @@ These 14 templates were **not attempted** (time budget), so they have no screens
 ## Added catalogue entries (not launch-tested except Stirling-PDF)
 
 Adobe alternatives: stirling-pdf (run, 3 shots), svgedit, filerobot-image-editor, opencut-classic, omniclip, photoprism. Microsoft Office alternatives: univer, pptist. AI tools: anything-llm, flowise, langflow, openwhispr (desktop), natively (desktop, Cluely alternative). The repositories exist and their licences are as reported by GitHub's API; they have no screenshots and carry the unverified warning.
+
+## Added in the follow-up pass
+
+- **Featured section** at the top of Discover (App Store style): OpenFilm hero, then "Adobe alternatives" and "Microsoft Office alternatives" shelves. All entries also sit in their categories in the sidebar.
+- **OpenFilm** (`openfilm/openfilm`, MIT; name and logo are trademarks) and the eight Craft apps from `github.com/storytold` (PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, WordCraft, GridCraft, DeckCraft; each `MIT OR Apache-2.0` in its `Cargo.toml` and licence files) are catalogued with their own app icons (`public/library-icons/ATTRIBUTION.md`). **They have no screenshots yet**: the sandbox's auto-mode classifier denied running or building cloned code (SVG-Edit, then the Rust workspaces), so they are unverified. Release installers are blocked from this sandbox (403).
+- Also added and run in this pass: slidev (4 shots), monaco-editor (3), chatbot-ui-lite (2).
+- Blocked by the classifier, not by the apps: SVG-Edit, PPTist, and every Rust build.
+- Still not launch-tested: the 14 originals listed above, plus the other unverified entries.
+
+## Clone commands
+
+Every Library entry has a "Copy clone command" button that copies `git clone <repositoryUrl>.git`; "Get" runs `git clone --depth 1` into a new project.

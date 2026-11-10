@@ -45,6 +45,10 @@ export type TemplateManifest = {
   capabilitiesVerified: string[];
   capabilitiesPlanned: string[];
   sourceScreenshots: SourceScreenshot[];
+  /** The project's own app icon, copied into /library-icons; null falls back to the owner's avatar. */
+  iconUrl: string | null;
+  /** Lower numbers appear first in the Featured section; null is not featured. */
+  featuredRank: number | null;
   captureProvenance: string | null;
   compatibility: string[];
   deployModes: string[];
@@ -186,6 +190,8 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
     capabilitiesVerified: [],
     capabilitiesPlanned: [description],
     sourceScreenshots: [],
+    iconUrl: null,
+    featuredRank: null,
     captureProvenance: null,
     compatibility: [
       "Source is not copied into a project automatically.",
@@ -275,6 +281,15 @@ const seeds: readonly Seed[] = [
   ["slidev", "Slidev", "PowerPoint, Keynote", "Notes, Docs & Presentations", "slidevjs/slidev", "Presentation builder driven by Markdown and Vue.", "full-app", "TypeScript, Vue, Vite", "MIT", "Runs with Node; no external services."],
   ["monaco-editor", "Monaco Editor", "VS Code editor", "Developer Tools", "microsoft/monaco-editor", "The code editor that powers VS Code, for the browser.", "framework", "TypeScript, JavaScript", "MIT", "Component library; ship ThirdPartyNotices.txt with any distribution."],
   ["yt-dlp", "yt-dlp", "Video downloader", "Design, Video & Creative", "yt-dlp/yt-dlp", "Command-line downloader for video and audio from many sites.", "integration", "Python, CLI", "Unlicense", "Public domain, but bundled executables include other licences. Only use with rights-cleared or user-supplied sources."],
+  ["openfilm", "OpenFilm", "Remotion, CapCut", "Design, Video & Creative", "openfilm/openfilm", "AI video agent: your coding agent writes a film as web pages and Studio edits it in the browser.", "full-app", "TypeScript, Node, ffmpeg", "MIT", "Needs Node 22.2+ and ffmpeg; the first run downloads a headless Chromium (about 100 MB). The code is MIT; the OpenFilm name and logo are trademarks (see TRADEMARK.md)."],
+  ["photocraft", "PhotoCraft", "Adobe Photoshop", "Adobe alternatives", "storytold/photocraft", "Photo editor with layers, PSD support and a GPU compositor, written in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["vectorcraft", "VectorCraft", "Adobe Illustrator", "Adobe alternatives", "storytold/vectorcraft", "Vector art tool written from scratch in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["filmcraft", "FilmCraft", "Adobe Premiere Pro", "Adobe alternatives", "storytold/filmcraft", "Nonlinear video editor written from scratch in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["lightcraft", "LightCraft", "Adobe Lightroom", "Adobe alternatives", "storytold/lightcraft", "Non-destructive photo editor written from scratch in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["pdfcraft", "PdfCraft", "Adobe Acrobat", "Adobe alternatives", "storytold/pdfcraft", "PDF reader and editor written from scratch in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["wordcraft", "WordCraft", "Microsoft Word", "Microsoft Office alternatives", "storytold/wordcraft", "Clean-room word processor in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["gridcraft", "GridCraft", "Microsoft Excel", "Microsoft Office alternatives", "storytold/gridcraft", "Clean-room spreadsheet in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
+  ["deckcraft", "DeckCraft", "Microsoft PowerPoint", "Microsoft Office alternatives", "storytold/deckcraft", "Clean-room presentation app in Rust.", "full-app", "Rust, WebAssembly, desktop", "MIT OR Apache-2.0", "Pure-Rust workspace with desktop (egui, wgpu) and WebAssembly builds. Not launch-tested in this pass: the sandbox blocked building cloned code, so there are no screenshots yet. Installers are attached to GitHub releases."],
 ];
 
 /* Real captures, taken by cloning, installing and running each app locally (see provenance). Only apps that were actually run have any. */
@@ -350,7 +365,18 @@ const VERIFIED: Record<string, Verified> = {
   opencut: { license: "MIT", status: "requires-setup", port: 5173, dev: "bun run dev (apps/web)", build: ["bun install"], commit: "e668010", footprint: "bun install ~6 s.", verified: ["Install and dev server start"], notes: ["The default branch is a rewrite in progress: apps/web renders only a placeholder page, so no screenshots were taken.", "The README points to opencut-classic as the working editor."] },
 };
 
-function withCaptures(manifest: TemplateManifest): TemplateManifest {
+/** Featured order: OpenFilm first, then the Adobe-style and Microsoft-style tools. Entries not listed are not featured. */
+const FEATURED_ORDER = ["openfilm", "photocraft", "filmcraft", "wordcraft", "gridcraft", "vectorcraft", "lightcraft", "pdfcraft", "deckcraft"];
+/** Own app icons copied from each project (see public/library-icons/ATTRIBUTION.md). */
+const OWN_ICONS = new Set(FEATURED_ORDER);
+
+function withCaptures(manifestIn: TemplateManifest): TemplateManifest {
+  const rank = FEATURED_ORDER.indexOf(manifestIn.id);
+  const manifest: TemplateManifest = {
+    ...manifestIn,
+    featuredRank: rank >= 0 ? rank : null,
+    iconUrl: OWN_ICONS.has(manifestIn.id) ? `/library-icons/${manifestIn.id}.png` : null,
+  };
   const shots = CAPTURED[manifest.id];
   const facts = VERIFIED[manifest.id];
   let out = manifest;

@@ -144,10 +144,10 @@ function coverBackground(entry: TemplateManifest) {
 
 /** A soft, colour-washed backdrop made from the app's own icon (cheap: a tiny image, upscaled and blurred once). */
 function IconWash({ entry, opacity = 0.5 }: { entry: TemplateManifest; opacity?: number }) {
-  const [failed, setFailed] = useState(true);
-  if (failed) return null;
+  const [failed, setFailed] = useState(!entry.iconUrl);
+  if (failed || !entry.iconUrl) return null;
   return (
-    <img src={`https://github.com/${repoSlug(entry).split("/")[0]}.png?size=40`} alt="" aria-hidden loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
+    <img src={entry.iconUrl} alt="" aria-hidden loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
       className="pointer-events-none absolute left-1/2 top-1/2 h-[140%] w-[140%] -translate-x-1/2 -translate-y-1/2 object-cover blur-[34px] saturate-[1.35]" style={{ opacity }} />
   );
 }
@@ -190,7 +190,7 @@ function AppIcon({ entry, size = 44, round = false, lifted = false }: { entry: T
       style={{ width: size, height: size, background: meta.tint, color: meta.accent }}
     >
       <Icon className="h-[46%] w-[46%]" />
-      {failed ? null : <img src={`https://github.com/${repoSlug(entry).split("/")[0]}.png?size=${Math.min(460, Math.max(96, size * 2))}`} alt="" loading="lazy" referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={cn("absolute inset-0 h-full w-full bg-white object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")} />}
+      {failed ? null : <img src={entry.iconUrl ?? `https://github.com/${repoSlug(entry).split("/")[0]}.png?size=${Math.min(460, Math.max(96, size * 2))}`} alt="" loading="lazy" referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={cn("absolute inset-0 h-full w-full bg-white object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")} />}
     </span>
   );
 }
@@ -434,7 +434,7 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
         aria-label={`Featured: ${entry.name}`}
         onClick={() => onChoose(entry)}
         onKeyDown={activate(() => onChoose(entry))}
-        className="group relative grid w-full cursor-pointer overflow-hidden rounded-[12px] bg-[#F7F6F5] text-left outline-none ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 hover:ring-[rgba(55,53,47,0.2)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
+        className="group relative grid w-full cursor-pointer overflow-hidden rounded-[12px] bg-[#F7F6F5] text-left outline-none ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 hover:ring-[rgba(55,53,47,0.2)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
       >
         <AnimatePresence mode="wait" initial={false}>
           <motion.div key={`t-${entry.id}`} className="flex min-w-0 flex-col justify-center gap-1 p-6 sm:p-7" initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3, ease: EASE }}>
@@ -451,7 +451,7 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
             </div>
           </motion.div>
         </AnimatePresence>
-        <div className="relative hidden min-h-[210px] sm:block" aria-hidden>
+        <div className="relative hidden min-h-[210px] lg:block" aria-hidden>
           <AnimatePresence initial={false}>
             <motion.div key={`art-${entry.id}`} className="absolute inset-0" initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4, ease: EASE }}>
               <SourceVisual entry={entry} className="h-full w-full" iconSize={72} />
@@ -536,6 +536,11 @@ export function TemplateLibrary({
     }
     return picked;
   }, [catalogue]);
+  // Featured: ranked entries lead (OpenFilm, then the Adobe-style and Microsoft-style tools).
+  const byRank = (a: TemplateManifest, b: TemplateManifest) => (a.featuredRank ?? 999) - (b.featuredRank ?? 999) || a.name.localeCompare(b.name);
+  const featuredHero = useMemo(() => catalogue.filter((entry) => entry.featuredRank !== null && entry.featuredRank < 5).sort(byRank), [catalogue]);
+  const adobeShelf = useMemo(() => catalogue.filter((entry) => entry.category === "Adobe alternatives").sort(byRank), [catalogue]);
+  const officeShelf = useMemo(() => catalogue.filter((entry) => entry.category === "Microsoft Office alternatives").sort(byRank), [catalogue]);
   const shelves = useMemo(() => {
     const groups = new globalThis.Map<string, TemplateManifest[]>();
     for (const entry of catalogue) groups.set(entry.category, [...(groups.get(entry.category) ?? []), entry]);
@@ -908,7 +913,10 @@ export function TemplateLibrary({
                 {!loading && !error && !entries.length ? <div className="rounded-[16px] bg-[#F7F6F5] p-10 text-center text-[13px] text-[#78766F]">No apps match. Try another search or category.</div> : null}
                 {!error && entries.length && isHome ? (
                   <>
-                    <section aria-label="Templates" className="mb-8">
+                    {featuredHero.length ? <Spotlight entries={featuredHero} onChoose={choose} install={install} related={related} /> : null}
+                    {adobeShelf.length ? <Shelf title="Adobe alternatives" subtitle="Photo, vector, video and PDF tools you can run and change" entries={adobeShelf} onChoose={choose} install={install} onSeeAll={() => goCategory("Adobe alternatives")} /> : null}
+                    {officeShelf.length ? <Shelf title="Microsoft Office alternatives" subtitle="Documents, spreadsheets and presentations" entries={officeShelf} onChoose={choose} install={install} onSeeAll={() => goCategory("Microsoft Office alternatives")} /> : null}
+                    <section aria-label="Templates" className="mb-8 border-t border-[rgba(55,53,47,0.09)] pt-5">
                       <div className="mb-3 flex items-end justify-between">
                         <div>
                           <h3 className="text-[18px] font-bold tracking-[-0.01em] text-[#2C2C2B]">Templates</h3>

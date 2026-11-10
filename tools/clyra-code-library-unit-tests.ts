@@ -80,6 +80,21 @@ await test("source search matches names, categories and comparison labels", () =
   assert.equal(searchTemplateLibrary({ query: "this will not match" }).length, 0);
 });
 
+await test("featured entries lead with OpenFilm, then the Adobe-style and Microsoft-style tools, each with its own icon", () => {
+  const featured = TEMPLATE_LIBRARY.filter((entry) => entry.featuredRank !== null).sort((a, b) => (a.featuredRank ?? 0) - (b.featuredRank ?? 0));
+  assert.equal(featured[0]?.id, "openfilm");
+  for (const id of ["photocraft", "vectorcraft", "filmcraft", "lightcraft", "pdfcraft", "wordcraft", "gridcraft", "deckcraft"]) {
+    assert.ok(featured.some((entry) => entry.id === id), `${id} is featured`);
+  }
+  assert.ok(featured.every((entry) => entry.iconUrl?.startsWith("/library-icons/")));
+  assert.equal(getTemplateManifest("pdfcraft")?.category, "Adobe alternatives");
+  assert.equal(getTemplateManifest("deckcraft")?.category, "Microsoft Office alternatives");
+});
+
+await test("every featured icon file exists on disk", async () => {
+  for (const entry of TEMPLATE_LIBRARY.filter((item) => item.iconUrl)) await access(path.join(process.cwd(), "public", entry.iconUrl!));
+});
+
 await test("the bounded checkout scan discovers notices and scripts without executing them", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "clyra-library-test-"));
   try {
