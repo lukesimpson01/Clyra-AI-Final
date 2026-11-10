@@ -67,7 +67,8 @@ type Seed = readonly [
   warning?: string,
 ];
 
-const seeds: readonly Seed[] = [
+/** The full curated inventory, kept for when the library is rebuilt. Not served for now. */
+export const FULL_SEEDS: readonly Seed[] = [
   ["chopify", "Chopify", "OpusClip, Vizard", "Video & Shorts", "mehbul/chopify", "AI clip selection, scoring and captions.", "integration", "CLI, web", "MIT"],
   ["cutawan", "Cutawan", "OpusClip, Klap", "Video & Shorts", "JeremySNR/cutawan", "Podcast clipping and active-speaker reframing.", "reference-only", "desktop", "MIT", "Desktop workflow; do not present it as a browser import."],
   ["clipmint", "ClipMint", "OpusClip, Klap", "Video & Shorts", "kleZ799/clipmint", "Local shorts generation and captions.", "reference-only", "desktop, CLI", "MIT", "Native dependencies need inspection before use."],
@@ -202,7 +203,69 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
   };
 }
 
-export const TEMPLATE_LIBRARY: readonly TemplateManifest[] = Object.freeze(seeds.map(manifestFromSeed));
+/* The 40 starter templates, each a public GitHub repository verified to exist. Clone happens on "Get". */
+const seeds: readonly Seed[] = [
+  ["librechat", "LibreChat", "ChatGPT", "AI Chats & Agents", "danny-avila/LibreChat", "Multi-provider AI chat with agents, files and plugins.", "full-app", "TypeScript, Node, MongoDB", "MIT", "Needs MongoDB and your own model API keys."],
+  ["vercel-chatbot", "Vercel AI Chatbot", "Claude", "AI Chats & Agents", "vercel/chatbot", "Next.js chat app built on the Vercel AI SDK.", "full-app", "TypeScript, Next.js, Postgres", "License review", "Needs a Postgres database and AI provider keys. Licence is not auto-detected; review it."],
+  ["perplexica", "Perplexica", "Perplexity", "AI Chats & Agents", "ItzCrazyKns/Perplexica", "AI answer engine that searches the web and cites sources.", "full-app", "TypeScript, Next.js, SearxNG", "MIT", "Needs a SearxNG instance and a model provider. The repository has been renamed upstream (Vane)."],
+  ["openhands", "OpenHands", "Codex, Cursor", "AI Chats & Agents", "OpenHands/OpenHands", "Autonomous software-development agent with a web UI.", "full-app", "TypeScript, Python, Docker", "MIT", "Needs Docker and a model API key; very large repository."],
+  ["bolt-diy", "bolt.diy", "Lovable, Bolt", "AI Chats & Agents", "stackblitz-labs/bolt.diy", "Prompt, run, edit and deploy full-stack apps in the browser.", "full-app", "TypeScript, Remix, Node", "MIT", "Needs your own model provider keys."],
+  ["code-server", "code-server", "VS Code", "Developer Tools", "coder/code-server", "VS Code running on a server, used from the browser.", "full-app", "TypeScript, Node", "MIT", "Needs a built VS Code toolchain; heavy to build locally."],
+  ["gitea", "Gitea", "GitHub", "Developer Tools", "go-gitea/gitea", "Self-hosted Git service with issues and pull requests.", "full-app", "Go, Node", "MIT", "Needs Go and Node to build."],
+  ["hoppscotch", "Hoppscotch", "Postman", "Developer Tools", "hoppscotch/hoppscotch", "Open-source API development and testing workspace.", "full-app", "TypeScript, Vue, Postgres", "MIT", "Self-hosting needs a Postgres database."],
+  ["nocodb", "NocoDB", "Airtable", "Developer Tools", "nocodb/nocodb", "Turn any database into a spreadsheet interface.", "full-app", "TypeScript, Vue, Node", "License review", "Licence is custom / mixed — review before distributing. Very large repository."],
+  ["uptime-kuma", "Uptime Kuma", "Uptime monitoring", "Developer Tools", "louislam/uptime-kuma", "Self-hosted uptime and status monitoring.", "full-app", "JavaScript, Vue, Node, SQLite", "MIT", "Runs with Node; no external services needed."],
+  ["appflowy", "AppFlowy", "Notion", "Productivity & Collaboration", "AppFlowy-IO/AppFlowy", "Docs, databases and projects in one workspace.", "full-app", "Dart, Flutter, Rust", "AGPL-3.0", "AGPL licence. Needs Flutter and Rust toolchains."],
+  ["plane", "Plane", "Linear", "Productivity & Collaboration", "makeplane/plane", "Issue tracking, cycles and project planning.", "full-app", "TypeScript, Next.js, Python, Postgres", "AGPL-3.0", "AGPL licence. Needs Postgres, Redis and Docker."],
+  ["wekan", "WeKan", "Trello", "Productivity & Collaboration", "wekan/wekan", "Open-source kanban boards.", "full-app", "JavaScript, Meteor, MongoDB", "MIT", "Needs MongoDB and Meteor."],
+  ["onlyoffice", "ONLYOFFICE Docs", "Google Docs, Office", "Productivity & Collaboration", "ONLYOFFICE/DocumentServer", "Online document, spreadsheet and presentation editors.", "full-app", "Shell, Docker", "AGPL-3.0", "AGPL licence. Distributed as a server image; the repository is mostly packaging."],
+  ["cal-diy", "Cal.com", "Calendly", "Productivity & Collaboration", "calcom/cal.com", "Scheduling and booking infrastructure.", "full-app", "TypeScript, Next.js, Postgres", "MIT", "Needs Postgres and calendar integrations. The repository is now cal.diy upstream."],
+  ["penpot", "Penpot", "Figma", "Design, Video & Creative", "penpot/penpot", "Open-source design and prototyping platform.", "full-app", "Clojure, ClojureScript, Postgres", "MPL-2.0", "MPL-2.0. Full-stack deployment (Docker) required."],
+  ["hycanvas", "HyCanvas", "Canva", "Design, Video & Creative", "hyscaler/HyCanvas", "Browser-based graphic design editor.", "full-app", "TypeScript, React", "AGPL-3.0", "AGPL licence. A small project; confirm it runs before relying on it."],
+  ["minipaint", "miniPaint", "Photoshop", "Design, Video & Creative", "viliusle/miniPaint", "Online image editor with layers and filters.", "full-app", "JavaScript", "License review", "Licence is not auto-detected; review it. Runs as a static site."],
+  ["opencut", "OpenCut", "CapCut", "Design, Video & Creative", "OpenCut-app/OpenCut", "Browser video editor with a timeline.", "full-app", "TypeScript, Next.js", "MIT", "Needs Node and a database for accounts."],
+  ["cap", "Cap", "Loom", "Design, Video & Creative", "CapSoftware/Cap", "Screen recording and sharing.", "full-app", "Rust, Tauri, TypeScript", "License review", "Mixed licence (AGPL and MIT parts) — review. Desktop capture needs native permissions."],
+  ["medusa", "Medusa", "Shopify backend", "Business & SaaS", "medusajs/medusa", "Commerce modules and an admin for custom storefronts.", "full-app", "TypeScript, Node, Postgres", "License review", "Licence is not auto-detected; review it. Needs Postgres and Redis."],
+  ["twenty", "Twenty CRM", "HubSpot, Salesforce", "Business & SaaS", "twentyhq/twenty", "Open-source CRM.", "full-app", "TypeScript, React, NestJS, Postgres", "License review", "Mixed licence (AGPL and commercial) — review. Needs Postgres and Redis. Very large repository."],
+  ["chatwoot", "Chatwoot", "Intercom", "Business & SaaS", "chatwoot/chatwoot", "Customer messaging and support inbox.", "full-app", "Ruby, Rails, Vue, Postgres", "License review", "Mixed licence (MIT plus enterprise parts) — review. Needs Postgres and Redis."],
+  ["invoiceninja", "Invoice Ninja", "Invoicing, accounting", "Business & SaaS", "invoiceninja/invoiceninja", "Invoices, quotes and payments.", "full-app", "PHP, Laravel, MySQL", "License review", "Source-available licence — review the terms. Needs PHP and MySQL."],
+  ["formbricks", "Formbricks", "Typeform", "Business & SaaS", "formbricks/formbricks", "Surveys and in-product feedback.", "full-app", "TypeScript, Next.js, Postgres", "License review", "Mixed licence (AGPL plus enterprise parts) — review. Needs Postgres."],
+  ["stoat", "Stoat", "Discord", "Social & Entertainment", "stoatchat/stoatchat", "Open-source chat platform (formerly Revolt).", "full-app", "Rust, MongoDB", "License review", "Licence is not auto-detected; review it. Needs MongoDB and Redis."],
+  ["pixelfed", "Pixelfed", "Instagram", "Social & Entertainment", "pixelfed/pixelfed", "Federated photo sharing.", "full-app", "PHP, Laravel, MySQL", "AGPL-3.0", "AGPL licence. Needs PHP, a database and Redis."],
+  ["peertube", "PeerTube", "YouTube", "Social & Entertainment", "Chocobozzz/PeerTube", "Federated video hosting and streaming.", "full-app", "TypeScript, Node, Postgres, FFmpeg", "AGPL-3.0", "AGPL licence. Needs Postgres, Redis and FFmpeg."],
+  ["mastodon", "Mastodon", "Twitter / X", "Social & Entertainment", "mastodon/mastodon", "Federated social network.", "full-app", "Ruby, Rails, Postgres", "AGPL-3.0", "AGPL licence. Needs Postgres, Redis and Ruby."],
+  ["navidrome", "Navidrome", "Spotify", "Social & Entertainment", "navidrome/navidrome", "Self-hosted music streaming server.", "full-app", "Go, React", "GPL-3.0", "GPL-3.0 licence. Needs Go and Node to build, and a music library."],
+  ["saas-starter", "Next.js SaaS Starter", "SaaS website", "Websites & Publishing", "nextjs/saas-starter", "Landing page, pricing, auth and a dashboard.", "full-app", "TypeScript, Next.js, Postgres", "MIT", "Needs Postgres and Stripe keys for payments."],
+  ["astrofy", "Astrofy", "Portfolio website", "Websites & Publishing", "manuelernestog/astrofy", "Portfolio and blog template.", "full-app", "Astro, Tailwind", "MIT", "Static site; no external services."],
+  ["medusa-dtc", "Medusa DTC Starter", "Ecommerce storefront", "Websites & Publishing", "medusajs/dtc-starter", "Next.js storefront for a Medusa backend.", "full-app", "TypeScript, Next.js", "MIT", "Needs a running Medusa backend."],
+  ["ghost", "Ghost", "Blog and newsletter", "Websites & Publishing", "TryGhost/Ghost", "Publishing platform with memberships and newsletters.", "full-app", "TypeScript, Node, MySQL", "MIT", "Needs Node and MySQL; email needs a provider."],
+  ["docusaurus", "Docusaurus", "Documentation website", "Websites & Publishing", "facebook/docusaurus", "Documentation site generator.", "full-app", "TypeScript, React", "MIT", "Cloning gives the framework monorepo, not a starter site; very large."],
+  ["activepieces", "Activepieces", "Zapier", "Automation & Data", "activepieces/activepieces", "Workflow automation with AI and integrations.", "full-app", "TypeScript, Angular, NestJS, Postgres", "License review", "Mixed licence (MIT plus enterprise parts) — review. Needs Postgres and Redis."],
+  ["umami", "Umami", "Google Analytics", "Automation & Data", "umami-software/umami", "Privacy-focused web analytics.", "full-app", "TypeScript, Next.js, Postgres", "MIT", "Needs Postgres."],
+  ["actual", "Actual Budget", "Personal finance", "Automation & Data", "actualbudget/actual", "Local-first personal finance manager.", "full-app", "TypeScript, Node", "MIT", "Runs with Node; no external services."],
+  ["metabase", "Metabase", "Business intelligence", "Automation & Data", "metabase/metabase", "Dashboards and analytics on your databases.", "full-app", "Clojure, TypeScript", "License review", "Mixed licence (AGPL plus commercial) — review. Needs a JDK; very large repository."],
+  ["excalidraw", "Excalidraw", "Miro", "Automation & Data", "excalidraw/excalidraw", "Virtual whiteboard for sketching diagrams.", "full-app", "TypeScript, React", "MIT", "Runs with Node; no external services."],
+];
+
+/* Real captures, taken by cloning, installing and running each app locally (see provenance). Only apps that were actually run have any. */
+const CAPTURED: Record<string, Array<[file: string, alt: string]>> = {
+  astrofy: [["astrofy-1.jpg", "Astrofy home page"], ["astrofy-2.jpg", "Astrofy project list"], ["astrofy-3.jpg", "Astrofy blog"]],
+  minipaint: [["minipaint-1.jpg", "miniPaint editor with tools, layers and colour panels"]],
+  "uptime-kuma": [["uptime-kuma-1.jpg", "Uptime Kuma first-run setup (database choice)"]],
+};
+
+function withCaptures(manifest: TemplateManifest): TemplateManifest {
+  const shots = CAPTURED[manifest.id];
+  if (!shots) return manifest;
+  const capturedAt = "2026-11-10";
+  return {
+    ...manifest,
+    sourceScreenshots: shots.map(([file, alt]) => ({ url: `/library-shots/${file}`, alt, capturedAt, provenance: "Captured by Clyra from a local run of the unmodified upstream source." })),
+    captureProvenance: "Captured from a local run of the upstream source on 2026-11-10.",
+  };
+}
+
+export const TEMPLATE_LIBRARY: readonly TemplateManifest[] = Object.freeze(seeds.map(manifestFromSeed).map(withCaptures));
 
 export function getTemplateManifest(id: string): TemplateManifest | null {
   return TEMPLATE_LIBRARY.find((entry) => entry.id === id) ?? null;

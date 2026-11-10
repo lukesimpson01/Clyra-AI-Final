@@ -16,7 +16,10 @@ import {
 import { WeatherDiagramCard, type WeatherPayload } from "../../components/WeatherDiagramCard";
 import { LocationMapCard } from "../../components/LocationMapCard";
 import { CreditsNotice } from "../../components/chat/CreditsNotice";
-import { TodoChecklist } from "../../components/clyra-code/harness";
+import { PlanCard } from "../../components/clyra-code/PlanCard";
+import { DiffCounters } from "../../components/clyra-code/AnimatedCounter";
+import { RunFold } from "../../components/clyra-code/CodexActivity";
+import { splitIntoGroups, type PlanRow } from "../../components/clyra-code/activityModel";
 import { ChatMapCard } from "../../components/chat/ChatMapCard";
 import { ChatAgentRunView } from "../../components/chat/ChatAgentRun";
 import { ActivityGroup, RunHeader } from "../../components/clyra-code/CodexActivity";
@@ -55,6 +58,28 @@ const agentRun = {
   ],
 };
 const t0 = Date.now() - 60000;
+const planSequential: PlanRow[] = [{ content: "Inspect existing project", status: "completed" }, { content: "Rebuild the Working UI", status: "in_progress" }, { content: "Connect tool events", status: "pending" }, { content: "Implement all tool renderers", status: "pending" }, { content: "Run verification tests", status: "pending" }];
+const planBlocked: PlanRow[] = [{ content: "Inspect project", status: "completed" }, { content: "Update components", status: "completed" }, { content: "Connect agent events", status: "completed" }, { content: "Fix failing integration test", status: "blocked" }, { content: "Run final verification", status: "pending" }];
+const planDone: PlanRow[] = ["Inspect existing project", "Rebuild the Working UI", "Connect tool events", "Run verification tests"].map((content) => ({ content, status: "completed" as const }));
+const planParallel: PlanRow[] = [{ content: "Review the API", status: "completed" }, { content: "Review the frontend", status: "in_progress" }, { content: "Write the summary", status: "pending" }, { content: "Check the build", status: "completed" }];
+const run = (id: string, kind: string, target: string, extra: Partial<AgentAction> = {}): AgentAction =>
+  ({ id, kind, tool: kind, status: "success", target, startedAt: t0, endedAt: t0 + 800, ...extra } as AgentAction);
+const toolActions: AgentAction[] = [
+  run("g1", "git", "git status", { tool: "bash", output: " M src/App.tsx\nexit 0" }), run("g2", "git", "git diff --stat", { tool: "bash", output: " 3 files changed\nexit 0" }),
+  run("b1", "browser", "https://example.com/pricing", { tool: "browser_navigate" }), run("b2", "browser", "", { tool: "browser_get_state" }), run("b3", "browser", "#buy", { tool: "browser_click" }),
+  run("i1", "image", "shots/pricing.png", { tool: "read_image", output: "image/png" }),
+  run("s1", "subagent", "Review the API implementation", { tool: "subagent", output: "Found 2 issues in routes.ts" }), run("s2", "subagent", "Review the frontend components", { tool: "subagent", status: "active", endedAt: undefined }),
+  run("m1", "mcp", "", { tool: "mcp__github__create_issue", output: "Created issue #42" }),
+];
+const timelineActions: AgentAction[] = [
+  run("a", "list", "src/components"), run("b", "read", "src/App.tsx"), run("c", "read", "src/components/WorkingPanel.tsx"),
+  run("d", "edit", "src/components/AgentUI.tsx", { additions: 43, deletions: 17, before, after }),
+  run("e", "edit", "src/components/Working.tsx", { additions: 62, deletions: 18, before, after }),
+  run("f", "create", "src/components/ToolRow.tsx", { additions: 91, deletions: 0, before: "", after }),
+  run("g", "create", "src/components/PlanView.tsx", { additions: 104, deletions: 0, before: "", after }),
+  run("h", "command", "npm run typecheck", { output: "exit 0" }), run("i", "build", "npm run build", { output: "built in 4.2s\nexit 0" }),
+  run("j", "test", "npm run test", { status: "active", endedAt: undefined }),
+];
 const codeActions: AgentAction[] = [
   { id: "1", kind: "read", tool: "read", status: "success", target: "src/App.tsx", startedAt: t0, endedAt: t0 + 400 },
   { id: "2", kind: "edit", tool: "edit", status: "success", target: "src/components/Panel.tsx", additions: 5, deletions: 3, before, after, startedAt: t0 + 500, endedAt: t0 + 900 },
@@ -91,8 +116,10 @@ export default function AgentActionsHarness() {
         <ChatAgentRunView run={agentRun} live onOpenNote={() => {}} />
         <ChatMapCard location={{ name: "Sydney Opera House", region: "New South Wales", country: "Australia", lat: -33.857198, lon: 151.2151234 }} />
         <div className="clyra-code-ui" style={{ display: "grid", gap: 12, maxWidth: 560 }}>
-          <TodoChecklist todos={[{ content: "Read the project", status: "completed" }, { content: "Edit Panel.tsx", status: "in_progress" }, { content: "Run the tests", status: "pending" }]} />
-          <TodoChecklist todos={[{ content: "Done one", status: "completed" }, { content: "Done two", status: "completed" }]} finished />
+          <PlanCard live plan={planSequential} />
+          <PlanCard live={false} plan={planBlocked} />
+          <PlanCard live={false} plan={planDone} />
+          <PlanCard live variant="panel" plan={planParallel} />
         </div>
         <WeatherDiagramCard weather={sampleWeather} />
         <LocationMapCard location={{ name: "Hornsby Heights", region: "New South Wales", country: "Australia", lat: -33.6667, lon: 151.1, isCurrentLocation: true }} />
@@ -101,6 +128,29 @@ export default function AgentActionsHarness() {
           <RunHeader phase="running" label="Running npm run lint" since={t0} until={null} onStop={() => {}} />
           <ActivityGroup actions={codeActions} liveId="5" fresh={false} defaultOpen onOpenFile={() => {}} />
           <RunHeader phase="complete" label="" since={t0} until={t0 + 9000} summary="3 files changed" />
+        </div>
+        <div className="clyra-code-root" style={{ marginTop: 28, maxWidth: 688, position: "relative", paddingBottom: 56 }}>
+          <RunHeader phase="running" label="" since={t0 + 44000} until={null} actionCount={0} onStop={() => {}} />
+          <p className="dsh-assistant-message" style={{ marginTop: 10 }}>I found the current activity renderer and the existing code diff components. I'm replacing only the presentation.</p>
+          {splitIntoGroups(timelineActions).map((group, index) => (
+            <div key={index} style={{ marginTop: 8 }}>
+              <ActivityGroup actions={group} liveId="j" fresh={false} defaultOpen={index === 1} onOpenFile={() => {}} />
+            </div>
+          ))}
+          <p className="dsh-assistant-message" style={{ marginTop: 12 }}>The new components are connected. I'm now validating the build.</p>
+          <div style={{ marginTop: 12 }}><PlanCard live plan={planSequential} /></div>
+          <button type="button" className="cc-change-pill"><span className="cc-change-pill-files">6 files</span><DiffCounters additions={253} deletions={32} className="cc-change-pill-counts" /></button>
+        </div>
+        <div className="clyra-code-root" id="tool-kinds" style={{ marginTop: 28, maxWidth: 688 }}>
+          {splitIntoGroups(toolActions).map((group, index) => (
+            <div key={index} style={{ marginTop: 6 }}><ActivityGroup actions={group} liveId="s2" fresh={false} defaultOpen={false} onOpenFile={() => {}} /></div>
+          ))}
+        </div>
+        <div className="clyra-code-root" style={{ marginTop: 28, maxWidth: 688 }}>
+          <RunHeader phase="complete" label="" since={t0} until={t0 + 204000} summary="6 files changed · +355 −56" actionCount={10} open={false} onToggle={() => {}} />
+          <RunFold open={false}><div /></RunFold>
+          <p className="dsh-assistant-message" style={{ marginTop: 10 }}>I've completed the activity UI update. Build and tests passed.</p>
+          <div style={{ marginTop: 12 }}><PlanCard live={false} plan={planDone} /></div>
         </div>
         <MessageActions onCopy={() => setCopied(true)} onRegenerate={() => {}} onReadAloud={() => {}} onBranch={() => {}} onExport={() => {}} copied={copied} isReading={false} />
       </div>

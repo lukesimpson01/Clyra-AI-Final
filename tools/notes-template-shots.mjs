@@ -21,21 +21,12 @@ const arg = (name, fallback) => {
 };
 const base = (arg("url", process.env.NOTES_URL || "http://localhost:3000")).replace(/\/$/, "");
 
-/* The active registry is the source of truth. Read the export list—not every
-   `id:` in this archival source file—so inactive definitions can never yield
-   public gallery captures. Avoid importing it here because the browser editor
-   module graph deliberately has a registry↔database cycle that Node cannot
-   initialise as a standalone preview utility. */
+/* Every template in the library is active. Read the source rather than import
+   it: the browser editor module graph has an import cycle Node cannot
+   initialise on its own. */
 async function templateIds() {
-  const source = await readFile(path.join(root, "public", "notes", "js", "template-library-v2.js"), "utf8");
-  const active = source.match(/export const TEMPLATE_LIBRARY_V2\s*=\s*\[([\s\S]*?)\];/);
-  if (!active) throw new Error("Could not read the active template registry");
-  const names = [...active[1].matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((match) => match[1]);
-  return names.map((name) => {
-    const declaration = source.match(new RegExp(`const\\s+${name}\\s*=\\s*make\\(\\{\\s*id:\\s*"([a-z0-9-]+)"`));
-    if (!declaration) throw new Error(`Could not resolve active template ${name}`);
-    return declaration[1];
-  });
+  const source = await readFile(path.join(root, "public", "notes", "js", "template-library-v3.js"), "utf8");
+  return [...source.matchAll(/\badd\(\s*[A-Z]+,\s*"([a-z0-9-]+)"/g)].map((match) => match[1]);
 }
 
 const FRAME = { width: 720, height: 500 };
@@ -57,7 +48,7 @@ async function main() {
 
   const browser = await chromium.launch();
   const context = await browser.newContext({
-    viewport: { width: FRAME.width, height: 900 },
+    viewport: { width: 1000, height: 900 },
     deviceScaleFactor: 2,
   });
   const page = await context.newPage();

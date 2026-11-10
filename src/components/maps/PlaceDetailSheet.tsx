@@ -8,7 +8,8 @@ import { ShiningText } from "../ui/shining-text";
 import type { ClyraPlace, Route } from "../../../lib/maps/types";
 import { formatDistance, formatDuration } from "./mapsIcons";
 import { openingState } from "../../../lib/maps/openingHours";
-import { getPlaceDetail, peekPlaceDetail, prefetchPlaceDetail, type PlaceInfoResult, type PlaceReviewsResult, type StreetImage } from "./placeDetailCache";
+import { PhotoCarousel, type CarouselPhoto } from "./PhotoCarousel";
+import { getPlaceDetail, getPlaceWeb, peekPlaceDetail, prefetchPlaceDetail, type PlaceEnrichResult, type PlaceWebResult, type PlaceInfoResult, type PlaceReviewsResult, type StreetImage } from "./placeDetailCache";
 
 interface PlaceDetailSheetProps {
   place: ClyraPlace;
@@ -60,8 +61,8 @@ function SatelliteHero({ coordinates }: { coordinates: [number, number] }) {
 /** Google-style round action: a tinted circle with a label underneath. */
 function CircleAction({ label, onClick, primary, pressed, children }: { label: string; onClick: () => void; primary?: boolean; pressed?: boolean; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={pressed} className="group flex w-[60px] flex-col items-center gap-1.5 text-[11.5px] font-semibold text-[#1a5fb4] outline-none">
-      <span className={"grid h-11 w-11 place-items-center rounded-full transition-all duration-150 group-hover:scale-105 group-active:scale-90 group-focus-visible:ring-2 group-focus-visible:ring-blue-400 " + (primary ? "bg-[#1a73e8] text-white shadow-[0_4px_12px_rgba(26,115,232,.4)]" : pressed ? "bg-[#d3e3fd] text-[#0b57d0]" : "bg-[#e8f0fe] text-[#1a5fb4] group-hover:bg-[#d3e3fd]")}>{children}</span>
+    <button type="button" onClick={onClick} aria-pressed={pressed} className="group flex w-[60px] flex-col items-center gap-1.5 text-[11.5px] font-medium text-[#3a3d44] outline-none">
+      <span className={"grid h-11 w-11 place-items-center rounded-full transition-all duration-150 group-hover:scale-105 group-active:scale-90 group-focus-visible:ring-2 group-focus-visible:ring-blue-400 " + (primary ? "bg-[#0066ff] text-white shadow-[0_6px_14px_-6px_rgba(0,102,255,.6)]" : pressed ? "bg-[#0066ff]/12 text-[#0052cc]" : "bg-[#f3f4f6] text-[#3a3d44] group-hover:bg-[#eceef1]")}>{children}</span>
       {label}
     </button>
   );
@@ -112,6 +113,11 @@ function reveal(index = 0) {
 export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoading, onClose, onStart, onDirections, onSelectNearby, onAskClyra, onNearby }: PlaceDetailSheetProps) {
   const isPin = place.id.startsWith("pin-");
   const [info, setInfo] = useState<PlaceInfoResult | null>(null);
+  const [enrich, setEnrich] = useState<PlaceEnrichResult | null>(null);
+  const [web, setWeb] = useState<PlaceWebResult | null>(null);
+  const [webLoading, setWebLoading] = useState(false);
+  const [failedPhotos, setFailedPhotos] = useState<string[]>([]);
+  const [weekOpen, setWeekOpen] = useState(false);
   const [loadingInfo, setLoadingInfo] = useState(true);
   const [photoIndex, setPhotoIndex] = useState(0);
   const [reviews, setReviews] = useState<PlaceReviewsResult | null>(null);
@@ -127,6 +133,10 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
   useEffect(() => {
     let cancelled = false;
     setPhotoIndex(0);
+    setFailedPhotos([]);
+    setWeb(null);
+    setWebLoading(!place.id.startsWith("pin-"));
+    setWeekOpen(false);
     setStreetIndex(null);
     setShareNote(null);
     setSaved(readSaved().some((p) => p.id === place.id));
@@ -134,12 +144,14 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
     const cached = peekPlaceDetail(place);
     if (cached) {
       setInfo(cached.info);
+      setEnrich(cached.enrich);
       setLoadingInfo(false);
       setReviews(cached.reviews);
       setReviewsChecked(cached.reviewsChecked);
       setStreetImages(cached.streetImages);
     } else {
       setInfo(null);
+      setEnrich(null);
       setLoadingInfo(true);
       setReviews(null);
       setReviewsChecked(false);
@@ -149,10 +161,17 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
     getPlaceDetail(place).then((bundle) => {
       if (cancelled) return;
       setInfo(bundle.info);
+      setEnrich(bundle.enrich);
       setLoadingInfo(false);
       setReviews(bundle.reviews);
       setReviewsChecked(bundle.reviewsChecked);
       setStreetImages(bundle.streetImages);
+    });
+
+    void getPlaceWeb(place).then((result) => {
+      if (cancelled) return;
+      setWeb(result);
+      setWebLoading(false);
     });
 
     return () => {
@@ -162,6 +181,22 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
 
   const photos = info?.photos ?? [];
   const photo = photos[photoIndex];
+  /* the carousel: the best-sourced pictures first, street imagery last and labelled as such; any that fail to load drop out */
+  const slides: CarouselPhoto[] = useMemo(() => {
+    const base: CarouselPhoto[] = enrich?.photos?.length
+      ? enrich.photos
+      : (info?.photos ?? []).map((p) => ({ url: p.url, source: p.attribution?.split(" · ")[0] || "Wikimedia Commons", caption: p.attribution }));
+    const street: CarouselPhoto[] = (streetImages ?? []).slice(0, 1).map((st) => ({ url: st.url, source: `Street view · ${st.provider}`, caption: st.takenAt ? `Taken ${new Date(st.takenAt).toLocaleDateString()}` : st.license, link: st.sourcePage }));
+    return [...base, ...street].filter((p) => !failedPhotos.includes(p.url));
+  }, [enrich, info, streetImages, failedPhotos]);
+  const weekly = enrich?.hours?.weekly ?? web?.hours?.weekly;
+  const hoursSource = enrich?.hours?.source ?? web?.hours?.source;
+  const ratings = useMemo(() => {
+    const merged = [...(enrich?.ratings ?? [])];
+    for (const r of web?.ratings ?? []) if (!merged.some((m) => m.source === r.source)) merged.push(r);
+    return merged;
+  }, [enrich, web]);
+  const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
   const category = place.categories[0]?.replace(/_/g, " ");
   const addressLine = place.address
     ? [place.address, place.locality, place.region].filter(Boolean).join(", ")
@@ -170,7 +205,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
   const hours = useMemo(() => openingState(place.openingHours?.raw), [place.openingHours?.raw, place.id]);
   const hoursLines = place.openingHours?.raw ? place.openingHours.raw.split(";").map((s) => s.trim()).filter(Boolean) : [];
   const heroLoading = loadingInfo || identifying;
-  const hasDetailLines = Boolean(addressLine || isPin || hoursLines.length || place.phone || place.website);
+  const hasDetailLines = Boolean(addressLine || isPin || hoursLines.length || place.phone || place.website || !isPin);
 
   const toggleSave = () => {
     const current = readSaved();
@@ -204,10 +239,18 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
       exit={{ opacity: 0, x: -16 }}
       transition={{ duration: 0.26, ease: EASE }}
       aria-label={`${place.name ?? "Place"} details`}
-      className="pointer-events-auto absolute bottom-0 left-0 top-0 z-30 flex w-[408px] max-w-[100vw] flex-col overflow-hidden bg-white"
+      className="mx-sheet !top-[72px]"
     >
-      <div className="relative h-[230px] w-full shrink-0 overflow-hidden bg-[#f4f1ea]">
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/45 to-transparent" />
+      {slides.length ? (
+        <div className="relative shrink-0">
+          <button type="button" aria-label="Close" onClick={onClose} className="absolute right-3 top-3 z-20 grid h-8 w-8 place-items-center rounded-full bg-white/95 text-[#3a3d44] shadow-[0_0_0_1px_rgba(16,18,24,.06),0_4px_12px_-4px_rgba(16,18,24,.25)] transition-transform hover:bg-white hover:text-[#0d0d0d] active:scale-90">
+            <X className="h-4 w-4" />
+          </button>
+          <PhotoCarousel photos={slides} alt={place.name ?? "Place"} onFail={(url) => setFailedPhotos((f) => (f.includes(url) ? f : [...f, url]))} />
+        </div>
+      ) : (
+      <div className="relative h-[190px] w-full shrink-0 overflow-hidden bg-[#f1f2f4]">
+        
         <AnimatePresence initial={false}>
           {photo ? (
             <motion.img
@@ -281,10 +324,11 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           <span className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">Street imagery · {streetImages[0].provider}</span>
         ) : null}
 
-        <button type="button" aria-label="Close" onClick={onClose} className="absolute bottom-3 right-3 z-20 grid h-8 w-8 place-items-center rounded-full bg-white text-slate-600 shadow transition-transform hover:bg-white hover:text-slate-900 active:scale-90">
+        <button type="button" aria-label="Close" onClick={onClose} className="absolute right-3 top-3 z-20 grid h-8 w-8 place-items-center rounded-full bg-white/95 text-[#3a3d44] shadow-[0_0_0_1px_rgba(16,18,24,.06),0_4px_12px_-4px_rgba(16,18,24,.25)] transition-transform hover:bg-white hover:text-[#0d0d0d] active:scale-90">
           <X className="h-4 w-4" />
         </button>
       </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-4 pb-3 pt-4">
@@ -296,7 +340,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           ) : (
             <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease: EASE }}>
               <div className="flex items-start justify-between gap-3">
-                <h3 className="text-[22px] font-medium leading-tight text-slate-950">{place.name}</h3>
+                <h3 className="text-[20px] font-semibold leading-tight tracking-[-0.02em] text-[#0d0d0d]">{place.name}</h3>
                 <PlaceConditions coordinates={place.coordinates} compact />
               </div>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[12.5px] text-slate-500">
@@ -323,22 +367,22 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           )}
 
           {route ? (
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#3b82f6]/[0.07] px-3 py-2.5">
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#f3f4f6] px-3 py-2.5">
               <div>
                 <p className="text-[18px] font-bold leading-none text-slate-950">{formatDuration(route.durationSeconds)}</p>
                 <p className="mt-1 text-[12px] text-slate-500">{formatDistance(route.distanceMeters)} · fastest route</p>
               </div>
-              <Button size="lg" variant="primary" className="rounded-full" onClick={onStart}>
+              <button type="button" className="mx-btn mx-btn--primary" onClick={onStart}>
                 <Navigation2 className="h-4 w-4" /> Start
-              </Button>
+              </button>
             </div>
           ) : routeLoading ? (
             <div className="mt-3 text-[12.5px]"><ShiningText text="Finding the route…" className="text-[12.5px]" /></div>
           ) : isPin && !identifying ? (
             <div className="mt-3">
-              <Button size="lg" variant="primary" className="rounded-full" onClick={() => onDirections(place)}>
+              <button type="button" className="mx-btn mx-btn--primary" onClick={() => onDirections(place)}>
                 <Navigation2 className="h-4 w-4" /> Directions
-              </Button>
+              </button>
             </div>
           ) : null}
 
@@ -369,11 +413,43 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
                 <span className={addressLine ? "" : "text-[12px] text-slate-500"}>{lat.toFixed(6)}, {lng.toFixed(6)}</span>
               </p>
             ) : null}
-            {hoursLines.length ? (
+            {weekly?.length || hoursLines.length ? (
               <div className="flex items-start gap-2">
                 <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                <ul className="space-y-0.5">{hoursLines.map((line) => <li key={line}>{line}</li>)}</ul>
+                <div className="min-w-0 flex-1">
+                  <button type="button" onClick={() => setWeekOpen((v) => !v)} aria-expanded={weekOpen} className="flex w-full items-center gap-2 text-left">
+                    {hours.state === "open" ? <span className="mx-pill" data-tone="ok">Open · until {hours.closesAt}</span> : null}
+                    {hours.state === "open24" ? <span className="mx-pill" data-tone="ok">Open 24 hours</span> : null}
+                    {hours.state === "closed" ? <span className="mx-pill" data-tone="bad">Closed{hours.opensAt ? ` · opens ${hours.opensAt}${hours.opensOn ? ` ${hours.opensOn}` : ""}` : ""}</span> : null}
+                    {hours.state === "unknown" && weekly?.length ? <span className="text-slate-700">{weekly.find((d) => d.day === todayName)?.text ?? "Hours"}</span> : null}
+                    <span className="ml-auto text-[12px] font-semibold text-[#0052cc]">{weekOpen ? "Hide hours" : "All hours"}</span>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {weekOpen ? (
+                      <motion.ul
+                        key="week"
+                        className="mx-week"
+                        style={{ overflow: "hidden" }}
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.26, ease: EASE }}
+                      >
+                        {weekly?.length
+                          ? weekly.map((d) => <li key={d.day} data-today={d.day === todayName}><span>{d.day}</span><span>{d.text}</span></li>)
+                          : hoursLines.map((line) => <li key={line}><span>{line}</span></li>)}
+                      </motion.ul>
+                    ) : null}
+                  </AnimatePresence>
+                  {hoursSource ? <p className="mt-1 text-[10.5px] text-slate-400">Hours from {hoursSource}</p> : null}
+                </div>
               </div>
+            ) : null}
+            {!isPin && !weekly?.length && !hoursLines.length ? (
+              <p className="flex items-center gap-2 text-slate-500">
+                <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                {webLoading ? <ShiningText text="Checking opening hours…" className="text-[13px]" /> : <span>Opening hours not published</span>}
+              </p>
             ) : null}
             {place.phone ? <p className="flex items-start gap-2"><Phone className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" /><span>{place.phone}</span></p> : null}
             {place.website ? (
@@ -412,26 +488,38 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
           </motion.div>
         ) : null}
 
-        {photos.length > 1 ? (
-          <motion.div {...reveal(3)} className="border-t border-slate-100 px-4 py-3">
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">Photos</p>
-            <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-              {photos.map((p, i) => (
-                <button
-                  key={p.url}
-                  type="button"
-                  aria-label={`Show photo ${i + 1}`}
-                  onClick={() => setPhotoIndex(i)}
-                  className={"h-16 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all duration-150 active:scale-95 " + (i === photoIndex ? "border-[#3b82f6]" : "border-transparent hover:border-slate-200")}
-                >
-                  <img src={p.url} alt="" loading="lazy" className="h-full w-full object-cover" />
-                </button>
-              ))}
-            </div>
+        {ratings.length > 0 && !isPin && !identifying ? (
+          <motion.div {...reveal(4)} className="border-t border-slate-100 px-4 py-3">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">Ratings & reviews</p>
+            {ratings.map((r) => (
+              <div key={r.source}>
+                <div className="mx-rating">
+                  <span className="mx-rating__score">{r.value.toFixed(1)}</span>
+                  <span className="mx-rating__meta">
+                    <span className="mx-rating__stars" aria-label={`${r.value} out of 5`}>{"★".repeat(Math.round(r.value))}<span style={{ color: "#d8dbe0" }}>{"★".repeat(5 - Math.round(r.value))}</span></span>
+                    <br />
+                    {typeof r.count === "number" ? `${r.count.toLocaleString()} ratings · ` : ""}
+                    {r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.source}</a> : r.source}
+                  </span>
+                </div>
+                {r.reviews?.length ? (
+                  <div className="px-1 pt-1">
+                    {r.reviews.slice(0, 3).map((rv, i) => (
+                      <p key={i} className="mx-review">
+                        <b>{rv.author ?? "Reviewer"}</b>{typeof rv.rating === "number" ? ` · ${"★".repeat(Math.round(rv.rating))}` : ""}{rv.when ? ` · ${rv.when}` : ""}
+                        <br />
+                        {rv.text.length > 220 ? `${rv.text.slice(0, 220)}…` : rv.text}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            <p className="mt-2 text-[10.5px] text-slate-400">Shown with the source each rating came from.{enrich.sources.includes("Google Places") ? "" : " Add a Google Places key to show Google reviews."}</p>
           </motion.div>
         ) : null}
 
-        {reviewsChecked && !isPin && !identifying ? (
+        {!ratings.length && reviewsChecked && !isPin && !identifying && !webLoading ? (
           <motion.div {...reveal(4)} className="border-t border-slate-100 px-4 py-3">
             <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">Reviews</p>
             {reviews?.items.length ? (
@@ -476,16 +564,15 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
 
         {!identifying ? (
           <motion.div {...reveal(6)} className="border-t border-slate-100 px-4 py-3">
-            <Button size="lg" variant="secondary" className="w-full rounded-full" onClick={() => onAskClyra(place)}>
+            <button type="button" className="mx-btn mx-btn--block" onClick={() => onAskClyra(place)}>
               <Sparkles className="h-4 w-4 text-[#3b82f6]" /> Ask Clyra about this place
-            </Button>
+            </button>
           </motion.div>
         ) : null}
 
         <p className="border-t border-slate-100 px-4 py-2.5 text-[10.5px] leading-relaxed text-slate-400">
           Data © OpenStreetMap contributors
-          {info?.summary ? " · Wikipedia" : ""}
-          {photos.length ? " · Wikimedia Commons" : ""}
+          {enrich?.sources?.length ? ` · ${enrich.sources.join(" · ")}` : `${info?.summary ? " · Wikipedia" : ""}${photos.length ? " · Wikimedia Commons" : ""}`}
           {streetImages?.length ? ` · ${[...new Set(streetImages.map((s) => s.provider))].join(", ")}` : ""}
         </p>
       </div>

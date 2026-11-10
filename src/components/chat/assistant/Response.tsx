@@ -13,12 +13,15 @@ export function AssistantResponse({
   streaming,
   plain = false,
   error = false,
+  delay = 0,
   children,
 }: {
   enter: boolean;
   streaming: boolean;
   plain?: boolean;
   error?: boolean;
+  /** Seconds to wait before entering, so a collapsing activity block can finish first. */
+  delay?: number;
   children: ReactNode;
 }) {
   const [enterOnMount] = useState(enter);
@@ -37,7 +40,7 @@ export function AssistantResponse({
       data-invert-ignore
       initial={enterOnMount && !reduced ? { opacity: 0, y: 6 } : false}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced ? 0 : AI_DURATION.response, ease: AI_EASE }}
+      transition={{ duration: reduced ? 0 : AI_DURATION.response, ease: AI_EASE, delay: reduced ? 0 : delay }}
     >
       {children}
     </motion.article>

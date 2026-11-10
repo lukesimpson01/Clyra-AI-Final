@@ -23,6 +23,8 @@ import {
   Globe,
   ListChecks,
   Maximize2,
+  MoreHorizontal,
+  SquareDashedMousePointer,
   MessageSquarePlus,
   Minimize2,
   Monitor,
@@ -49,6 +51,8 @@ import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { stripFilePrefix } from "./format";
+import { PlanCard } from "./PlanCard";
+import type { PlanRow } from "./activityModel";
 import type { ComposerContext } from "./Composer";
 import {
   VisualInspector,
@@ -180,6 +184,7 @@ function BrowserView({
   onPreviewError,
   fullscreen,
   onToggleFullscreen,
+  onClose,
 }: {
   session: PreviewSession | null;
   frameVersion: number;
@@ -197,6 +202,7 @@ function BrowserView({
   onPreviewError?: (message: string) => void;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  onClose?: () => void;
 }) {
   const projectPreviewSrc = `/api/vibe/projects/${encodeURIComponent(projectId ?? "")}/preview/`;
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -289,6 +295,8 @@ function BrowserView({
     (session?.status === "build_failed" ||
       session?.status === "server_crashed" ||
       session?.status === "runtime_error");
+  /* An empty project is not a failure: there is simply nothing built yet, so it gets the calm empty state. */
+  const nothingToPreview = /no recognised project target|nothing to preview/i.test(String(session?.lastError?.message || ""));
 
   useEffect(() => {
     if (failed && session?.lastError?.message) onPreviewError?.(session.lastError.message);
@@ -345,37 +353,50 @@ function BrowserView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-[40px] items-center gap-0.5 border-b border-[color:var(--border-subtle)] px-2.5">
+      <div className="flex h-[40px] items-center gap-0.5 border-b border-[color:var(--border-subtle)] px-2">
         <button
           type="button"
           aria-label="Back"
           disabled={historyIndex <= 0}
           onClick={() => navigateHistory(historyIndex - 1)}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
+          className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#5D5D5D] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D] disabled:text-[#C4C4C4] disabled:hover:bg-transparent"
         >
-          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={1.8} />
+          <ArrowLeft className="h-[15px] w-[15px]" strokeWidth={1.7} />
         </button>
         <button
           type="button"
           aria-label="Forward"
           disabled={historyIndex >= history.length - 1}
           onClick={() => navigateHistory(historyIndex + 1)}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)] disabled:text-[color:var(--text-disabled)]"
+          className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#5D5D5D] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D] disabled:text-[#C4C4C4] disabled:hover:bg-transparent"
         >
-          <ArrowRight className="h-[13px] w-[13px]" strokeWidth={1.8} />
+          <ArrowRight className="h-[15px] w-[15px]" strokeWidth={1.7} />
         </button>
         <button
           type="button"
           aria-label="Reload"
           onClick={onReload}
-          className="rounded-[7px] p-1.5 text-[#93959A] transition-colors hover:bg-[color:var(--surface-hover)]"
+          className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#5D5D5D] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D] disabled:text-[#C4C4C4] disabled:hover:bg-transparent"
         >
-          <RotateCw className="h-[13px] w-[13px]" strokeWidth={1.8} />
+          <RotateCw className="h-[14px] w-[14px]" strokeWidth={1.7} />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleInspect}
+          aria-label={inspectMode ? "Exit edit mode" : "Select an element to edit"}
+          title={inspectMode ? "Exit edit mode" : "Select an element to edit"}
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] transition-colors",
+            inspectMode ? "bg-black/[0.07] text-[#0D0D0D]" : "text-[#5D5D5D] hover:bg-black/[0.05] hover:text-[#0D0D0D]",
+          )}
+        >
+          <SquareDashedMousePointer className="h-[14px] w-[14px]" strokeWidth={1.8} />
         </button>
         <form
-          className="mx-2 flex h-[28px] min-w-0 flex-1 items-center rounded-[8px] bg-black/[0.025] px-3 focus-within:bg-white focus-within:ring-1 focus-within:ring-[#3977F6]/25"
+          className="mx-1.5 flex h-7 min-w-[120px] flex-1 items-center gap-2 rounded-[8px] bg-transparent px-2.5 transition-colors duration-150 hover:bg-black/[0.05] focus-within:bg-black/[0.05]"
           onSubmit={(event) => { event.preventDefault(); navigate(address || displayAddress); }}
         >
+          <Search className="h-[12px] w-[12px] shrink-0 text-[color:var(--text-tertiary)]" strokeWidth={1.8} aria-hidden="true" />
           <input
             value={address}
             onChange={(event) => setAddress(event.target.value)}
@@ -383,7 +404,7 @@ function BrowserView({
             aria-label="Preview address or Google search"
             spellCheck={false}
             autoComplete="off"
-            className="cc-mono h-full min-w-0 flex-1 bg-transparent text-[11.5px] text-[color:var(--text-secondary)] outline-none placeholder:text-[color:var(--text-tertiary)]"
+            className="h-full min-w-0 flex-1 truncate border-0 bg-transparent text-center text-[13px] text-[#5D5D5D] shadow-none outline-none ring-0 placeholder:text-[#8F8F8F] focus:text-left focus:text-[#0D0D0D] focus:outline-none focus:ring-0"
           />
         </form>
         {navigatedSrc ? (
@@ -397,103 +418,25 @@ function BrowserView({
             Preview
           </button>
         ) : null}
-        {ready ? (
-          <button
-            type="button"
-            aria-label="Open project on development server"
-            title="Open project on development server"
-            onClick={() => window.open(url, "_blank", "noopener")}
-            className={cn(
-              "flex h-7 items-center rounded-[7px] text-[10.5px] font-medium text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]",
-              compact ? "px-1.5" : "gap-1 px-2",
-            )}
-          >
-            <ExternalLink className="h-[12px] w-[12px]" strokeWidth={1.8} />
-            {!compact ? "Dev server" : null}
-          </button>
-        ) : null}
-        {activeSrc ? (
-          <button
-            type="button"
-            aria-label="Open externally"
-            onClick={() => window.open(activeSrc, "_blank", "noopener")}
-            className="rounded-[7px] p-1.5 text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
-          >
-            <ExternalLink className="h-[14px] w-[14px]" strokeWidth={1.8} />
-          </button>
-        ) : null}
-        <div className="ml-1 flex h-7 shrink-0 items-center rounded-[8px] bg-[color:var(--surface-muted)] p-0.5">
+        {/* Right side: screen size, full screen and close. Nothing else competes with the address. */}
+        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Preview size">
           {([["desktop", Monitor, "Desktop"], ["tablet", Tablet, "Tablet"], ["mobile", Smartphone, "Mobile"]] as const).map(([id, Icon, label]) => (
-            <button
-              key={id}
-              type="button"
-              aria-label={`${label} viewport`}
-              title={label}
-              onClick={() => setViewport(id)}
-              className={cn(
-                "flex h-6 w-6 items-center justify-center rounded-[6px] transition-colors",
-                viewport === id ? "bg-white text-[#1E6FFF] shadow-[0_1px_2px_rgba(0,0,0,0.1)]" : "text-[#93959A] hover:text-[#5F6368]",
-              )}
-            >
-              <Icon className="h-[13px] w-[13px]" strokeWidth={1.8} />
+            <button key={id} type="button" aria-label={`${label} size`} title={`${label} size`} aria-pressed={viewport === id} onClick={() => setViewport(id)}
+              className={cn("flex h-7 w-7 items-center justify-center rounded-[7px] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D]", viewport === id ? "bg-black/[0.06] text-[#0D0D0D]" : "text-[#8F8F8F]")}>
+              <Icon className="h-[14px] w-[14px]" strokeWidth={1.7} />
             </button>
           ))}
         </div>
-        <div ref={zoomMenuRef} className="relative shrink-0">
-          <button
-            type="button"
-            aria-label="Zoom"
-            title="Zoom"
-            onClick={() => setZoomMenuOpen((open) => !open)}
-            className="flex h-7 items-center gap-0.5 rounded-[7px] px-1.5 text-[11px] font-medium text-[#5F6368] transition-colors hover:bg-[color:var(--surface-hover)]"
-          >
-            {zoom === "fit" ? "Fit" : `${Math.round(zoom * 100)}%`}
-            <ChevronDown className="h-[11px] w-[11px]" strokeWidth={1.8} />
+        <button type="button" aria-label={fullscreen ? "Exit full screen" : "Full screen"} title={fullscreen ? "Exit full screen" : "Full screen"} onClick={onToggleFullscreen}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-[#5D5D5D] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D]">
+          {fullscreen ? <Minimize2 className="h-[14px] w-[14px]" strokeWidth={1.7} /> : <Maximize2 className="h-[14px] w-[14px]" strokeWidth={1.7} />}
+        </button>
+        {onClose ? (
+          <button type="button" aria-label="Close preview" title="Close preview" onClick={onClose}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-[#5D5D5D] transition-colors hover:bg-black/[0.05] hover:text-[#0D0D0D]">
+            <X className="h-[15px] w-[15px]" strokeWidth={1.7} />
           </button>
-          {zoomMenuOpen ? (
-            <div className="absolute right-0 top-[calc(100%+6px)] z-40 w-[118px] rounded-[10px] border border-[color:var(--border-subtle)] bg-white p-1 shadow-[0_10px_28px_rgba(15,23,42,0.13)]">
-              {([["fit", "Fit"], [1, "100%"], [0.75, "75%"], [0.5, "50%"]] as const).map(([value, label]) => (
-                <button
-                  key={String(value)}
-                  type="button"
-                  onClick={() => { setZoom(value); setZoomMenuOpen(false); }}
-                  className={cn(
-                    "flex h-7 w-full items-center justify-between rounded-[6px] px-2 text-[11.5px] transition-colors",
-                    zoom === value ? "bg-[color:var(--surface-selected)] font-medium text-[#1E6FFF]" : "text-[#5F6368] hover:bg-[color:var(--surface-hover)]",
-                  )}
-                >
-                  {label}
-                  {zoom === value ? <Check className="h-[12px] w-[12px]" strokeWidth={2} /> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          aria-label={fullscreen ? "Exit full screen preview" : "Full screen preview"}
-          title={fullscreen ? "Exit full screen" : "Full screen"}
-          onClick={onToggleFullscreen}
-          className="rounded-[7px] p-1.5 text-[color:var(--text-secondary)] transition-colors hover:bg-[color:var(--surface-hover)]"
-        >
-          {fullscreen ? <Minimize2 className="h-[14px] w-[14px]" strokeWidth={1.8} /> : <Maximize2 className="h-[14px] w-[14px]" strokeWidth={1.8} />}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleInspect}
-          aria-label={inspectMode ? "Exit edit mode" : "Edit"}
-          title={inspectMode ? "Exit edit mode" : "Edit"}
-          className={cn(
-            "flex h-7 items-center rounded-[8px] text-[11.5px] transition-colors",
-            compact ? "ml-0.5 gap-0 px-2" : "ml-0.5 gap-1.5 px-2.5",
-            inspectMode
-              ? "bg-[#E8F0FE] font-medium text-[#1E6FFF]"
-              : "font-medium text-[color:var(--text-secondary)] hover:bg-[color:var(--surface-hover)]",
-          )}
-        >
-          <Pencil className={cn(compact ? "h-[13.5px] w-[13.5px]" : "h-[12.5px] w-[12.5px]")} strokeWidth={1.8} />
-          {compact ? null : (inspectMode ? "Editing" : "Edit")}
-        </button>
+        ) : null}
       </div>
 
       <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-[#F7F7F6]">
@@ -546,7 +489,7 @@ function BrowserView({
                 </button>
               ) : null}
             </div>
-          ) : failed ? (
+          ) : failed && !nothingToPreview ? (
             <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
               <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
               {session?.lastError?.message ? (
@@ -571,7 +514,7 @@ function BrowserView({
                 </button>
               </div>
             </div>
-          ) : (!starting && !agentRunning) ? (
+          ) : (!starting && !agentRunning) || nothingToPreview ? (
             <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[#F7F7F6]">
               <div className="relative z-[1] flex max-w-[300px] flex-col items-center px-5 text-center">
                 <Globe className="mb-2.5 h-6 w-6 text-[#B7B9BD]" strokeWidth={1.4} />
@@ -613,9 +556,7 @@ function BrowserView({
 /* Plan view — the session's real, current todowrite() checklist       */
 /* ------------------------------------------------------------------ */
 
-type PlanTodo = { content: string; status: string; priority: string };
-
-function PlanView({ plan }: { plan: PlanTodo[] | null }) {
+function PlanView({ plan, live }: { plan: PlanRow[] | null; live: boolean }) {
   if (!plan || !plan.length) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -623,50 +564,9 @@ function PlanView({ plan }: { plan: PlanTodo[] | null }) {
       </div>
     );
   }
-  const done = plan.filter((todo) => todo.status === "completed").length;
   return (
     <div className="cc-scroll min-h-0 flex-1 overflow-y-auto py-2">
-      <div className="flex items-center justify-between px-3.5 py-1.5">
-        <span className="text-[11px] font-medium text-[color:var(--text-tertiary)]">
-          {done} of {plan.length} done
-        </span>
-      </div>
-      <ul className="flex flex-col">
-        {plan.map((todo, index) => (
-          <li
-            key={index}
-            className={cn(
-              "flex items-start gap-2 px-3.5 py-[7px] text-[12px] leading-[1.45]",
-              todo.status === "in_progress" && "bg-[color:var(--surface-selected)]",
-            )}
-          >
-            <span className="mt-[1.5px] shrink-0">
-              {todo.status === "completed" ? (
-                <CheckCircle2 className="h-[14px] w-[14px] text-[#2E9A5A]" strokeWidth={1.8} />
-              ) : todo.status === "in_progress" ? (
-                <CircleDot className="h-[14px] w-[14px] text-[#3977F6]" strokeWidth={1.8} />
-              ) : todo.status === "cancelled" ? (
-                <XCircle className="h-[14px] w-[14px] text-[color:var(--text-disabled)]" strokeWidth={1.8} />
-              ) : (
-                <Circle className="h-[14px] w-[14px] text-[color:var(--text-disabled)]" strokeWidth={1.8} />
-              )}
-            </span>
-            <span
-              className={cn(
-                "min-w-0 flex-1",
-                todo.status === "completed" && "text-[color:var(--text-tertiary)] line-through decoration-[color:var(--text-disabled)]",
-                todo.status === "cancelled" && "text-[color:var(--text-disabled)] line-through",
-                (todo.status === "pending" || todo.status === "in_progress") && "text-[color:var(--text-secondary)]",
-              )}
-            >
-              {todo.content}
-            </span>
-            {todo.priority === "high" && todo.status !== "completed" && todo.status !== "cancelled" ? (
-              <span className="mt-[2px] h-[5px] w-[5px] shrink-0 rounded-full bg-[#D9822B]" title="High priority" />
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      <PlanCard plan={plan} live={live} variant="panel" />
     </div>
   );
 }
@@ -1075,10 +975,11 @@ export function RightPanel({
   onPreviewError,
   fullscreen = false,
   onToggleFullscreen,
+  onClose,
 }: {
   state: ClyraCodeState;
   actionList: AgentAction[];
-  plan: PlanTodo[] | null;
+  plan: PlanRow[] | null;
   tab: RightTab;
   onTabChange: (tab: RightTab) => void;
   preview: ReturnType<typeof usePreview>;
@@ -1094,6 +995,7 @@ export function RightPanel({
   onPreviewError?: (message: string) => void;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  onClose?: () => void;
 }) {
   const [inspectMode, setInspectMode] = useState(false);
   const [selection, setSelection] = useState<InspectPayload | null>(null);
@@ -1265,7 +1167,7 @@ export function RightPanel({
       transition={reduceMotion ? { duration: 0 } : { duration: 0.42, ease: [0.32, 0.72, 0, 1] }}
       className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-[color:var(--preview-background)]", fullscreen && "fixed inset-0 z-[130] bg-white")}
     >
-      <div className="relative flex h-[42px] min-w-max items-center gap-1 border-b border-[color:var(--border-subtle)] px-2.5">
+      <div className="relative flex h-[40px] min-w-0 items-center gap-0.5 border-b border-[color:var(--border-subtle)] px-2">
         {tabs.map((entry) => {
           const Icon = entry.icon;
           const selected = tab === entry.id;
@@ -1275,14 +1177,14 @@ export function RightPanel({
               type="button"
               onClick={() => onTabChange(entry.id)}
               className={cn(
-                "relative flex items-center gap-1.5 rounded-[7px] px-[9px] py-[6px] text-[11.75px] transition-colors duration-100",
+                "relative flex h-7 items-center gap-1.5 rounded-[7px] px-2 text-[13px] font-medium transition-colors duration-100",
                 selected
-                  ? "bg-[#F1F1F0] font-medium text-[#34363A]"
-                  : "text-[#818388] hover:bg-black/[0.03]",
+                  ? "bg-black/[0.05] text-[#0D0D0D]"
+                  : "text-[#8F8F8F] hover:bg-black/[0.04] hover:text-[#0D0D0D]",
               )}
             >
               <span className="flex items-center gap-1.5">
-                {Icon ? <Icon className="h-[13px] w-[13px]" strokeWidth={1.8} /> : null}
+                {Icon ? <Icon className="h-[14px] w-[14px]" strokeWidth={1.7} /> : null}
                 {entry.label}
               </span>
             </button>
@@ -1309,9 +1211,10 @@ export function RightPanel({
           onPreviewError={onPreviewError}
           fullscreen={fullscreen}
           onToggleFullscreen={() => onToggleFullscreen?.()}
+          onClose={onClose}
         />
       ) : tab === "plan" ? (
-        <PlanView plan={plan} />
+        <PlanView plan={plan} live={agentRunning} />
       ) : tab === "changes" ? (
         <ChangesView diffs={state.diffs} actions={actionList} focusFile={focusFile} />
       ) : (

@@ -114,7 +114,7 @@ export const AgentActionRow = memo(function AgentActionRow({
 }) {
   const reduced = useReducedMotion();
   const isFileKind = /^(edit|create|delete)$/.test(action.kind);
-  const isTerminalKind = /^(command|build|check|test|preview)$/.test(action.kind);
+  const isTerminalKind = /^(command|build|check|test|preview|git)$/.test(action.kind);
   // Codex-style: edits show their diff inline as soon as they land; a running command shows its live output.
   const [expanded, setExpanded] = useState(() => {
     const fresh = !settled && Date.now() - (action.endedAt ?? action.startedAt) < 4000;
@@ -173,7 +173,7 @@ export const AgentActionRow = memo(function AgentActionRow({
   }
 
   const isFileAction = /^(edit|create|delete)$/.test(action.kind);
-  const isTerminalAction = /^(command|build|check|test|preview)$/.test(action.kind);
+  const isTerminalAction = /^(command|build|check|test|preview|git)$/.test(action.kind);
   const isMonoTarget = isFileAction || isTerminalAction || /^(read|list)$/.test(action.kind);
 
   const title =

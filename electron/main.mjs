@@ -42,7 +42,21 @@ dotenv.config({ path: path.join(projectRoot, ".env.local"), quiet: true, overrid
 const isDevelopment = process.env.CLYRA_ELECTRON_DEV === "1";
 const appPort = Number(process.env.CLYRA_DESKTOP_PORT || 31_415);
 const cdpPort = Number(process.env.CLYRA_CDP_PORT || 9_223);
-const bridgePort = Number(process.env.CLYRA_BROWSER_BRIDGE_PORT || 9_224);
+let bridgePort = Number(process.env.CLYRA_BROWSER_BRIDGE_PORT || 9_224);
+
+/** First free loopback port from `start`: a second Clyra instance (or a leftover one) must not crash the bridge. */
+async function firstFreePort(start) {
+  const { createServer } = await import("node:net");
+  for (let port = start; port < start + 20; port += 1) {
+    const free = await new Promise((resolve) => {
+      const probe = createServer();
+      probe.once("error", () => resolve(false));
+      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
+    });
+    if (free) return port;
+  }
+  return start;
+}
 const bridgeToken = crypto.randomBytes(24).toString("hex");
 // Capability token for the local Express service (server.ts). Minted fresh
 // per launch, passed to the sidecar via env, and cookied onto the UI origin
@@ -294,7 +308,8 @@ async function readJson(request) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
-function startBrowserBridge() {
+async function startBrowserBridge() {
+  if (!process.env.CLYRA_BROWSER_BRIDGE_PORT) bridgePort = await firstFreePort(bridgePort);
   bridgeServer = http.createServer(async (request, response) => {
     if (request.headers.authorization !== `Bearer ${bridgeToken}`) {
       sendJson(response, 401, { ok: false, error: "Unauthorized" });

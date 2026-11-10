@@ -13,8 +13,9 @@ import type { PlaceReviews } from "./reviews";
 import { openingState } from "./openingHours";
 import { haversineMeters } from "./providers";
 import type { TransitItinerary } from "./transit";
+import type { EnrichedPlace } from "./placeEnrich";
 
-const MAX_STEPS = 10;
+const MAX_STEPS = 12;
 
 export interface AgentContext {
   center?: Coordinate;
@@ -45,13 +46,15 @@ export interface AgentDeps {
   placeInfo(name: string, at: Coordinate): Promise<PlaceInfo>;
   reviews(osmId: string | undefined): Promise<PlaceReviews | null>;
   webSearch(query: string): Promise<string>;
+  /** Photos, weekly hours and ratings from the best available source. */
+  enrich(place: ClyraPlace): Promise<EnrichedPlace | null>;
   transit(origin: Coordinate, destination: Coordinate, when?: string, arriveBy?: boolean): Promise<TransitItinerary[]>;
 }
 
 export type MapAction =
   | { type: "show_places"; places: ClyraPlace[]; title?: string }
   | { type: "select_place"; place: ClyraPlace }
-  | { type: "set_route"; route: Route; destinationName: string }
+  | { type: "set_route"; route: Route; destinationName: string; destination?: ClyraPlace; stops?: ClyraPlace[] }
   | { type: "fit_results" }
   | { type: "clear_results" }
   | { type: "zoom"; delta: 1 | -1 }
@@ -143,6 +146,23 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "plan_trip",
+      description: "Plan a multi-stop trip in one call. stops lists every place to visit, each as a search phrase ('Bondi Beach', 'a coffee shop in Surry Hills') or a result_N reference. The last item is the final destination. Each is resolved to a real place, optionally reordered to the shortest sensible order (optimize), routed from the user's location, drawn on the map and shown in the trip panel with opening hours. Use this for itineraries, day plans and errands; use get_route for a single destination.",
+      parameters: {
+        type: "object",
+        properties: {
+          stops: { type: "array", items: { type: "string" } },
+          mode: { type: "string", enum: ["drive", "walk", "bike"] },
+          optimize: { type: "boolean" },
+          keep_last: { type: "boolean", description: "Keep the last stop as the final destination when optimizing (default true)." },
+        },
+        required: ["stops"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "select_result",
       description: "Select a result on the map so its details panel opens. ref is result_N.",
       parameters: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
@@ -210,6 +230,23 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "research_place",
+      description: "Research a place on the live web: its menu (and whether a specific dish or drink is served, with prices), reviews and what people say, opening times, booking, or anything else the map data lacks. Pass ref (result_N or 'selected') or a place name in query, the topic, and item when the user asks about a specific dish, product or service. Report only what the pages say and say which source it came from.",
+      parameters: {
+        type: "object",
+        properties: {
+          ref: { type: "string" },
+          query: { type: "string" },
+          topic: { type: "string", enum: ["menu", "reviews", "hours", "prices", "booking", "general"] },
+          item: { type: "string" },
+        },
+        required: ["topic"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description: "Search the current public web for information the map data cannot answer (events, closures, news). Cite it as web information, not map data.",
       parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
@@ -235,7 +272,7 @@ async function callModel(messages: ToolMessage[], signal: AbortSignal, tools: ty
       body: JSON.stringify({
         model: process.env.MY_LLM_MODEL || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
         temperature: 0.2,
-        max_tokens: 900,
+        max_tokens: 1500,
         messages,
         tools,
         tool_choice: "auto",
@@ -329,9 +366,10 @@ export async function runMapsAgent(
       case "inspect_place": {
         const place = resolve(args.ref);
         if (!place) return { error: `Unknown reference ${args.ref}.` };
-        const [info, reviews] = await Promise.all([
+        const [info, reviews, enriched] = await Promise.all([
           deps.placeInfo(place.id.startsWith("pin-") ? "" : place.name ?? "", place.coordinates),
           deps.reviews(place.id.startsWith("osm-") ? place.id.replace(/^osm-/, "").replace("-", "/") : undefined),
+          deps.enrich(place).catch(() => null),
         ]);
         const hours = openingState(place.openingHours?.raw);
         return {
@@ -342,10 +380,13 @@ export async function runMapsAgent(
           website: place.website,
           openingHours: place.openingHours?.raw,
           openNow: hours.state === "unknown" ? "unknown (hours not parseable)" : hours,
+          weeklyHours: enriched?.hours?.weekly?.map((d) => `${d.day}: ${d.text}`),
+          ratings: enriched?.ratings?.length ? enriched.ratings.map((r) => ({ source: r.source, rating: r.value, count: r.count })) : reviews ? { rating: reviews.rating, count: reviews.count } : "no ratings found",
+          priceLevel: enriched?.priceLevel,
+          website: place.website ?? enriched?.website,
           description: info.summary,
-          reviews: reviews ? { rating: reviews.rating, count: reviews.count } : "no open reviews",
-          photoCount: info.photos.length,
-          sources: ["OpenStreetMap", info.summary ? "Wikipedia" : null, info.photos.length ? "Wikimedia Commons" : null, reviews ? "Mangrove" : null].filter(Boolean),
+          photoCount: Math.max(info.photos.length, enriched?.photos.length ?? 0),
+          sources: ["OpenStreetMap", info.summary ? "Wikipedia" : null, enriched?.sources.length ? enriched.sources.join(", ") : null, reviews ? "Mangrove" : null].filter(Boolean),
         };
       }
       case "get_route": {
@@ -364,6 +405,56 @@ export async function runMapsAgent(
           durationMinutes: Math.round(route.durationSeconds / 60),
           distanceKm: Math.round((route.distanceMeters / 1000) * 10) / 10,
           tollAvoidance: args.avoid_tolls ? "requested, but not enforced by the current routing provider" : "not requested",
+        };
+      }
+      case "plan_trip": {
+        const origin = context.userLocation ?? context.center;
+        if (!origin) return { error: "No start location available." };
+        const wanted: string[] = (Array.isArray(args.stops) ? args.stops : []).map((x: unknown) => String(x)).filter(Boolean).slice(0, 9);
+        if (wanted.length < 1) return { error: "Give at least one stop." };
+        const resolved: ClyraPlace[] = [];
+        const missing: string[] = [];
+        for (const w of wanted) {
+          const known = resolve(w);
+          if (known) { resolved.push(known); continue; }
+          const found = (await deps.searchPlaces(w, context.center))[0];
+          if (found) { register([found]); resolved.push(found); } else missing.push(w);
+        }
+        if (!resolved.length) return { error: "None of those places could be found.", missing };
+        let ordered = resolved;
+        if (args.optimize && resolved.length > 2) {
+          const keepLast = args.keep_last !== false;
+          const last = keepLast ? resolved[resolved.length - 1] : undefined;
+          const pool = keepLast ? resolved.slice(0, -1) : [...resolved];
+          const out: ClyraPlace[] = [];
+          let at: Coordinate = origin;
+          while (pool.length) {
+            let best = 0;
+            for (let i = 1; i < pool.length; i += 1) if (haversineMeters(at, pool[i].coordinates) < haversineMeters(at, pool[best].coordinates)) best = i;
+            const [next] = pool.splice(best, 1);
+            out.push(next);
+            at = next.coordinates;
+          }
+          ordered = last ? [...out, last] : out;
+        }
+        const destination = ordered[ordered.length - 1];
+        const via = ordered.slice(0, -1);
+        const mode: TravelMode = (args.mode as TravelMode) || context.mode || "drive";
+        const route = await deps.route(origin, destination.coordinates, mode, false, via.map((p) => p.coordinates));
+        if (!route) return { error: "No route could be calculated for these stops.", missing };
+        actions.push({ type: "set_route", route, destinationName: destination.name ?? "Destination", destination, stops: via });
+        return {
+          mode,
+          totalMinutes: Math.round(route.durationSeconds / 60),
+          totalKm: Math.round((route.distanceMeters / 1000) * 10) / 10,
+          order: ordered.map((p, i) => ({
+            n: i + 1,
+            name: p.name,
+            category: p.categories?.[0],
+            address: [p.address, p.locality].filter(Boolean).join(", ") || undefined,
+            openNow: (() => { const h = openingState(p.openingHours?.raw); return h.state === "unknown" ? "unknown" : h.state === "open" ? `open until ${h.closesAt}` : h.state === "open24" ? "open 24 hours" : "closed"; })(),
+          })),
+          unresolved: missing.length ? missing : undefined,
         };
       }
       case "get_transit": {
@@ -443,6 +534,17 @@ export async function runMapsAgent(
         } else return { error: "Unsupported map action." };
         return { done: a };
       }
+      case "research_place": {
+        const place = resolve(args.ref);
+        const name = place?.name || String(args.query || "").trim();
+        if (!name) return { error: "Say which place to research." };
+        const where = [place?.locality, place?.region].filter(Boolean).join(" ");
+        const topic = String(args.topic || "general");
+        const item = String(args.item || "").trim();
+        const q = [name, where, topic === "general" ? "" : topic, item].filter(Boolean).join(" ");
+        const text = await deps.webSearch(q);
+        return { place: name, topic, item: item || undefined, webResults: text.slice(0, 6000), note: "Live web pages, not map data. Quote only what they say; if the item or price isn't on the pages, say so." };
+      }
       case "web_search":
         return { webResults: (await deps.webSearch(String(args.query || ""))).slice(0, 4000), note: "Web information, not map data." };
       default:
@@ -461,6 +563,8 @@ export async function runMapsAgent(
     context.activeRoute ? "A route is active; route-based search is available." : "",
     "You can also plan transit trips, change the map style, tilt to 3D, run a Flyover tour, start navigation, open Look Around, and add places to Guides. Do these when the user asks.",
     "You can help with anything about the world on the map: explain a place's history or what it is (inspect_place, web_search), plan a day out or an itinerary (search several categories, show the picks with show/compare, then route between them with via stops), find things along a journey, check weather for a trip, and answer travel questions. For anything current — events, news, closures, prices, opening of new places — use web_search. Chain as many tools as the request needs, then act on the map so the user can see the answer, not only read it.",
+    "When the user asks whether a place has a particular dish, drink, product or price, or wants menu, review or booking details, call research_place (topic and item) and answer from the pages; never guess a menu. For recommendations, search several candidates, inspect the best, then explain why each fits.",
+    "For an itinerary, day out or several errands, call plan_trip once with every stop; then use inspect_place on stops the user asks about and mention opening hours that would clash with the plan. Offer to add, remove or reorder stops (plan_trip again with the full list).",
     "To go somewhere ('show me Paris', 'take me to the Eiffel Tower'), search for it and select the best result so the map flies there.",
   ]
     .filter(Boolean)
@@ -547,11 +651,14 @@ function labelFor(name: string): string {
     case "inspect_place":
       return "Checking place details…";
     case "get_route":
-      return "Calculating route…";
+    case "plan_trip":
+      return "Planning the route…";
     case "identify_point":
       return "Identifying the point…";
     case "web_search":
       return "Searching the web…";
+    case "research_place":
+      return "Researching the place…";
     default:
       return "Working…";
   }
@@ -568,5 +675,6 @@ function summarise(result: unknown): string {
   if (typeof r.saved === "string") return `saved ${r.saved}`;
   if (typeof r.name === "string") return r.name;
   if (typeof r.durationMinutes === "number") return `${r.durationMinutes} min`;
+  if (typeof r.totalMinutes === "number") return `${Array.isArray(r.order) ? r.order.length : ""} stops · ${r.totalMinutes} min`.trim();
   return "done";
 }

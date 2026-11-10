@@ -334,6 +334,9 @@ export async function openNotesDb(): Promise<DB> {
   /* A chat can belong to one note: the note's own thread, kept with it. */
   const chatColumns = new Set((db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>).map((c) => c.name));
   if (!chatColumns.has("page_id")) db.exec("ALTER TABLE chats ADD COLUMN page_id TEXT");
+  /* A reply's tool run (plan, steps, agents) and the changes it proposed, so a reopened chat shows the work, not just the words. */
+  const messageColumns = new Set((db.prepare("PRAGMA table_info(chat_messages)").all() as Array<{ name: string }>).map((column) => column.name));
+  if (!messageColumns.has("run")) db.exec("ALTER TABLE chat_messages ADD COLUMN run TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS chats_page ON chats(page_id, updated_at DESC)");
   migrateLegacyPages(db);
   return db;

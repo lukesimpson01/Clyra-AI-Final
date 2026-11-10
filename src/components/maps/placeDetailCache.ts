@@ -35,7 +35,24 @@ export interface StreetImage {
   sourcePage?: string;
 }
 
+export interface EnrichedPhoto { url: string; source: string; caption?: string; link?: string }
+export interface EnrichedReview { author?: string; rating?: number; text: string; when?: string }
+export interface EnrichedRating { source: string; value: number; count?: number; url?: string; reviews?: EnrichedReview[] }
+export interface PlaceEnrichResult {
+  photos: EnrichedPhoto[];
+  hours?: { weekly: Array<{ day: string; text: string }>; source: string };
+  ratings: EnrichedRating[];
+  priceLevel?: string;
+  website?: string;
+  phone?: string;
+  mapsUrl?: string;
+  sources: string[];
+  summary?: string;
+  summaryUrl?: string;
+}
+
 export interface PlaceDetailBundle {
+  enrich: PlaceEnrichResult | null;
   info: PlaceInfoResult | null;
   reviews: PlaceReviewsResult | null;
   reviewsChecked: boolean;
@@ -43,7 +60,7 @@ export interface PlaceDetailBundle {
 }
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const EMPTY_BUNDLE: PlaceDetailBundle = { info: null, reviews: null, reviewsChecked: true, streetImages: [] };
+const EMPTY_BUNDLE: PlaceDetailBundle = { enrich: null, info: null, reviews: null, reviewsChecked: true, streetImages: [] };
 
 interface Entry {
   at: number;
@@ -58,7 +75,7 @@ function warmImages(bundle: PlaceDetailBundle) {
   // the <img> mounting — so by the time the sheet opens, the browser's own
   // HTTP cache already has them and the first paint is instant, not a spinner.
   if (typeof window === "undefined") return;
-  const urls = [...(bundle.info?.photos?.slice(0, 3).map((p) => p.url) ?? []), bundle.streetImages[0]?.url].filter(
+  const urls = [...(bundle.enrich?.photos?.slice(0, 3).map((p) => p.url) ?? bundle.info?.photos?.slice(0, 3).map((p) => p.url) ?? []), bundle.streetImages[0]?.url].filter(
     (u): u is string => Boolean(u),
   );
   for (const url of urls) {
@@ -81,6 +98,23 @@ function fetchBundle(place: ClyraPlace): Promise<PlaceDetailBundle> {
     .catch(() => null);
 
   const osm = place.id.match(/^osm-((?:node|way|relation)-\d+)/);
+  const enrich: Promise<PlaceEnrichResult | null> = isPin
+    ? Promise.resolve(null)
+    : fetch("/api/maps/place-enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: place.name,
+          coordinates: place.coordinates,
+          locality: place.locality,
+          website: place.website,
+          openingHours: place.openingHours?.raw,
+          osmId: osm ? osm[1].replace("-", "/") : undefined,
+        }),
+      })
+        .then((r) => r.json())
+        .then((d: PlaceEnrichResult & { ok: boolean }) => (d.ok ? d : null))
+        .catch(() => null);
   const reviews: Promise<{ checked: boolean; reviews: PlaceReviewsResult | null }> = osm
     ? fetch("/api/maps/reviews", {
         method: "POST",
@@ -101,8 +135,9 @@ function fetchBundle(place: ClyraPlace): Promise<PlaceDetailBundle> {
     .then((d: { ok: boolean; images?: StreetImage[] }) => (d.ok ? d.images ?? [] : []))
     .catch(() => []);
 
-  return Promise.all([info, reviews, streetImages]).then(([infoRes, reviewsRes, streetRes]) => {
+  return Promise.all([info, reviews, streetImages, enrich]).then(([infoRes, reviewsRes, streetRes, enrichRes]) => {
     const bundle: PlaceDetailBundle = {
+      enrich: enrichRes,
       info: infoRes,
       reviews: reviewsRes.reviews,
       reviewsChecked: reviewsRes.checked,
@@ -139,4 +174,28 @@ export function peekPlaceDetail(place: ClyraPlace): PlaceDetailBundle | null {
 /** Warms the cache ahead of a click — call from hover on a result row or chip. */
 export function prefetchPlaceDetail(place: ClyraPlace) {
   void getPlaceDetail(place);
+}
+
+
+export interface PlaceWebResult {
+  hours?: { weekly: Array<{ day: string; text: string }>; source: string; url: string };
+  ratings: Array<{ source: string; value: number; count?: number; url?: string }>;
+}
+const webCache = new Map<string, { at: number; promise: Promise<PlaceWebResult | null> }>();
+
+/** The slow half: hours and ratings read from the place's own site and the open web. Cached per place. */
+export function getPlaceWeb(place: ClyraPlace): Promise<PlaceWebResult | null> {
+  if (place.id.startsWith("pin-") || !place.name) return Promise.resolve(null);
+  const hit = webCache.get(place.id);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
+  const promise = fetch("/api/maps/place-web", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: place.name, locality: place.locality, website: place.website }),
+  })
+    .then((r) => r.json())
+    .then((d: PlaceWebResult & { ok: boolean }) => (d.ok ? d : null))
+    .catch(() => null);
+  webCache.set(place.id, { at: Date.now(), promise });
+  return promise;
 }

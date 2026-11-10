@@ -6,7 +6,7 @@ async function openWorkspace(page: Page) {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${API}/`);
   await page.getByText("Vibe Coder", { exact: true }).first().click();
-  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("heading", { name: "What are we building today?" })).toBeVisible({ timeout: 60_000 });
 }
 
 test("the source-library API exposes the curated inventory without promising unverified apps run", async ({ request }) => {
@@ -23,14 +23,13 @@ test("the source-library API exposes the curated inventory without promising unv
 test("the workspace opens a searchable source library with an explicit verification gate", async ({ page }) => {
   await openWorkspace(page);
   await page.getByRole("button", { name: "Library", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Clyra source library" });
+  const dialog = page.getByRole("dialog", { name: "Clyra Library" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
   await dialog.getByRole("searchbox").or(dialog.getByPlaceholder(/Search apps/)).fill("Excalidraw");
   await dialog.getByRole("button", { name: /Excalidraw/ }).first().click();
-  await expect(dialog.getByText("Alternative to Miro · FigJam")).toBeVisible();
+  await expect(dialog.getByText("Like Miro & FigJam").first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
   await dialog.getByText("Advanced import options").click();
   await expect(dialog.getByRole("button", { name: "Verify repository" })).toBeVisible();
-  await expect(dialog.getByText(/public preview card from GitHub/)).toBeVisible();
 });

@@ -336,8 +336,10 @@ export const api = {
       { method: "POST" },
     ),
 
+  /* Tool caches and build output are not the agent's work; the changes list shows only real files. */
   sessionDiff: (projectId: string, sessionId: string) =>
-    json<FileDiff[]>(`/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/diff`),
+    json<FileDiff[]>(`/api/opencode/sessions/${enc(projectId)}/${enc(sessionId)}/diff`)
+      .then((diffs) => diffs.filter((diff) => !/(^|\/)(\.vite|node_modules|\.next|\.turbo|\.cache|dist|build|\.parcel-cache|DerivedData)\//.test(String(diff.file || "")))),
 
   sessionMessages: (projectId: string, sessionId: string) =>
     json<OpenCodeMessage[]>(

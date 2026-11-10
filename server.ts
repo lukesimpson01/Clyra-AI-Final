@@ -1,3 +1,4 @@
+import * as templatesCatalog from "./lib/notes/templates-catalog";
 import { cleanDictation } from "./electron/dictation-cleanup.mjs";
 import dotenv from "dotenv";
 import express from "express";
@@ -127,6 +128,9 @@ import {
 import { fetchLiveWeather, fetchLiveWeatherByCoords, geocodePlace, reverseGeocode } from "./lib/research/weather";
 import { searchPlaces as mapsSearchPlaces, searchNearby as mapsSearchNearby, routingProvider as mapsRoutingProvider, findAlongRoute as mapsFindAlongRoute } from "./lib/maps/providers";
 import { lookupPlaceInfo } from "./lib/maps/placeInfo";
+import { enrichPlace, googlePhotoBytes, type EnrichDeps } from "./lib/maps/placeEnrich";
+import { fetchUrl as mapsFetchUrl } from "./lib/agent/research-tools";
+import { lookupWeb, type WebPage } from "./lib/maps/placeWeb";
 import { identifyPoint } from "./lib/maps/identify";
 import { findStreetImagery } from "./lib/maps/streetImagery";
 import { findOpenReviews } from "./lib/maps/reviews";
@@ -3076,6 +3080,9 @@ async function startServer() {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
     const send = (event: AgentEvent) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+    /* Long runs spend minutes inside single model calls; a comment line keeps proxies and the browser from treating a quiet stream as dead. */
+    const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(": keep-alive\n\n"); }, 15_000);
+    res.on("close", () => clearInterval(heartbeat));
     try {
       await runChatAgent(
         turns,
@@ -3083,7 +3090,7 @@ async function startServer() {
           createNote: ({ title, markdown, parentId, icon }) => { const page = createNotesPage({ title, markdown, parentId, icon }) as { id: string; title: string } | null; if (!page) throw new Error("Notes could not create the page."); return { id: String(page.id), title: String(page.title || title) }; },
           notes: req.body?.notes ? {
             search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
-            read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
+            read: (id) => { const page = notesStore.getPage(id); if (!page) return null; return { title: String(page.title || "Untitled"), markdown: String(notesStore.pageMarkdown(id) ?? "") }; },
             linkPage: (hostId, linkedPageId) => {
               const host = notesStore.getPage(hostId); const linked = notesStore.getPage(linkedPageId);
               if (!host || !linked) return { ok: false as const, error: "Choose two existing notes." };
@@ -3092,6 +3099,43 @@ async function startServer() {
               tree.push({ id: `agent-link-${crypto.randomUUID()}`, page_id: hostId, parent_id: null, type: "link_to_page", text: [], props: { pageId: linkedPageId, title: String(linked.title || "Untitled") }, sort: tree.length, children: [] } as any);
               notesStore.saveBlocks(hostId, tree);
               return { ok: true as const, hostTitle: String(host.title || "Untitled"), linkedTitle: String(linked.title || "Untitled") };
+            },
+            createDatabase: ({ title, columns, rows, parentId, icon }) => {
+              const database = notesStore.createDatabase({ name: title, parentId: parentId || null, icon, properties: columns.map((column) => ({ name: column.name, type: column.type })) }) as any;
+              const props = database.properties as Array<{ id: string; type: string }>;
+              let count = 0;
+              for (const row of rows) {
+                const values: Record<string, unknown> = {};
+                props.forEach((property, index) => { const value = row[index]; if (value !== undefined && value !== null && value !== "") values[property.id] = property.type === "number" ? Number(value) : value; });
+                notesStore.createRecord(database.id, { values });
+                count += 1;
+              }
+              return { id: String(database.page_id), title, rows: count };
+            },
+            createFlashcards: ({ deckName, cards, pageId }) => {
+              const deck = notesStore.createDeck({ name: deckName, pageId: pageId || null }) as any;
+              const result = notesStore.addCards(String(deck.id), cards.map((card) => ({ ...card, sourcePageId: pageId || null })));
+              return { deckId: String(deck.id), added: result.added };
+            },
+            duplicate: (id) => { const copy = notesStore.duplicatePage(id) as any; return copy ? { id: String(copy.id), title: String(copy.title || "Untitled") } : null; },
+            templates: { catalog: templatesCatalog.catalog, describe: templatesCatalog.describe, instantiate: templatesCatalog.instantiate },
+            organize: (id, action) => {
+              const page = notesStore.getPage(id) as Record<string, unknown> | null;
+              if (!page) return { ok: false as const, error: "That note does not exist." };
+              if (page.locked) return { ok: false as const, error: "That note is locked." };
+              try {
+                const patch: Record<string, unknown> = {};
+                if (action.rename) patch.title = action.rename;
+                if (action.icon) patch.icon = action.icon;
+                if (typeof action.favorite === "boolean") patch.favorite = action.favorite;
+                if (Object.keys(patch).length) notesStore.updatePage(id, patch);
+                if (action.moveTo !== undefined) {
+                  if (action.moveTo === id) return { ok: false as const, error: "A note cannot be moved inside itself." };
+                  notesStore.movePage(id, action.moveTo, 0);
+                }
+                if (action.trash) notesStore.trashPage(id);
+                return { ok: true as const, title: String(action.rename || page.title || "Untitled") };
+              } catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Could not update the note." }; }
             },
             index: (() => { const rows = notesStore.listPages() as Array<Record<string, unknown>>; const names = new Map(rows.map((r) => [String(r.id), String(r.title || "Untitled")])); return rows.filter((r) => !r.inline && r.kind !== "record").slice(0, 300).map((r) => ({ id: String(r.id), title: String(r.title || "Untitled"), icon: r.icon ? String(r.icon).slice(0, 8) : undefined, parentTitle: r.parent_id ? names.get(String(r.parent_id)) : undefined })); })(),
             context: (Array.isArray(req.body.notes.pageIds) ? req.body.notes.pageIds : []).slice(0, 6).map((id: unknown) => {
@@ -4209,9 +4253,21 @@ async function startServer() {
       placeInfo: (name, at) => lookupPlaceInfo(name, at),
       reviews: (osmId) => findOpenReviews(osmId),
       webSearch: async (query) => {
-        const research = await runWebSearchResearch({ query, maxResults: 5, fetchTop: 2 });
+        const research = await runWebSearchResearch({ query, maxResults: 6, fetchTop: 3 });
         return buildWebSearchPrompt({ query, research });
       },
+      enrich: (place) =>
+        enrichPlace(
+          {
+            name: place.name,
+            coordinates: place.coordinates,
+            locality: place.locality,
+            osmId: place.id.startsWith("osm-") ? place.id.replace(/^osm-/, "").replace("-", "/") : undefined,
+            website: place.website,
+            openingHoursRaw: place.openingHours?.raw,
+          },
+          mapsEnrichDeps,
+        ),
     };
     res.flushHeaders?.();
     try {
@@ -4250,6 +4306,81 @@ async function startServer() {
     } catch (err) {
       res.status(502).json({ ok: false, error: err instanceof Error ? err.message : "Place lookup failed" });
     }
+  });
+
+  /** Web search for the maps features (menus, review sites), through the same engine Clyra Chat uses. */
+  const mapsWebPages: NonNullable<EnrichDeps["web"]> = async (query) => {
+    const research = await runWebSearchResearch({ query, maxResults: 6, fetchTop: 3 });
+    if (!research.ok || !("pages" in research)) return [];
+    return research.pages.filter((p) => !p.blocked).map((p) => ({ url: p.url, excerpt: p.excerpt }));
+  };
+  /** Pages about a place from a live search, read in full (hours and ratings sit well below the first screen). */
+  const mapsPlacePages = async (query: string): Promise<WebPage[]> => {
+    const urls = (await findWebSearchUrls(query, 10)).slice(0, 7);
+    const pages = await Promise.all(urls.map((u) => mapsFetchUrl(u).catch(() => null)));
+    return pages.filter((p): p is NonNullable<typeof p> => Boolean(p) && !p!.blocked).map((p) => ({ url: p.url, text: p.text.slice(0, 20_000) }));
+  };
+  const mapsEnrichDeps: EnrichDeps = { mangrove: (osmId) => findOpenReviews(osmId) };
+
+  app.post("/api/maps/place-enrich", async (req, res) => {
+    const name = String(req.body?.name ?? "").trim();
+    const coordinates = req.body?.coordinates as [number, number] | undefined;
+    if (!name || !Array.isArray(coordinates) || coordinates.length !== 2 || !coordinates.every(Number.isFinite)) {
+      res.status(400).json({ ok: false, error: "name and coordinates required" });
+      return;
+    }
+    try {
+      const info = await lookupPlaceInfo(name, coordinates);
+      const wiki = info.photos[0]
+        ? { url: info.photos[0].url, source: info.photos[0].attribution?.startsWith("Wikipedia") ? "Wikipedia" : "Wikimedia Commons", caption: info.photos[0].attribution }
+        : null;
+      const enriched = await enrichPlace(
+        {
+          name,
+          coordinates,
+          locality: typeof req.body?.locality === "string" ? req.body.locality : undefined,
+          osmId: typeof req.body?.osmId === "string" ? req.body.osmId : undefined,
+          website: typeof req.body?.website === "string" ? req.body.website : undefined,
+          openingHoursRaw: typeof req.body?.openingHours === "string" ? req.body.openingHours : undefined,
+        },
+        mapsEnrichDeps,
+        wiki,
+      );
+      if (info.summary && !enriched.sources.includes("Wikipedia")) enriched.sources.push("Wikipedia");
+      if (enriched.photos.some((p) => p.source.startsWith("Wikimedia") || p.source === "Wikipedia") && !enriched.sources.includes("Wikimedia")) enriched.sources.push("Wikimedia");
+      for (const extra of info.photos.slice(1)) if (!enriched.photos.some((p) => p.url === extra.url)) enriched.photos.push({ url: extra.url, source: "Wikimedia Commons", caption: extra.attribution });
+      res.json({ ok: true, ...enriched, summary: info.summary, summaryUrl: info.summaryUrl });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: err instanceof Error ? err.message : "Place lookup failed" });
+    }
+  });
+
+  const webCache = new Map<string, { at: number; value: unknown }>();
+  /** The slow half of a place card: opening hours and ratings read from the place's own site and the open web. */
+  app.post("/api/maps/place-web", async (req, res) => {
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) { res.status(400).json({ ok: false, error: "name required" }); return; }
+    const locality = typeof req.body?.locality === "string" ? req.body.locality : undefined;
+    const website = typeof req.body?.website === "string" ? req.body.website : undefined;
+    const key = `${name.toLowerCase()}|${(locality ?? "").toLowerCase()}`;
+    const hit = webCache.get(key);
+    if (hit && Date.now() - hit.at < 30 * 60_000) { res.json({ ok: true, ...(hit.value as object) }); return; }
+    try {
+      const found = await lookupWeb({ name, locality, website }, mapsPlacePages);
+      const rich = Boolean(found.hours || found.ratings.length);
+      webCache.set(key, { at: rich ? Date.now() : Date.now() - 29 * 60_000, value: found });
+      res.json({ ok: true, ...found });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: err instanceof Error ? err.message : "Lookup failed" });
+    }
+  });
+
+  app.get("/api/maps/google-photo", async (req, res) => {
+    const photo = await googlePhotoBytes(String(req.query.n ?? ""));
+    if (!photo) { res.status(404).end(); return; }
+    res.setHeader("Content-Type", photo.type);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(Buffer.from(photo.body));
   });
 
   app.post("/api/maps/search", async (req, res) => {

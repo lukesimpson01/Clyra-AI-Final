@@ -1,3 +1,5 @@
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AI_EASE } from "./motion";
 import { Brain, FileText, Globe, Layers, MapPin, Music2, Terminal } from "lucide-react";
 import { ActivityDisclosure } from "./Disclosure";
 import { ActivityRow, type ActivityState } from "./ActivityRow";
@@ -105,5 +107,29 @@ export function WorkSummary({ label, steps }: { label: string; steps: ActivitySt
     <ActivityDisclosure icon={failed.length ? undefined : <Layers />} label={failed.length ? `${label} · ${failed.length} failed` : label} defaultOpen={detail === "detailed"}>
       <ActivitySteps steps={steps} />
     </ActivityDisclosure>
+  );
+}
+
+/**
+ * Live work, then gone: while `active` the children show; when it turns false they fold away (height and opacity)
+ * so everything below glides up instead of jumping. Collapse takes COLLAPSE_SECONDS; the answer waits for it.
+ */
+export const ACTIVITY_COLLAPSE_SECONDS = 0.34;
+export function ActivityCollapse({ active, children }: { active: boolean; children: React.ReactNode }) {
+  const reduced = useReducedMotion();
+  return (
+    <AnimatePresence initial={false}>
+      {active ? (
+        <motion.div
+          key="live-activity"
+          style={{ overflow: "hidden" }}
+          initial={false}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0, transition: { duration: reduced ? 0 : ACTIVITY_COLLAPSE_SECONDS, ease: AI_EASE } }}
+        >
+          {children}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }

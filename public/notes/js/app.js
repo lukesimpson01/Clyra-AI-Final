@@ -1,6 +1,6 @@
 /* Application controller: bootstraps the workspace, owns the tab router and
    provides the shared actions every surface calls back into. */
-import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, closeTopLayer, closeAllLayers, layerCount, mod, modKey, append } from "./dom.js";
+import { el, clear, icon, iconButton, menu, modal, toast, confirmDialog, closeTopLayer, closeAllLayers, layerCount, mod, modKey, append, frozenHtml } from "./dom.js";
 import { api } from "./api.js";
 import {
   state, subscribe, emit, loadWorkspace, refreshPages, restoreSession, saveSession,
@@ -21,22 +21,26 @@ import { renderWelcome, loadTourState, tourSeen, markTourSeen } from "./views/we
 import { openCommandPalette } from "./command-palette.js";
 import { renderInbox } from "./views/inbox.js";
 import { renderLibrary } from "./views/library.js";
+import { renderFiles } from "./views/files.js";
 import { openTrash } from "./views/trash.js";
 import { renderTemplatesView } from "./views/templates.js";
 import { openImport } from "./views/import.js";
 import { openCourses, openSettings } from "./views/settings.js";
 import { runGenerator } from "./views/generators.js";
 import { openTerminal } from "./runner.js";
+import { TaskView } from "./task-view.js";
+import { openVersions } from "./version-history.js";
 
 const TAB_LABELS = {
   home: { title: "Home", icon: "home" },
   welcome: { title: "Welcome", icon: "home", emoji: "\u{1F44B}" },
   templates: { title: "Templates", icon: "template" },
-  chat: { title: "AI chat", icon: "sparkle" },
+  chat: { title: "AI chat", icon: "comment" },
   flashcards: { title: "Flashcards", icon: "cards" },
   tests: { title: "Practice tests", icon: "check_square" },
   inbox: { title: "Inbox", icon: "inbox" },
   library: { title: "Library", icon: "book" },
+  files: { title: "Files", icon: "grid" },
 };
 
 class App {
@@ -116,6 +120,7 @@ class App {
   }
 
   renderChrome() {
+    this.reconcileSplit();
     this.tabstrip.render();
     this.toolbar.render();
     this.sidebar.renderBody();
@@ -145,73 +150,217 @@ class App {
     }
     const renderers = {
       home: renderHome, welcome: renderWelcome, templates: (surface, app) => renderTemplatesView(surface, app, activeTab()?.parentId), chat: renderChat, flashcards: renderFlashcards,
-      tests: renderTests, inbox: renderInbox, library: renderLibrary,
+      tests: renderTests, inbox: renderInbox, library: renderLibrary, files: renderFiles,
     };
     const render = renderers[tab.kind] || renderHome;
     this.currentView = render(this.surface, this) || null;
   }
 
-  /* A split is intentionally limited to two real note pages. Each pane owns
-     a normal PageView, so text editing, autosave, scrolling and block tools
-     remain the same implementation rather than a static preview. */
+  /* Split panes stay real PageViews. Each group has its own tab run while the
+     primary strip remains the workspace dock. Keeping this state local means
+     a person can experiment with a layout without changing their saved tabs. */
   renderSplitSurface() {
-    const { primary, secondary, orientation } = this.split;
+    const groups = this.split.groups;
     const active = activeTab();
-    const key = `split:${primary}:${secondary}:${orientation}:${active?.id || ""}`;
-    if (this.currentKey === key) return;
     closeAllLayers("navigation");
     this.captureSplitPreviews();
-    /* On a pane change both views are already tracked in paneViews. Destroying
-       currentView first as well can double-unsubscribe the active editor. */
-    if (this.paneViews.size) {
-      for (const view of this.paneViews.values()) view?.destroy?.();
-    } else {
+    if (!this.paneNodes) this.paneNodes = new Map();
+    /* The old single-view surface is replaced once, then panes are reconciled
+       in place so an editor never remounts just because a neighbouring tab
+       opened, closed or moved. */
+    if (!this.surface.classList.contains("split-surface")) {
       this.currentView?.destroy?.();
+      this.currentView = null;
+      clear(this.surface);
+      this.paneNodes.clear();
     }
-    this.paneViews.clear();
-    clear(this.surface);
-    this.surface.className = `surface split-surface ${orientation}`;
-    this.currentKey = key;
+    this.surface.className = `surface split-surface ${this.split.layout}`;
+    this.surface.dataset.panes = String(groups.length);
+    this.currentKey = `split:${this.split.layout}`;
     this.currentTabId = active?.id || null;
     state.view = { kind: active?.kind || "page" };
-    [primary, secondary].forEach((tabId) => {
-      const paneTab = state.tabs.find((entry) => entry.id === tabId);
-      if (!paneTab || paneTab.kind !== "page") return;
-      const label = this.tabLabel(paneTab);
-      const pane = el("section", {
-        class: `split-pane${paneTab.id === active?.id ? " active" : ""}`,
-        dataset: { tabId: paneTab.id },
-        onpointerdown: () => { if (state.activeTab !== paneTab.id) selectTab(paneTab.id); },
+    const wanted = new Set(groups.map((group) => group.id));
+    for (const [id, entry] of [...this.paneNodes]) {
+      if (wanted.has(id)) continue;
+      this.paneNodes.delete(id);
+      entry.view?.destroy?.();
+      for (const key of [...this.paneViews.keys()]) if (this.paneViews.get(key) === entry.view) this.paneViews.delete(key);
+      entry.pane.classList.add("leaving");
+      setTimeout(() => entry.pane.remove(), 200);
+    }
+    let cursor = null;
+    for (const group of groups) {
+      let entry = this.paneNodes.get(group.id);
+      if (!entry) entry = this.createPane(group);
+      entry.group = group;
+      if (entry.pane.previousElementSibling !== cursor && entry.pane.parentNode) this.surface.insertBefore(entry.pane, cursor ? cursor.nextSibling : this.surface.firstChild);
+      else if (!entry.pane.parentNode) this.surface.insertBefore(entry.pane, cursor ? cursor.nextSibling : this.surface.firstChild);
+      cursor = entry.pane;
+      const paneTab = state.tabs.find((tab) => tab.id === group.activeId);
+      entry.pane.classList.toggle("active", paneTab?.id === active?.id);
+      entry.pane.dataset.tabId = paneTab?.id || "";
+      this.paintPaneTabs(entry, group);
+      if (paneTab && entry.tabId !== paneTab.id) {
+        entry.view?.destroy?.();
+        for (const key of [...this.paneViews.keys()]) if (this.paneViews.get(key) === entry.view) this.paneViews.delete(key);
+        clear(entry.body);
+        entry.tabId = paneTab.id;
+        entry.view = new PageView(entry.body, paneTab.pageId, this, paneTab.scrollTop || 0);
+        this.paneViews.set(paneTab.id, entry.view);
+      }
+      if (paneTab && paneTab.id === active?.id) this.currentView = entry.view;
+    }
+    this.surface.querySelectorAll(".split-drop-overlay").forEach((node) => this.surface.append(node));
+  }
+
+  createPane(group) {
+    const entry = { group, pane: null, head: null, list: null, body: null, view: null, tabId: null, nodes: new Map() };
+    entry.list = el("div", { class: "split-pane-tabs", role: "tablist", "aria-label": "Split note tabs" });
+    entry.head = el("header", { class: "split-pane-head" }, entry.list,
+      iconButton("plus", "Open a new note here", () => { this.split.focus = entry.group.id; this.createPage(null, { newTab: true }); }, { size: 14, className: "split-pane-add" }),
+      iconButton("close", "Close this group", () => this.closeGroup(entry.group.id), { size: 14, className: "split-pane-close" }));
+    entry.body = el("div", { class: "split-pane-body" });
+    entry.pane = el("section", {
+      class: "split-pane entering", dataset: { groupId: group.id },
+      onpointerdown: () => {
+        this.split.focus = entry.group.id;
+        const id = entry.group.activeId;
+        if (id && state.activeTab !== id) this.selectSplitTab(entry.group.id, id);
       },
-        el("header", { class: "split-pane-head" },
-          el("span", { class: "split-pane-icon", text: label.emoji || "" }, label.emoji ? null : icon(label.icon, 14)),
-          el("span", { class: "split-pane-title", text: label.title }),
-          el("button", {
-            class: "icon-button split-pane-close", type: "button", "aria-label": "Close split view",
-            onpointerdown: (event) => event.stopPropagation(),
-            onclick: (event) => { event.stopPropagation(); this.exitSplit(); },
-          }, icon("close", 13))),
-      );
-      const host = el("div", { class: "split-pane-body" });
-      pane.append(host);
-      this.surface.append(pane);
-      const view = new PageView(host, paneTab.pageId, this, paneTab.scrollTop || 0);
-      this.paneViews.set(paneTab.id, view);
-      if (paneTab.id === active?.id) this.currentView = view;
+      ondragover: (event) => { if (this.paneDrag) { event.preventDefault(); entry.pane.classList.add("drop-ready"); } },
+      ondragleave: (event) => { if (!entry.pane.contains(event.relatedTarget)) entry.pane.classList.remove("drop-ready"); },
+      ondrop: (event) => {
+        entry.pane.classList.remove("drop-ready");
+        const tabId = this.paneDrag?.tabId;
+        if (!tabId) return;
+        event.preventDefault();
+        this.moveTabToPane(tabId, entry.group.id);
+        this.paneDrag = null;
+        this.clearSplitTargets();
+      },
+    }, entry.head, entry.body);
+    this.paneNodes.set(group.id, entry);
+    setTimeout(() => entry.pane.classList.remove("entering"), 320);
+    return entry;
+  }
+
+  /* Pane tabs are reconciled like the dock: a new tab grows into place, a
+     closed one collapses first, and its neighbours slide across with it. */
+  paintPaneTabs(entry, group) {
+    const tabs = group.tabIds.map((id) => state.tabs.find((tab) => tab.id === id)).filter((tab) => tab?.kind === "page");
+    const wanted = new Set(tabs.map((tab) => tab.id));
+    for (const [id, node] of [...entry.nodes]) {
+      if (wanted.has(id)) continue;
+      entry.nodes.delete(id);
+      node.classList.add("closing");
+      node.classList.remove("settled");
+      node.style.pointerEvents = "none";
+      setTimeout(() => node.remove(), 220);
+    }
+    let cursor = entry.list.firstChild;
+    while (cursor && cursor.classList.contains("closing")) cursor = cursor.nextSibling;
+    for (const tab of tabs) {
+      let node = entry.nodes.get(tab.id);
+      const label = this.tabLabel(tab);
+      if (!node) {
+        node = this.paneTabNode(entry, tab);
+        entry.nodes.set(tab.id, node);
+        entry.list.insertBefore(node, cursor);
+        void node.offsetWidth;
+        node.classList.add("settled");
+      } else if (node !== cursor) entry.list.insertBefore(node, cursor);
+      const icon$ = node.querySelector(".split-pane-icon");
+      clear(icon$);
+      if (label.emoji) icon$.textContent = label.emoji; else icon$.append(icon(label.icon, 13));
+      node.querySelector(".split-pane-tab-label").textContent = label.title;
+      node.title = label.title;
+      node.classList.toggle("active", tab.id === group.activeId);
+      node.setAttribute("aria-selected", String(tab.id === group.activeId));
+      cursor = node.nextSibling;
+      while (cursor && cursor.classList.contains("closing")) cursor = cursor.nextSibling;
+    }
+  }
+
+  paneTabNode(entry, tab) {
+    const node = el("div", {
+      class: "split-pane-tab", role: "tab", draggable: "true", tabindex: "0",
+      onclick: (event) => { event.stopPropagation(); this.selectSplitTab(entry.group.id, tab.id); },
+      onauxclick: (event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.id); } },
+      oncontextmenu: (event) => {
+        event.preventDefault();
+        menu(node, [
+          { label: "Close tab", icon: "close", onSelect: () => closeTab(tab.id) },
+          { label: "Return to top strip", icon: "arrow_left", onSelect: () => this.returnTabToTop(tab.id) },
+        ]);
+      },
+    },
+      el("span", { class: "split-pane-icon" }),
+      el("span", { class: "split-pane-tab-label" }),
+      el("button", { class: "split-pane-tab-close", type: "button", tabindex: "-1", onclick: (event) => { event.stopPropagation(); closeTab(tab.id); } }, icon("close", 11)));
+    this.tabstrip?.bindPreview(node, tab);
+    node.addEventListener("dragstart", (event) => {
+      this.tabstrip?.hideTabPreview();
+      this.paneDrag = { tabId: tab.id, groupId: entry.group.id };
+      if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", tab.id); }
+      node.classList.add("dragging");
+      this.beginTabTearOff(tab.id, entry.group.id);
     });
+    node.addEventListener("dragend", () => { node.classList.remove("dragging"); this.paneDrag = null; this.clearSplitTargets(); });
+    node.addEventListener("dragover", (event) => { if (this.paneDrag && this.paneDrag.tabId !== tab.id) { event.preventDefault(); event.stopPropagation(); node.classList.add("drag-over"); } });
+    node.addEventListener("dragleave", () => node.classList.remove("drag-over"));
+    node.addEventListener("drop", (event) => {
+      node.classList.remove("drag-over");
+      const dragged = this.paneDrag?.tabId;
+      if (!dragged || dragged === tab.id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.moveTabToPane(dragged, entry.group.id, tab.id);
+      this.paneDrag = null;
+      this.clearSplitTargets();
+    });
+    return node;
+  }
+
+  closeGroup(groupId) {
+    const group = this.split?.groups.find((entry) => entry.id === groupId);
+    if (!group) return;
+    /* Closing a group hands its notes back to the dock rather than closing them. */
+    this.split.groups = this.split.groups.filter((entry) => entry !== group);
+    if (this.split.groups.length < 2) { this.captureSplitPreviews(); this.teardownSplit(this.split.groups[0]?.activeId || state.activeTab); emit("tabs"); return; }
+    this.split.layout = this.layoutForSplit("right", this.split.groups.length);
+    const next = this.split.groups[0];
+    emit("tabs");
+    if (!this.isSplitTab(state.activeTab)) selectTab(next.activeId);
   }
 
   captureTabPreview(tab, host) {
+    /* A chat is previewed as the conversation it holds: the same rendered
+       markup, frozen, so the card shows real messages and tool calls. */
+    if (tab?.kind === "chat") {
+      const view = host?.querySelector?.(".chat-view");
+      if (!view) return;
+      const thread = view.querySelector(".chat-thread, .thread") || view;
+      tab.preview = { kind: "chat", html: frozenHtml(view), scrollTop: thread.scrollTop || 0, landing: view.classList.contains("landing") };
+      return;
+    }
+    /* Every other view (Files, Home, Templates, Library…) is previewed as the screen it shows right now. */
+    if (tab && tab.kind !== "page") {
+      const scroller = host?.querySelector?.(".page-scroll, .scroll") || host;
+      if (!scroller || !scroller.childElementCount) return;
+      tab.preview = { kind: "view", html: frozenHtml(scroller), scrollTop: scroller.scrollTop || 0 };
+      return;
+    }
     if (!tab || tab.kind !== "page") return;
     const scroller = host?.querySelector?.(".page-scroll");
     if (!scroller?.querySelector?.(".page-canvas")) return;
     tab.scrollTop = scroller.scrollTop;
-    tab.preview = { html: scroller.outerHTML, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight };
+    tab.preview = { html: frozenHtml(scroller), scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight };
   }
 
   captureSplitPreviews() {
     if (!this.split) return;
-    for (const tabId of [this.split.primary, this.split.secondary]) {
+    for (const group of this.split.groups) {
+      const tabId = group.activeId;
       const tab = state.tabs.find((entry) => entry.id === tabId);
       this.captureTabPreview(tab, this.surface.querySelector(`.split-pane[data-tab-id="${CSS.escape(tabId)}"]`));
     }
@@ -222,30 +371,104 @@ class App {
      is restored when the person comes back to the still-open tab. */
   captureActiveTabPreview() {
     const previous = state.tabs.find((candidate) => candidate.id === this.currentTabId);
-    this.captureTabPreview(previous, this.surface);
+    const host = this.split && previous ? this.surface.querySelector(`.split-pane[data-tab-id="${CSS.escape(previous.id)}"]`) : this.surface;
+    this.captureTabPreview(previous, host);
   }
 
   reconcileSplit() {
     if (!this.split) return;
-    const alive = new Set(state.tabs.map((tab) => tab.id));
-    if (alive.has(this.split.primary) && alive.has(this.split.secondary)) return;
-    const survivor = alive.has(this.split.primary) ? this.split.primary : this.split.secondary;
+    const isNote = (id) => state.tabs.some((tab) => tab.id === id && tab.kind === "page");
+    this.split.groups = this.split.groups
+      .map((group) => {
+        const tabIds = group.tabIds.filter(isNote);
+        return { ...group, tabIds, activeId: tabIds.includes(group.activeId) ? group.activeId : tabIds[0] };
+      })
+      .filter((group) => group.tabIds.length);
+    const active = activeTab();
+    /* A note opened from the dock while split lands in the focused group
+       rather than throwing the whole layout away. */
+    if (active?.kind === "page" && !this.isSplitTab(active.id) && this.split.groups.length) {
+      const target = this.split.groups.find((group) => group.id === this.split.focus) || this.split.groups[0];
+      const holder = target.tabIds.length ? target : this.split.groups[0];
+      holder.tabIds.push(active.id);
+      holder.activeId = active.id;
+    }
+    const live = this.split.groups.find((group) => group.tabIds.includes(state.activeTab));
+    if (live) { live.activeId = state.activeTab; this.split.focus = live.id; }
+    if (this.split.groups.length >= 2 && live) {
+      this.split.layout = this.layoutForSplit(this.split.edge || "right", this.split.groups.length);
+      return;
+    }
+    this.captureSplitPreviews();
+    this.teardownSplit(live?.activeId || this.split.groups[0]?.activeId || null);
+  }
+
+  teardownSplit(survivor = null) {
+    for (const view of this.paneViews.values()) view?.destroy?.();
+    this.paneViews.clear();
+    this.paneNodes?.clear();
+    this.currentView = null;
     this.split = null;
     this.splitPanels = null;
     this.root.classList.remove("has-split", "split-sidebar-open", "split-rail-open", "split-panels-dimmed");
     this.currentKey = null;
-    for (const view of this.paneViews.values()) view?.destroy?.();
-    this.paneViews.clear();
-    this.currentView = null;
-    if (survivor && state.activeTab !== survivor) {
-      state.activeTab = survivor;
-      saveSession();
-    }
+    this.tabstrip?.syncRailToggle();
+    if (survivor && state.activeTab !== survivor && state.tabs.some((tab) => tab.id === survivor)) { state.activeTab = survivor; saveSession(); }
   }
 
-  splitTab(tabId, edge) {
+  layoutForSplit(edge, count) {
+    if (count <= 2) return edge === "top" || edge === "bottom" ? "vertical" : "horizontal";
+    return count === 3 ? "grid-3" : "grid-4";
+  }
+
+  selectSplitTab(groupId, tabId) {
+    const group = this.split?.groups.find((entry) => entry.id === groupId);
+    if (!group || !group.tabIds.includes(tabId)) return;
+    group.activeId = tabId;
+    this.split.focus = groupId;
+    if (state.activeTab === tabId) { this.renderSplitSurface(); this.toolbar?.render(); return; }
+    selectTab(tabId);
+  }
+
+  /* Tabs move between groups (or reorder inside one) without remounting the
+     pane they came from; an emptied group quietly folds away. */
+  moveTabToPane(tabId, targetGroupId, beforeTabId = null) {
+    const target = this.split?.groups.find((group) => group.id === targetGroupId);
+    const source = this.split?.groups.find((group) => group.tabIds.includes(tabId));
+    if (!target) return;
+    if (source) {
+      source.tabIds = source.tabIds.filter((id) => id !== tabId);
+      if (source.activeId === tabId) source.activeId = source.tabIds[0];
+    }
+    const at = beforeTabId ? target.tabIds.indexOf(beforeTabId) : -1;
+    if (at >= 0) target.tabIds.splice(at, 0, tabId); else target.tabIds.push(tabId);
+    target.activeId = tabId;
+    this.split.focus = target.id;
+    if (source && !source.tabIds.length) this.split.groups = this.split.groups.filter((group) => group !== source);
+    if (this.split.groups.length < 2) { this.captureSplitPreviews(); this.teardownSplit(tabId); emit("tabs"); return; }
+    this.split.layout = this.layoutForSplit(this.split.edge || "right", this.split.groups.length);
+    if (state.activeTab === tabId) { this.renderSplitSurface(); this.toolbar?.render(); this.tabstrip?.render(); } else selectTab(tabId);
+  }
+
+  splitTab(tabId, edge, sourceGroupId = null) {
     const moved = state.tabs.find((tab) => tab.id === tabId);
     if (!moved || moved.kind !== "page") { toast("Only note tabs can be placed beside another note"); return; }
+    if (this.split) {
+      if (this.split.groups.length >= 4) { toast("Up to four note groups can be open at once"); return; }
+      const source = this.split.groups.find((group) => group.id === sourceGroupId) || this.split.groups.find((group) => group.tabIds.includes(tabId));
+      if (source && source.tabIds.length < 2) { toast("Drag a note from a pane with two or more tabs, or from the top strip, to add a group"); return; }
+      if (source) {
+        source.tabIds = source.tabIds.filter((id) => id !== tabId);
+        if (source.activeId === tabId) source.activeId = source.tabIds[0];
+      }
+      const newGroup = { id: `pane-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`, tabIds: [tabId], activeId: tabId };
+      this.split.groups.push(newGroup);
+      this.split.edge = edge;
+      this.split.focus = newGroup.id;
+      this.split.layout = this.layoutForSplit(edge, this.split.groups.length);
+      if (state.activeTab === tabId) { this.renderSplitSurface(); this.toolbar?.render(); this.tabstrip?.render(); } else selectTab(tabId);
+      return;
+    }
     const active = activeTab();
     const retained = active?.id !== tabId && active?.kind === "page"
       ? active
@@ -253,10 +476,15 @@ class App {
     if (!retained) { toast("Open another note first, then drag a tab to split the view"); return; }
     this.captureActiveTabPreview();
     this.split = {
-      primary: retained.id,
-      secondary: moved.id,
-      orientation: edge === "top" || edge === "bottom" ? "vertical" : "horizontal",
+      layout: this.layoutForSplit(edge, 2),
+      edge,
+      focus: null,
+      groups: [
+        { id: "pane-main", tabIds: [retained.id], activeId: retained.id },
+        { id: `pane-${Date.now().toString(36)}`, tabIds: [moved.id], activeId: moved.id },
+      ],
     };
+    this.split.focus = this.split.groups[1].id;
     this.splitPanels = { sidebar: false, rail: false };
     this.root.classList.add("has-split");
     this.syncSplitPanels();
@@ -268,17 +496,30 @@ class App {
   exitSplit() {
     if (!this.split) return;
     this.captureSplitPreviews();
-    for (const view of this.paneViews.values()) view?.destroy?.();
-    this.paneViews.clear();
-    this.currentView = null;
-    this.split = null;
-    this.splitPanels = null;
-    this.root.classList.remove("has-split", "split-sidebar-open", "split-rail-open", "split-panels-dimmed");
-    this.currentKey = null;
+    this.teardownSplit(state.activeTab);
     emit("tabs");
   }
 
-  beginTabTearOff(tabId) {
+  /* A tab dropped back on the dock leaves its group. If that leaves a single
+     group the split dissolves; otherwise the remaining panes just re-flow. */
+  returnTabToTop(tabId) {
+    if (!this.split) return;
+    const source = this.split.groups.find((group) => group.tabIds.includes(tabId));
+    if (!source) return;
+    this.captureSplitPreviews();
+    source.tabIds = source.tabIds.filter((id) => id !== tabId);
+    if (source.activeId === tabId) source.activeId = source.tabIds[0];
+    if (!source.tabIds.length) this.split.groups = this.split.groups.filter((group) => group !== source);
+    if (this.split.groups.length < 2) { this.teardownSplit(tabId); emit("tabs"); return; }
+    this.split.layout = this.layoutForSplit(this.split.edge || "right", this.split.groups.length);
+    const next = this.split.groups.find((group) => group.id === this.split.focus) || this.split.groups[0];
+    if (state.activeTab === next.activeId) { this.renderSplitSurface(); this.toolbar?.render(); emit("tabs"); }
+    else selectTab(next.activeId);
+  }
+
+  isSplitTab(tabId) { return Boolean(this.split?.groups.some((group) => group.tabIds.includes(tabId))); }
+
+  beginTabTearOff(tabId, sourceGroupId = null) {
     const tab = state.tabs.find((entry) => entry.id === tabId);
     if (!tab || tab.kind !== "page") return;
     this.clearSplitTargets();
@@ -288,7 +529,7 @@ class App {
       const zone = el("div", { class: `split-drop-zone ${edge}`, dataset: { edge }, role: "button", "aria-label": `Place ${this.tabLabel(tab).title} on the ${label.toLowerCase()}` });
       zone.addEventListener("dragenter", (event) => { event.preventDefault(); overlay.dataset.edge = edge; });
       zone.addEventListener("dragover", (event) => { event.preventDefault(); overlay.dataset.edge = edge; });
-      zone.addEventListener("drop", (event) => { event.preventDefault(); this.clearSplitTargets(); this.splitTab(tabId, edge); });
+      zone.addEventListener("drop", (event) => { event.preventDefault(); this.clearSplitTargets(); this.splitTab(tabId, edge, sourceGroupId); });
       overlay.append(zone);
     }
     overlay.addEventListener("dragleave", (event) => { if (!overlay.contains(event.relatedTarget)) delete overlay.dataset.edge; });
@@ -309,9 +550,30 @@ class App {
     this.root.classList.toggle("split-sidebar-open", sidebar);
     this.root.classList.toggle("split-rail-open", rail);
     this.root.classList.toggle("split-panels-dimmed", sidebar || rail);
+    /* The overlays are temporary: a press anywhere on the documents puts them
+       away again, without touching the tab strip that stays put above. */
+    if (sidebar || rail) {
+      if (!this.splitPanelDismiss) {
+        this.splitPanelDismiss = (event) => {
+          if (!this.split || event.target.closest?.(".sidebar, .rail, .tabstrip, .layer")) return;
+          this.splitPanels.sidebar = false; this.splitPanels.rail = false;
+          this.syncSplitPanels();
+        };
+        this.surface.addEventListener("pointerdown", this.splitPanelDismiss, true);
+      }
+    } else if (this.splitPanelDismiss) {
+      this.surface.removeEventListener("pointerdown", this.splitPanelDismiss, true);
+      this.splitPanelDismiss = null;
+    }
     if (!rail) this.rail?.hideAll();
     else { this.rail?.refresh(); this.rail?.showCurrent(); }
     this.tabstrip?.syncRailToggle();
+  }
+
+  toggleTaskView() {
+    this.taskView ||= new TaskView(this);
+    if (!this.taskView.open) this.captureActiveTabPreview();
+    this.taskView.toggle();
   }
 
   /* ------------------------------------------------------- navigation */
@@ -459,6 +721,20 @@ class App {
   }
 
   railOpen() { return this.split ? Boolean(this.splitPanels?.rail) : state.railHidden === false; }
+
+  /* The chat lives in one place at a time. Moving it to the sidebar leaves
+     the full-screen chat for wherever you were before it. */
+  leaveChatView() {
+    if (activeTab()?.kind !== "chat") return;
+    if (this.history.length) this.goBack();
+    else this.openView({ kind: "home" });
+  }
+
+  openChatSidebar() {
+    this.leaveChatView();
+    if (!this.railOpen()) this.toggleRail();
+    this.showRailPanel("chat");
+  }
 
   showRailPanel(id) { this.rail?.show(id); }
 
@@ -680,19 +956,41 @@ class App {
         navigator.clipboard.writeText(`${location.origin}/notes#${page.id}`);
         toast("Link copied");
       } },
-      { label: "Export as Markdown", icon: "export", onSelect: () => this.exportPage(page) },
+      { type: "label", label: "Export" },
+      { label: "Word document (.docx)", icon: "export", onSelect: () => this.exportPage(page, "docx") },
+      { label: "Google Docs (.docx)", icon: "export", onSelect: () => this.exportPage(page, "docx", { googleDocs: true }) },
+      { label: "PDF", icon: "export", onSelect: () => this.exportPage(page, "pdf") },
+      { label: "Markdown (.md)", icon: "export", onSelect: () => this.exportPage(page, "md") },
+      { label: "Web page (.html)", icon: "export", onSelect: () => this.exportPage(page, "html") },
     ], { align: "end" });
   }
 
-  async exportPage(page) {
-    const markdown = await withError(() => api.get(`/api/notes/pages/${page.id}/markdown`), "Export failed");
-    if (markdown === null) return;
-    const blob = new Blob([markdown], { type: "text/markdown" });
-    const link = el("a", { href: URL.createObjectURL(blob), download: `${(page.title || "Untitled").replace(/[^\w -]/g, "")}.md` });
+  /* Word, PDF and Markdown are built on the server from the page's real blocks
+     (databases become tables, calendars become agendas). If PDF rendering is
+     unavailable the same page opens in the system print dialog instead. */
+  async exportPage(page, format = "md", { googleDocs = false } = {}) {
+    const labels = { docx: "Word document", pdf: "PDF", md: "Markdown", html: "Web page" };
+    toast(`Preparing ${labels[format] || format}…`);
+    const response = await fetch(`/api/notes/pages/${encodeURIComponent(page.id)}/export?format=${format}`).catch(() => null);
+    if (response?.status === 501 && format === "pdf") { await this.printPage(page); return; }
+    if (!response?.ok) { toast("Export failed"); return; }
+    const filename = decodeURIComponent(response.headers.get("X-Export-Filename") || `${(page.title || "Untitled").replace(/[^\w -]/g, "")}.${format}`);
+    const link = el("a", { href: URL.createObjectURL(await response.blob()), download: filename });
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+    /* Google Docs opens Word files directly: the same .docx keeps headings, lists, tables, shading and images. */
+    toast(googleDocs ? `Saved ${filename}. In Google Docs choose File, Open, Upload to open it.` : `${labels[format] || "File"} saved as ${filename}`);
+  }
+
+  async printPage(page) {
+    const html = await fetch(`/api/notes/pages/${encodeURIComponent(page.id)}/export?format=html`).then((r) => r.ok ? r.text() : null).catch(() => null);
+    if (!html) { toast("Export failed"); return; }
+    const frame = el("iframe", { style: { position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0" } });
+    document.body.append(frame);
+    frame.srcdoc = html;
+    frame.onload = () => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => frame.remove(), 60000); };
   }
 
   pageMenu(page, anchor, onChange, options = {}) {
@@ -742,8 +1040,13 @@ class App {
       { label: "Move to", icon: "move", onSelect: () => this.moveDialog(page, refresh) },
       { label: "Move to subject", icon: "book", onSelect: () => this.subjectPicker(page, anchor, refresh) },
       { type: "separator" },
-      { label: "Export as Markdown", icon: "export", onSelect: () => this.exportPage(page) },
-      { label: "Version history", icon: "history", onSelect: () => this.versionDialog(page) },
+      { type: "label", label: "Export" },
+      { label: "Word document (.docx)", icon: "export", onSelect: () => this.exportPage(page, "docx") },
+      { label: "Google Docs (.docx)", icon: "export", onSelect: () => this.exportPage(page, "docx", { googleDocs: true }) },
+      { label: "PDF", icon: "export", onSelect: () => this.exportPage(page, "pdf") },
+      { label: "Markdown (.md)", icon: "export", onSelect: () => this.exportPage(page, "md") },
+      { label: "Web page (.html)", icon: "export", onSelect: () => this.exportPage(page, "html") },
+      { label: "Version history", icon: "history", onSelect: () => openVersions(this, page.id, { title: page.title }) },
       { type: "separator" },
       /* Notion's page style block: the typeface as chips, then two switches. Each applies at once; the menu stays open. */
       { type: "custom", render: () => {
@@ -934,7 +1237,15 @@ class App {
         try { flushAll(); } finally { window.location.assign("/?launcher=1"); }
         return;
       }
+      /* Task view here is for the notes you have open: every tab as a card, the
+         sidebars sliding away while it is up. The all-apps view keeps its own chord. */
       if (shortcutMatches(event, "taskView")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.toggleTaskView();
+        return;
+      }
+      if (shortcutMatches(event, "appTaskView")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         try { flushAll(); } finally { window.location.assign("/?taskview=1"); }

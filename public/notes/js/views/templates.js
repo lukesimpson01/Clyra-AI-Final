@@ -7,7 +7,7 @@ import { el, clear, icon, modal, toast, append } from "../dom.js";
 import { api } from "../api.js";
 import { refreshPages, withError } from "../state.js";
 import { createFromTemplate } from "../database.js";
-import { TEMPLATES, TEMPLATE_CATEGORIES, templateBlocks } from "../templates-data.js";
+import { TEMPLATES, TEMPLATE_CATEGORIES, TEMPLATE_TONES, templateBlocks } from "../templates-data.js";
 
 export { TEMPLATES, TEMPLATE_CATEGORIES };
 
@@ -38,12 +38,14 @@ const CATEGORY_ICONS = {
   "Dashboards & Knowledge": "page",
   "Résumés & Cover Letters": "page",
   "Official Documents": "template",
+  Lists: "check_square",
 };
 
 /* Built-in templates are intentionally recognisable at a glance. These are
    app icons, not decorative cover banners, so they remain quiet beside real
    screenshots and retain their meaning in compact lists. */
 const CATEGORY_EMOJI = {
+  "Letters": "✉️",
   "Study & Education": "📘",
   "Planning & Productivity": "🗓️",
   "Work & Business": "💼",
@@ -51,6 +53,7 @@ const CATEGORY_EMOJI = {
   "Dashboards & Knowledge": "🧠",
   "Résumés & Cover Letters": "📄",
   "Official Documents": "📑",
+  Lists: "📝",
 };
 
 /* The gallery should help a person understand the actual working surface
@@ -132,7 +135,8 @@ export function openTemplates(app, parentId, { host = null } = {}) {
   let category = "All";
   let query = "";
   let detail = null;
-  const state = { busy: new Set(), created: new Map(), paints: new Set() };
+  const state = { busy: new Set(), created: new Map(), paints: new Set(), tones: new Map() };
+  const toneOf = (template) => state.tones.get(template.id) || "gray";
   const repaintButtons = () => state.paints.forEach((paint) => paint());
 
   const main = el("div", { class: "template-main as-main scroll" });
@@ -147,7 +151,7 @@ export function openTemplates(app, parentId, { host = null } = {}) {
       /* some of these pages hold databases: they are made inside the page and shown in place */
       let made = null;
       try {
-        made = await createFromTemplate(app, template, parentId || null, { open: false });
+        made = await createFromTemplate(app, template, parentId || null, { open: false, tone: toneOf(template) });
       } catch (error) {
         console.error("Template creation failed", error);
       }
@@ -164,7 +168,8 @@ export function openTemplates(app, parentId, { host = null } = {}) {
         title: template.id === "blank" ? "" : template.name,
         icon: template.id === "blank" ? undefined : template.emoji,
         cover: template.cover || undefined,
-        blocks: templateBlocks(template),
+        fullWidth: template.wide !== false,
+        blocks: templateBlocks(template, toneOf(template)),
       }),
       "Could not create the page",
     );
@@ -256,6 +261,35 @@ export function openTemplates(app, parentId, { host = null } = {}) {
     });
     setActive(0);
     shots.append(track, previousArrow, nextArrow, dotRow);
+    /* Colour: grey is the default. Any other tone swaps the captured shots for
+       a live render of the same page in that colour. */
+    const live = el("div", { class: "as-detail-live", hidden: true });
+    const swatches = el("div", { class: "as-tones", role: "radiogroup", "aria-label": "Template colour" });
+    /* Choosing a colour never renders anything by itself. The grey screenshots step aside (they would show the wrong colour),
+       and a live preview is offered, not started, until it is asked for. */
+    const previewed = new Set();
+    const paintTone = () => {
+      const tone = toneOf(template);
+      [...swatches.children].forEach((node) => { const on = node.dataset.tone === tone; node.classList.toggle("on", on); node.setAttribute("aria-checked", String(on)); });
+      const dark = document.documentElement.dataset.notesTheme === "dark" ? "&theme=dark" : "";
+      shots.hidden = tone !== "gray";
+      live.hidden = tone === "gray";
+      if (tone === "gray") { live.replaceChildren(); return; }
+      if (previewed.has(tone)) {
+        live.replaceChildren(el("iframe", { class: "as-live-frame", title: `${template.name} in ${tone}`, src: `/notes/template-preview.html?id=${encodeURIComponent(template.id)}&tone=${tone}${dark}`, loading: "lazy" }));
+        return;
+      }
+      live.replaceChildren(el("div", { class: "as-tone-hold" },
+        el("span", { class: `as-tone-dot as-tone-${tone}` }),
+        el("b", { text: `${tone[0].toUpperCase()}${tone.slice(1)} selected` }),
+        el("span", { text: "Get will create this page in that colour. Screenshots are hidden because they only show grey." }),
+        el("button", { class: "as-tone-preview", type: "button", onclick: () => { previewed.add(tone); paintTone(); } }, `Preview in ${tone}`)));
+    };
+    TEMPLATE_TONES.forEach((tone) => swatches.append(el("button", {
+      class: `as-tone as-tone-${tone}`, type: "button", role: "radio", dataset: { tone }, title: tone === "gray" ? "Grey (default)" : tone[0].toUpperCase() + tone.slice(1), "aria-label": tone === "gray" ? "Grey, default" : tone,
+      onclick: () => { state.tones.set(template.id, tone); paintTone(); },
+    })));
+    paintTone();
     return el("article", { class: "as-detail", style: { "--tpl-accent": template.accent || "var(--accent)" } },
       back,
       el("header", { class: "as-detail-head" },
@@ -264,7 +298,9 @@ export function openTemplates(app, parentId, { host = null } = {}) {
         el("div", { class: "as-detail-actions" },
           el("button", { class: "as-preview-button", type: "button", onclick: () => preview(template) }, icon("page", 14), "Preview"),
           getButton(template, state, create, open, { large: true }))),
+      el("div", { class: "as-tone-row" }, el("span", { class: "as-tone-label", text: "Colour" }), swatches),
       shots,
+      live,
       el("section", { class: "as-detail-copy" },
         el("h3", { text: "About this template" }),
         el("p", { text: template.desc }),

@@ -1,0 +1,58 @@
+/* Task view: one light surface, every open note as a window on it. */
+.main { position: relative; }
+.tv { position: absolute; inset: 0; z-index: 140; display: flex; flex-direction: column; overflow: hidden auto; padding: 0 48px 72px; opacity: 0; transition: opacity 240ms var(--ease-out); }
+.tv.in { opacity: 1; }
+.tv.out { opacity: 0; pointer-events: none; transition-duration: 220ms; }
+.tv-backdrop { position: fixed; inset: 0; z-index: -1; background: var(--background-main); }
+.tv-grid { padding-top: 28px; display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 34px 28px; margin: auto; width: 100%; max-width: 1500px; }
+.tv-card { position: relative; display: flex; flex-direction: column; gap: 10px; width: var(--tv-w); padding: 0; border: 0; background: transparent; text-align: left; outline: none; cursor: pointer; opacity: 0; transform: translateY(18px) scale(.94); transition: transform 420ms cubic-bezier(.22,1,.36,1) calc(var(--i, 0) * 26ms), opacity 300ms ease calc(var(--i, 0) * 26ms); }
+.tv.in .tv-card { opacity: 1; transform: none; }
+.tv.out .tv-card { opacity: 0; transform: scale(.96); transition-delay: 0ms; transition-duration: 200ms; }
+.tv-card.leaving { opacity: 0 !important; transform: scale(.86) !important; transition: transform 170ms ease, opacity 150ms ease !important; pointer-events: none; }
+.tv-window { position: relative; height: var(--tv-h); overflow: hidden; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--background-main); box-shadow: 0 1px 2px rgba(15,23,42,.05), 0 10px 30px rgba(15,23,42,.07); transition: transform 260ms cubic-bezier(.22,1,.36,1), box-shadow 260ms ease, border-color 200ms ease; }
+.tv-card:hover .tv-window, .tv-card:focus-visible .tv-window { transform: translateY(-3px) scale(1.012); box-shadow: 0 2px 4px rgba(15,23,42,.06), 0 18px 44px rgba(15,23,42,.13); }
+.tv-card:active .tv-window { transform: scale(.99); }
+.tv-card.active .tv-window { border-color: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent), 0 12px 34px rgba(15,23,42,.1); }
+.tv-card:focus-visible .tv-window { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tv-frame { position: absolute; left: 0; top: 0; width: 1040px; height: 680px; transform: scale(var(--tv-s)); transform-origin: top left; pointer-events: none; }
+.tv-page { width: 1040px; height: 680px; overflow: hidden; background: var(--background-main); }
+.tv-page .page-scroll { overflow: hidden !important; height: 680px !important; }
+.tv-page * { animation: none !important; transition: none !important; }
+.tv-page.tv-chat .chat-view { height: 680px; }
+.tv-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; height: 100%; color: var(--text-tertiary); font-size: 30px; }
+.tv-empty-emoji { font-size: 72px; }
+.tv-label { display: flex; align-items: center; justify-content: center; gap: 7px; align-self: center; max-width: calc(100% - 20px); padding: 4px 12px; border-radius: 999px; color: var(--text-secondary); font-size: 13px; font-weight: 500; transition: background 160ms ease, color 160ms ease; } .tv-card:hover .tv-label, .tv-card:focus-visible .tv-label { background: var(--background-hover); color: var(--text-primary); }
+.tv-label span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-card.active .tv-label { color: var(--text-primary); }
+.tv-close { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--background-main); color: var(--text-secondary); border: 1px solid var(--border-soft); opacity: 0; transform: scale(.8); transition: opacity 160ms ease, transform 220ms cubic-bezier(.34,1.56,.64,1), background 140ms ease; backdrop-filter: blur(8px); }
+.tv-card:hover .tv-close, .tv-card:focus-within .tv-close { opacity: 1; transform: none; }
+.tv-close:hover { background: var(--background-main); color: var(--text-primary); }
+.tv-new .tv-window { display: grid; place-items: center; border-style: dashed; background: transparent; box-shadow: none; color: var(--text-tertiary); }
+.tv-new:hover .tv-window { color: var(--text-primary); }
+.tv-new-plus { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; background: var(--background-main); border: 1px solid var(--border-soft); transition: background 160ms ease; } .tv-new:hover .tv-new-plus { background: var(--background-hover); }
+.tv-hint { position: fixed; left: 50%; bottom: 22px; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; background: var(--background-main); border: 1px solid var(--border-soft); color: var(--text-tertiary); font-size: 12px; box-shadow: 0 1px 6px rgba(15,23,42,.1); transform: translateX(-50%); backdrop-filter: blur(10px); }
+.tv-hint kbd { padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-soft); font: 11px var(--font-ui); }
+
+/* While it is open, the sidebars glide away (they are restored by the controller) and the tab strip waits. */
+.workspace.task-view-open .sidebar, .workspace.task-view-open .rail { pointer-events: none; }
+.workspace.task-view-open .tabstrip, .workspace.task-view-open .doc-toolbar { opacity: .0; pointer-events: none; transition: opacity 200ms ease; }
+.workspace.task-view-open .surface { visibility: hidden; transition: visibility 0s 240ms; }
+
+/* Pages the AI is editing carry a slow blue gradient, here as everywhere. */
+.tv-glow { position: absolute; inset: 0; border-radius: inherit; opacity: 0; pointer-events: none; transition: opacity 300ms ease; }
+.tv-card.ai-working .tv-glow { opacity: 1; box-shadow: inset 0 0 0 2px #4f8bff, inset 0 0 30px rgba(79,139,255,.35); animation: ai-pulse 2.2s ease-in-out infinite; }
+@keyframes ai-pulse { 0%, 100% { box-shadow: inset 0 0 0 2px #4f8bff, inset 0 0 22px rgba(79,139,255,.28); } 50% { box-shadow: inset 0 0 0 2px #8ab0ff, inset 0 0 40px rgba(120,100,255,.4); } }
+@media (max-width: 760px) { .tv { padding: 28px 16px 64px; } .tv-grid { gap: 22px 16px; } }
+@media (prefers-reduced-motion: reduce) { .tv, .tv-card, .tv-window, .tv-close { transition: none; } .tv-card.ai-working .tv-glow { animation: none; } }
+
+/* The bar: Home to leave, search to find. White at rest; grey only on hover or focus. */
+.tv-bar { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 1fr minmax(260px, 520px) 1fr; align-items: center; gap: 12px; margin: 0 -48px; padding: 16px 48px 14px; background: var(--background-main); }
+.tv-home { justify-self: start; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px 0 11px; border-radius: 999px; border: 0; background: transparent; color: var(--text-secondary); font-size: 13.5px; font-weight: 500; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+.tv-home:hover, .tv-home:focus-visible { background: var(--background-hover); color: var(--text-primary); outline: none; } .tv-home:active { transform: scale(.97); }
+.tv-searchbox { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 999px; border: 0; background: transparent; color: var(--text-tertiary); transition: background 140ms ease; }
+.tv-searchbox:hover { background: var(--background-hover); }
+.tv-searchbox:focus-within { background: transparent; }
+.tv-search { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--text-primary); font-size: 14px; outline: none; } .tv-search::-webkit-search-cancel-button { display: none; }
+.tv-count { justify-self: end; color: var(--text-tertiary); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.tv-none { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 70px 20px; color: var(--text-secondary); text-align: center; animation: ag-enter 320ms cubic-bezier(.22,1,.36,1); } .tv-none span { color: var(--text-tertiary); font-size: 13px; }
+@media (max-width: 760px) { .tv-bar { grid-template-columns: auto 1fr; margin: 0 -16px; padding: 12px 16px; } .tv-count { display: none; } .tv-home span { display: none; } .tv-home { padding: 0 10px; } }

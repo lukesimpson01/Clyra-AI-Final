@@ -7,6 +7,7 @@ import { chatReplyFailureText, isCreditsError } from "./lib/chatReplyErrors";
 import { CreditsNotice } from "./components/chat/CreditsNotice";
 import { AgentTodo, ChatAgentRunView } from "./components/chat/ChatAgentRun";
 import { ChatMapCard } from "./components/chat/ChatMapCard";
+import { ChatCodeRun } from "./components/chat/ChatCodeRun";
 import { shouldUseBrowserUse, shouldUseChatAgent, streamChatAgent, type ChatAgentRun } from "./lib/chatAgentClient";
 import { ChatBrowserRunView, type ChatBrowserRunState } from "./components/chat/ChatBrowserRun";
 import { reduceRunItems, type RunEvent, type RunItem } from "./lib/browserRunFeed";
@@ -160,6 +161,8 @@ import { AttachmentThumb, FilePreviewDialog, describeFile } from "./components/c
 import {
   ActivitySteps,
   AssistantResponse,
+  ActivityCollapse,
+  ACTIVITY_COLLAPSE_SECONDS,
   AssistantStatus,
   ChatMenu,
   JumpToLatest,
@@ -1833,6 +1836,7 @@ export const AnimatedMessage = ({
   codeHighlighting = true,
   codeTheme = "dark",
   assistantKind = "chat",
+  codeRun,
   thinkingMode = "thinking",
   youtubeVideoId,
   searchSources,
@@ -1882,6 +1886,8 @@ export const AnimatedMessage = ({
   isThinking?: boolean;
   isStreaming?: boolean;
   vibeUserPrompt?: string;
+  /** A coding request running on the Vibe Coder harness; its live actions render in the message. */
+  codeRun?: { projectId: string; sessionId: string; projectName?: string; startedAt: number };
   fontSizeClass?: string;
   markdownSupport?: boolean;
   codeHighlighting?: boolean;
@@ -2081,6 +2087,10 @@ export const AnimatedMessage = ({
   }, [isVibe, showThinking, basicThinking, thinkingMode, sourceViews, searchQuery, googleActivity, isStreaming, searchSources, searchCitations, harnessSteps]);
 
   const responseEnter = wasLiveRef.current;
+  /* a live activity block (search, research…) was on screen: the answer waits for it to fold away */
+  const hadActivityRef = useRef(false);
+  if (showThinking && !basicThinking) hadActivityRef.current = true;
+  const answerDelay = hadActivityRef.current ? ACTIVITY_COLLAPSE_SECONDS * 0.6 : 0;
   const softFailure = !isStreaming && isSoftFailureMessage(content);
   /* the answer's [S3] markers become links to the sources they name, shown by host */
   const linkCitations = (text: string) =>
@@ -2160,6 +2170,7 @@ export const AnimatedMessage = ({
         enter={responseEnter}
         streaming={!!isStreaming}
         error={softFailure}
+        delay={answerDelay}
       >
         {bodyContent(content)}
       </AssistantResponse>
@@ -2197,19 +2208,24 @@ export const AnimatedMessage = ({
           icon={<Brain />}
           finished={!showThinking}
         />
-      ) : showThinking ? (
-        <AssistantStatus
-          kind={statusKind}
-          label={statusLabel}
-          query={thinkingMode === "search" ? searchQuery : undefined}
-          sources={thinkingMode === "search" ? sourceViews : []}
-          steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
-          note={memoryActivity}
-        />
       ) : (
         <>
-          {!isVibe && !basicThinking && thoughtSeconds ? <ThoughtLine seconds={thoughtSeconds} /> : null}
-          {completedActivity}
+          <ActivityCollapse active={showThinking}>
+            <AssistantStatus
+              kind={statusKind}
+              label={statusLabel}
+              query={thinkingMode === "search" ? searchQuery : undefined}
+              sources={thinkingMode === "search" ? sourceViews : []}
+              steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
+              note={memoryActivity}
+            />
+          </ActivityCollapse>
+          {!showThinking ? (
+            <>
+              {!isVibe && !basicThinking && thoughtSeconds ? <ThoughtLine seconds={thoughtSeconds} /> : null}
+              {completedActivity}
+            </>
+          ) : null}
         </>
       )}
       {browserRun ? (
@@ -2234,6 +2250,7 @@ export const AnimatedMessage = ({
       {mapLocation ? <ChatMapCard location={mapLocation} /> : null}
       {hasInlineStatusCard ? missionNodes : null}
       {answerNode}
+      {codeRun ? <ChatCodeRun key={codeRun.sessionId} projectId={codeRun.projectId} sessionId={codeRun.sessionId} projectName={codeRun.projectName} justStarted={Date.now() - codeRun.startedAt < 90_000} /> : null}
       {showAnswer && !isStreaming && !isVibe && !useDocumentUI ? <SourcesFooter sources={sourceViews} query={thinkingMode === "search" ? searchQuery : undefined} /> : null}
       {hasInlineStatusCard ? null : missionNodes}
     </div>
@@ -2429,6 +2446,20 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 );
 Textarea.displayName = "Textarea";
 
+/** Words of a search query, longest first so "chat gpt" lights up as one phrase before its parts. */
+function searchTerms(query: string) {
+  return Array.from(new Set(query.toLowerCase().split(/\s+/).filter(Boolean))).sort((a, b) => b.length - a.length);
+}
+
+/** The slice of `text` around its first match, so a hit deep in a long message still shows in a one-line row. */
+function snippetAround(text: string, query: string, radius = 36) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const lower = flat.toLowerCase();
+  const at = searchTerms(query).map((term) => lower.indexOf(term)).filter((n) => n >= 0).sort((a, b) => a - b)[0];
+  if (at === undefined || at <= radius) return flat;
+  return `…${flat.slice(Math.max(0, at - radius))}`;
+}
+
 const HighlightText = React.memo(({
   text,
   highlight,
@@ -2436,21 +2467,17 @@ const HighlightText = React.memo(({
   text: string;
   highlight: string;
 }) => {
-  if (!highlight.trim()) return <>{text}</>;
-  const lower = highlight.toLowerCase();
-  const parts = text.split(
-    new RegExp(`(${highlight.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"),
-  );
+  const terms = searchTerms(highlight);
+  if (!terms.length) return <>{text}</>;
+  const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const parts = text.split(pattern);
   return (
     <>
       {parts.map((part, i) =>
-        part.toLowerCase() === lower ? (
-          <span
-            key={i}
-            className="text-blue-500 font-medium transition-colors duration-300 ease-out"
-          >
+        i % 2 === 1 ? (
+          <mark key={i} className="clyra-search-hit">
             {part}
-          </span>
+          </mark>
         ) : (
           part
         ),
@@ -2583,6 +2610,7 @@ export default function App() {
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
     vibeUserPrompt?: string;
+    codeRun?: { projectId: string; sessionId: string; projectName?: string; startedAt: number };
     thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
     googleAction?: string;
     googleDetail?: string;
@@ -2879,8 +2907,19 @@ export default function App() {
       setVisitedWorkspaceTabs((current) => (current.includes(tab) ? current : [...current, tab]));
       setActiveWorkspaceTab(tab);
     };
+    const openProject = (event: Event) => {
+      const projectId = String((event as CustomEvent).detail || "");
+      if (!projectId) return;
+      setVibeProjectToOpen(projectId);
+      setVisitedWorkspaceTabs((current) => (current.includes("vibe") ? current : [...current, "vibe"]));
+      setActiveWorkspaceTab("vibe");
+    };
     window.addEventListener("clyra:open-workspace", open);
-    return () => window.removeEventListener("clyra:open-workspace", open);
+    window.addEventListener("clyra:open-vibe-project", openProject);
+    return () => {
+      window.removeEventListener("clyra:open-workspace", open);
+      window.removeEventListener("clyra:open-vibe-project", openProject);
+    };
   }, []);
   const [taskViewPreviews, setTaskViewPreviews] = useState<Record<string, TaskViewPreview>>({});
   const taskViewSelectionRef = useRef(false);
@@ -3969,9 +4008,16 @@ export default function App() {
       ) : kind === "medium" ? (
         <Zap size={size} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
       ) : kind === "high" ? (
-        <Flame size={size} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
+        /* the top level on offer is the "supercharged" one: its icon shimmers */
+        <span className="clyra-effort-max" aria-hidden>
+          <Flame size={size} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
+          <i /><i /><i />
+        </span>
       ) : (
-        <Rocket size={size} strokeWidth={1.8} color="#DC2626" strokeLinecap="round" strokeLinejoin="round" />
+        <span className="clyra-effort-max" aria-hidden>
+          <Rocket size={size} strokeWidth={1.8} color="#DC2626" strokeLinecap="round" strokeLinejoin="round" />
+          <i /><i /><i />
+        </span>
       );
     return CHAT_EFFORTS.map((v) => ({
       value: v,
@@ -6306,9 +6352,15 @@ The local fallback is intentionally compact so recovery stays fast and reliable.
           msg.id === aiMsgId
             ? {
                 ...msg,
-                content: `Started a real Clyra Code session for **${String(createdPayload?.project?.name || "this project")}**. The project and session were created successfully; Clyra is now working in Vibe. I’ll only report the build as complete after the runtime’s checks and preview verification finish.`,
+                content: `Working on **${String(createdPayload?.project?.name || "this project")}** in Clyra Code. Every step below comes from the same agent harness as Vibe Coder.`,
                 isThinking: false,
                 isStreaming: false,
+                codeRun: {
+                  projectId,
+                  sessionId,
+                  projectName: String(createdPayload?.project?.name || "") || undefined,
+                  startedAt: Date.now(),
+                },
               }
             : msg,
         ),
@@ -10443,6 +10495,7 @@ Please analyze the code you just wrote and fix this error.`;
                 vibeUserPrompt={
                   message.vibeUserPrompt
                 }
+                codeRun={message.codeRun}
                 thinkingMode={message.thinkingMode}
                 youtubeVideoId={message.youtubeVideoId}
                 searchSources={message.searchSources}
@@ -11413,7 +11466,7 @@ Please analyze the code you just wrote and fix this error.`;
                                       ? "You: "
                                       : "AI: "}
                                     <HighlightText
-                                      text={matchedMessage.content}
+                                      text={snippetAround(matchedMessage.content, searchQuery)}
                                       highlight={searchQuery}
                                     />
                                   </div>

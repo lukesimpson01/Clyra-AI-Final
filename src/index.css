@@ -1258,10 +1258,12 @@ body {
   line-height: 1.7;
 }
 
-button,
-input,
-textarea,
-select {
+/* Outside Clyra Code this unlayered reset wins over Tailwind's layered utilities, so a text-[13px] on a button is
+   ignored there. Clyra Code is built on those utilities, so it is left to the base layer's own reset instead. */
+button:where(:not(.clyra-code-root *)),
+input:where(:not(.clyra-code-root *)),
+textarea:where(:not(.clyra-code-root *)),
+select:where(:not(.clyra-code-root *)) {
   font: inherit;
 }
 
@@ -5517,30 +5519,34 @@ body,
    Clyra Code — agent-first coding workspace theme
    ============================================================ */
 .clyra-code-root {
-  --app-background: #FCFCFC;
-  --sidebar-background: #F7F7F6;
+  /* Matched to the Codex desktop app's own tokens (read from its shipped
+     stylesheets): white surfaces, a #f9f9f9 sidebar, #0d0d0d / #5d5d5d /
+     #8f8f8f text, 10%-black hairlines, 5%-black hover and selection, 10px rows
+     and a 22px composer. */
+  --app-background: #FFFFFF;
+  --sidebar-background: #F9F9F9;
   --main-background: #FFFFFF;
   --preview-background: #FFFFFF;
   --composer-surface: #FFFFFF;
-  --surface-muted: #FAFAF9;
-  --surface-hover: rgba(0, 0, 0, .035);
-  --surface-selected: rgba(0, 0, 0, .045);
-  --border-subtle: rgba(0, 0, 0, 0.06);
-  --border-medium: rgba(0, 0, 0, 0.09);
-  --text-primary: #202124;
-  --text-secondary: #686A70;
-  --text-tertiary: #96989D;
-  --text-disabled: #B7B9BD;
+  --surface-muted: #F3F3F3;
+  --surface-hover: rgba(0, 0, 0, .05);
+  --surface-selected: rgba(0, 0, 0, .05);
+  --border-subtle: rgba(0, 0, 0, 0.07);
+  --border-medium: rgba(0, 0, 0, 0.10);
+  --text-primary: #0D0D0D;
+  --text-secondary: #5D5D5D;
+  --text-tertiary: #8F8F8F;
+  --text-disabled: #B4B4B4;
   --accent-blue: #3977F6;
-  --clyra-code-user-bubble: #E8F3FE;
+  --clyra-code-user-bubble: #E8F1FC;
   --addition-green: #268A50;
   --deletion-red: #C24949;
   --warning-amber: #b87918;
-  --radius-row: 6px;
-  --radius-control: 7px;
-  --radius-tab: 8px;
-  --radius-input: 11px;
-  --radius-panel: 8px;
+  --radius-row: 10px;
+  --radius-control: 8px;
+  --radius-tab: 10px;
+  --radius-input: 22px;
+  --radius-panel: 10px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, Helvetica, Arial, sans-serif;
   font-feature-settings: normal;
   letter-spacing: -0.005em;
@@ -11568,3 +11574,18 @@ body,
 
 /* Conversation precision — final cascade. Kept at EOF so unrelated workspace
    styling cannot reintroduce a second chat gutter or cap the scroll viewport. */
+
+/* Max effort: the rocket "supercharges" — a light sweep, a pulsing glow and tiny rising sparks. */
+.clyra-effort-max { position: relative; display: inline-grid; place-items: center; line-height: 0; border-radius: 50%; isolation: isolate; animation: clyra-effort-max-glow 2.4s ease-in-out infinite; }
+.clyra-effort-max::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,.95) 50%, transparent 65%); background-size: 260% 100%; background-position: 160% 0; mix-blend-mode: overlay; animation: clyra-effort-max-sheen 2.2s cubic-bezier(.4,0,.2,1) infinite; pointer-events: none; }
+.clyra-effort-max > i { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: #FDBA74; opacity: 0; animation: clyra-effort-max-spark 1.8s ease-out infinite; pointer-events: none; }
+.clyra-effort-max > i:nth-of-type(1) { left: 1px; bottom: 1px; }
+.clyra-effort-max > i:nth-of-type(2) { left: 5px; bottom: -1px; animation-delay: .6s; }
+.clyra-effort-max > i:nth-of-type(3) { left: -1px; bottom: 5px; animation-delay: 1.2s; }
+@keyframes clyra-effort-max-glow { 0%,100% { filter: drop-shadow(0 0 0 rgba(239,68,68,0)); } 50% { filter: drop-shadow(0 0 3px rgba(249,115,22,.65)); } }
+@keyframes clyra-effort-max-sheen { 0% { background-position: 160% 0; } 60%,100% { background-position: -60% 0; } }
+@keyframes clyra-effort-max-spark { 0% { opacity: 0; transform: translate(0,0) scale(1); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(-5px,6px) scale(.4); } }
+@media (prefers-reduced-motion: reduce) { .clyra-effort-max, .clyra-effort-max::after, .clyra-effort-max > i { animation: none; } .clyra-effort-max > i { display: none; } }
+
+/* Words found by a search: blue text, no highlighter box. */
+.clyra-search-hit { background: transparent; color: #0066ff; font-weight: 600; padding: 0; transition: color .2s ease; }

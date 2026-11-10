@@ -1,5 +1,5 @@
 /* Sidebar, tab strip and page toolbar. */
-import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, mod, modKey, append } from "./dom.js";
+import { el, clear, icon, iconButton, tooltip, menu, modal, toast, confirmDialog, mod, modKey, append, frozenHtml } from "./dom.js";
 import { api } from "./api.js";
 import {
   state, childrenOf, hasChildren, getPageMeta, saveSession, refreshPages,
@@ -28,7 +28,7 @@ export class Sidebar {
        slides it away rather than squeezing every row as the track shrinks. */
     this.footer = this.buildFooter();
     this.host.append(
-      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), this.buildSearchField(), (this.nav = this.buildNav()), this.body, this.footer),
+      append(el("div", { class: "sidebar-inner" }), this.buildHeader(), (this.nav = this.buildNav()), this.body, this.footer),
       this.buildResizer(),
     );
     this.renderBody();
@@ -88,13 +88,14 @@ export class Sidebar {
         el("span", { class: "nav-name" }, el("span", { class: "nav-name-text", text: label })),
       );
       if (selected) selectedButtons.push(button);
-      /* Pointing at a button names it in small text above; only choosing it opens its label. */
-      button.dataset.tip = shortcut ? `${label} · ${shortcut}` : label;
+      /* Every destination names itself on hover; only the chosen one keeps its label open. */
+      tooltip(button, label, shortcut, { delay: 220 });
       if (kind === "inbox" && state.inbox.some((event) => !event.read_at)) button.classList.add("has-unread");
       return button;
     };
     append(nav,
       item("home", "Home", "home"),
+      item("welcome", "Welcome tour", "flag"),
       item("chat", "AI chat", "comment"),
       item("flashcards", "Flashcards", "cards"),
       item("tests", "Tests", "check_square"),
@@ -119,6 +120,7 @@ export class Sidebar {
       badge ? el("span", { class: "sidebar-util-badge", text: badge }) : null);
     return el("footer", { class: "sidebar-footer", "aria-label": "Workspace tools" },
       el("div", { class: "sidebar-utils" },
+        utility("Files", "grid", () => this.context.openView({ kind: "files" })),
         utility("Library", "book", () => this.context.openView({ kind: "library" })),
         utility("Templates", "template", () => this.context.openTemplates(null)),
         utility("Import", "import", () => this.context.openImport(null)),
@@ -138,8 +140,6 @@ export class Sidebar {
     }
     if (activeTab()?.kind === "chat") { this.renderChatBody(); return; }
     const sections = [];
-    /* The tour is saved at the top of the sidebar, so it can be opened again at any time. */
-    sections.push(el("div", { class: "sidebar-section welcome-entry" }, this.staticRow("Welcome", "\u{1F44B}", () => this.context.openView({ kind: "welcome" }))));
     const favorites = state.pages.filter((page) => page.favorite && page.kind !== "record" && !page.inline);
     const recents = [...state.pages]
       .filter((page) => page.kind !== "record" && !page.inline)
@@ -526,6 +526,17 @@ export class TabStrip {
         this.railToggle()),
     );
     this.scroller.addEventListener("mouseleave", () => this.moveIndicator());
+    const dock = this.host.querySelector(".tab-list");
+    dock.addEventListener("dragover", (event) => { if (this.context.paneDrag?.groupId) { event.preventDefault(); dock.classList.add("pane-drop"); } });
+    dock.addEventListener("dragleave", (event) => { if (!dock.contains(event.relatedTarget)) dock.classList.remove("pane-drop"); });
+    dock.addEventListener("drop", (event) => {
+      dock.classList.remove("pane-drop");
+      const id = this.context.paneDrag?.groupId ? this.context.paneDrag.tabId : null;
+      if (!id || event.defaultPrevented) return;
+      event.preventDefault();
+      this.context.returnTabToTop?.(id);
+      this.context.paneDrag = null;
+    });
     /* Measure the usable run, not the viewport. Tabs contract before the
        strip scrolls, while the compose control stays outside that run. */
     this.tabResize = new ResizeObserver(() => this.measureTabWidth());
@@ -534,7 +545,7 @@ export class TabStrip {
 
   measureTabWidth() {
     if (!this.scroller?.isConnected) return;
-    const count = Math.max(1, state.tabs.length);
+    const count = Math.max(1, this.visibleTabs().length);
     const usable = Math.max(46, this.scroller.clientWidth - Math.max(0, count - 1) * 2);
     /* A compact tab still needs a genuinely clickable close affordance. */
     const width = Math.max(46, Math.min(168, Math.floor(usable / count)));
@@ -565,16 +576,21 @@ export class TabStrip {
     this.railButtonNode.setAttribute("aria-pressed", open ? "true" : "false");
   }
 
+  /* While split, tabs living in a pane belong to that pane's own strip, so
+     the dock lists only what is not already open on screen. */
+  visibleTabs() { return state.tabs.filter((tab) => !this.context.isSplitTab?.(tab.id)); }
+
   /* Tabs are reconciled rather than rebuilt so an opening tab can grow into
      place and a closing one can collapse before it leaves. */
   render() {
-    this.host.style.setProperty("--tab-count", String(Math.max(1, state.tabs.length)));
-    const wanted = new Set(state.tabs.map((tab) => tab.id));
+    const visible = this.visibleTabs();
+    this.host.style.setProperty("--tab-count", String(Math.max(1, visible.length)));
+    const wanted = new Set(visible.map((tab) => tab.id));
     for (const [id, node] of [...this.nodes]) {
       if (!wanted.has(id)) { this.retire(id, node); }
     }
     let cursor = this.indicator.nextSibling;
-    for (const tab of state.tabs) {
+    for (const tab of visible) {
       let node = this.nodes.get(tab.id);
       if (!node) {
         node = this.tabNode(tab);
@@ -601,6 +617,7 @@ export class TabStrip {
 
   retire(id, node) {
     this.nodes.delete(id);
+    if (this.previewCard?.dataset.tabId === String(id)) this.hideTabPreview();
     node.classList.add("closing");
     node.classList.remove("settled");
     const drop = () => node.remove();
@@ -646,6 +663,7 @@ export class TabStrip {
       onmouseenter: () => {
         this.moveIndicator(node);
         clearTimeout(previewTimer);
+        clearTimeout(this.hideGrace);
         /* Once a preview is present, it follows across neighbouring tabs at
            once instead of fading out and making the next card wait again. */
         if (this.previewCard?.isConnected) this.showTabPreview(tab, node);
@@ -657,7 +675,10 @@ export class TabStrip {
       onpointerleave: (event) => {
         clearTimeout(previewTimer);
         if (isWithinTab(event.relatedTarget) || event.relatedTarget?.closest?.(".tab")) return;
-        this.hideTabPreview();
+        /* A short grace period bridges the gap between neighbouring tabs, so
+           landing on the next tab (or its close button) glides the card over
+           instead of dismissing it and starting the delay again. */
+        this.scheduleHidePreview();
       },
       onauxclick: (event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.id); } },
       oncontextmenu: (event) => {
@@ -688,22 +709,53 @@ export class TabStrip {
     });
     node.addEventListener("dragstart", (event) => {
       this.dragTab = tab.id;
+      if (this.context.split) this.context.paneDrag = { tabId: tab.id, groupId: null };
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", tab.id);
       }
       this.context.beginTabTearOff?.(tab.id);
     });
-    node.addEventListener("dragend", () => { this.dragTab = null; this.context.clearSplitTargets?.(); });
+    node.addEventListener("dragend", () => { this.dragTab = null; this.context.paneDrag = null; this.context.clearSplitTargets?.(); });
     node.addEventListener("dragover", (event) => { event.preventDefault(); node.classList.add("drag-over"); });
     node.addEventListener("dragleave", () => node.classList.remove("drag-over"));
     node.addEventListener("drop", (event) => {
       event.preventDefault();
       node.classList.remove("drag-over");
+      const droppedId = this.context.paneDrag?.tabId;
+      /* A pane tab dropped on the dock leaves its group and lands at this slot. */
+      if (droppedId && this.context.isSplitTab?.(droppedId) && this.dragTab !== droppedId) {
+        this.context.returnTabToTop?.(droppedId);
+        const to = state.tabs.indexOf(tab);
+        if (droppedId !== tab.id && to >= 0) moveTab(droppedId, to);
+        this.context.paneDrag = null;
+        return;
+      }
       if (this.dragTab && this.dragTab !== tab.id) moveTab(this.dragTab, state.tabs.indexOf(tab));
       this.dragTab = null;
     });
     return node;
+  }
+
+  scheduleHidePreview(delay = 160) {
+    clearTimeout(this.hideGrace);
+    this.hideGrace = setTimeout(() => this.hideTabPreview(), delay);
+  }
+
+  /* Pane tabs share the dock's preview card and its grace behaviour. */
+  bindPreview(node, tab) {
+    let timer = null;
+    node.addEventListener("mouseenter", () => {
+      clearTimeout(timer);
+      clearTimeout(this.hideGrace);
+      if (this.previewCard?.isConnected) this.showTabPreview(tab, node);
+      else timer = setTimeout(() => this.showTabPreview(tab, node), 360);
+    });
+    node.addEventListener("pointerleave", (event) => {
+      clearTimeout(timer);
+      if (event.relatedTarget?.closest?.(".tab, .split-pane-tab")) return;
+      this.scheduleHidePreview();
+    });
   }
 
   hideTabPreview() {
@@ -737,6 +789,23 @@ export class TabStrip {
       this.positionTabPreview(card, anchor);
       requestAnimationFrame(() => card.classList.add("visible"));
     } else this.positionTabPreview(card, anchor);
+    /* The tab being hovered may be the one on screen: take a fresh capture so
+       the card matches what is there right now. */
+    if (tab.id === state.activeTab) this.context.captureActiveTabPreview?.();
+    if (tab.kind !== "page") {
+      const viewport = card.querySelector(".tab-preview-sheet");
+      const snap = tab.preview?.html ? tab.preview : null;
+      if (snap && this.previewCard === card) {
+        const copy = el("div", { class: `tab-preview-document tab-preview-chat${tab.kind === "chat" ? "" : " tab-preview-screen"}`, html: snap.html });
+        copy.style.transform = "scale(0.27)";
+        viewport.replaceChildren(copy);
+        const bubbles = copy.querySelectorAll(".chat-row.user").length;
+        card.querySelector(".tab-preview-caption").textContent = tab.kind === "chat"
+          ? (snap.landing ? "New conversation" : `${bubbles} ${bubbles === 1 ? "message" : "messages"} · live conversation`)
+          : "Live view of this screen";
+      } else card.querySelector(".tab-preview-caption").textContent = tab.kind === "chat" ? "Open this chat to start a conversation" : "Open this tab to see it here";
+      return;
+    }
     if (tab.kind !== "page") return;
     const paintSnapshot = (snapshot) => {
       if (!snapshot?.html || this.previewCard !== card || card.dataset.tabId !== String(tab.id)) return false;
@@ -768,7 +837,7 @@ export class TabStrip {
         const poll = () => {
           const scroll = previewHost.querySelector(".page-scroll");
           if (scroll?.querySelector(".page-canvas")) {
-            resolve({ html: scroll.outerHTML, scrollTop: Number(tab.scrollTop) || 0, scrollHeight: scroll.scrollHeight });
+            resolve({ html: frozenHtml(scroll), scrollTop: Number(tab.scrollTop) || 0, scrollHeight: scroll.scrollHeight });
             return;
           }
           if (performance.now() - started > 1800) { reject(new Error("Preview timed out")); return; }

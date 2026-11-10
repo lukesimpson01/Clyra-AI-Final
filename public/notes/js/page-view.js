@@ -8,6 +8,7 @@ import { state, emit, loadPage, queueMetaSave, flushPage, getPageMeta, refreshPa
 import { openSearch } from "./search.js";
 import { openColourLegend } from "./colour-coding.js";
 import { unlockForm } from "./passcode.js";
+import { mountGlow, isAiWorking, pendingEdits, renderSuggestion } from "./ai-live.js";
 
 const COVERS = [
   "linear-gradient(120deg, #d5e3f0 0%, #eef2f6 100%)",
@@ -159,6 +160,35 @@ export class PageView {
       editorHost.prepend(preview);
       requestAnimationFrame(() => preview.classList.add("visible"));
     };
+    /* Live AI: the blue gradient while the assistant works on this note, and
+       any change it has proposed, shown in place until it is applied or dismissed. */
+    this.glow = mountGlow(this.host);
+    this.glow.set(isAiWorking(page.id));
+    this.ghosts = new Map();
+    const showPending = (animate = true) => {
+      for (const edit of pendingEdits(page.id)) {
+        if (this.ghosts.has(edit.id)) continue;
+        this.ghosts.set(edit.id, null);
+        renderSuggestion(editorHost, edit, { Editor, animate }).then((ghost) => { if (this.ghosts.has(edit.id)) this.ghosts.set(edit.id, ghost); else ghost.destroy(); });
+      }
+    };
+    this.onAiWork = (event) => { if (String(event.detail.pageId) === String(page.id)) this.glow.set(event.detail.on); };
+    this.onAiEdit = () => showPending(true);
+    this.onAiSettle = (event) => { const ghost = this.ghosts.get(event.detail.editId); this.ghosts.delete(event.detail.editId); ghost?.destroy(); };
+    window.addEventListener("clyra:ai-work", this.onAiWork);
+    window.addEventListener("clyra:ai-edit", this.onAiEdit);
+    window.addEventListener("clyra:ai-settle", this.onAiSettle);
+    /* The editor redraws whole blocks now and then; a suggestion that was swept away is drawn again, without replaying. */
+    let regraft = 0;
+    this.ghostWatch = new MutationObserver(() => {
+      clearTimeout(regraft);
+      regraft = setTimeout(() => {
+        for (const [id, ghost] of this.ghosts) if (ghost && !ghost.node.isConnected) { ghost.destroy(); this.ghosts.delete(id); }
+        showPending(false);
+      }, 120);
+    });
+    this.ghostWatch.observe(editorHost, { childList: true });
+    showPending(true);
     this.applyColourFocus();
     requestAnimationFrame(() => this.context.revealBlock?.());
     this.context.refreshCommentMarks?.();
@@ -379,6 +409,11 @@ export class PageView {
   }
 
   destroy() {
+    window.removeEventListener("clyra:ai-work", this.onAiWork);
+    window.removeEventListener("clyra:ai-edit", this.onAiEdit);
+    window.removeEventListener("clyra:ai-settle", this.onAiSettle);
+    this.ghostWatch?.disconnect();
+    this.glow?.destroy();
     this.database?.destroy();
     this.editor?.destroy();
     flushPage(this.pageId);

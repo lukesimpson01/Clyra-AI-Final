@@ -7,11 +7,13 @@
    student attaches with @. */
 import { el, clear, icon, iconButton, bloub, toast, append, menu, modal, confirmDialog } from "../dom.js";
 import { api } from "../api.js";
-import { state, withError, refreshPages } from "../state.js";
+import { state, withError, refreshPages, activeTab } from "../state.js";
 import { formatRelative } from "../app.js";
 import { renderMarkdown } from "../ai-composer.js";
 import { openSearch } from "../search.js";
 import { streamAgent, renderAgentRun } from "../agent-run.js";
+import { registerEdit, settleEdit, setAiWorking } from "../ai-live.js";
+import { openVersions } from "../version-history.js";
 import { instructionsFor, listAgents, getAgent, deleteAgent, openPersonalize, openAgentEditor, isPinned, togglePin } from "../chat-extras.js";
 
 /* Quick actions under the composer, as Notion's chat has them: each is a real task for the agent, which can read the
@@ -45,11 +47,32 @@ const AUTOPAGE_KEY = "clyra-notes:chat-autopage";
 export const autoPageOn = () => { try { return localStorage.getItem(AUTOPAGE_KEY) !== "0"; } catch { return true; } };
 const clock = (when) => new Date(when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-/* `compact` is the rail's chat: same thread, same composer, no history
-   column and no room for one. Everything else behaves identically, so there
-   is one chat implementation rather than two that drift. */
+/* There is one chat. The full-screen view and the sidebar both show this
+   same instance: opening one moves it there, so a reply streaming in full
+   screen keeps streaming, with the same messages, tool runs and animations,
+   when it moves to the sidebar, and the two can never both be open. */
+let shared = null;
 export function renderChat(host, app, options = {}) {
   const compact = Boolean(options.compact);
+  if (shared && shared.builtWithAi !== state.aiConfigured && !shared.isBusy()) { shared.dispose(); shared = null; }
+  if (!shared) { shared = buildChat(app, { compact }); shared.builtWithAi = state.aiConfigured; }
+  shared.mount(host, compact);
+  const me = shared;
+  return {
+    setPage: (id) => me.setPage(id),
+    toggleHistory: () => me.toggleHistory(),
+    focus: () => me.focus(),
+    setSources: (next) => me.setSources(next),
+    isIn: (node) => node.contains(me.root),
+    /* Leaving a view takes the chat out of it, nothing more: a running reply carries on. */
+    destroy() { if (host.contains(me.root)) me.root.remove(); },
+  };
+}
+
+/* `compact` is the sidebar's layout of the chat: same thread, same composer,
+   no history column. It changes as the chat moves between the two places. */
+function buildChat(app, options = {}) {
+  let compact = Boolean(options.compact);
   let messages = [];
   let sources = [];
   let busy = false;
@@ -79,6 +102,7 @@ export function renderChat(host, app, options = {}) {
     class: "chat-input", rows: "1", placeholder: PLACEHOLDER, "aria-label": "Ask Clyra",
   });
   const send = el("button", { class: "chat-send", type: "button", "aria-label": "Send message", disabled: true },
+    el("span", { class: "chat-stop-icon", "aria-hidden": "true" }),
     el("span", { class: "chat-send-icon", "aria-hidden": "true", html: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>' }));
 
   const modelButton = el("button", { class: "chat-model", type: "button", "aria-haspopup": "menu", "aria-label": "Choose how Clyra answers" });
@@ -145,6 +169,21 @@ export function renderChat(host, app, options = {}) {
       class: "chat-action-chip", type: "button",
       onclick: () => { input.value = action.prompt; grow(); syncSend(); if (action.prompt.endsWith(": ")) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } else ask(); },
     }, icon(action.icon, 15), action.label)));
+  /* Under the chips, three things worth asking right now, drawn from the
+     workspace itself: the note you last touched, and what is due. */
+  const suggested = el("div", { class: "chat-suggested", role: "group", "aria-label": "Suggested" });
+  const paintSuggested = () => {
+    clear(suggested);
+    const latest = [...state.pages].filter((page) => page.kind !== "record" && page.title).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0];
+    const rows = [];
+    if (latest) {
+      rows.push(["text", `Summarise “${latest.title}”`, `Summarise my note “${latest.title}” into the key points and open questions.`]);
+      rows.push(["cards", `Turn “${latest.title}” into flashcards`, `Read my note “${latest.title}”, then create a flashcard deck from it.`]);
+    }
+    rows.push(["target", state.study?.due ? `Plan my ${state.study.due} due cards` : "Plan a revision week", state.study?.due ? "I have flashcards due. Make me a short plan to get through them today." : "Plan a realistic revision week from my notes and put it in a new note."]);
+    rows.slice(0, 3).forEach(([glyph, label, prompt]) => suggested.append(el("button", { class: "chat-suggested-row", type: "button", onclick: () => { input.value = prompt; grow(); syncSend(); ask(); } }, icon(glyph, 15), el("span", { text: label }), icon("chevron_right", 12))));
+  };
+  actionRow.append(suggested);
   /* The header, as Notion's AI panel has it: the chat's name with a switcher for other chats and agents, then new chat,
      export and the more menu. */
   const headTitle = el("button", { class: "chat-head-title", type: "button", "aria-haspopup": "menu", "aria-label": "Switch chat or agent" });
@@ -225,21 +264,29 @@ export function renderChat(host, app, options = {}) {
     ].filter(Boolean), { align: "end" });
   }, { size: 15 });
   const pinButton = iconButton("pin", "Pin chat", () => { if (!chatId) { toast("Send a message first"); return; } togglePin(chatId); paintHead(); publishChats(); }, { size: 15, className: "chat-pin" });
+  /* Full screen and the sidebar swap places with one click; the conversation goes with it. */
+  const modeButton = iconButton("expand", "Open full screen", () => { if (compact) app.openView({ kind: "chat" }); else app.openChatSidebar?.(); }, { size: 15, className: "chat-mode" });
+  const paintMode = () => {
+    const label = compact ? "Open full screen" : "Move to the sidebar";
+    modeButton.setAttribute("aria-label", label);
+    modeButton.title = label;
+    modeButton.replaceChildren(icon(compact ? "expand" : "panel", 15));
+  };
   const panelHead = el("div", { class: "chat-panel-head" },
-    compact ? null : el("span", { class: "chat-head-crumb" }, el("span", { class: "chat-head-mark" }, bloub(16)), el("span", { class: "chat-head-brand", text: "Clyra" }), el("span", { class: "chat-head-sep", text: "/" })),
+    el("span", { class: "chat-head-crumb" }, el("span", { class: "chat-head-mark" }, bloub(16)), el("span", { class: "chat-head-brand", text: "Clyra" }), el("span", { class: "chat-head-sep", text: "/" })),
     headTitle,
     el("span", { class: "chat-head-spacer" }),
+    modeButton,
     iconButton("plus", "New chat", () => startChat(), { size: 15 }),
     exportButton,
     pinButton,
     moreButton);
   const attached = el("div", { class: "chat-attached" });
-  const chatView = el("div", { class: "chat-view" }, panelHead, attached, thread, composer, compact ? null : actionRow);
+  const chatView = el("div", { class: "chat-view" }, panelHead, attached, thread, composer, actionRow);
   historyOpen = false;
   const layout = el("div", { class: `chat-layout history-hidden${compact ? " compact" : ""}` },
     chatView,
-    compact ? null : history);
-  host.append(layout);
+    history);
 
   const toggleHistory = () => {
     if (compact) return;
@@ -352,7 +399,10 @@ export function renderChat(host, app, options = {}) {
       citations: row.citations || [],
       searched: row.searched || null,
       restored: true,
+      savedId: row.id,
+      ...(row.run ? { run: { todos: row.run.todos || [], steps: row.run.steps || [], agents: row.run.agents || [], board: row.run.board || [], phases: row.run.phases || [], elapsedMs: row.run.elapsedMs || 0 }, runState: {}, prelude: row.run.prelude || "", edits: (row.run.edits || []).map((edit) => ({ ...edit, chatId: id })) } : {}),
     }));
+    messages.forEach((message) => (message.edits || []).forEach((edit) => { edit.owner = message; }));
     /* A reopened thread should not replay its reveal animations. */
     paint();
     paintHistory();
@@ -383,18 +433,39 @@ export function renderChat(host, app, options = {}) {
     return chatId;
   };
 
+  /* What of a reply's run is worth keeping: the plan, every step with its
+     actions, the agents, and each proposed change with its outcome. */
+  const runRecord = (message) => (message.run || message.edits?.length ? {
+    todos: message.run?.todos || [], steps: message.run?.steps || [], agents: message.run?.agents || [], board: message.run?.board || [], phases: message.run?.phases || [], elapsedMs: message.run?.elapsedMs || 0,
+    prelude: message.prelude || "",
+    edits: (message.edits || []).map(({ id, pageId, title, kind, markdown, position, afterText, find, replace, status, messageId }) => ({ id, pageId, title, kind, markdown, position, afterText, find, replace, status: status || "pending", messageId })),
+  } : null);
   const remember = async (message) => {
-    if (!chatId) return;
-    await api.post(`/api/notes/chats/${chatId}/messages`, {
+    if (!chatId) return null;
+    return api.post(`/api/notes/chats/${chatId}/messages`, {
       role: message.role,
       text: message.text ?? "",
       sources: message.sources || [],
       citations: message.citations || [],
       searched: message.searched || null,
-    }).catch(() => {});
+      run: runRecord(message),
+    }).catch(() => null);
+  };
+  /* Accepting or dismissing a change later is kept with the reply it came from. */
+  const persistRun = (message) => {
+    const record = message && runRecord(message);
+    if (!record || !message.savedId || !(message.chatId || chatId)) return;
+    api.patch(`/api/notes/chats/${message.chatId || chatId}/messages/${message.savedId}`, { run: record }).catch(() => {});
   };
 
-  const syncSend = () => { send.disabled = busy || !input.value.trim(); composer.classList.toggle("has-text", Boolean(input.value.trim())); };
+  /* While a reply runs the send button is a Stop button. */
+  const syncSend = () => {
+    send.disabled = !busy && !input.value.trim();
+    send.classList.toggle("is-stop", busy);
+    send.setAttribute("aria-label", busy ? "Stop" : "Send message");
+    send.title = busy ? "Stop (Esc)" : "";
+    composer.classList.toggle("has-text", Boolean(input.value.trim()));
+  };
   const grow = () => { input.style.height = "auto"; input.style.height = `${Math.min(140, input.scrollHeight)}px`; };
   const addMention = (page) => {
     const id = String(page.page_id || page.id);
@@ -421,7 +492,8 @@ export function renderChat(host, app, options = {}) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); ask(); }
   });
-  send.addEventListener("click", () => ask());
+  send.addEventListener("click", () => { if (busy) askAbort?.abort(); else ask(); });
+  input.addEventListener("keydown", (event) => { if (event.key === "Escape" && busy) { event.preventDefault(); askAbort?.abort(); } });
 
   const onNewChat = () => startChat();
   window.addEventListener("clyra:new-chat", onNewChat);
@@ -595,17 +667,53 @@ export function renderChat(host, app, options = {}) {
     const waiting = actionDrain; actionDrain = [];
     waiting.forEach((resolve) => resolve());
   };
+  /* Agents working together: each has a lane with its own steps, and they share a board. */
+  const lane = (answer, id) => {
+    answer.run.agents ||= [];
+    let found = answer.run.agents.find((agent) => agent.id === id);
+    if (!found) { found = { id, name: "Agent", goal: "", state: "running", steps: [], todos: [], summary: "" }; answer.run.agents.push(found); }
+    return found;
+  };
   const applyActionEvent = (answer, event) => {
-    if (event.type === "todos") answer.run.todos = event.items;
+    if (event.type === "agent") Object.assign(lane(answer, event.id), { name: event.name, goal: event.goal, state: event.state, summary: event.summary || "" });
+    else if (event.type === "board") (answer.run.board ||= []).push({ from: event.from, text: event.text });
+    else if (event.type === "phase" && !event.agent) {
+      answer.run.phases ||= [];
+      if (answer.run.phases[answer.run.phases.length - 1] !== event.phase) answer.run.phases.push(event.phase);
+      answer.run.phaseLabel = event.label;
+    }
+    else if (event.type === "todos" && event.agent) lane(answer, event.agent).todos = event.items;
+    else if (event.type === "step" && event.agent) {
+      const mine = lane(answer, event.agent);
+      const at = mine.steps.findIndex((step) => step.id === event.id);
+      if (at >= 0) mine.steps[at] = event; else mine.steps.push(event);
+    }
+    else if (event.type === "todos") answer.run.todos = event.items;
     else if (event.type === "step") {
       const index = answer.run.steps.findIndex((step) => step.id === event.id);
       if (index >= 0) answer.run.steps[index] = event; else answer.run.steps.push(event);
     } else if (event.type === "edit") {
       answer.edits = answer.edits || [];
+      /* A newer proposal for the same place replaces the older one, in the chat and in the note. */
+      if (event.edit.supersedes) {
+        const old = answer.edits.find((edit) => edit.id === event.edit.supersedes);
+        if (old && (!old.status || old.status === "pending")) {
+          answer.edits = answer.edits.filter((edit) => edit !== old);
+          settleEdit(old.id, "declined");
+        }
+      }
       const index = answer.edits.findIndex((edit) => edit.id === event.edit.id);
       if (index >= 0) answer.edits[index] = { ...answer.edits[index], ...event.edit };
-      else answer.edits.push({ ...event.edit, status: "pending" });
+      else {
+        const created = { ...event.edit, status: "pending", messageId: (answer.msgId ||= `msg-${Date.now().toString(36)}`), chatId: chatId || null };
+        Object.defineProperty(created, "owner", { value: answer, enumerable: false, writable: true });
+        answer.edits.push(created);
+        /* The note shows the change the moment it is proposed; accepting or dismissing happens here or on the note. */
+        registerEdit(created, { accept: () => applyEdit(created), decline: () => declineEdit(created) });
+        markWorking(answer, created.pageId);
+      }
     }
+    if (event.type === "step" && event.document?.id) markWorking(answer, event.document.id);
     paintStructural();
   };
   const pumpActions = () => {
@@ -625,11 +733,6 @@ export function renderChat(host, app, options = {}) {
     else actionDrain.push(resolve);
   });
 
-  const workRow = (label, kind) =>
-    el("div", { class: `chat-work ${kind}` },
-      el("span", { class: "chat-work-mark" }, kind === "search" ? icon("search", 13) : bloub(18)),
-      el("span", { class: "chat-work-label shimmer-text", text: label }));
-
   /* A set of steps stacks with a tick landing on each as it completes. */
   const actionList = (steps, activeIndex) =>
     el("ol", { class: "chat-actions-list" }, steps.map((step, index) =>
@@ -637,39 +740,95 @@ export function renderChat(host, app, options = {}) {
         el("span", { class: "chat-action-tick" }, icon("check_square", 12)),
         el("span", { class: index === activeIndex ? "shimmer-text" : "", text: step }))));
 
+  /* A page glows blue while the assistant is working on it, and stops when the run does. */
+  const markWorking = (answer, pageId) => {
+    if (!pageId) return;
+    answer.workPages ||= new Set();
+    if (answer.workPages.has(String(pageId))) return;
+    answer.workPages.add(String(pageId));
+    setAiWorking(pageId, true);
+  };
+  const stopWorking = (answer) => { (answer.workPages || []).forEach((pageId) => setAiWorking(pageId, false)); answer.workPages = new Set(); };
+
+  const applyEdit = async (edit) => {
+    if ((edit.status && edit.status !== "pending") || edit.applying) return;
+    edit.applying = true; paint();
+    const result = await withError(() => api.post(`/api/notes/pages/${encodeURIComponent(edit.pageId)}/agent-edit`, {
+      kind: edit.kind, markdown: edit.markdown, position: edit.position, afterText: edit.afterText, find: edit.find, replace: edit.replace,
+      messageId: edit.messageId, chatId: edit.chatId, editId: edit.id, summary: edit.title,
+    }), "Could not apply that change");
+    edit.applying = false;
+    if (!result?.ok) { edit.error = result?.error || "The note changed before this could be applied."; paint(); return; }
+    edit.status = "accepted";
+    edit.version = result.version || null;
+    persistRun(edit.owner);
+    settleEdit(edit.id, "accepted");
+    await refreshPages();
+    /* An accepted edit must reload an open page, or a second edit appears to do nothing. */
+    if (String(app.currentPageId?.() || "") === String(edit.pageId)) app.reloadView?.();
+    else app.openPage(edit.pageId);
+    toast(`Applied to ${result.title || edit.title}`);
+    paint();
+  };
+  const declineEdit = (edit) => { if (edit.status && edit.status !== "pending") return; edit.status = "declined"; settleEdit(edit.id, "declined"); persistRun(edit.owner); paint(); };
+
+  /* A proposed change, shown the way it will read in the note: a formatted
+     preview of what is added, what it replaces struck through, the size of
+     the change, and long changes folded until asked for. */
+  const countLines = (text) => (text || "").split("\n").filter((line) => line.trim()).length;
+  const previewHtml = (markdown) => renderMarkdown(String(markdown || ""));
   const editProposal = (edit) => {
     const additions = edit.kind === "insert" ? edit.markdown : edit.replace;
     const removals = edit.kind === "replace" ? edit.find : "";
     const settled = edit.status && edit.status !== "pending";
-    const accept = async () => {
-      if (settled || edit.applying) return;
-      edit.applying = true; paint();
-      if (String(app.currentPageId?.() || "") === String(edit.pageId)) app.currentView?.showAgentEdit?.(edit);
-      const result = await withError(() => api.post(`/api/notes/pages/${encodeURIComponent(edit.pageId)}/agent-edit`, {
-        kind: edit.kind, markdown: edit.markdown, position: edit.position, afterText: edit.afterText, find: edit.find, replace: edit.replace,
-      }), "Could not apply that change");
-      edit.applying = false;
-      if (!result?.ok) { edit.error = result?.error || "The note changed before this could be applied."; paint(); return; }
-      edit.status = "accepted";
-      await refreshPages();
-      if (String(app.currentPageId?.() || "") === String(edit.pageId)) {
-        /* Opening an already-open page intentionally does not reload it; an
-           accepted edit must, otherwise the second edit appears to do nothing. */
-        app.reloadView?.();
-      } else app.openPage(edit.pageId);
-      toast(`Updated ${result.title || edit.title}`);
-      paint();
-    };
-    const decline = () => { if (!settled) { edit.status = "declined"; paint(); } };
-    return el("section", { class: `chat-edit-proposal ${settled ? `is-${edit.status}` : ""}`, "aria-label": `Proposed change to ${edit.title}` },
-      el("div", { class: "chat-edit-head" }, icon("pencil", 14), el("span", { text: `Proposed change · ${edit.title}` }), settled ? el("span", { class: "chat-edit-state", text: edit.status === "accepted" ? "Applied" : "Declined" }) : null),
-      removals ? el("del", { class: "chat-edit-remove", text: removals }) : null,
-      additions ? el("ins", { class: "chat-edit-add", text: additions }) : null,
+    const added = countLines(additions), removed = countLines(removals);
+    const showInNote = () => { app.openPage(edit.pageId); setTimeout(() => window.dispatchEvent(new CustomEvent("clyra:ai-edit", { detail: { edit } })), 400); };
+    const body = el("div", { class: "chat-edit-body" },
+      removals ? el("div", { class: "chat-edit-removed" }, el("span", { class: "chat-edit-tag", text: "Replaces" }), el("p", { text: removals.replace(/^#+\s*/gm, "").replace(/\*\*/g, "").trim() })) : null,
+      additions ? el("div", { class: "chat-edit-preview chat-answer-text", html: previewHtml(additions) }) : null);
+    const long = added > 10;
+    const card = el("section", { class: `chat-edit-proposal${settled ? ` is-${edit.status}` : ""}${long ? " is-long" : ""}`, "aria-label": `Proposed change to ${edit.title}` },
+      el("header", { class: "chat-edit-head" },
+        el("span", { class: "chat-edit-icon" }, icon(edit.kind === "insert" ? "plus" : "pencil", 13)),
+        el("span", { class: "chat-edit-title" }, el("b", { text: edit.title }), el("span", { text: edit.kind === "insert" ? (edit.position === "start" ? "Adds at the top" : edit.position === "after" ? "Adds after a passage" : "Adds at the end") : "Rewrites a passage" })),
+        el("span", { class: "chat-edit-diff" }, added ? el("b", { class: "add", text: `+${added}` }) : null, removed ? el("b", { class: "del", text: `−${removed}` }) : null),
+        settled ? el("span", { class: `chat-edit-state is-${edit.status}`, text: edit.status === "accepted" ? "Applied" : "Dismissed" })
+          : el("button", { class: "chat-edit-peek", type: "button", onclick: showInNote }, "Show in note", icon("arrow_right", 11))),
+      body,
+      long ? el("button", { class: "chat-edit-more", type: "button", onclick: (event) => { card.classList.toggle("is-expanded"); event.currentTarget.textContent = card.classList.contains("is-expanded") ? "Show less" : "Show all"; } }, "Show all") : null,
       edit.error ? el("p", { class: "chat-edit-error", text: edit.error }) : null,
       !settled ? el("div", { class: "chat-edit-actions" },
-        el("button", { class: "chat-edit-accept", type: "button", disabled: Boolean(edit.applying), onclick: accept }, edit.applying ? "Applying…" : "Accept changes"),
-        el("button", { class: "chat-edit-decline", type: "button", disabled: Boolean(edit.applying), onclick: decline }, "Decline")) : null);
+        el("button", { class: "chat-edit-accept", type: "button", disabled: Boolean(edit.applying), onclick: () => applyEdit(edit) }, edit.applying ? "Applying…" : "Apply"),
+        el("button", { class: "chat-edit-decline", type: "button", disabled: Boolean(edit.applying), onclick: () => declineEdit(edit) }, "Dismiss")) : null,
+      edit.status === "accepted" ? el("button", { class: "chat-version", type: "button", onclick: () => openVersions(app, edit.pageId, { focus: edit.version, title: edit.title }) }, icon("refresh", 12), edit.version ? `Version ${String(edit.version).slice(0, 7)} · view, compare or restore` : "Version history") : null);
+    return card;
   };
+  /* A reply's changes: the bar to apply or dismiss them all, with each change
+     folded above it until asked for. The bar is the last thing in the reply. */
+  const changesBlock = (message) => {
+    const edits = message.edits;
+    const pending = edits.filter((edit) => !edit.status || edit.status === "pending");
+    const notes = [...new Set(edits.map((edit) => edit.title))];
+    const added = edits.reduce((sum, edit) => sum + countLines(edit.kind === "insert" ? edit.markdown : edit.replace), 0);
+    const removed = edits.reduce((sum, edit) => sum + countLines(edit.kind === "replace" ? edit.find : ""), 0);
+    const open = Boolean(message.changesOpen);
+    const applied = edits.filter((edit) => edit.status === "accepted").length;
+    const settledText = applied === edits.length ? "Applied" : applied ? `${applied} applied, ${edits.length - applied} dismissed` : "Dismissed";
+    const toggle = () => { message.changesOpen = !message.changesOpen; paint(); };
+    return el("div", { class: `chat-changes${open ? " is-open" : ""}` },
+      open ? el("div", { class: "chat-changes-list" }, edits.map(editProposal)) : null,
+      el("div", { class: "chat-edit-batch" },
+        el("button", { class: "chat-changes-toggle", type: "button", "aria-expanded": String(open), onclick: toggle },
+          icon("chevron_right", 12),
+          el("b", { text: `${edits.length} change${edits.length === 1 ? "" : "s"}` }),
+          el("span", { text: notes.length === 1 ? ` to ${notes[0]}` : ` across ${notes.length} notes` })),
+        el("span", { class: "chat-edit-diff" }, added ? el("b", { class: "add", text: `+${added}` }) : null, removed ? el("b", { class: "del", text: `−${removed}` }) : null),
+        pending.length ? el("span", { class: "chat-edit-batch-actions" },
+          el("button", { class: "chat-edit-decline", type: "button", onclick: () => pending.forEach(declineEdit) }, pending.length > 1 ? "Dismiss all" : "Dismiss"),
+          el("button", { class: "chat-edit-accept", type: "button", onclick: async () => { for (const edit of pending) await applyEdit(edit); } }, pending.length > 1 ? `Apply all ${pending.length}` : "Apply"))
+          : el("span", { class: `chat-edit-state${applied ? " is-accepted" : ""}`, text: settledText })));
+  };
+
 
   const paint = () => {
     const wasNearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 52;
@@ -683,6 +842,7 @@ export function renderChat(host, app, options = {}) {
     /* an empty chat is a landing: the heading and the composer sit together in the middle, as in Notion */
     chatView.classList.toggle("landing", Boolean(state.aiConfigured) && !messages.length && !compact);
     actionRow.hidden = !chatView.classList.contains("landing");
+    if (!actionRow.hidden) paintSuggested();
     if (!state.aiConfigured) {
       thread.append(el("div", { class: "chat-column chat-intro" },
         el("h1", { class: "chat-title", text: "AI is not configured" }),
@@ -729,14 +889,15 @@ export function renderChat(host, app, options = {}) {
       } else if (message.pending) {
         /* What is shown is what is happening: the plan and each tool call as it runs, then the answer as it streams. */
         message.runState = message.runState || {};
+        /* The run leads: "Working for 12s" on top, the timeline under it. Once
+           the answer starts streaming the work is over, so it folds away. */
+        if (message.text && message.run && !message.run.elapsedMs) message.run.elapsedMs = Date.now() - (message.startedAt || Date.now());
         append(body,
-          message.prelude ? (() => { const intro = el("div", { class: "chat-answer-text chat-prelude" }); revealAnswer(intro, message.prelude, false); return intro; })() : null,
-          renderAgentRun(message.run, { live: true, onOpenNote: (id) => app.openPage(id), state: message.runState }),
+          renderAgentRun(message.run || { todos: [], steps: [] }, { live: !message.text, since: message.startedAt || (message.startedAt = Date.now()), onOpenNote: (id) => app.openPage(id), format: renderMarkdown, state: message.runState }),
           /* Keep a stable live host in the document. Text chunks update it in
              place below the work that produced them, without rebuilding the
              surrounding thread (the source of the visible flicker). */
-          message.liveEl || (message.liveEl = el("div", { class: "chat-stream chat-live" })),
-          !message.run?.todos.length && !message.run?.steps.length && !message.text ? workRow("Thinking", "think") : null);
+          message.liveEl || (message.liveEl = el("div", { class: "chat-stream chat-live" })));
         if (message.text) liveText(message);
       } else {
         if (message.prelude) {
@@ -746,7 +907,7 @@ export function renderChat(host, app, options = {}) {
         }
         if (message.run) {
           message.runState = message.runState || {};
-          const view = renderAgentRun(message.run, { live: false, onOpenNote: (id) => app.openPage(id), state: message.runState });
+          const view = renderAgentRun(message.run, { live: false, onOpenNote: (id) => app.openPage(id), format: renderMarkdown, state: message.runState });
           if (view) body.append(view);
         }
         const answerHost = el("div", { class: "chat-answer-text" });
@@ -779,7 +940,8 @@ export function renderChat(host, app, options = {}) {
           if (citation?.pageId) app.openPage(citation.pageId, { blockId: citation.blockId });
         });
         if (message.citations?.length) answerHost.innerHTML = linkCitations(answerHost.innerHTML, message.citations);
-        if (message.edits?.length) body.append(...message.edits.map(editProposal));
+        /* The reply ends with its changes: one bar to apply or dismiss them, and nothing under it. The individual changes fold above the bar. */
+        if (message.edits?.length) body.append(changesBlock(message));
       }
       thread.append(el("div", { class: "chat-column chat-row assistant" }, wrapper));
     }
@@ -811,6 +973,7 @@ export function renderChat(host, app, options = {}) {
     /* Only the agent's update_todos calls create a plan. A scripted generic
        row falsely implied that every request had been planned. */
     answer.run = { todos: [], steps: [] };
+    answer.startedAt = Date.now();
     busy = true;
     syncSend();
     paint();
@@ -847,11 +1010,13 @@ export function renderChat(host, app, options = {}) {
         notes: { pageIds, currentPageId: attachedId ? String(attachedId) : app.currentPageId?.() ? String(app.currentPageId()) : null },
         signal: controller.signal,
         onEvent: (event) => {
-          if (event.type === "todos" || event.type === "step" || event.type === "edit") {
+          if (event.type === "todos" || event.type === "step" || event.type === "edit" || event.type === "agent" || event.type === "board" || event.type === "phase") {
             queueAction(answer, event);
           } else if (event.type === "text") {
             if (event.placement === "before") {
-              answer.prelude += event.text;
+              /* What the model says between tool calls is part of the timeline, in order, like Codex's commentary. */
+              const steps = (answer.run ||= { todos: [], steps: [] }).steps;
+              if (event.text.trim()) steps.push({ id: `note-${steps.length}-${Date.now()}`, tool: "note", state: "done", text: event.text.trim() });
               paintSoon();
               return;
             }
@@ -888,8 +1053,10 @@ export function renderChat(host, app, options = {}) {
         answer.citations = [];
       }
       if (!finished) { answer.pending = false; if (!answer.text) answer.error = "Clyra couldn't finish this reply."; }
+      if (answer.run && answer.startedAt) answer.run.elapsedMs = Date.now() - answer.startedAt;
       if (!answer.error) {
-        await remember({ role: "assistant", text: answer.text, sources: answer.sources, citations: [], searched: answer.searched });
+        const saved = await remember({ role: "assistant", text: answer.text, sources: answer.sources, citations: [], searched: answer.searched, run: answer.run, edits: answer.edits, prelude: answer.prelude });
+        if (saved?.id) { answer.savedId = saved.id; answer.chatId = chatId; }
         loadChats();
         refreshPages?.();
       }
@@ -897,6 +1064,7 @@ export function renderChat(host, app, options = {}) {
       answer.pending = false;
       answer.error = controller.signal.aborted ? "Stopped." : error.message;
     } finally {
+      stopWorking(answer);
       askAbort = null;
       busy = false;
       syncSend();
@@ -945,6 +1113,8 @@ export function renderChat(host, app, options = {}) {
     id = id ? String(id) : null;
     wantedId = id;
     if (busy || id === boundId) return;
+    /* A conversation in progress follows you: it stays put and simply points at the new page. */
+    if (messages.length) { boundId = id; paintAttached(); return; }
     boundId = id;
     chatId = null; messages = []; sources = []; quotes = []; files = [];
     paintSources(); paintAttached(); paint();
@@ -955,11 +1125,34 @@ export function renderChat(host, app, options = {}) {
     else { paintHead(); paintHistory(); }
   };
 
+  /* Moves the chat into a view. Only one view can hold it, so opening the
+     full-screen chat closes the sidebar's chat, and opening the sidebar's chat
+     leaves the full-screen one. */
+  const mount = (host, nextCompact) => {
+    host.append(layout);
+    const changed = nextCompact !== compact;
+    compact = nextCompact;
+    layout.classList.toggle("compact", compact);
+    if (compact) layout.classList.add("history-hidden");
+    paintMode();
+    if (changed) { paintHead(); paintAttached(); paintHistory(); paint(); }
+    if (!compact) publishChats();
+    if (!compact) {
+      if (app.railOpen?.() && app.rail?.current === "chat") app.toggleRail();
+      queueMicrotask(() => input.focus());
+    } else if (activeTab()?.kind === "chat") app.leaveChatView?.();
+    requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
+  };
+
   paint();
+  paintMode();
   loadChats();
   if (!compact) api.post("/api/notes/chats/prune", {}).catch(() => {});
-  queueMicrotask(() => { if (!compact) input.focus(); });
   return {
+    root: layout,
+    mount,
+    isBusy: () => busy,
+    dispose() { askAbort?.abort(); layout.remove(); window.removeEventListener("clyra:chat-action", onSidebar); window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); window.removeEventListener("clyra:prefill-chat", onPrefill); },
     setPage,
     toggleHistory,
     focus: () => input.focus(),
@@ -973,7 +1166,6 @@ export function renderChat(host, app, options = {}) {
         source.pageId && !seen.has(source.pageId) && seen.add(source.pageId));
       paintSources();
     },
-    destroy() { window.removeEventListener("clyra:chat-action", onSidebar); window.removeEventListener("clyra:new-chat", onNewChat); window.removeEventListener("clyra:notes-quote", onQuote); window.removeEventListener("clyra:prefill-chat", onPrefill); },
   };
 }
 

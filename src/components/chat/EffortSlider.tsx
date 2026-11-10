@@ -185,6 +185,12 @@ export function EffortSlider({
           style={{ height: TRACK_H, borderRadius: TRACK_H / 2 }}
         >
           <motion.div aria-hidden className="clyra-effort-fill" style={{ width: fill, borderRadius: TRACK_H / 2, background: accentColor }} />
+          {/* At the top level a ripple travels along the fill: expanding rings that stay inside the track. */}
+          {shownIndex === count - 1 && !reduceMotion ? (
+            <span aria-hidden className="clyra-effort-ripples">
+              <i /><i /><i />
+            </span>
+          ) : null}
           {efforts.map((_, i) => (
             <span
               key={i}
@@ -201,7 +207,7 @@ export function EffortSlider({
             transition={{ duration: 0.16, ease: EASE_OUT }}
           />
         </div>
-        <div style={{ position: "relative", height: 18, marginTop: 8, marginLeft: INSET + THUMB / 2, width: travel, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div style={{ position: "relative", height: 16, marginTop: 8, marginLeft: INSET + THUMB / 2, width: travel, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           {efforts.map((e, i) => {
             const on = i === shownIndex;
             return (
@@ -213,7 +219,6 @@ export function EffortSlider({
                 data-on={on ? "true" : undefined}
                 style={on ? { color: accentColor } : undefined}
               >
-                <span className="clyra-effort-label-icon" aria-hidden>{e.icon}</span>
                 {e.label}
               </button>
             );
@@ -227,12 +232,14 @@ export function EffortSlider({
         .clyra-effort-stop { position: absolute; top: 50%; margin-top: -2px; width: 4px; height: 4px; border-radius: 2px; transition: background-color .2s ease; pointer-events: none; }
         .clyra-effort-thumb { position: absolute; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); will-change: transform; cursor: grab; }
         .clyra-effort-track:active .clyra-effort-thumb { cursor: grabbing; }
-        .clyra-effort-label { display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px; margin: 0 -5px; border: 0; background: transparent; cursor: pointer; font: 500 11.5px/16px inherit; font-family: inherit; color: #8F8F8F; border-radius: 8px; white-space: nowrap; transition: color .18s ease; }
+        .clyra-effort-label { display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; margin: 0 -4px; border: 0; background: transparent; cursor: pointer; font-family: inherit; font-size: 10.5px; line-height: 14px; font-weight: 500; letter-spacing: 0; color: #8F8F8F; border-radius: 8px; white-space: nowrap; transition: color .18s ease; }
         .clyra-effort-label[data-on] { font-weight: 600; }
         .clyra-effort-label:hover { color: #0D0D0D; }
-        .clyra-effort-label-icon { display: grid; place-items: center; opacity: .72; transition: opacity .18s ease; }
-        .clyra-effort-label[data-on] .clyra-effort-label-icon { opacity: 1; }
-        .clyra-effort-label-icon svg { width: 12px; height: 12px; display: block; }
+        .clyra-effort-ripples { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+        .clyra-effort-ripples i { position: absolute; top: 50%; left: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.75); background: radial-gradient(circle, rgba(255,255,255,.28), rgba(255,255,255,0) 70%); opacity: 0; transform: translateX(0) scale(.5); animation: clyra-effort-ripple 2.4s cubic-bezier(.3,.1,.4,1) infinite; }
+        .clyra-effort-ripples i:nth-child(2) { animation-delay: .8s; }
+        .clyra-effort-ripples i:nth-child(3) { animation-delay: 1.6s; }
+        @keyframes clyra-effort-ripple { 0% { opacity: 0; transform: translateX(8px) scale(.5); } 15% { opacity: .9; } 100% { opacity: 0; transform: translateX(230px) scale(1.6); } }
         .clyra-effort-reset { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 0; border-radius: 11px; background: transparent; color: #A0A0A0; cursor: pointer; transition: color .15s ease, background-color .15s ease, transform .3s cubic-bezier(.22,1,.36,1); }
         .clyra-effort-reset:hover { background: rgba(16,18,24,.05); color: #5D5D5D; transform: rotate(-40deg); }
       `}</style>

@@ -76,9 +76,12 @@ async function wikipediaSummary(
   const geoData = await getJson<{ query?: { geosearch?: GeoSearchHit[] } }>(geo.toString());
   const hits = geoData?.query?.geosearch ?? [];
   const target = normalise(name);
+  // An article about a different thing that merely starts with the same words ("Bondi Beach" vs "Bondi Beach
+  // Post Office") must never supply this place's picture: require the same title, or a very close subject.
   const match = hits.find((h) => {
     const t = normalise(h.title);
-    return t === target || t.startsWith(target) || target.startsWith(t);
+    if (t === target) return true;
+    return h.dist <= 80 && (t.startsWith(`${target} `) === false) && (target.startsWith(`${t} `) === false) && (t.includes(target) || target.includes(t));
   });
   if (!match) return null;
 
@@ -86,7 +89,9 @@ async function wikipediaSummary(
     `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(match.title.replace(/ /g, "_"))}`,
   );
   if (!summary?.extract || summary.type === "disambiguation") return null;
-  const image = summary.originalimage?.source || summary.thumbnail?.source;
+  // The original can be several thousand pixels wide; ask Wikimedia for a 960px rendition of the same picture.
+  const thumb = summary.thumbnail?.source?.replace(/\/(\d+)px-/, "/960px-");
+  const image = thumb || summary.originalimage?.source;
   return {
     summary: summary.extract,
     url: summary.content_urls?.desktop?.page,
@@ -156,6 +161,8 @@ export async function lookupPlaceInfo(name: string, at: Coordinate): Promise<Pla
     summaryUrl: wiki?.url,
     photos,
   };
-  cache.set(key, { at: Date.now(), info });
+  // A lookup that found nothing may just have hit a slow moment at Wikipedia: remember it for a minute, not half an hour.
+  const found = Boolean(info.summary || info.photos.length);
+  cache.set(key, { at: found ? Date.now() : Date.now() - (CACHE_TTL_MS - 60_000), info });
   return info;
 }

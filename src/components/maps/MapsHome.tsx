@@ -36,12 +36,12 @@ function Row({ place, icon, onSelect, onRemove }: { place: ClyraPlace; icon: Rea
         type="button"
         onMouseEnter={() => prefetchPlaceDetail(place)}
         onClick={() => onSelect(place)}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-slate-100"
+        className="mx-row min-w-0 flex-1"
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500">{icon}</span>
-        <span className="min-w-0">
-          <span className="block truncate text-[13px] font-semibold text-slate-800">{place.name}</span>
-          <span className="block truncate text-[12px] text-slate-500">{place.address || place.locality || ""}</span>
+        <span className="mx-row__icon">{icon}</span>
+        <span className="mx-row__body">
+          <span className="mx-row__title">{place.name}</span>
+          <span className="mx-row__meta">{place.address || place.locality || ""}</span>
         </span>
       </button>
       {onRemove ? (
@@ -54,7 +54,7 @@ function Row({ place, icon, onSelect, onRemove }: { place: ClyraPlace; icon: Rea
 }
 
 const Label = ({ children }: { children: React.ReactNode }) => (
-  <div className="px-2.5 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{children}</div>
+  <div className="mx-eyebrow px-2.5 pb-1 pt-3">{children}</div>
 );
 
 /** Idle-state Library sheet: Home/Work, parked car, Favorites, Guides, Recents. */
@@ -94,15 +94,15 @@ export function MapsHome({ onSelect }: { onSelect: (p: ClyraPlace) => void }) {
 
   const quick = (icon: React.ReactNode, label: string, place: ClyraPlace | undefined) =>
     place ? (
-      <button type="button" onClick={() => onSelect(place)} className="flex flex-1 flex-col items-center gap-1 rounded-xl px-2 py-2 hover:bg-slate-100">
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-500 text-white">{icon}</span>
-        <span className="text-[11.5px] font-semibold text-slate-700">{label}</span>
+      <button type="button" onClick={() => onSelect(place)} className="flex flex-1 flex-col items-center gap-1 rounded-xl px-2 py-2 hover:bg-[#f3f4f6]">
+        <span className="grid h-9 w-9 place-items-center rounded-[12px] bg-[#0066ff] text-white">{icon}</span>
+        <span className="text-[11.5px] font-semibold text-[#3a3d44]">{label}</span>
       </button>
     ) : null;
 
   return (
-    <div className="pointer-events-auto absolute left-4 top-[68px] z-20 max-h-[calc(100%-150px)] w-[380px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-2xl border border-slate-200/80 bg-white p-2 shadow-[0_12px_40px_rgba(15,23,42,.16)]">
-      <button type="button" onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center justify-between px-2.5 py-1 text-[13px] font-bold text-slate-800">
+    <div className="mx-sheet mx-sheet--auto mx-scroll mx-in !flex-none p-2">
+      <button type="button" onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center justify-between px-2.5 py-1.5 text-[15px] font-semibold tracking-[-0.02em] text-[#0d0d0d]">
         Library
         <ChevronDown className={"h-4 w-4 text-slate-400 transition-transform " + (collapsed ? "-rotate-90" : "")} />
       </button>

@@ -121,10 +121,14 @@ type StoredSession = {
   /** Commit the workspace sat on when this chat first ran, for real diffs. */
   baseline?: string;
   messages: StoredMessage[];
+  /** The id this task has inside the current runtime process (see `harnessSessionFor`). */
+  harnessId?: string;
 };
 
 /** Per-session assembly state for the harness chunk stream. */
 type StreamState = {
+  /** The runtime session this stream belongs to: turn numbers restart with each one. */
+  epoch: string;
   turn: number;
   messageId: string;
   /** `${step}:${index}` → the part accumulating that streamed block. */
@@ -163,6 +167,10 @@ type ProjectRuntime = {
   controllers: Map<string, CodingTaskController>;
   checkpointQueue?: Promise<void>;
   saveQueue?: Promise<void>;
+  /** Harness session ids the current runtime process has created. */
+  liveHarness?: Set<string>;
+  /** Runtime session id → the Clyra task it belongs to. */
+  harnessAlias?: Map<string, string>;
 };
 
 function textOfBlocks(blocks: unknown): string {
@@ -396,11 +404,69 @@ export class DeepSeekHarnessRuntimeManager {
     // permanent system prompt. The raw user request remains the durable chat
     // message; this short, selected guidance only accompanies this turn.
     const skill = automaticFrontendSkill(text);
-    await client.prompt(sessionId, [
+    const { harnessId, recap } = this.harnessSessionFor(project, session);
+    /* Work that changes the project gets a visible, honest plan: the to-do list
+       the person sees is the agent's own todo_write calls. */
+    const effortLevel = preflight.effort as string;
+    const planned = !["ask", "plan", "review"].includes(preflight.mode) && !/^\[clyra:internal\]/.test(text)
+      && (effortLevel === "high" ? text.trim().length > 20 : effortLevel === "low" ? false : text.trim().length > 60);
+    /* The effort setting changes how the agent works, not just a label: how much it explores, plans and verifies. */
+    const effortNote = /^\[clyra:internal\]/.test(text) ? null : effortLevel === "low"
+      ? "[clyra:internal] Effort: low. Be quick and economical: make the smallest change that satisfies the request, read only the files you must, skip a written plan, and verify with at most one cheap check. Keep commentary and the final answer to a sentence or two."
+      : effortLevel === "high"
+        ? "[clyra:internal] Effort: high. Be thorough: explore the relevant code before changing it, keep a todo plan current, handle edge cases and error states, and verify the result properly (run the build and tests, and check the preview where there is one) before finishing. Re-check your work for bugs and fix what you find."
+        : null;
+    const planNote = planned
+      ? "[clyra:internal] Before changing files, call todo_write with 3–7 concrete steps for this request (named after the real files and behaviour, not generic phases), exactly one in_progress. Update it as each step finishes, and only mark a step completed after you have done and checked it. Keep going until every step is completed; the last step is always verifying the result (run the project's checks and look at the preview where there is one)."
+      : null;
+    /* The thread reads as a few steps with the agent's own words between them, so it has to speak between batches of work. */
+    const narrateNote = /^\[clyra:internal\]/.test(text) || ["ask"].includes(preflight.mode)
+      ? null
+      : "[clyra:internal] Narrate as you work, in plain first person. Before each batch of tool calls, write one short sentence saying what you are about to do and why (for example “I'll look at how the page is structured before changing it.”). When a phase ends, write one sentence on what you found or changed and what comes next. Do not narrate every single call, do not put narration inside tools, and keep the final answer a clear summary of the result.";
+    await client.prompt(harnessId, [
+      ...(recap ? [{ type: "text" as const, text: recap }] : []),
+      ...(narrateNote ? [{ type: "text" as const, text: narrateNote }] : []),
+      ...(effortNote ? [{ type: "text" as const, text: effortNote }] : []),
+      ...(planNote ? [{ type: "text" as const, text: planNote }] : []),
       ...(skill ? [{ type: "text" as const, text: skill }] : []),
       { type: "text" as const, text },
     ]);
     return { ok: true };
+  }
+
+  /**
+   * The runtime keeps a task's conversation only for the life of its process,
+   * and the SDK cannot reopen a task saved by an earlier process (creating it
+   * again fails because its log is already on disk). So a task that outlives
+   * its runtime continues under a fresh runtime session, given a recap of the
+   * conversation so far; events from that session are routed back to the task.
+   * The workspace, transcript and diffs are untouched.
+   */
+  private harnessSessionFor(project: ProjectRuntime, session: StoredSession): { harnessId: string; recap: string | null } {
+    const live = project.liveHarness ??= new Set();
+    const alias = project.harnessAlias ??= new Map();
+    const current = session.harnessId ?? session.id;
+    if (live.has(current)) return { harnessId: current, recap: null };
+    const earlier = session.messages.slice(0, -1);
+    const isNew = !earlier.length && !session.harnessId;
+    const harnessId = isNew ? session.id : `${session.id}-r${Date.now().toString(36)}`;
+    session.harnessId = harnessId;
+    live.add(harnessId);
+    alias.set(harnessId, session.id);
+    this.persist(project);
+    if (isNew) return { harnessId, recap: null };
+    const lines: string[] = [];
+    for (const message of earlier.slice(-14)) {
+      const role = message.info?.role === "user" ? "User" : "You";
+      const text = (message.parts ?? []).filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n").replace(/\s+\n/g, "\n").trim();
+      if (!text || /^\[clyra:internal\]/.test(text)) continue;
+      lines.push(`${role}: ${text.length > 1400 ? `${text.slice(0, 1400)}…` : text}`);
+    }
+    const history = lines.join("\n\n").slice(-9000);
+    return {
+      harnessId,
+      recap: `[clyra:internal] You are continuing an earlier task in this same workspace after the coding runtime restarted. Your files and changes are all still on disk; inspect them rather than assuming. The conversation so far:\n\n${history}\n\nNow handle the user's next message below.`,
+    };
   }
 
   /**
@@ -604,6 +670,7 @@ export class DeepSeekHarnessRuntimeManager {
         model: route.modelID,
       });
       project.client = client;
+      project.liveHarness = new Set();
       void this.streamNotifications(project, client);
       return client;
     })();
@@ -643,7 +710,10 @@ export class DeepSeekHarnessRuntimeManager {
     }
   }
 
-  private handleNotification(project: ProjectRuntime, method: string, params: Record<string, unknown>) {
+  private handleNotification(project: ProjectRuntime, method: string, rawParams: Record<string, unknown>) {
+    const runtimeId = String(rawParams.sessionId || "");
+    const owner = runtimeId ? project.harnessAlias?.get(runtimeId) : undefined;
+    const params = owner ? { ...rawParams, sessionId: owner } : rawParams;
     if (method === "session.status") {
       const sessionId = String(params.sessionId || "");
       if (!sessionId) return;
@@ -684,11 +754,14 @@ export class DeepSeekHarnessRuntimeManager {
   }
 
   private openTurn(project: ProjectRuntime, sessionId: string, turn: number) {
+    const epoch = project.sessions.get(sessionId)?.harnessId ?? sessionId;
     const stream = project.streams.get(sessionId);
-    if (stream && stream.turn === turn) return stream;
+    if (stream && stream.turn === turn && stream.epoch === epoch) return stream;
     const next: StreamState = {
+      epoch,
       turn,
-      messageId: `asst-${sessionId.slice(-8)}-${turn}`,
+      /* Unique per runtime session, or a restarted task's first turn would overwrite the earlier reply's saved message. */
+      messageId: `asst-${sessionId.slice(-8)}-${epoch === sessionId ? "" : `${epoch.slice(-6)}-`}${turn}`,
       blocks: new Map(),
       tools: new Map(),
     };
@@ -697,7 +770,9 @@ export class DeepSeekHarnessRuntimeManager {
   }
 
   private stream(project: ProjectRuntime, sessionId: string, turn: unknown) {
-    return project.streams.get(sessionId) ?? this.openTurn(project, sessionId, Number(turn) || 1);
+    const existing = project.streams.get(sessionId);
+    const epoch = project.sessions.get(sessionId)?.harnessId ?? sessionId;
+    return existing && existing.epoch === epoch ? existing : this.openTurn(project, sessionId, Number(turn) || 1);
   }
 
   /**
@@ -927,7 +1002,7 @@ export class DeepSeekHarnessRuntimeManager {
           await controller.recordRecovery(`${failed.name} failed; use its real output to repair the implementation.`);
           this.publish(project, { type: "session.status", properties: { sessionID: sessionId, status: { type: "busy", message: "Repairing a failed validation" } } });
           try {
-            await (await this.client(project)).prompt(sessionId, [{ type: "text", text: `[clyra:internal] Validation failed: ${failed.name}\n${String(failed.output || "No output").slice(-8_000)}\nInspect the failure, repair the smallest relevant code, then rerun the validation. Do not claim completion until it passes.` }]);
+            await (await this.client(project)).prompt(project.sessions.get(sessionId)?.harnessId ?? sessionId, [{ type: "text", text: `[clyra:internal] Validation failed: ${failed.name}\n${String(failed.output || "No output").slice(-8_000)}\nInspect the failure, repair the smallest relevant code, then rerun the validation. Do not claim completion until it passes.` }]);
             run.settling = false;
             return;
           } catch (error) {

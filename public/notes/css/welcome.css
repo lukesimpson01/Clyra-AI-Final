@@ -657,17 +657,6 @@ button.wl-task-btn { cursor: pointer; }
 .wl-selection-demo { position: relative; display: grid; place-content: center; gap: 16px; min-height: 100%; padding: 34px; box-sizing: border-box; }
 .wl-selection-copy { width: min(100%, 500px); margin: 0; padding: 0; color: var(--text-primary); font-size: clamp(19px, 2vw, 25px); font-weight: 500; line-height: 1.42; outline: 0; caret-color: var(--accent); }
 .wl-selection-copy::selection { color: inherit; background: color-mix(in srgb, var(--accent) 26%, transparent); }
-.wl-selection-toolbar-slot { width: min(100%, 680px); min-height: 48px; }
-.wl-selection-toolbar { position: static; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; width: min(100%, 680px); min-height: 38px; box-sizing: border-box; padding: 4px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--background-menu); box-shadow: 0 14px 35px rgba(26, 30, 38, .13), 0 2px 8px rgba(26, 30, 38, .08); animation: wl-selection-in 180ms var(--wl-ease) both; }
-.wl-selection-toolbar[hidden] { display: none; }
-.wl-selection-toolbar .icon-button { width: 28px; height: 28px; border-radius: 8px; }
-.wl-selection-toolbar .icon-button:hover { background: var(--background-hover); }
-.wl-selection-toolbar .text-button { height: 28px; }
-.wl-selection-toolbar .toolbar-colour { position: relative; overflow: visible; }
-.wl-selection-toolbar .toolbar-colour::after { content: ""; position: absolute; right: 6px; bottom: 4px; left: 6px; height: 2px; border-radius: 99px; background: var(--text-primary); }
-.wl-selection-toolbar .toolbar-colour-highlight::after { background: #f1d677; }
-.wl-selection-toolbar .toolbar-colour-letter { font: 600 18px/1 var(--font-ui); letter-spacing: -.04em; }
-.wl-selection-toolbar .wl-attention { animation: wl-soft-attention 2.2s ease-in-out infinite; }
 @keyframes wl-soft-attention { 0%, 100% { background: rgba(55, 53, 47, .025); color: var(--text-secondary); } 50% { background: rgba(55, 53, 47, .13); color: var(--text-primary); } }
 .wl-selection-ask { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--accent-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .wl-selection-ask:hover { background: var(--background-hover); }
@@ -675,8 +664,7 @@ button.wl-task-btn { cursor: pointer; }
 .wl-selection-hint { color: var(--text-tertiary); font-size: 13px; transition: color 160ms ease; }
 .wl-selection-demo.selected .wl-selection-hint { color: var(--accent-text); }
 @keyframes wl-selection-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .wl-selection-toolbar, .wl-selection-toolbar .wl-attention { animation: none; } }
-
+@media (prefers-reduced-motion: reduce) { 
 /* Terminal lesson has only one source of truth: the live drawer at the bottom
    of the page. This compact launch card is explanatory, not a lookalike. */
 .wl-terminal-stage-note { display: inline-flex; align-items: center; gap: 9px; max-width: 360px; margin: auto; padding: 10px 13px; border-radius: 10px; color: var(--text-secondary); background: var(--background-subtle); font-size: 13px; line-height: 1.45; }
@@ -701,3 +689,12 @@ button.wl-task-btn { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .wl-study-flow .check-step[data-state="running"] .check-text.check-shine { animation: none; background: none; -webkit-text-fill-color: currentColor; color: var(--text-primary); }
 }
+
+/* The tour's toolbar is the real one: same parts, same float above the selection. */
+.wl-floating-toolbar[hidden] { display: none; }
+.wl-floating-toolbar { z-index: 260; }
+.wl-floating-toolbar .toolbar-colour { position: relative; overflow: visible; }
+.wl-floating-toolbar .toolbar-colour::after { content: ""; position: absolute; right: 7px; bottom: 5px; left: 7px; height: 2px; border-radius: 99px; background: var(--text-primary); }
+.wl-floating-toolbar .toolbar-colour-highlight::after { background: #f1d677; }
+.wl-stage .cp-tour-readonly .cp-option.active:hover { background: rgba(35, 131, 226, .08); }
+.wl-stage .cp-tour-readonly .cp-option.chosen { background: rgba(35, 131, 226, .16); }

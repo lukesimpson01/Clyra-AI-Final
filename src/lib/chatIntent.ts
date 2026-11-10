@@ -109,5 +109,16 @@ export function isVibeBuildRequest(prompt: string): boolean {
     /\b(?:fix|debug|refactor|lint|compile|resolve|patch|migrate|production-ready)\b/.test(text) &&
     /\b(?:app|apps|project|repo|repository|codebase|bugs?|errors?|features?|build|dependenc(?:y|ies)|compiler|typecheck|tests?|functions?|components?|modules?|files?|scripts?)\b/.test(text);
   const creation = /\b(?:make|create|design|build|scaffold)\s+(?:me\s+)?(?:an?\s+)?(?:web\s+app|website|landing\s+page|dashboard|prototype|mobile\s+app|game)\b/.test(text);
-  return projectAction || creation;
+  // "code me a snake game", "write a python script that renames files", "develop a chrome extension": an
+  // explicit ask to produce a program. Explanations ("how does a for loop work"), questions about code, and
+  // requests to fix a pasted snippet stay in ordinary chat.
+  const isProse = /\b(?:essay|poem|story|article|email|letter|report|paragraph|summary|song|speech|blog|caption|review)\b/.test(text);
+  const isQuestion = isProse || /^(?:what|why|how|when|where|who|which|explain|describe|compare|is|are|does|do|can you explain)\b/.test(text);
+  const programObject =
+    "(?:app|apps|application|website|web\\s?site|web\\s?page|site|game|script|bot|tool|extension|plugin|api|server|backend|frontend|cli|program|calculator|tracker|scraper|clone|saas|platform|widget|landing\\s+page|dashboard|portfolio|store|shop|chatbot|tool)";
+  const codeVerb = new RegExp(
+    `\\b(?:code|program|develop|implement|generate|write|make|create|build|design|scaffold)\\s+(?:me\\s+|us\\s+)?(?:up\\s+)?(?:a|an|the|my|some)?\\s*(?:[\\w-]+\\s+){0,5}?${programObject}\\b`,
+  ).test(text);
+  const codeMe = /\b(?:code|program)\s+(?:me\s+|us\s+)?(?:up\s+)?(?:a|an|the|my|some)\b/.test(text);
+  return projectAction || creation || (!isQuestion && (codeVerb || codeMe));
 }

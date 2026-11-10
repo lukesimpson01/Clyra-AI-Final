@@ -18,6 +18,9 @@ interface NavigationHudProps {
   onSpeedChange: (speed: number) => void;
   muted?: boolean;
   onToggleMute?: () => void;
+  /** Real GPS navigation: no pause or speed controls, and a status line for the location fix. */
+  live?: boolean;
+  liveStatus?: string;
 }
 
 /** Compact turn-by-turn HUD — deliberately small so the map stays the star. */
@@ -33,6 +36,8 @@ export function NavigationHud({
   onSpeedChange,
   muted,
   onToggleMute,
+  live = false,
+  liveStatus,
 }: NavigationHudProps) {
   const [speedOpen, setSpeedOpen] = useState(false);
   const Icon = upcomingStep ? MANEUVER_ICON[upcomingStep.type] : MANEUVER_ICON.continue;
@@ -44,15 +49,15 @@ export function NavigationHud({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -12 }}
         transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-        className="pointer-events-auto absolute left-4 top-4 z-30 w-[300px] overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_12px_40px_rgba(15,23,42,.14)]"
+        className="mx-pop pointer-events-auto absolute left-4 top-4 z-30 w-[300px] overflow-hidden"
       >
         <div className="flex items-center gap-3 px-4 py-3.5">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#3b82f6] text-white">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[14px] bg-[#0066ff] text-white shadow-[0_6px_14px_-6px_rgba(0,102,255,.6)]">
             <Icon className="h-6 w-6" />
           </span>
           <div className="min-w-0 flex-1">
             {typeof upcomingDistanceMeters === "number" ? (
-              <p className="text-[20px] font-bold leading-none text-slate-950">{formatDistance(upcomingDistanceMeters)}</p>
+              <p className="text-[20px] font-bold leading-none text-[#0d0d0d]">{formatDistance(upcomingDistanceMeters)}</p>
             ) : null}
             <p className="mt-1 truncate text-[13px] font-semibold text-slate-700">{upcomingStep?.instruction || "Continue"}</p>
             {upcomingStep?.roadName ? <p className="truncate text-[11.5px] text-slate-500">{upcomingStep.roadName}</p> : null}
@@ -65,15 +70,18 @@ export function NavigationHud({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 12 }}
         transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-        className="pointer-events-auto absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-slate-200/90 bg-white px-4 py-2.5 shadow-[0_12px_40px_rgba(15,23,42,.14)]"
+        className="mx-pop pointer-events-auto absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 !rounded-full px-4 py-2.5"
       >
         <div className="text-center">
-          <p className="text-[15px] font-bold leading-none text-slate-950">{formatDuration(remainingDurationSeconds)}</p>
+          <p className="text-[15px] font-bold leading-none text-[#0d0d0d]">{formatDuration(remainingDurationSeconds)}</p>
           <p className="mt-0.5 text-[10.5px] leading-none text-slate-500">{formatDistance(remainingDistanceMeters)}</p>
         </div>
         <div className="h-6 w-px bg-slate-200" />
         <p className="text-[12.5px] font-semibold text-slate-600">{formatArrival(remainingDurationSeconds)}</p>
+        {live && liveStatus ? <p className="text-[11.5px] font-medium text-[#6b6f76]">{liveStatus}</p> : null}
         <div className="h-6 w-px bg-slate-200" />
+        {live ? null : (
+          <>
         <button
           type="button"
           aria-label={paused ? "Resume" : "Pause"}
@@ -103,7 +111,7 @@ export function NavigationHud({
                   }}
                   className={
                     "block w-full whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-[12px] font-semibold " +
-                    (s === speed ? "bg-[#3b82f6]/10 text-[#3b82f6]" : "text-slate-600 hover:bg-slate-50")
+                    (s === speed ? "bg-[#0066ff]/10 text-[#0052cc]" : "text-slate-600 hover:bg-slate-50")
                   }
                 >
                   {s}×
@@ -112,6 +120,8 @@ export function NavigationHud({
             </div>
           ) : null}
         </div>
+          </>
+        )}
         {onToggleMute ? (
           <button type="button" aria-label={muted ? "Unmute voice guidance" : "Mute voice guidance"} onClick={onToggleMute} className="grid h-8 w-8 place-items-center rounded-full text-slate-600 transition-colors hover:bg-slate-100">
             {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}

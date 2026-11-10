@@ -7,7 +7,6 @@ import { PlaceDetailSheet } from "./PlaceDetailSheet";
 import { RouteOverviewPanel, type TransitState, type TransitWhen } from "./RouteOverviewPanel";
 import { LookAroundViewer } from "./LookAroundViewer";
 import { addToGuide, createGuide, readLibrary } from "../../maps/library";
-import { VoiceGuide } from "../../navigation/VoiceGuide";
 import { fetchTilePois } from "../../maps/tilePois";
 import { downloadArea, saveArea } from "../../maps/offline";
 import type { TransitItinerary } from "../../../lib/maps/transit";
@@ -18,11 +17,12 @@ import { MapsHome, pushRecent } from "./MapsHome";
 import type { Basemap } from "../../maps/MapController";
 import { CATEGORY_CHIPS, CATEGORY_ICONS } from "./mapsIcons";
 import { prefetchPlaceDetail } from "./placeDetailCache";
-import { NavigationSimulationEngine, type SimulationState } from "../../navigation/NavigationSimulationEngine";
+import type { SimulationState } from "../../navigation/NavigationSimulationEngine";
 import { NavigationCameraController, overviewBoundsOf } from "../../navigation/NavigationCameraController";
-import { bearingBetween } from "../../navigation/RouteInterpolator";
+import { RouteInterpolator } from "../../navigation/RouteInterpolator";
 import type { ClyraPlace, Coordinate, Route, TravelMode } from "../../../lib/maps/types";
 import { getElectronDesktop } from "../../lib/electron-runtime";
+import "./maps-ui.css";
 
 /** Space the left place/route panel takes, so fitted routes stay fully visible. */
 const ROUTE_PADDING = { top: 96, bottom: 40, left: 440, right: 90 };
@@ -94,7 +94,7 @@ interface IdentifyResponse {
 type AgentAction =
   | { type: "show_places"; places: ClyraPlace[]; title?: string }
   | { type: "select_place"; place: ClyraPlace }
-  | { type: "set_route"; route: Route; destinationName: string }
+  | { type: "set_route"; route: Route; destinationName: string; destination?: ClyraPlace; stops?: ClyraPlace[] }
   | { type: "fit_results" }
   | { type: "clear_results" }
   | { type: "zoom"; delta: 1 | -1 }
@@ -142,6 +142,8 @@ export function ClyraMapsWorkspace() {
   const [selectedPlace, setSelectedPlace] = useState<ClyraPlace | null>(null);
 
   const [route, setRoute] = useState<Route | null>(null);
+  /** Which kind of guidance is running: a live, GPS-following drive, or the cinematic flight. */
+  const [navKind, setNavKind] = useState<"live" | "fly">("fly");
   const [alternatives, setAlternatives] = useState<Route[]>([]);
   const [destinationName, setDestinationName] = useState("");
   const [mode, setMode] = useState<TravelMode>(() => readPrefs().mode ?? "drive");
@@ -152,8 +154,6 @@ export function ClyraMapsWorkspace() {
   const [navActive, setNavActive] = useState(false);
   const navActiveRef = useRef(false);
   const [simState, setSimState] = useState<SimulationState | null>(null);
-  const engineRef = useRef<NavigationSimulationEngine | null>(null);
-  const cameraRef = useRef<NavigationCameraController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [transit, setTransit] = useState<TransitState | null>(null);
@@ -162,9 +162,17 @@ export function ClyraMapsWorkspace() {
   const [stops, setStops] = useState<ClyraPlace[]>([]);
   const stopsRef = useRef<ClyraPlace[]>([]);
   const destRef = useRef<{ name: string; coordinates: Coordinate } | null>(null);
-  const voiceRef = useRef<VoiceGuide | null>(null);
-  const [muted, setMuted] = useState(false);
+  /** Live data from the cinematic flight, for the HUD. */
+  const watchRef = useRef<number | null>(null);
+  const routeRef = useRef<Route | null>(null);
+  const handleStopRef = useRef<() => void>(() => undefined);
+  const liveCleanupRef = useRef<() => void>(() => undefined);
+  routeRef.current = route;
+  const [liveFix, setLiveFix] = useState<{ accuracy: number; waiting: boolean } | null>(null);
+  const flightRef = useRef<{ progress: number; speed: number; phase: "cruise" | "hold" | "turn"; paused: boolean; scale: number } | null>(null);
   const [flying, setFlying] = useState(false);
+  /** The search dropdown is open: the panel beneath it steps aside so only one menu shows. */
+  const [searchOpen, setSearchOpen] = useState(false);
   const [lookAround, setLookAround] = useState<{ coordinates: Coordinate; title?: string } | null>(null);
   const [downloadLabel, setDownloadLabel] = useState<string | null>(null);
   const activeCategoryRef = useRef<{ id: string; label: string } | null>(null);
@@ -688,6 +696,14 @@ export function ClyraMapsWorkspace() {
         return;
       case "set_route":
         if (isRoute(action.route)) {
+          const tripStops = (action.stops ?? []).filter(isPlace);
+          stopsRef.current = tripStops;
+          setStops(tripStops);
+          controller()?.setStops(tripStops.map((p) => p.coordinates));
+          const finalDest = action.destination && isPlace(action.destination) ? action.destination : null;
+          if (finalDest) destRef.current = { name: finalDest.name ?? "", coordinates: finalDest.coordinates };
+          if (action.route.mode !== "transit") setMode(action.route.mode);
+          setTransit(null);
           setRoute(action.route);
           setAlternatives([action.route]);
           setDestinationName(action.destinationName ?? "");
@@ -697,7 +713,7 @@ export function ClyraMapsWorkspace() {
           controller()?.setRoute(action.route);
           controller()?.setAlternativeRoutes([]);
           controller()?.fitToBounds(overviewBoundsOf(action.route.geometry), ROUTE_PADDING);
-          step(`Drew route to ${action.destinationName || "destination"} · ${Math.round(action.route.durationSeconds / 60)} min · ${(action.route.distanceMeters / 1000).toFixed(1)} km`);
+          step(`${tripStops.length ? `Planned a ${tripStops.length + 1}-stop trip` : "Drew route"} to ${action.destinationName || "destination"} · ${Math.round(action.route.durationSeconds / 60)} min · ${(action.route.distanceMeters / 1000).toFixed(1)} km`);
         }
         return;
       case "fit_results":
@@ -863,11 +879,9 @@ export function ClyraMapsWorkspace() {
           activeCategoryRef.current = null;
           showPlacesOnMap(list, `Results for “${text}”`);
         } else {
-          setAgentOpen(true);
           void runAgent(text);
         }
       } catch {
-        setAgentOpen(true);
         void runAgent(text);
       } finally {
         setThinking(false);
@@ -879,7 +893,6 @@ export function ClyraMapsWorkspace() {
 
   /** Top search bar: whatever is typed opens Ask Clyra and runs the agent. */
   const submitFromSearch = (text: string) => {
-    setAgentOpen(true);
     void runAgent(text);
   };
 
@@ -889,87 +902,14 @@ export function ClyraMapsWorkspace() {
     pollRef.current = null;
   };
 
-  const handleGo = useCallback(() => {
-    const activeRoute = route;
-    const m = map();
-    const ctrl = controller();
-    if (!activeRoute || !m || !ctrl) return;
-
-    const initialBearing = bearingBetween(activeRoute.geometry[0], activeRoute.geometry[1] || activeRoute.geometry[0]);
-    navActiveRef.current = true;
-    setNavActive(true);
-
-    // Cinematic fly-in: overview -> approach start -> rotate to heading -> pitch in.
-    m.flyTo({
-      center: activeRoute.geometry[0],
-      zoom: 17,
-      pitch: 60,
-      bearing: initialBearing,
-      duration: 1600,
-      curve: 1.35,
-      essential: true,
-    });
-
-    controller()?.stopFlyover();
-    controller()?.setRouteLabels(null, []);
-    setFlying(false);
-    voiceRef.current = new VoiceGuide();
-    voiceRef.current.muted = muted;
-    voiceRef.current.say("Starting route.");
-    window.setTimeout(() => {
-      const engine = new NavigationSimulationEngine(activeRoute);
-      const camera = new NavigationCameraController(initialBearing);
-      engineRef.current = engine;
-      cameraRef.current = camera;
-
-      // Raw, per-frame updates — mutate map sources directly, never React state.
-      engine.subscribe((state) => {
-        ctrl.setDotPosition(state.currentCoordinate, state.bearing);
-        ctrl.setProgress(activeRoute, state.progressMeters);
-        const next = engine.nextManeuver();
-        voiceRef.current?.update(next?.step, next?.distanceMeters);
-        const avgSpeed = (activeRoute.distanceMeters / Math.max(activeRoute.durationSeconds, 1)) * state.simulationSpeed;
-        const frame = camera.frame({
-          position: state.currentCoordinate,
-          heading: state.bearing,
-          progressMeters: state.progressMeters,
-          interpolator: engine.getInterpolator(),
-          metersPerSecond: avgSpeed,
-          distanceToNextManeuver: next?.distanceMeters,
-        });
-        ctrl.applyCameraFrame(frame);
-        if (state.status === "arrived") {
-          stopPolling();
-          setSimState(engine.getSnapshot());
-          m.easeTo({ pitch: 0, zoom: 16, duration: 900 });
-        }
-      });
-
-      pollRef.current = setInterval(() => {
-        if (!engineRef.current) return;
-        setSimState(engineRef.current.getSnapshot());
-      }, 500);
-
-      engine.start();
-    }, 1650);
-  }, [route, map, controller, muted]);
-
-  const handleTogglePause = useCallback(() => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    const state = engine.getSnapshot();
-    if (state.status === "driving") engine.pause();
-    else if (state.status === "paused") engine.resume();
-    setSimState(engine.getSnapshot());
-  }, []);
-
   const handleStop = useCallback(() => {
     stopPolling();
-    voiceRef.current?.stop();
-    voiceRef.current = null;
-    engineRef.current?.dispose();
-    engineRef.current = null;
-    cameraRef.current = null;
+    if (watchRef.current != null) { navigator.geolocation?.clearWatch(watchRef.current); watchRef.current = null; }
+    liveCleanupRef.current();
+    liveCleanupRef.current = () => undefined;
+    setLiveFix(null);
+    controller()?.stopFlyover();
+    flightRef.current = null;
     navActiveRef.current = false;
     setNavActive(false);
     setSimState(null);
@@ -977,11 +917,182 @@ export function ClyraMapsWorkspace() {
     // Back to the idle "you are here" dot at the real position, not a blank map.
     if (realPositionRef.current) ctrl?.setDotPosition(realPositionRef.current);
     else ctrl?.clearDot();
-    if (route) {
-      ctrl?.setProgress(null, 0);
-      ctrl?.fitToBounds(overviewBoundsOf(route.geometry), 90);
-    }
+    ctrl?.setProgress(null, 0);
+    if (route) ctrl?.fitToBounds(overviewBoundsOf(route.geometry), ROUTE_PADDING);
   }, [controller, route]);
+
+  handleStopRef.current = handleStop;
+
+  /** Fly route: a cinematic flight along the route, no voice. See maps/routeFlyover.ts for how the camera behaves. */
+  const startFlight = useCallback(() => {
+    setNavKind("fly");
+    const activeRoute = route;
+    const ctrl = controller();
+    if (!activeRoute || !ctrl) return;
+    navActiveRef.current = true;
+    setNavActive(true);
+    ctrl.stopFlyover();
+    ctrl.setRouteLabels(null, []);
+    setFlying(false);
+    flightRef.current = { progress: 0, speed: 0, phase: "cruise", paused: false, scale: 1 };
+    let lastPush = 0;
+    const push = (info: { progress: number; speed: number; phase: "cruise" | "hold" | "turn" }) => {
+      const f = flightRef.current;
+      if (!f) return;
+      f.progress = info.progress;
+      f.speed = info.speed;
+      f.phase = info.phase;
+      const now = performance.now();
+      if (now - lastPush < 250) return;
+      lastPush = now;
+      const remaining = Math.max(0, activeRoute.distanceMeters - info.progress);
+      setSimState({
+        routeId: activeRoute.id,
+        status: f.paused ? "paused" : "driving",
+        progressMeters: info.progress,
+        progressRatio: info.progress / Math.max(1, activeRoute.distanceMeters),
+        currentCoordinate: activeRoute.geometry[0],
+        bearing: 0,
+        currentStepIndex: 0,
+        nextStepIndex: 0,
+        remainingDistanceMeters: remaining,
+        remainingDurationSeconds: (remaining / Math.max(1, activeRoute.distanceMeters)) * activeRoute.durationSeconds,
+        simulationSpeed: f.scale,
+      } as SimulationState);
+    };
+    ctrl.startRouteFlyover(activeRoute, () => {
+      // arrived: settle the camera high above the destination, then hand the map back
+      map()?.easeTo({ pitch: 0, zoom: 16, duration: 1400, essential: true });
+      window.setTimeout(handleStop, 1500);
+    }, push);
+  }, [route, map, controller, handleStop]);
+
+  /** Go: real navigation. The blue dot is your position from the device's GPS, snapped to the route; the camera
+   * follows your heading; leaving the route for more than a few seconds finds a new one from where you are. */
+  const handleGo = useCallback(() => {
+    const activeRoute = route;
+    const ctrl = controller();
+    if (!activeRoute || !ctrl) return;
+    if (!navigator.geolocation) { setLocationHint("This device can't share its location, so live navigation isn't available. Try Fly route."); return; }
+    setNavKind("live");
+    navActiveRef.current = true;
+    setNavActive(true);
+    ctrl.stopFlyover();
+    ctrl.setRouteLabels(null, []);
+    setFlying(false);
+    setLiveFix({ accuracy: 0, waiting: true });
+
+    let current = activeRoute;
+    let path = new RouteInterpolator(current);
+    const camera = new NavigationCameraController(path.at(0).bearing);
+    let progress = 0;
+    let lastFix: { at: number; coord: [number, number] } | null = null;
+    let offCount = 0;
+    let rerouting = false;
+    let lastPush = 0;
+
+    let gotFix = false;
+    const onFix = (fix: { lon: number; lat: number; accuracy: number; heading: number | null; speed: number | null; timestamp: number }) => {
+      gotFix = true;
+      if (routeRef.current && routeRef.current.id !== current.id) {
+        // a new route arrived (we rerouted, or the user switched): follow that one
+        current = routeRef.current;
+        path = new RouteInterpolator(current);
+        progress = 0;
+        rerouting = false;
+        offCount = 0;
+      }
+      if (fix.accuracy > 120) { setLiveFix({ accuracy: Math.round(fix.accuracy), waiting: true }); return; }
+      const here: [number, number] = [fix.lon, fix.lat];
+      realPositionRef.current = here;
+      const snap = path.nearestProgress(here);
+      const onRoute = snap.offsetMeters < Math.max(45, fix.accuracy * 1.5);
+      // never jump backwards by more than a GPS wobble, so the line behind you stays drawn
+      if (onRoute) { offCount = 0; if (snap.distanceMeters > progress - 25) progress = Math.max(progress, snap.distanceMeters); }
+      else offCount += 1;
+
+      const at = path.at(progress);
+      const shown = onRoute ? at.coordinate : here;
+      const heading = Number.isFinite(fix.heading) && (fix.speed ?? 0) > 1 ? (fix.heading as number) : at.bearing;
+      ctrl.setDotPosition(shown, heading);
+      ctrl.setProgress(current, progress);
+
+      const speed = Math.max(0, fix.speed ?? (lastFix ? 0 : 0));
+      const step = current.steps.find((st) => (current.cumulativeDistances[st.geometryStartIndex] ?? 0) > progress + 1);
+      ctrl.applyCameraFrame(camera.frame({
+        position: shown,
+        heading,
+        progressMeters: progress,
+        interpolator: path,
+        metersPerSecond: Math.max(speed, 6),
+        distanceToNextManeuver: step ? (current.cumulativeDistances[step.geometryStartIndex] ?? 0) - progress : undefined,
+      }));
+      lastFix = { at: fix.timestamp, coord: here };
+
+      const remaining = Math.max(0, current.distanceMeters - progress);
+      const now = performance.now();
+      if (now - lastPush > 400) {
+        lastPush = now;
+        setLiveFix({ accuracy: Math.round(fix.accuracy), waiting: false });
+        setSimState({
+          routeId: current.id, status: "driving", progressMeters: progress, progressRatio: progress / Math.max(1, current.distanceMeters),
+          currentCoordinate: shown, bearing: heading, currentStepIndex: 0, nextStepIndex: 0,
+          remainingDistanceMeters: remaining,
+          remainingDurationSeconds: (remaining / Math.max(1, current.distanceMeters)) * current.durationSeconds,
+          simulationSpeed: 1,
+        } as SimulationState);
+        flightRef.current = { progress, speed, phase: "cruise", paused: false, scale: 1 };
+      }
+      if (remaining < 25) {
+        setLocationHint("You've arrived");
+        window.setTimeout(() => { handleStopRef.current(); window.setTimeout(() => setLocationHint(null), 4000); }, 1200);
+        return;
+      }
+      if (!onRoute && offCount >= 3 && !rerouting && destRef.current) {
+        rerouting = true;
+        setLocationHint("Off route — finding a new one…");
+        void loadRouteFor(destRef.current, {});
+      }
+    };
+    const giveUp = (why: string) => {
+      console.warn("[maps] live navigation has no location", why);
+      handleStopRef.current();
+      setLocationHint(why);
+      window.setTimeout(() => setLocationHint(null), 9000);
+    };
+    // the camera comes down to the road while the first fix arrives
+    map()?.easeTo({ pitch: 55, zoom: 16.5, duration: 900, essential: true });
+    // Two sources, whichever answers: the browser's own GPS/Wi-Fi fixes, and in the desktop app macOS Location
+    // Services directly (the browser API often receives nothing in a desktop build). A source failing is not fatal.
+    let denied = false;
+    watchRef.current = navigator.geolocation.watchPosition(
+      (pos) => onFix({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, heading: pos.coords.heading, speed: pos.coords.speed, timestamp: pos.timestamp }),
+      (err) => { if (err.code === err.PERMISSION_DENIED) denied = true; },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 },
+    );
+    const nativeLocation = getElectronDesktop()?.location;
+    const nativePoll = nativeLocation
+      ? window.setInterval(() => {
+          void nativeLocation.get({ timeoutSeconds: 3 }).then((r) => {
+            if (r?.ok && typeof r.lat === "number" && typeof r.lon === "number") onFix({ lon: r.lon, lat: r.lat, accuracy: typeof (r as { accuracy?: number }).accuracy === "number" ? (r as { accuracy?: number }).accuracy! : 20, heading: null, speed: null, timestamp: Date.now() });
+            else if (r?.error === "denied") denied = true;
+          }).catch(() => undefined);
+        }, 3000)
+      : null;
+    const noFixTimer = window.setTimeout(() => {
+      if (!gotFix && navActiveRef.current) giveUp(denied ? "Location is turned off for Clyra. Allow it in your system settings to navigate, or use Fly route." : "Couldn't get a location fix. Check Location Services, or use Fly route.");
+    }, 20_000);
+    const clearLive = () => { if (nativePoll != null) window.clearInterval(nativePoll); window.clearTimeout(noFixTimer); };
+    liveCleanupRef.current = clearLive;
+  }, [route, map, controller, loadRouteFor]);
+
+  const handleTogglePause = useCallback(() => {
+    const f = flightRef.current;
+    if (!f) return;
+    f.paused = !f.paused;
+    controller()?.pauseRouteFlyover(f.paused);
+    setSimState((prev) => (prev ? { ...prev, status: f.paused ? "paused" : "driving" } : prev));
+  }, [controller]);
 
   const clearRoute = useCallback(() => {
     setRoute(null);
@@ -1046,11 +1157,17 @@ export function ClyraMapsWorkspace() {
       setFlying(false);
       return;
     }
+    // With a route on the map the flight follows it; otherwise it slowly circles the place or view.
+    if (route && route.geometry.length > 1) {
+      ctrl.startRouteFlyover(route, () => setFlying(false));
+      setFlying(true);
+      return;
+    }
     const c = map()?.getCenter();
     const here: Coordinate = c ? [c.lng, c.lat] : centerRef.current;
     ctrl.startFlyover(selectedPlace?.coordinates ?? here, () => setFlying(false));
     setFlying(true);
-  }, [controller, map, selectedPlace]);
+  }, [controller, map, selectedPlace, route]);
 
   const handleLookAround = useCallback(() => {
     const c = map()?.getCenter();
@@ -1059,13 +1176,18 @@ export function ClyraMapsWorkspace() {
   }, [map, selectedPlace]);
 
   // Re-derived on every render, which the 300ms simulation poll keeps fresh.
-  const upcoming = navActive ? engineRef.current?.nextManeuver() : undefined;
+  const upcoming = (() => {
+    if (!navActive || !route) return undefined;
+    const progress = flightRef.current?.progress ?? 0;
+    const step = route.steps.find((st) => (route.cumulativeDistances[st.geometryStartIndex] ?? 0) > progress + 1);
+    return step ? { step, distanceMeters: Math.max(0, (route.cumulativeDistances[step.geometryStartIndex] ?? 0) - progress) } : undefined;
+  })();
   // The left column hosts one card at a time: a place, or a route overview.
   const sidebarOpen = !navActive && (Boolean(selectedPlace) || Boolean(route || transit) || places.length > 0);
   const leftPanelOpen = !navActive && (Boolean(selectedPlace) || Boolean((route || transit) && !selectedPlace));
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-100">
+    <div className="mx-root relative h-full w-full overflow-hidden bg-[#eef0f3]" data-flying={flying} data-search={searchOpen}>
       {initialCenter ? (
         <MapView
           ref={mapViewRef}
@@ -1109,29 +1231,17 @@ export function ClyraMapsWorkspace() {
           downloadLabel={downloadLabel}
           flying={flying}
           rightInset={agentOpen ? 428 : 16}
-          leftInset={sidebarOpen ? 408 : 0}
+          leftInset={sidebarOpen ? 396 : 0}
           onFlyover={toggleFlyover}
         />
       ) : null}
 
       {!navActive && !selectedPlace && !route && places.length === 0 ? <MapsHome onSelect={focusPlace} /> : null}
 
-      <AnimatePresence>
-        {sidebarOpen ? (
-          <motion.div
-            key="sidebar-backdrop"
-            initial={{ x: -40, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: -40, opacity: 0 }}
-            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-            className="pointer-events-auto absolute bottom-0 left-0 top-0 z-10 w-[408px] max-w-[100vw] rounded-r-[20px] bg-white shadow-[2px_0_16px_rgba(15,23,42,.2)]"
-          />
-        ) : null}
-      </AnimatePresence>
-
       {!navActive ? (
         <>
           <MapsComposer
+            onOpenChange={setSearchOpen}
             onSubmit={submitFromSearch}
             onSearch={(t) => void submitSearch(t)}
             onSuggestionPick={focusPlace}
@@ -1140,18 +1250,12 @@ export function ClyraMapsWorkspace() {
             thinkingLabel={thinkingLabel}
           />
 
-          <div className="clyra-maps-chips pointer-events-auto absolute left-[412px] right-[84px] top-4 z-20 flex gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] max-md:hidden">
+          <div className="clyra-maps-chips pointer-events-auto absolute left-[412px] right-[72px] top-[19px] z-20 flex gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] max-md:hidden">
             {CATEGORY_CHIPS.map((chip) => {
               const Icon = CATEGORY_ICONS[chip.id];
-              const active = activeCategory === chip.id;
               return (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => handleCategoryClick(chip.id, chip.label)}
-                  className={"flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium shadow-[0_1px_6px_rgba(15,23,42,.25)] outline-none transition-all duration-150 hover:shadow-[0_2px_10px_rgba(15,23,42,.3)] active:scale-95 " + (active ? "bg-[#e8f0fe] text-[#1a5fb4]" : "bg-white text-slate-700")}
-                >
-                  {Icon ? <Icon className="h-4 w-4" /> : null}
+                <button key={chip.id} type="button" onClick={() => handleCategoryClick(chip.id, chip.label)} data-on={activeCategory === chip.id} className="mx-chip">
+                  {Icon ? <Icon /> : null}
                   {chip.label}
                 </button>
               );
@@ -1167,7 +1271,7 @@ export function ClyraMapsWorkspace() {
             const c = activeCategoryRef.current;
             if (c) void handleCategoryClick(c.id, c.label);
           }}
-          className="pointer-events-auto absolute left-[calc(50%+204px)] top-[68px] z-30 -translate-x-1/2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-[#2563eb] shadow-[0_6px_20px_rgba(15,23,42,.18)] hover:bg-slate-50"
+          className="mx-chip absolute left-[calc(50%+204px)] top-[72px] z-30 -translate-x-1/2 !text-[#0052cc]"
         >
           Search this area
         </button>
@@ -1201,11 +1305,9 @@ export function ClyraMapsWorkspace() {
             onDirections={(p) => void computeRoute(p)}
             onSelectNearby={focusPlace}
             onNearby={(p) => {
-              setAgentOpen(true);
               void runAgent(`What's worth visiting or eating within a short walk of ${p.name}?`);
             }}
             onAskClyra={(p) => {
-              setAgentOpen(true);
               void runAgent(`Tell me about ${p.name}: what it is, whether it's open now and its hours, what people say about it, and whether it's worth going.`);
             }}
           />
@@ -1252,6 +1354,16 @@ export function ClyraMapsWorkspace() {
             fetchAlongRoute={fetchAlongRoute}
             onAddStop={(p) => changeStops([...stopsRef.current, p])}
             onRemoveStop={(i) => changeStops(stopsRef.current.filter((_, idx) => idx !== i))}
+            onPlanWithClyra={() => {
+              void runAgent(`Plan a great trip to ${destinationName || "this destination"}: suggest worthwhile stops on the way, add them with plan_trip in a sensible order, and tell me opening hours that could clash.`);
+            }}
+            onMoveStop={(i, delta) => {
+              const next = [...stopsRef.current];
+              const to = i + delta;
+              if (to < 0 || to >= next.length) return;
+              [next[i], next[to]] = [next[to], next[i]];
+              changeStops(next);
+            }}
             onSelectItinerary={(id) => {
               setTransit((t) => (t ? { ...t, selectedId: id } : t));
               const it = transit?.itineraries.find((x) => x.id === id);
@@ -1274,6 +1386,7 @@ export function ClyraMapsWorkspace() {
               controller()?.setRouteLabels(alt, others);
             }}
             onGo={handleGo}
+            onFly={startFlight}
             onClose={clearRoute}
           />
         ) : null}
@@ -1303,17 +1416,12 @@ export function ClyraMapsWorkspace() {
           remainingDurationSeconds={simState?.remainingDurationSeconds ?? route?.durationSeconds ?? 0}
           paused={simState?.status === "paused"}
           speed={simState?.simulationSpeed ?? 1}
+          live={navKind === "live"}
+          liveStatus={navKind === "live" ? (liveFix?.waiting ? (liveFix.accuracy ? `Improving accuracy · ±${liveFix.accuracy} m` : "Finding your location…") : liveFix ? `GPS · ±${liveFix.accuracy} m` : undefined) : undefined}
           onTogglePause={handleTogglePause}
           onStop={handleStop}
-          onSpeedChange={(s) => engineRef.current?.setSpeed(s)}
-          muted={muted}
-          onToggleMute={() => {
-            const next = !muted;
-            setMuted(next);
-            if (voiceRef.current) voiceRef.current.muted = next;
-            if (next) window.speechSynthesis?.cancel();
-          }}
-        />
+          onSpeedChange={(sp) => { if (flightRef.current) flightRef.current.scale = sp; controller()?.setRouteFlyoverSpeed(sp); }}
+/>
       ) : null}
     </div>
   );

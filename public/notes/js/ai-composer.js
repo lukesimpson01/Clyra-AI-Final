@@ -293,7 +293,9 @@ export function renderMarkdown(source) {
   let list = null;
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
   let inCode = false;
-  for (const line of lines) {
+  const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => inline(cell.trim()));
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (/^```/.test(line.trim())) {
       closeList();
       out.push(inCode ? "</code></pre>" : "<pre><code>");
@@ -301,8 +303,38 @@ export function renderMarkdown(source) {
       continue;
     }
     if (inCode) { out.push(line); continue; }
+    /* A table: consecutive pipe rows, with the row above a --- separator as its header. */
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      closeList();
+      const rows = [];
+      while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) rows.push(lines[index++]);
+      index -= 1;
+      const separator = rows.findIndex((row) => /^\s*\|[\s:|-]+\|\s*$/.test(row));
+      const head = separator === 1 ? cells(rows[0]) : null;
+      const body = rows.filter((_, i) => i !== separator && !(head && i === 0)).map(cells);
+      out.push(`<div class="md-table"><table>${head ? `<thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead>` : ""}<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    /* A quote, or a callout written as > [!tip]. */
+    if (/^&gt;\s?/.test(line)) {
+      closeList();
+      const quoted = [];
+      while (index < lines.length && /^&gt;\s?/.test(lines[index])) quoted.push(lines[index++].replace(/^&gt;\s?/, ""));
+      index -= 1;
+      const kind = quoted[0]?.match(/^\[!(\w+)\]\s*/);
+      if (kind) quoted[0] = quoted[0].slice(kind[0].length);
+      out.push(`<blockquote${kind ? ` class="md-callout md-${kind[1].toLowerCase()}"` : ""}>${quoted.filter((q) => q.trim()).map((q) => `<p>${inline(q)}</p>`).join("")}</blockquote>`);
+      continue;
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { closeList(); out.push("<hr>"); continue; }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) { closeList(); out.push(`<h${Math.min(4, heading[1].length)}>${inline(heading[2])}</h${Math.min(4, heading[1].length)}>`); continue; }
+    const task = line.match(/^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/);
+    if (task) {
+      if (list !== "ul") { closeList(); out.push('<ul class="md-tasks">'); list = "ul"; }
+      out.push(`<li class="md-task${task[1].trim() ? " done" : ""}"><span class="md-check" aria-hidden="true"></span>${inline(task[2])}</li>`);
+      continue;
+    }
     const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
     if (bullet) {
       if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }

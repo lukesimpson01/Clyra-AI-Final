@@ -7,6 +7,7 @@
  * Nothing here fabricates activity — every entry originates from a real
  * harness event or a real API response.
  */
+import { isGitCommand, replayPlan } from "./activityModel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type VibeProject } from "./api";
 import { publishActivity, dismissActivity } from "../../lib/clyraHome";
@@ -27,6 +28,11 @@ export type ActionKind =
   | "preview"
   | "fetch"
   | "todo"
+  | "git"
+  | "browser"
+  | "image"
+  | "subagent"
+  | "mcp"
   | "permission"
   | "generic";
 
@@ -240,6 +246,7 @@ function cleanCommand(command: string) {
 
 function classifyCommand(command: string): ActionKind {
   const c = command.toLowerCase();
+  if (isGitCommand(command)) return "git";
   if (/\b(vitest|jest|pytest|playwright|cypress|mocha|ava|tap|npm\s+test|pnpm\s+test|yarn\s+test|cargo\s+test|go\s+test)\b/.test(c)) {
     return "test";
   }
@@ -270,7 +277,16 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
   if (/^(write|write_file|create|create_file|file_write)$/.test(lower)) return { kind: "create", target: stripProjectPrefix(file) };
   if (/^(edit|edit_file|apply_patch|applypatch|str_replace|str_replace_editor|replace|replace_in_file|patch|file_edit)$/.test(lower)) return { kind: "edit", target: stripProjectPrefix(file) };
   if (/^(delete|delete_file|rm|remove|remove_file)$/.test(lower)) return { kind: "delete", target: stripProjectPrefix(file) };
-  if (/^(read|read_file|read_image|open_file|view_file|cat|file_read)$/.test(lower)) return { kind: "read", target: stripProjectPrefix(file) };
+  if (lower === "read_image") return { kind: "image", target: stripProjectPrefix(file) };
+  if (/^(read|read_file|open_file|view_file|cat|file_read)$/.test(lower)) return { kind: "read", target: stripProjectPrefix(file) };
+  if (/^mcp__/.test(lower)) return { kind: "mcp", target: tool };
+  if (/^(subagent|send_message|interrupt_agent|list_agents|list_subagent_models|report)$/.test(lower)) {
+    return { kind: "subagent", target: firstString(input, "description", "prompt", "task", "message", "title", "summary", "report") };
+  }
+  if (/^browser_/.test(lower)) {
+    return { kind: "browser", target: firstString(input, "url", "selector", "text", "element", "target", "ref", "name") };
+  }
+  if (lower === "website_theme_scraper") return { kind: "fetch", target: String(input.url || query || tool) };
   if (/^(web_search|websearch|search_web|internet_search)$/.test(lower)) return { kind: "research", target: query || tool };
   if (/^(grep|glob|search|codebase_search|find_in_files|ripgrep)$/.test(lower)) return { kind: "search", target: query || stripProjectPrefix(file) || tool };
   if (/^(list|ls|tree|list_files|readdir|directory_list)$/.test(lower)) return { kind: "list", target: stripProjectPrefix(file || firstString(input, "dir", "directory", "cwd")) || "project structure" };
@@ -1141,7 +1157,7 @@ export function useClyraCode() {
       .filter(Boolean);
     const running = state.runState === "running" || state.runState === "starting";
     const fileActions = actionList.filter((a) => /^(edit|create|delete)$/.test(a.kind));
-    const commandActions = actionList.filter((a) => /^(command|build|check|test|preview)$/.test(a.kind));
+    const commandActions = actionList.filter((a) => /^(command|build|check|test|preview|git)$/.test(a.kind));
     const pendingPermissions = actionList.filter(
       (a) => a.kind === "permission" && a.status === "active",
     );
@@ -1175,18 +1191,9 @@ export function useClyraCode() {
       }
       effectiveDiffs = [...byFile.values()];
     }
-    // The plan is whichever todo action reported last — todowrite replaces the
-    // whole list on every call, so the newest one is the session's real plan.
-    const todoActions = actionList.filter((a) => a.kind === "todo" && a.todos?.length);
-    const lastPlan = todoActions.length ? todoActions[todoActions.length - 1].todos ?? null : null;
-    // A finished run has nothing left "in progress". Reconcile any rows the
-    // agent never marked done (a reopened completed task, or a run that ended
-    // between two todowrite calls) so a finished checklist reads finished
-    // instead of leaving a spinner turning forever.
-    const plan =
-      lastPlan && state.runState === "complete"
-        ? lastPlan.map((row) => (row.status === "completed" ? row : { ...row, status: "completed" }))
-        : lastPlan;
+    // The plan is rebuilt by replaying every todo_write in order (each replaces the list, and a step the agent had
+    // finished stays finished). Nothing is promoted to "completed" here: a step is done only when the agent said so.
+    const plan = replayPlan(actionList.filter((a) => a.kind === "todo" && a.todos?.length).map((a) => a.todos!));
     return { actionList, running, fileActions, commandActions, pendingPermissions, effectiveDiffs, plan };
   }, [state.log, state.actions, state.runState, state.diffs]);
 

@@ -22,7 +22,7 @@ async function openWorkspace(page: Page, width: number, height = 812) {
   await page.setViewportSize({ width, height });
   await page.goto(`${API}/`);
   await page.getByText("Vibe Coder", { exact: true }).first().click();
-  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("heading", { name: "What are we building today?" })).toBeVisible({ timeout: 60_000 });
 }
 
 async function documentFits(page: Page) {
