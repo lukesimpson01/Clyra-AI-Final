@@ -25,6 +25,43 @@ const PARTICLES = [
   { x: 61, y: 74, s: 1.2, d: -2.9, t: 4.4 }, { x: 67, y: 32, s: 1.4, d: -1.6, t: 3.6 }, { x: 73, y: 58, s: 1.1, d: -3.1, t: 5.0 },
   { x: 79, y: 26, s: 1.7, d: -0.7, t: 3.2 }, { x: 84, y: 66, s: 1.3, d: -2.4, t: 4.2 }, { x: 89, y: 42, s: 1.2, d: -1.1, t: 3.8 },
 ];
+/** Energy gathering toward the thumb: where each spark starts (px from the thumb) before it is pulled in. */
+const SPARKS = Array.from({ length: 16 }, (_, i) => {
+  const a = (i / 16) * Math.PI * 2 + (i % 2) * 0.35;
+  const r = 46 + ((i * 37) % 38);
+  return { sx: Math.round(Math.cos(a) * r), sy: Math.round(Math.sin(a) * r * 0.45), d: (i % 5) * 0.045 };
+});
+let chargeAudio: AudioContext | null = null;
+/** A quiet rising charge and a soft low hit: felt more than heard. Synthesised, nothing downloaded. */
+function playChargeSound() {
+  try {
+    chargeAudio = chargeAudio ?? new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const ctx = chargeAudio;
+    if (ctx.state === "suspended") void ctx.resume();
+    const t = ctx.currentTime + 0.01;
+    const out = ctx.createGain();
+    out.gain.value = 0.9;
+    out.connect(ctx.destination);
+    const tone = (type: OscillatorType, f0: number, f1: number, start: number, dur: number, peak: number) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, t + start);
+      osc.frequency.exponentialRampToValueAtTime(f1, t + start + dur);
+      g.gain.setValueAtTime(0.0001, t + start);
+      g.gain.exponentialRampToValueAtTime(peak, t + start + dur * 0.8);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + start + dur + 0.05);
+      osc.connect(g).connect(out);
+      osc.start(t + start);
+      osc.stop(t + start + dur + 0.1);
+    };
+    tone("sine", 180, 1180, 0, 0.62, 0.05);       // the charge rising
+    tone("triangle", 360, 2360, 0.05, 0.57, 0.018); // its shimmer an octave above
+    tone("sine", 92, 46, 0.64, 0.5, 0.11);         // the release: a low, short thump
+    tone("sine", 1318, 1318, 0.64, 0.38, 0.03);     // and a bright note on top
+  } catch { /* audio is a bonus */ }
+}
+
 const SETTLE = { type: "spring", stiffness: 560, damping: 44, mass: 0.7 } as const;
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
@@ -71,6 +108,14 @@ export function EffortSlider({
   const lastShown = useRef(index);
   const shownIndex = preview ?? index;
   const isMax = shownIndex === count - 1;
+  /* Entering the top level plays a charge-up and release (~1.3 s). The key restarts it each time you arrive. */
+  const [intro, setIntro] = useState(0);
+  const wasMax = useRef(isMax);
+  useEffect(() => {
+    if (isMax && !wasMax.current && open && !reduceMotion) { setIntro((n) => n + 1); playChargeSound(); }
+    if (!isMax) setIntro(0);
+    wasMax.current = isMax;
+  }, [isMax, open, reduceMotion]);
   const direction = shownIndex >= lastShown.current ? 1 : -1;
   useEffect(() => { lastShown.current = shownIndex; }, [shownIndex]);
 
@@ -100,6 +145,7 @@ export function EffortSlider({
 
   return (
     <div
+      data-effort-intro={intro ? intro : undefined}
       style={{
         ...(fixedAnchor
           ? { position: "fixed" as const, left: fixedAnchor.left, bottom: fixedAnchor.bottom }
@@ -146,7 +192,17 @@ export function EffortSlider({
         </button>
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 12, position: "relative" }}>
+        {intro ? (
+          <motion.div key={intro} aria-hidden className="clyra-effort-fx" style={{ x, top: INSET, left: INSET, width: THUMB, height: THUMB }}>
+            <span className="clyra-effort-fx__core" />
+            <span className="clyra-effort-fx__ring" />
+            <span className="clyra-effort-fx__ring clyra-effort-fx__ring--2" />
+            {SPARKS.map((sp, n) => (
+              <s key={n} style={{ ["--sx" as string]: `${sp.sx}px`, ["--sy" as string]: `${sp.sy}px`, animationDelay: `${sp.d}s` }} />
+            ))}
+          </motion.div>
+        ) : null}
         <div
           ref={trackRef}
           role="slider"
@@ -203,11 +259,12 @@ export function EffortSlider({
           className="clyra-effort-track"
           style={{ height: TRACK_H, borderRadius: TRACK_H / 2 }}
         >
-          <motion.div aria-hidden className={"clyra-effort-fill" + (isMax ? " clyra-effort-fill--max" : "")} style={{ width: fill, borderRadius: TRACK_H / 2, background: isMax ? undefined : accentColor }} />
+          <motion.div aria-hidden key={isMax ? `fill${intro}` : "fill"} className={"clyra-effort-fill" + (isMax ? " clyra-effort-fill--max" : "") + (intro ? " clyra-effort-fill--flood" : "")} style={{ width: fill, borderRadius: TRACK_H / 2, background: isMax ? undefined : accentColor }} />
           {/* At the top level the fill becomes a layered blue gradient with a soft light that travels the whole track,
               reverses and returns, forever (CSS only: it never touches React state). Tiny lights sit inside the gradient. */}
+          {intro ? <span key={`f${intro}`} aria-hidden className="clyra-effort-flash" /> : null}
           {isMax ? (
-            <span aria-hidden className="clyra-effort-lit" data-still={reduceMotion ? "true" : undefined}>
+            <span aria-hidden className="clyra-effort-lit" data-still={reduceMotion ? "true" : undefined} data-intro={intro ? "true" : undefined}>
               <i className="clyra-effort-shine" />
               {PARTICLES.map((p, n) => (
                 <b key={n} style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.s, height: p.s, ["--d" as string]: `${p.d}s`, ["--t" as string]: `${p.t}s` }} />
@@ -225,6 +282,7 @@ export function EffortSlider({
           <motion.div
             aria-hidden
             className="clyra-effort-thumb"
+            data-charge={intro ? intro : undefined}
             style={{ x, top: INSET, left: INSET, width: THUMB, height: THUMB }}
             animate={{ scale: pressed ? 1.08 : 1 }}
             transition={{ duration: 0.16, ease: EASE_OUT }}
@@ -273,6 +331,38 @@ export function EffortSlider({
         .clyra-effort-lit b { position: absolute; border-radius: 50%; background: #fff; opacity: .4; box-shadow: 0 0 3px rgba(185,222,255,.9); animation: clyra-effort-twinkle var(--t, 4s) ease-in-out var(--d, 0s) infinite; }
         @keyframes clyra-effort-twinkle { 0%, 100% { opacity: .28; transform: scale(.85); } 50% { opacity: .85; transform: scale(1.1); } }
         .clyra-effort-lit[data-still] b { animation: none; }
+
+        /* ── entering max: charge up, release ───────────────────────────────────────────────────────────────── */
+        .clyra-effort-fx { position: absolute; pointer-events: none; z-index: 4; }
+        .clyra-effort-fx > * { position: absolute; left: 50%; top: 50%; }
+        /* 0-650 ms: energy gathers in the thumb: three pulses, each stronger, a growing blue glow, sparks pulled in */
+        .clyra-effort-fx__core { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: radial-gradient(circle, rgba(185,222,255,.95) 0%, rgba(30,111,255,.6) 45%, rgba(30,111,255,0) 72%); opacity: 0; transform: scale(.3);
+          animation: clyra-effort-core 1.25s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-core { 0% { opacity: 0; transform: scale(.3); } 14% { opacity: .55; transform: scale(1.1); } 24% { opacity: .25; transform: scale(.8); } 38% { opacity: .75; transform: scale(1.5); } 48% { opacity: .35; transform: scale(1); } 60% { opacity: 1; transform: scale(2.1); } 74% { opacity: .9; transform: scale(3.4); } 100% { opacity: 0; transform: scale(5.2); } }
+        /* 650 ms: the release: two shock rings leave the thumb */
+        .clyra-effort-fx__ring { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 1.6px solid rgba(185,222,255,.95); box-shadow: 0 0 10px rgba(30,111,255,.65), inset 0 0 8px rgba(120,181,255,.5); opacity: 0; animation: clyra-effort-ring .7s cubic-bezier(.12,.7,.2,1) .62s both; }
+        .clyra-effort-fx__ring--2 { animation-delay: .78s; border-width: 1px; }
+        @keyframes clyra-effort-ring { 0% { opacity: .95; transform: scale(.5); } 100% { opacity: 0; transform: scale(5.6); } }
+        .clyra-effort-fx > s { width: 2.4px; height: 2.4px; margin: -1.2px 0 0 -1.2px; border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(185,222,255,1); opacity: 0; text-decoration: none; animation: clyra-effort-gather .64s cubic-bezier(.55,0,.85,.35) both; }
+        @keyframes clyra-effort-gather { 0% { opacity: 0; transform: translate(var(--sx), var(--sy)) scale(.6); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(0,0) scale(.2); } }
+        .clyra-effort-thumb[data-charge] { animation: clyra-effort-thumb 1.05s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-thumb { 0% { box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); } 20%,45% { box-shadow: 0 0 0 3px rgba(30,111,255,.25), 0 0 14px rgba(30,111,255,.7); } 32% { box-shadow: 0 0 0 1px rgba(30,111,255,.2), 0 0 6px rgba(30,111,255,.4); } 62% { box-shadow: 0 0 0 7px rgba(120,181,255,.45), 0 0 30px rgba(120,181,255,1); } 100% { box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); } }
+        /* 650 ms: a bright band sweeps the whole track and the gradient floods in behind it */
+        .clyra-effort-flash { position: absolute; top: -30%; bottom: -30%; left: 0; width: 120px; z-index: 3; pointer-events: none; opacity: 0; will-change: transform, opacity;
+          background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(185,222,255,.5) 38%, rgba(255,255,255,.98) 50%, rgba(185,222,255,.5) 62%, rgba(255,255,255,0) 100%);
+          animation: clyra-effort-flash .55s cubic-bezier(.55,0,.35,1) .64s both; }
+        @keyframes clyra-effort-flash { 0% { opacity: 0; transform: translate3d(-120px,0,0); } 12% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translate3d(calc(var(--track-w, 220px) + 20px),0,0); } }
+        .clyra-effort-fill--flood { animation: clyra-effort-flood 1.25s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-flood { 0% { filter: saturate(.4) brightness(.9); clip-path: inset(0 100% 0 0); } 52% { filter: saturate(.7) brightness(1); clip-path: inset(0 100% 0 0); } 62% { clip-path: inset(0 100% 0 0); filter: saturate(1.4) brightness(1.6); } 100% { clip-path: inset(0 0 0 0); filter: saturate(1) brightness(1); } }
+        /* the light and the tiny lights wait for the release, then carry on forever */
+        .clyra-effort-lit[data-intro] { animation: clyra-effort-lit-show .01s linear 1.15s both; }
+        @keyframes clyra-effort-lit-show { from { opacity: 0; } to { opacity: 1; } }
+        /* the whole popover takes the glow, then lets go */
+        [data-effort-intro] { animation: clyra-effort-glow 1.9s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-glow { 0%,40% { box-shadow: 0 0 0 1px rgba(16,18,24,.07), 0 8px 24px -10px rgba(16,18,24,.18); } 52% { box-shadow: 0 0 0 1px rgba(30,111,255,.5), 0 0 46px rgba(30,111,255,.55), 0 8px 24px -10px rgba(16,18,24,.18); } 100% { box-shadow: 0 0 0 1px rgba(16,18,24,.07), 0 8px 24px -10px rgba(16,18,24,.18); } }
+        [data-effort-intro] .clyra-effort-label[data-on] { animation: clyra-effort-label 1.2s cubic-bezier(.3,0,.2,1) .6s both; }
+        @keyframes clyra-effort-label { 0% { text-shadow: 0 0 0 rgba(30,111,255,0); } 30% { text-shadow: 0 0 10px rgba(30,111,255,.85); } 100% { text-shadow: 0 0 0 rgba(30,111,255,0); } }
+        @media (prefers-reduced-motion: reduce) { [data-effort-intro], .clyra-effort-fx, .clyra-effort-flash, .clyra-effort-thumb[data-charge], .clyra-effort-fill--flood, .clyra-effort-lit[data-intro] { animation: none !important; } .clyra-effort-fx, .clyra-effort-flash { display: none; } }
         .clyra-effort-reset { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 0; border-radius: 11px; background: transparent; color: #A0A0A0; cursor: pointer; transition: color .15s ease, background-color .15s ease, transform .3s cubic-bezier(.22,1,.36,1); }
         .clyra-effort-reset:hover { background: rgba(16,18,24,.05); color: #5D5D5D; transform: rotate(-40deg); }
       `}</style>
