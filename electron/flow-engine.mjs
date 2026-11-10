@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { cpus, tmpdir, constants as osConstants, setPriority } from "node:os";
 import path from "node:path";
 
@@ -49,10 +49,20 @@ export class FlowEngine {
     this.buffer = "";
     this.nextId = 0;
     this.idleTimer = null;
+    this.scratch = null;
+    this.runtime = undefined;
   }
 
+  /** Looked up once: this is asked on every hotkey press, and the answer only changes when the engine is installed. */
   get available() {
-    return Boolean(resolveSpeechRuntime(this.projectRoot));
+    if (!this.runtime) this.runtime = resolveSpeechRuntime(this.projectRoot) || undefined;
+    return Boolean(this.runtime);
+  }
+
+  /** One scratch folder for the life of the worker (a new folder per utterance cost two extra disk round trips). */
+  #scratchDir() {
+    if (!this.scratch) this.scratch = mkdtemp(path.join(tmpdir(), "clyra-flow-")).catch((error) => { this.scratch = null; throw error; });
+    return this.scratch;
   }
 
   /** Start (or reuse) the worker. Resolves once the model is loaded and primed. */
@@ -107,14 +117,13 @@ export class FlowEngine {
     await this.warm();
     const child = this.child;
     if (!child) throw new Error("The speech engine is unavailable.");
-    const directory = await mkdtemp(path.join(tmpdir(), "clyra-flow-"));
-    const wav = path.join(directory, "utterance.wav");
+    const id = String(++this.nextId);
+    const wav = path.join(await this.#scratchDir(), `utterance-${id}.wav`);
     try {
       // Speech models clip or mishear a word that starts at sample 0 ("Hi" -> "Aye"): give every clip a little silence
       // on both sides, which is exactly what a phrase cut out of a longer recording lacks.
       const pad = (seconds) => Buffer.alloc(Math.round(sampleRate * seconds) * 2);
       await writeFile(wav, pcmToWav(Buffer.concat([pad(0.4), pcm, pad(0.3)]), sampleRate));
-      const id = String(++this.nextId);
       const result = new Promise((resolve, reject) => {
         const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Transcription timed out.")); this.stop(); }, REQUEST_TIMEOUT_MS);
         this.pending.set(id, { resolve, reject, timer });
@@ -123,7 +132,7 @@ export class FlowEngine {
       return await result;
     } finally {
       this.#touch();
-      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      await unlink(wav).catch(() => undefined);
     }
   }
 
@@ -139,5 +148,8 @@ export class FlowEngine {
     this.child = null;
     this.ready = null;
     try { child?.stdin.end(); child?.kill(); } catch { /* already gone */ }
+    const scratch = this.scratch;
+    this.scratch = null;
+    if (scratch) scratch.then((directory) => rm(directory, { recursive: true, force: true })).catch(() => undefined);
   }
 }

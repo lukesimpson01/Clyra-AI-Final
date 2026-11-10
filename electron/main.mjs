@@ -163,6 +163,22 @@ function syncAnywhereTray() {
             click: () => { dictationManager?.applyHotkey(preset.id); rebuildTrayMenu?.(); },
           })),
         },
+        {
+          // When a dictation ends on its own after you stop talking. "Off" = only the hotkey or the stop button ends it.
+          label: "Finish when I stop talking",
+          submenu: (() => {
+            const flow = dictationManager?.readFlowSettings() || { autoStop: true, pace: "balanced" };
+            const current = flow.autoStop ? flow.pace : "off";
+            const set = (value) => () => { dictationManager?.writeFlowSettings(value === "off" ? { autoStop: false } : { autoStop: true, pace: value }); rebuildTrayMenu?.(); };
+            return [
+              { label: "Quickly", type: "radio", checked: current === "fast", click: set("fast") },
+              { label: "Balanced", type: "radio", checked: current === "balanced", click: set("balanced") },
+              { label: "Patiently (longer thinking pauses)", type: "radio", checked: current === "patient", click: set("patient") },
+              { type: "separator" },
+              { label: "Off", type: "radio", checked: current === "off", click: set("off") },
+            ];
+          })(),
+        },
         { label: "Reset dictation", click: () => dictationManager?.forceReset() },
         { type: "separator" },
         {

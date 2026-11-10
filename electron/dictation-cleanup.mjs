@@ -181,6 +181,25 @@ function capitalize(text) {
   out = out.replace(/\bi\b(?!['’][a-z]{0})/g, "I");
   return out;
 }
+// Speech models sometimes title-case ordinary words mid-sentence ("Hi, How are You?"). Only a closed list of
+// function words that are never names is lowered, never at the start of a sentence or line, and never when the
+// next word is a capitalised name ("The Hobbit", "Of Mice And Men"), which is how a title or proper noun begins.
+const NEVER_CAPITAL = new Set("how you are is was were the a an and or but to of in on at for with what when where why who do does did could would should we they he she it my your our their this that these those not have has had so if then than as by from about".split(" "));
+function fixStrayCapitals(text) {
+  const tokens = text.split(/(\s+)/);
+  const bare = (token) => String(token || "").replace(/^["'(\[]+|[,.;:!?"')\]]+$/g, "");
+  for (let i = 2; i < tokens.length; i += 2) {
+    const token = tokens[i];
+    const word = bare(token);
+    if (!/^[A-Z][a-z]+$/.test(word) || !NEVER_CAPITAL.has(word.toLowerCase())) continue;
+    if (/[.!?…:]["')\]]?$/.test(tokens[i - 2] || "") || /\n/.test(tokens[i - 1]) || /^["'(\[]/.test(token)) continue;
+    const next = bare(tokens[i + 2]);
+    if (/^[A-Z]/.test(next) && !NEVER_CAPITAL.has(next.toLowerCase()) && next !== "I") continue;
+    const at = token.indexOf(word);
+    tokens[i] = token.slice(0, at) + word[0].toLowerCase() + token.slice(at + 1);
+  }
+  return tokens.join("");
+}
 function ensureTerminalPunctuation(text, kind) {
   if (!text || /[.!?…:)\]"'`\n-]$/.test(text)) return text;
   const words = text.split(/\s+/).length;
@@ -203,6 +222,7 @@ function cleanDictation(input, options = {}) {
   text = applyDictionary(text, options.dictionary || []);
   text = tidySpacing(text);
   if (kind !== "code") {
+    text = fixStrayCapitals(text);
     text = capitalize(text);
     text = ensureTerminalPunctuation(text, kind);
   }

@@ -38,4 +38,16 @@ assert.match(manager, /retirePill\(\)/);
 assert.match(manager, /prepareSpare\(\)/);
 assert.match(manager, /presentAndInsert\(/);
 assert.doesNotMatch(manager, /current\.hide\(\)/);
-console.log("flow-native-contract-tests: 19 assertions passed");
+// Voice detection and end-of-speech run on the audio itself in the main process (see flow-endpoint-tests).
+const [session, capture] = await Promise.all([
+  readFile(new URL("../electron/flow-session.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../electron/flow-capture.html", import.meta.url), "utf8"),
+]);
+assert.match(manager, /new FlowSession\(/);
+assert.match(manager, /native\.onPcm = /);
+assert.match(session, /requiredSilenceMs\(/);
+assert.match(capture, /AudioWorkletNode/);
+assert.doesNotMatch(native, /Buffer\.concat/);   // reading the live audio must not re-join the whole recording
+// The paste is issued before the edit animation, never after it.
+assert.ok(manager.indexOf("startPaste();") < manager.indexOf('phase: "refining"'));
+console.log("flow-native-contract-tests: 25 assertions passed");

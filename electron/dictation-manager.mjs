@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { cleanDictation, looksLikeInstruction } from "./dictation-cleanup.mjs";
 import { hasEdits, wordDiff } from "./word-diff.mjs";
+import { FlowSession, joinPhrases } from "./flow-session.mjs";
 import { createTapMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_PRESETS, DEFAULT_HOTKEY } from "./dictation-hotkey.mjs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
 
@@ -148,21 +149,7 @@ function isClyraProcessName(name) {
   return /^clyra$/i.test(String(name || "").trim());
 }
 
-// Phrases are transcribed separately (so live words and the final text are fast); a cut can land mid-sentence, and the model
-// then ends the piece with a full stop ("...lunch with. Priya..."). Drop that stop when the piece ends on a connecting word.
-const OPEN_ENDINGS = new Set("a an the and or but so to of in on at for with from by as that which who whom whose if than then because while when where into onto over under about between through during before after is are was were be been am will would can could should may might do does did have has had my your his her its our their this these those not no".split(" "));
-export function joinPhrases(pieces) {
-  const out = [];
-  pieces.filter(Boolean).forEach((piece, index, all) => {
-    let text = String(piece).trim();
-    if (index < all.length - 1) {
-      const last = text.replace(/[.,?!;:]+$/, "").split(/\s+/).pop()?.toLowerCase() || "";
-      if (OPEN_ENDINGS.has(last)) text = text.replace(/[.,?!;:]+$/, "");
-    }
-    out.push(text);
-  });
-  return out.join(" ").replace(/\s+/g, " ").trim();
-}
+export { joinPhrases };
 
 export class DictationManager {
   constructor({ uiContents, preloadPath, pillPath, native = null, engine = null, settingsPath = "", cleanupViaService = null, optimiseViaService = null }) {
@@ -178,46 +165,12 @@ export class DictationManager {
     this.rendererReady = false;
     this.nativeActive = false;
     this.nativeStartPromise = null;
-    if (this.native) this.native.onLevel = (level) => {
-      if (!this.nativeActive || this.phase !== "listening") return;
-      const now = Date.now();
-      // The pill animates the level itself; a few updates a second are plenty and keep IPC and repaints light.
-      if (now - (this.lastLevelPush || 0) >= 90) { this.lastLevelPush = now; this.setState({ level: Math.max(0, Math.min(1, level)) }); }
-      // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
-      // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
-      // More sensitive than before: the first soft word of a sentence must count as speech, or it gets clipped.
-      const threshold = Math.max(0.03, this.noiseFloor * 1.9 + 0.016);
-      const bytes = this.native.bytes;
-      // The start cue plays as the microphone opens. Its sound must neither count as speech nor end up in the
-      // first phrase, or the model "hears" a word that was never said.
-      if (now < this.cueGuardUntil) return;
-      if (level >= threshold) {
-        if (!this.heardSpeech) this.speechStartedAt = now;
-        if (!this.segHasSpeech) {
-          this.segHasSpeech = true;
-          this.segSpeechAt = now;
-          // A short pre-roll keeps the first syllable, but never reaches back into the start cue.
-          const preRoll = 16_000 * 2 * (this.segments.length ? 0.4 : 0.6);
-          this.segStart = Math.max(this.segStart, this.cueEndBytes || 0, bytes - preRoll);
-        }
-        this.heardSpeech = true;
-        this.lastSpeechAt = now;
-        // Very long unbroken speech: commit at the next natural dip so partials stay fast.
-        if (now - this.segSpeechAt >= 8_000) this.commitSegment();
-        return;
-      }
-      this.noiseFloor = level < this.noiseFloor ? level : this.noiseFloor + (level - this.noiseFloor) * 0.04;
-      // A short pause closes the current phrase: it is transcribed once, in the background, and kept.
-      // A phrase under ~0.9 s ("So", "Hey Sam") is kept open and joined to what follows: decoded alone it has no
-      // context and is the most common source of a misheard opening word.
-      if (this.segHasSpeech && now - this.lastSpeechAt >= 420 && this.lastSpeechAt - this.segSpeechAt >= 900) this.commitSegment();
-      else if (this.segHasSpeech && now - this.segSpeechAt >= 4_500 && level < threshold * 2.2) this.commitSegment();
-      if (!this.autoStop) return;
-      // Only a long silence ends a session on its own: pausing for a second or two to think must never cut you off
-      // (tap again to finish sooner). Words are already being transcribed phrase by phrase during the pause.
-      if (this.heardSpeech && now - this.lastSpeechAt >= 8_000 && this.lastSpeechAt - this.speechStartedAt >= 250) void this.nativeFinish();
-      else if (!this.heardSpeech && now - this.nativeStartedAt >= 12_000) this.forceReset("No speech was detected.");
-    };
+    this.session = null;
+    if (this.native) {
+      // Every captured chunk goes straight to the session, which does its own voice detection on the audio.
+      this.native.onPcm = (chunk) => { if (this.nativeActive && this.phase === "listening") this.session?.feed(chunk); };
+      this.native.onFull = () => { if (this.nativeActive) void this.nativeFinish(); };
+    }
     this.preloadPath = preloadPath;
     this.pillPath = pillPath;
     this.window = null;
@@ -311,9 +264,12 @@ export class DictationManager {
         level: saved.level === "raw" || saved.level === "polished" ? saved.level : "light",
         dictionary: Array.isArray(saved.dictionary) ? saved.dictionary.map(String).filter(Boolean).slice(0, 80) : [],
         hotkey: typeof saved.hotkey === "string" ? saved.hotkey : DEFAULT_HOTKEY,
+        // Sessions end on their own when you stop talking; "pace" is how patient that is.
+        autoStop: saved.autoStop !== false,
+        pace: saved.pace === "fast" || saved.pace === "patient" ? saved.pace : "balanced",
       };
     } catch {
-      return { level: "light", dictionary: [], hotkey: DEFAULT_HOTKEY };
+      return { level: "light", dictionary: [], hotkey: DEFAULT_HOTKEY, autoStop: true, pace: "balanced" };
     }
   }
 
@@ -324,7 +280,7 @@ export class DictationManager {
       let existing = {};
       try { existing = JSON.parse(readFileSync(this.settingsPath, "utf8")); } catch { /* first write */ }
       const merged = { ...existing };
-      for (const key of ["level", "dictionary", "hotkey"]) if (settings?.[key] !== undefined) merged[key] = settings[key];
+      for (const key of ["level", "dictionary", "hotkey", "autoStop", "pace"]) if (settings?.[key] !== undefined) merged[key] = settings[key];
       writeFileSync(this.settingsPath, JSON.stringify(merged), "utf8");
     } catch { /* settings are best-effort */ }
   }
@@ -333,17 +289,8 @@ export class DictationManager {
     this.nativeActive = true;
     const startedAt = Date.now();
     this.nativeStartedAt = startedAt;
-    this.heardSpeech = false;
-    this.lastSpeechAt = startedAt;
-    this.noiseFloor = 0.008;
-    this.segments = [];
-    this.segStart = 0;
-    this.segHasSpeech = false;
-    this.segGen = 0;
-    this.partialText = "";
-    // No start beep any more (it leaked into the mic and swallowed the first words), so nothing is skipped.
-    this.cueGuardUntil = 0;
-    this.cueEndBytes = 0;
+    this.session?.close();
+    this.session = null;
     this.nativeStartPromise = this.native.start();
     // Warm the speech model while the user is already talking.
     this.engine?.warm().catch(() => undefined);
@@ -356,89 +303,70 @@ export class DictationManager {
     }
     if (activationId !== this.activationId || !this.nativeActive) { this.native.cancel(); this.nativeActive = false; return; }
     console.log(`[flow] microphone live in ${Date.now() - startedAt}ms`);
-    this.setState({ phase: "listening", detail: "Listening", level: 0, partial: "" });
-    this.startPartials(activationId);
+    const { autoStop, pace } = this.readFlowSettings();
+    const session = new FlowSession({
+      audio: (start, end) => this.native.slice(start, end),
+      transcribe: (pcm) => this.engine.transcribe(pcm),
+      autoStop: this.autoStop && autoStop,
+      pace,
+      onLive: (text) => { if (this.session === session && this.nativeActive && this.phase === "listening" && text !== this.payload.partial) this.setState({ partial: text }); },
+      onMeter: (meter) => { if (this.session === session) this.pushMeter(meter); },
+      onEnd: (reason) => {
+        if (this.session !== session || !this.nativeActive) return;
+        console.log(`[flow] auto-stop: ${reason} after ${Math.round(session.timeMs)}ms of audio (needed ${session.stats.requiredMs}ms of silence)`);
+        if (reason === "no-speech") this.forceReset("Didn't hear anything. Tap the hotkey and speak.");
+        else void this.nativeFinish();
+      },
+    });
+    this.session = session;
+    this.setState({ phase: "listening", detail: "Listening", level: 0, ending: 0, partial: "" });
+    // The audio recorded between key-down and now (the pre-roll) is analysed first, so byte offsets line up.
+    const preRoll = this.native.slice(0);
+    if (preRoll.length) session.feed(preRoll);
     if (this.pendingStop) { this.pendingStop = false; void this.nativeFinish(); }
   }
 
-  /** Close the current phrase and transcribe it once, in the background (final-quality text, kept). */
-  commitSegment() {
-    if (!this.segHasSpeech || !this.nativeActive) return;
-    const end = this.native.bytes - (this.native.bytes % 2);
-    const pcm = this.native.slice(this.segStart, end);
-    this.segStart = end;
-    this.segHasSpeech = false;
-    this.segGen += 1;
-    this.partialText = "";
-    const segment = { text: null };
-    segment.promise = pcm.length >= 16_000 * 2 * 0.25
-      ? this.engine.transcribe(pcm).then((text) => { segment.text = text || ""; this.pushLive(); return segment.text; }).catch(() => { segment.text = ""; return ""; })
-      : Promise.resolve((segment.text = ""));
-    this.segments.push(segment);
-  }
-
-  /** Everything transcribed so far (finished phrases + the phrase in progress) as one string. */
-  liveText() {
-    const parts = [];
-    for (const segment of this.segments) { if (segment.text === null) break; if (segment.text) parts.push(segment.text); }
-    if (this.partialText && this.segments.every((segment) => segment.text !== null)) {
-      // The word being spoken right now is cut off mid-sound and is usually decoded wrongly; show only the settled words.
-      const settled = this.partialText.split(" ");
-      if (settled.length > 1) settled.pop();
-      parts.push(settled.join(" "));
-    }
-    return joinPhrases(parts);
-  }
-
-  pushLive() {
+  /**
+   * Loudness and the auto-stop countdown, a few times a second. The floating pill gets them on their own light
+   * channel (it animates between updates itself), so nothing re-renders the transcript just to move a waveform.
+   */
+  pushMeter({ level, ending }) {
     if (!this.nativeActive || this.phase !== "listening") return;
-    const text = this.liveText();
-    if (text && text !== this.payload.partial) this.setState({ partial: text });
-  }
-
-  /** Live words while you talk: only the phrase in progress is re-transcribed, so each update is fast. */
-  startPartials(activationId) {
-    clearInterval(this.partialTimer);
-    let busy = false;
-    let lastBytes = 0;
-    this.partialTimer = setInterval(async () => {
-      if (busy || activationId !== this.activationId || !this.nativeActive || this.phase !== "listening" || !this.segHasSpeech) return;
-      const pcm = this.native.slice(this.segStart);
-      // Live words wait for ~0.6 s of a phrase: shorter clips are mostly guesses that flash and then change.
-      if (pcm.length < 16_000 * 2 * 0.8 || pcm.length - lastBytes < 16_000 * 2 * 0.3) return;
-      busy = true;
-      lastBytes = pcm.length;
-      const gen = this.segGen;
-      try {
-        const text = await this.engine.transcribe(pcm);
-        if (gen === this.segGen && activationId === this.activationId && this.nativeActive && text) { this.partialText = text; this.pushLive(); }
-      } catch { /* partials are best-effort; the final transcript is what counts */ } finally { busy = false; if (gen !== this.segGen) lastBytes = 0; }
-    }, 250);
+    const now = Date.now();
+    const urgent = (ending > 0) !== ((this.lastMeter?.ending || 0) > 0);
+    if (!urgent && now - (this.lastMeterAt || 0) < 66) return;
+    this.lastMeterAt = now;
+    this.lastMeter = { level: Math.round(level * 1000) / 1000, ending: Math.round(ending * 1000) / 1000 };
+    this.payload.level = this.lastMeter.level;
+    this.payload.ending = this.lastMeter.ending;
+    if (this.inline) { this.emitUi("dictation:state", this.payload); return; }
+    if (this.window && !this.window.isDestroyed()) this.window.webContents.send("dictation:pill-meter", this.lastMeter);
   }
 
   async nativeFinish() {
     if (!this.nativeActive) return;
     this.nativeActive = false;
     this.handsFree = false;
-    clearInterval(this.partialTimer);
     const activationId = this.activationId;
-    this.setState({ phase: "processing", detail: "Thinking", level: 0 });
+    const session = this.session;
+    const stopAt = Date.now();
+    this.setState({ phase: "processing", detail: "Transcribing", level: 0, ending: 0 });
     try {
       await this.nativeStartPromise?.catch(() => undefined);
       const pcm = await this.native.stop();
-      if (pcm.length < 16_000 * 2 * 0.25) throw new Error("No speech was detected.");
+      if (pcm.length < 16_000 * 2 * 0.25) throw new Error("Didn't hear anything. Tap the hotkey and speak.");
       let raw = "";
-      if (this.segments.length || this.segHasSpeech) {
-        // Finished phrases were transcribed while you spoke; only the last phrase is left to decode.
-        const tail = this.segHasSpeech && pcm.length - this.segStart >= 16_000 * 2 * 0.25 ? this.engine.transcribe(pcm.subarray(this.segStart - (this.segStart % 2))).catch(() => "") : Promise.resolve("");
-        const done = await Promise.all(this.segments.map((segment) => segment.promise));
-        raw = joinPhrases([...done, await tail]);
+      if (session) {
+        // The capture store is recycled by the next recording: from here the session reads the finished take.
+        session.audio = (start, end = pcm.length) => pcm.subarray(Math.max(0, start - (start % 2)), Math.min(pcm.length, end));
+        raw = await session.finish(pcm.length);
+        console.log(`[flow] transcript ready ${Date.now() - stopAt}ms after stop (${session.stats.decodes} decodes${session.stats.speculativeHits ? ", final text was already decoded during the pause" : ""})`);
+      } else {
+        raw = await this.engine.transcribe(pcm);
       }
-      // Quiet speaker or no phrase boundaries detected: fall back to decoding the whole recording.
-      if (!raw) raw = await this.engine.transcribe(this.cueEndBytes && pcm.length > this.cueEndBytes + 16_000 * 2 * 0.3 ? pcm.subarray(this.cueEndBytes - (this.cueEndBytes % 2)) : pcm);
       if (activationId !== this.activationId) return;
-      if (!raw) throw new Error("No speech was detected.");
-      this.setState({ phase: "processing", detail: "Thinking", partial: raw });
+      if (!raw) throw new Error("Didn't catch that. Tap the hotkey and try again.");
+      this.setState({ phase: "processing", detail: "Transcribing", partial: raw });
       const { level, dictionary } = this.readFlowSettings();
       const application = this.target?.application || "";
       // Text is selected: speech that sounds like an instruction ("make it sound smarter") is applied to
@@ -452,7 +380,7 @@ export class DictationManager {
         const rewrittenResult = await this.presentAndInsert({ raw: selected, text: rewritten, target: this.target || {} });
         const clipOnly = rewrittenResult?.method === "clipboard-only";
         this.setState({ phase: "done", detail: String(rewrittenResult?.note || "Rewritten"), clipboard: clipOnly, resultText: rewritten });
-        setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : clipOnly ? 4_200 : 2_600);
+        setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : clipOnly ? 4_200 : 1_500);
         return;
       }
       if (selected) this.setState({ edit: "replace" });
@@ -467,11 +395,13 @@ export class DictationManager {
       const result = await this.presentAndInsert({ raw, text, target: this.target || {} });
       const copiedOnly = result?.method === "clipboard-only";
       this.setState({ phase: "done", detail: String(result?.note || "Inserted"), clipboard: copiedOnly, resultText: text });
-      setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : copiedOnly ? 4_200 : 2_600);
+      setTimeout(() => { if (activationId === this.activationId && this.phase === "done") this.setState({ phase: "idle", detail: "", clipboard: false }); }, this.inline ? 700 : copiedOnly ? 4_200 : 1_500);
     } catch (error) {
       if (activationId !== this.activationId) return;
       const message = (error instanceof Error ? error.message : String(error || "")).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
       this.setState({ phase: "error", detail: message || "Clyra dictation failed." });
+    } finally {
+      if (this.session === session) this.session = null;
     }
   }
 
@@ -987,6 +917,8 @@ export class DictationManager {
   forceReset(message = "") {
     this.activationId += 1;
     if (this.nativeActive) { this.native?.cancel(); this.nativeActive = false; }
+    this.session?.close();
+    this.session = null;
     this.emitUi("dictation:trigger", { type: "cancel" });
     this.machine.reset();
     this.fellBack = false;
@@ -1122,6 +1054,8 @@ export class DictationManager {
   cancel() {
     this.activationId += 1;
     if (this.nativeActive) { this.native?.cancel(); this.nativeActive = false; }
+    this.session?.close();
+    this.session = null;
     this.emitUi("dictation:trigger", { type: "cancel" });
     this.target = null;
     this.fellBack = false;
@@ -1155,7 +1089,6 @@ export class DictationManager {
     const live = () => activation === this.activationId && this.phase !== "idle";
     const diff = raw && raw.trim() !== text.trim() ? wordDiff(raw, text) : null;
     const display = text.length > 420 ? `${text.slice(0, 420).trimEnd()}…` : text;
-    // The paste is released when the final text starts to sweep in (right away if there are no edits to show).
     const probe = focusedElementKind();
     let result = null;
     let failure = null;
@@ -1168,17 +1101,17 @@ export class DictationManager {
       const end = Date.now() + ms;
       while (Date.now() < end) { if (failure) throw failure; if (!live()) throw new Error("Cancelled."); await sleep(40); }
     };
-    // Long text glides inside the fixed-height pill; give it time to be read.
-    const overflowMs = Math.min(3_000, Math.max(0, Math.ceil(display.length / 60) - 2) * 800);
+    // The text goes into the app FIRST; the pill then shows what was heard and changed. (The paste used to wait
+    // for the whole edit animation, which made a corrected sentence arrive seconds late.)
+    startPaste();
+    const overflowMs = Math.min(1_600, Math.max(0, Math.ceil(display.length / 60) - 2) * 450);
     if (hasEdits(diff) && process.env.CLYRA_FLOW_NO_PREVIEW !== "1") {
       const count = (type) => diff.filter((segment) => segment.type === type).reduce((n, segment) => n + String(segment.text).split(/\s+/).filter(Boolean).length, 0);
       this.setState({ phase: "refining", detail: "", diff, finalText: display });
-      // Long enough for every removed word to be crossed out and every new word to appear, plus time to read it.
-      await settle(Math.min(6_000, 650 + count("del") * 110 + 280 + count("add") * 140 + 1_200 + overflowMs));
+      await settle(Math.min(2_600, 420 + count("del") * 60 + count("add") * 80 + 700));
     }
     this.setState({ phase: "revealing", detail: "", diff: null, finalText: display });
-    startPaste();   // the paste lands as the final text sweeps in
-    await settle(1_100 + overflowMs);
+    await settle(700 + overflowMs);
     await insertion;
     if (failure) throw failure;
     console.log(`[flow] insert result: ${result?.method || "ok"}${result?.note ? ` (${result.note})` : ""}`);

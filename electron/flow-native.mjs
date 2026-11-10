@@ -13,9 +13,13 @@ export class FlowNative {
     this.log = log;
     this.window = null;
     this.windowReady = null;
-    this.chunks = [];
+    // One growing buffer rather than a list of pieces: reading the audio so far (for live words) no longer
+    // re-joins the whole recording every time.
+    this.store = Buffer.allocUnsafe(16_000 * 2 * 20);
     this.bytes = 0;
     this.onLevel = null;
+    this.onPcm = null;   // (chunk: Buffer) => void, called after the chunk is stored, only while recording
+    this.onFull = null;  // the recording hit its length limit
     this.liveWaiter = null;
     this.stopWaiter = null;
     this.maxBytes = 16_000 * 2 * 60 * 5; // five minutes of 16 kHz mono PCM16
@@ -27,15 +31,17 @@ export class FlowNative {
     this.onStopped = (event) => { if (mine(event)) this.stopWaiter?.resolve(); };
     this.onLevelMsg = (event, value) => { if (mine(event)) this.onLevel?.(Number(value) || 0); };
     this.onChunk = (event, buffer) => {
-      if (!mine(event) || !(this.capturing || this.warming) || this.bytes > this.maxBytes) return;
+      if (!mine(event) || !(this.capturing || this.warming)) return;
+      if (this.bytes >= this.maxBytes) { if (this.capturing && !this.full) { this.full = true; this.onFull?.(); } return; }
       const chunk = Buffer.from(buffer);
-      this.chunks.push(chunk);
-      this.bytes += chunk.length;
+      this.append(chunk);
       // Pre-warmed but not recording yet: keep only the last ~1.2 s as a pre-roll for the first words.
       if (!this.capturing) {
         const keep = 16_000 * 2 * 1.2;
-        while (this.chunks.length > 1 && this.bytes - this.chunks[0].length >= keep) this.bytes -= this.chunks.shift().length;
+        if (this.bytes > keep * 2) { this.store.copyWithin(0, this.bytes - keep, this.bytes); this.bytes = keep; }
+        return;
       }
+      if (this.live) this.onPcm?.(chunk);
     };
     ipcMain.on("flow:ready", this.onReady);
     ipcMain.on("flow:live", this.onLive);
@@ -45,6 +51,18 @@ export class FlowNative {
     ipcMain.on("flow:chunk", this.onChunk);
     this.capturing = false;
     this.warming = false;
+    this.live = false;
+    this.full = false;
+  }
+
+  append(chunk) {
+    if (this.bytes + chunk.length > this.store.length) {
+      const grown = Buffer.allocUnsafe(Math.max(this.store.length * 2, this.bytes + chunk.length));
+      this.store.copy(grown, 0, 0, this.bytes);
+      this.store = grown;
+    }
+    chunk.copy(this.store, this.bytes);
+    this.bytes += chunk.length;
   }
 
   /** Create the hidden window (idempotent). Resolves once its page is ready. */
@@ -80,7 +98,6 @@ export class FlowNative {
   /** Hotkey key-down: open the mic early and keep a short rolling pre-roll (see start()). */
   warm() {
     if (this.capturing || this.warming || !this.window || this.window.isDestroyed()) return;
-    this.chunks = [];
     this.bytes = 0;
     this.warming = true;
     this.window.webContents.send("flow:warm");
@@ -90,7 +107,6 @@ export class FlowNative {
   cool() {
     if (!this.warming || this.capturing) return;
     this.warming = false;
-    this.chunks = [];
     this.bytes = 0;
     try { this.window?.webContents.send("flow:cool"); } catch { /* window closing */ }
   }
@@ -99,9 +115,11 @@ export class FlowNative {
   async start() {
     await Promise.race([this.ensureWindow(), new Promise((_resolve, reject) => setTimeout(() => reject(new Error("The microphone host did not start.")), 6_000))]);
     // A pre-warmed recording already holds the audio since key-down; keep it as the pre-roll.
-    if (!this.warming) { this.chunks = []; this.bytes = 0; }
+    if (!this.warming) this.bytes = 0;
     this.warming = false;
     this.capturing = true;
+    this.live = false;
+    this.full = false;
     const live = new Promise((resolve, reject) => { this.liveWaiter = { resolve, reject }; });
     this.window.webContents.send("flow:start");
     try {
@@ -112,39 +130,37 @@ export class FlowNative {
     } finally {
       this.liveWaiter = null;
     }
+    // From here on every chunk is also handed to onPcm; the caller first reads the pre-roll with slice(0).
+    this.live = true;
   }
 
   /** Stop recording and return everything captured as one PCM16 buffer. */
   async stop() {
-    if (!this.window || this.window.isDestroyed()) { this.capturing = false; return Buffer.concat(this.chunks); }
+    if (!this.window || this.window.isDestroyed()) { this.capturing = false; this.live = false; return Buffer.from(this.store.subarray(0, this.bytes)); }
     const stopped = new Promise((resolve) => { this.stopWaiter = { resolve }; });
     this.window.webContents.send("flow:stop");
     await Promise.race([stopped, new Promise((resolve) => setTimeout(resolve, 1_200))]);
     this.stopWaiter = null;
     this.capturing = false;
-    const pcm = Buffer.concat(this.chunks);
-    this.chunks = [];
+    this.live = false;
+    // A copy: the store is reused by the next recording while this one is still being transcribed.
+    const pcm = Buffer.from(this.store.subarray(0, this.bytes - (this.bytes % 2)));
     this.bytes = 0;
     return pcm;
   }
 
   /** Audio captured so far from byte offset `start` (and optionally up to `end`) without stopping. */
   slice(start = 0, end = Infinity) {
-    const all = Buffer.concat(this.chunks);
-    const from = Math.max(0, start - (start % 2));
-    return all.subarray(from, Math.min(all.length, end));
-  }
-
-  /** The most recent audio so far (without stopping), for live partial transcripts. */
-  snapshot(maxBytes = 16_000 * 2 * 14) {
-    const all = Buffer.concat(this.chunks);
-    return all.length > maxBytes ? all.subarray(all.length - maxBytes) : all;
+    const from = Math.max(0, Math.min(this.bytes, start - (start % 2)));
+    const to = Math.max(from, Math.min(this.bytes, end));
+    // Copied, because the bytes are written to a file asynchronously while recording continues.
+    return Buffer.from(this.store.subarray(from, to - ((to - from) % 2)));
   }
 
   cancel() {
     this.capturing = false;
     this.warming = false;
-    this.chunks = [];
+    this.live = false;
     this.bytes = 0;
     try { if (this.window && !this.window.isDestroyed()) this.window.webContents.send("flow:stop"); } catch { /* window closing */ }
   }

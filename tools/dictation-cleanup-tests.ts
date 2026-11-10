@@ -6,6 +6,11 @@ const c = (text: string, opts = {}) => cleanDictation(text, opts).text;
 // Fillers & stutters
 assert.equal(c("um so i think uh we should go"), "So I think we should go.");
 assert.equal(c("the the meeting is at five"), "The meeting is at five.");
+// Stray capitals from the speech model are lowered; names, sentence starts and titles are left alone
+assert.equal(c("Hi, How are You?"), "Hi, how are you?");
+assert.equal(c("I met Will at The office And It went well. The team was happy."), "I met Will at the office and it went well. The team was happy.");
+assert.equal(c("we watched Of Mice And Men last night"), "We watched Of Mice And Men last night.");
+assert.equal(c("I read The Hobbit and then The New York Times"), "I read The Hobbit and then The New York Times.");
 // Spoken punctuation and layout
 assert.equal(c("hello comma how are you question mark"), "Hello, how are you?");
 assert.equal(c("first line new line second line"), "First line\nSecond line.");

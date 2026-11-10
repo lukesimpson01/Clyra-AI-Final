@@ -3,227 +3,254 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clyra Dictation</title>
   <style>
-    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; --ease: cubic-bezier(.16, 1, .3, 1); --blue: #0052fb; --ink: #0b1220; --mute: #64748b; }
+    /* Clyra Flow pill.
+       One graphite capsule that sits on any wallpaper or app: [ voice meter ] [ words ] [ stop ].
+       - The meter is the real microphone level (one canvas, one draw per frame).
+       - The ring around Stop drains as the session is about to end on its own, so auto-stop is never a surprise.
+       - Only width/height of this one element and opacity/transform of its children ever animate. */
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      --surface: #14161b; --hairline: rgba(255,255,255,.11); --ink: #f3f4f6; --mute: #9299a6; --faint: rgba(255,255,255,.08);
+      --accent: #6c9bff; --accent-strong: #2f6bff; --danger: #ff6b61; --ok: #3ddc84;
+      --out: cubic-bezier(.22, 1, .36, 1);          /* everything settles with this curve */
+      --pop: cubic-bezier(.34, 1.36, .64, 1);       /* entrances only: a small overshoot */
+      --t-size: .42s; --t-fade: .2s;
+    }
     html, body { height: 100%; }
     body { margin: 0; overflow: hidden; background: transparent; -webkit-font-smoothing: antialiased; user-select: none; }
-    #stage { position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 16px; box-sizing: border-box; }
+    #stage { position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 22px; box-sizing: border-box; }
 
-    /* One capsule, constant height. Only its width changes (ball -> bar), and the radius is always an explicit
-       pixel value so the shape never snaps. Everything inside cross-fades. */
-    @property --a { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
-    /* #pill is the unclipped shell (so a halo can shine outside it); .clip holds the white body and all content. */
-    #pill { --w: 40px; --h: 40px; --r: 20px; --lvl: 0; --shine: 0; position: relative; box-sizing: border-box; width: var(--w); height: var(--h); border-radius: var(--r); cursor: grab;
-      opacity: 0; transform: translateY(10px) scale(.5); transform-origin: 50% 100%; pointer-events: auto;
-      transition: width .34s var(--ease), height .34s var(--ease), border-radius .34s var(--ease), opacity .24s ease, transform .34s var(--ease); will-change: width, height, transform, opacity; contain: layout style; }
-    .clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; box-sizing: border-box;
-      background: linear-gradient(180deg, #ffffff 0%, #f6f9ff 100%);
-      border: 1px solid rgba(15,23,42,.11); }
-    /* selection chip: what you highlighted and what Flow will do with it (replace it, or rewrite it from your instruction) */
-    .selchip { position: absolute; left: 50%; bottom: calc(100% + 8px); max-width: 360px; height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; border-radius: 13px; white-space: nowrap;
-      background: #fff; border: 1px solid rgba(15,23,42,.10); font-size: 12px; color: #5b6472; opacity: 0; transform: translate(-50%, 6px); transition: opacity .3s ease, transform .4s var(--ease); pointer-events: none; }
+    #pill { --w: 44px; --h: 44px; --r: 22px; position: relative; box-sizing: border-box; width: var(--w); height: var(--h); border-radius: var(--r); cursor: grab;
+      opacity: 0; transform: translateY(10px) scale(.72); transform-origin: 50% 100%; pointer-events: auto;
+      transition: width var(--t-size) var(--out), height var(--t-size) var(--out), border-radius var(--t-size) var(--out), opacity .16s ease, transform .22s var(--out);
+      will-change: width, height, transform, opacity; contain: layout style; }
+    #pill[data-ready="true"] { opacity: 1; transform: none; transition: width var(--t-size) var(--out), height var(--t-size) var(--out), border-radius var(--t-size) var(--out), opacity .2s ease, transform .5s var(--pop); }
+    #pill.dragging { cursor: grabbing; }
+    .clip { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; box-sizing: border-box; background: var(--surface);
+      box-shadow: inset 0 0 0 1px var(--hairline), 0 6px 18px -6px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.3); }
+
+    /* what you highlighted, and what Flow will do with it */
+    .selchip { position: absolute; left: 50%; bottom: calc(100% + 8px); max-width: 340px; height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; border-radius: 13px; white-space: nowrap; box-sizing: border-box;
+      background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); font-size: 12px; color: var(--mute); opacity: 0; transform: translate(-50%, 6px); transition: opacity .2s ease, transform .4s var(--out); pointer-events: none; }
     .selchip.show { opacity: 1; transform: translate(-50%, 0); }
-    .selchip .tag { flex: 0 0 auto; font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--blue); }
+    .selchip .tag { flex: 0 0 auto; font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
     .selchip .quote { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    #pill.dragging { cursor: grabbing; transition: opacity .2s ease; }
-    #pill[data-ready="true"] { opacity: 1; transform: none; }
 
-    .layer { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s; }
-    .layer.on { opacity: 1; visibility: visible; transition: opacity .4s ease .1s, visibility 0s; }
+    .layer { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .14s ease, visibility 0s linear .14s; }
+    .layer.on { opacity: 1; visibility: visible; transition: opacity .28s ease .08s, visibility 0s; }
 
-    button { appearance: none; border: 0; cursor: pointer; font: inherit; }
-    /* The one row: [cancel] [text or waveform] [stop / spinner / status] — same in every state. */
-    .row { position: absolute; left: 0; top: 0; height: var(--h); width: var(--rw, 480px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 0 6px; box-sizing: border-box; }
-    .ctl { position: relative; display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border-radius: 50%; transition: background .18s ease, transform .18s var(--ease), opacity .3s ease; }
-    .ctl:active { transform: scale(.9); }
-    .cancel { background: rgba(15,23,42,.055); color: #5b6678; } .cancel:hover { background: rgba(15,23,42,.11); color: var(--ink); }
-    .cancel svg { width: 11px; height: 11px; }
-    .stop { background: linear-gradient(180deg, #2a6bff, #0048e6); color: #fff; } .stop:hover { filter: brightness(1.08); }
-    .stop i { display: block; width: 9px; height: 9px; border-radius: 2.5px; background: currentColor; }
-    
+    button { appearance: none; border: 0; padding: 0; margin: 0; cursor: pointer; font: inherit; color: inherit; background: none; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-    /* centre: waveform when nothing has been said yet, otherwise the words */
-    .mid { position: relative; flex: 1; min-width: 0; height: 36px; overflow: hidden; transition: height .48s var(--ease); }
-    .meter { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2.5px; transition: opacity .3s ease; }
-    .bar { display: block; width: 2.5px; height: 18px; flex: 0 0 2.5px; border-radius: 999px; background: linear-gradient(180deg, #5b92ff, var(--blue)); transform: scaleY(.17); will-change: transform; }
-    .text { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: flex-start; overflow: hidden; opacity: 0; transition: opacity .3s ease;
-      -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); }
-    .has-text .text { opacity: 1; } .has-text .meter { opacity: 0; }
-    /* One line, newest words on the right; older words slide off to the left. Height never changes. */
-    .track { margin-block: auto; white-space: nowrap; flex: 0 0 auto; font-size: 13.5px; font-weight: 500; letter-spacing: -.01em; color: var(--ink); will-change: transform; transition: transform .22s var(--ease); }
-    .final-mode .text { justify-content: flex-start; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 2px), transparent 100%); }
-    .final-mode .text { inset: 0; }
-    .final-mode .track { white-space: normal; flex: 1 1 auto; line-height: 16px; transform: none !important; }
-    .final-mode.one-line .text { align-items: center; }
-    .final-mode.one-line .track { white-space: nowrap; }
-    .final-mode .text::-webkit-scrollbar { display: none; }
-    .w { display: inline-block; transition: color .4s ease, opacity .4s ease, text-decoration-color .4s ease, transform .5s var(--ease); }
-    /* each word eases up into place — opacity and transform only, so it stays on the compositor */
-    .w.in { animation: wordIn .34s var(--ease) both; }
-    @keyframes wordIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-    /* edits: removed = red + crossed out; added = blue (text only) */
-    .w.del { text-decoration: line-through; text-decoration-thickness: 1.7px; text-decoration-color: transparent; }
-    .w.del.struck { color: #dc2626; text-decoration-color: #dc2626; }
-    .w.add { color: var(--blue); font-weight: 600; opacity: 0; transform: translateY(5px); }
-    .w.add.shown { opacity: 1; transform: none; }
-    /* thinking: blue wave across the words */
-    .thinking .w { color: #64748b; animation: wordWave 1.5s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 60ms); }
-    @keyframes wordWave { 0%, 100% { color: #64748b; opacity: .75; } 40% { color: var(--blue); opacity: 1; } 70% { color: #64748b; opacity: .9; } }
-    .label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 560; opacity: 0; transition: opacity .3s ease; background: linear-gradient(110deg, #64748b 34%, var(--blue) 46%, #8fb4ff 50%, var(--blue) 54%, #64748b 66%); background-size: 260% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
-    @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -130% 0; } }
-    .show-label .label { opacity: 1; } .show-label .meter { opacity: 0; }
-    /* final text sweep */
-    .sweep .track { background-image: linear-gradient(100deg, var(--ink) 0 38%, var(--blue) 46%, #8fb4ff 50%, rgba(11,18,32,0) 58%); background-size: 340% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: sweepText .95s cubic-bezier(.3,.7,.2,1) forwards; }
-    @keyframes sweepText { from { background-position: 100% 0; } to { background-position: 0 0; } }
-    .note-in .track { animation: noteIn .45s var(--ease) both; }
-    @keyframes noteIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    /* the row: [lead 28] [mid flex] [end 28] with 8px gaps and 8px side padding. It is always exactly as wide as the
+       capsule, so the stop button rides the edge while the capsule grows and nothing inside is ever re-centred. */
+    .row { position: absolute; top: 0; left: 0; height: 44px; width: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; box-sizing: border-box; }
+    .card .row { top: auto; bottom: 0; height: 100%; align-items: flex-end; padding-bottom: 8px; }
+    .slot { position: relative; flex: 0 0 28px; width: 28px; height: 28px; display: grid; place-items: center; }
+    .slot > * { grid-area: 1 / 1; transition: opacity var(--t-fade) ease, transform .3s var(--out); }
+    .off { opacity: 0; transform: scale(.6); pointer-events: none; }
 
-    /* right-hand status glyphs */
-    /* "thinking" loader: the listening waveform settles into a small pulsing wave */
-    .spin { display: flex; align-items: center; justify-content: center; gap: 2.5px; height: 18px; }
-    .spin i { display: block; width: 2.5px; height: 4px; border-radius: 999px; background: linear-gradient(180deg, #5b92ff, var(--blue)); animation: pulseBar 1.05s ease-in-out infinite; animation-delay: calc(var(--i) * .11s); }
-    @keyframes pulseBar { 0%, 100% { height: 4px; opacity: .4; } 45% { height: 14px; opacity: 1; } }
-    .orb { width: 15px; height: 15px; border-radius: 50%; background: conic-gradient(from 0deg, #0052fb, #8fb4ff, #dbe7ff, #8fb4ff, #0052fb); -webkit-mask: radial-gradient(farthest-side, transparent 55%, #000 58%); mask: radial-gradient(farthest-side, transparent 55%, #000 58%); animation: spin .9s linear infinite; }
+    /* lead slot: meter while listening, spinner while working, x on hover */
+    #meter { width: 28px; height: 28px; display: block; }
+    .cancel { position: relative; z-index: 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--mute); background: var(--faint); }
+    .cancel:hover { color: var(--ink); background: rgba(255,255,255,.16); }
+    .cancel:active, .stop:active { transform: scale(.9); }
+    .cancel svg { width: 10px; height: 10px; }
+    #pill:not(.hovered) #cancel, #pill.locked #cancel { opacity: 0; transform: scale(.6); pointer-events: none; }
+    #pill.hovered:not(.locked) .lead-live { opacity: 0; transform: scale(.6); pointer-events: none; }
+    .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.14); border-top-color: var(--accent); box-sizing: border-box; animation: spin .7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    /* Apple Pay / App Store style success: a green disc springs in, the tick draws itself, a ring ripples out */
-    .badge { position: relative; width: 26px; height: 26px; display: grid; place-items: center; transform: scale(.4); opacity: 0; transition: transform .6s cubic-bezier(.34,1.56,.64,1), opacity .25s ease; }
-    .badge.show { transform: none; opacity: 1; }
-    .badge svg { width: 26px; height: 26px; overflow: visible; }
-    .badge .disc { fill: #34c759; transform: scale(0); transform-origin: 13px 13px; }
-    .badge .tick { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 18; stroke-dashoffset: 18; }
-    .badge .wave { fill: none; stroke: #34c759; stroke-width: 1.5; opacity: 0; transform-origin: 13px 13px; }
-    .badge.show .disc { animation: discIn .55s cubic-bezier(.34,1.56,.64,1) forwards; }
-    .badge.show .tick { animation: tickDraw .36s .22s cubic-bezier(.4,0,.2,1) forwards; }
-    .badge.show .wave { animation: tickWave .8s .12s ease-out forwards; }
+    .slot > .spinner.off { animation-play-state: paused; transform: none; }
+    .status { width: 20px; height: 20px; }
+    .status svg { width: 20px; height: 20px; display: block; overflow: visible; }
+    .status .disc { transform-origin: 10px 10px; transform: scale(0); }
+    .status.show .disc { animation: discIn .45s var(--pop) forwards; }
+    .status .mark { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 16; stroke-dashoffset: 16; }
+    .status.show .mark { animation: draw .3s .16s ease-out forwards; }
     @keyframes discIn { to { transform: scale(1); } }
-    @keyframes tickDraw { to { stroke-dashoffset: 0; } }
-    @keyframes tickWave { 0% { opacity: .55; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.9); } }
-    .badge.clip .disc { fill: #0052fb; }
-    .glyph { position: absolute; transition: opacity .25s ease, transform .35s var(--ease); }
-    .glyph.off { opacity: 0; transform: scale(.6); pointer-events: none; }
-    .endwrap { position: relative; width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
 
-    /* ball: blank */
-    #l-dot { display: block; }
-    .l-main { display: block; }
-    /* chooser */
-    .l-select { display: flex; align-items: center; gap: 6px; padding: 0 9px; }
-    .choice { flex: 1; height: 28px; border-radius: 14px; background: #eef3ff; color: var(--ink); font-size: 12px; font-weight: 600; transition: background .16s ease, color .16s ease; }
-    .choice:hover { background: #dce8ff; color: var(--blue); }
-    .msg { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 14px; font-size: 12.5px; font-weight: 540; color: #334155; }
-    .msg.error { color: #b42318; }
+    /* end slot: stop, wrapped by the auto-stop ring */
+    .stop { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); }
+    .stop:hover { background: #fff; }
+    .stop i { display: block; width: 9px; height: 9px; border-radius: 2.5px; background: var(--surface); }
+    #ring { position: absolute; inset: -3px; width: 34px; height: 34px; transform: rotate(-90deg); pointer-events: none; opacity: 0; transition: opacity .2s ease; }
+    #ring.on { opacity: 1; }
+    #ring circle { fill: none; stroke-width: 2; }
+    #ring .trail { stroke: rgba(255,255,255,.12); }
+    #ring .arc { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 97.4; stroke-dashoffset: 0; transition: stroke-dashoffset .14s linear; }
+    #end.gone { flex-basis: 0; width: 0; margin-left: -8px; opacity: 0; pointer-events: none; }
+    #end { transition: opacity var(--t-fade) ease; }
 
-    @media (prefers-reduced-motion: reduce) { #pill, .layer, .w, .badge { transition-duration: 1ms !important; } .spin i, .badge .disc, .badge .tick, .badge .wave, .label, .thinking .w, .w.in, .w.in::after, .w.bump, #pill, .sweep .track { animation: none !important; } }
+    /* middle: a quiet hint until there are words, then the words */
+    .mid { position: relative; flex: 1; min-width: 0; height: 28px; overflow: hidden; }
+    .card .mid { height: 100%; }
+    .hint { position: absolute; inset: 0; display: flex; align-items: center; font-size: 13px; font-weight: 500; letter-spacing: -.005em; color: var(--mute); white-space: nowrap; transition: opacity var(--t-fade) ease; }
+    .has-text .hint { opacity: 0; }
+    .working .hint, .thinking .w { background: linear-gradient(100deg, var(--mute) 35%, #e9edf5 50%, var(--mute) 65%); background-size: 240% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.5s linear infinite; }
+    .thinking .w { background-attachment: fixed; }
+    @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+    .text { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; opacity: 0; transition: opacity var(--t-fade) ease;
+      -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%); mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%); }
+    .has-text .text { opacity: 1; }
+    .text.fits { -webkit-mask-image: none; mask-image: none; }
+    /* one line while you speak: newest words on the right, older words slide off to the left */
+    .track { white-space: nowrap; flex: 0 0 auto; font-size: 13.5px; font-weight: 500; letter-spacing: -.01em; line-height: 18px; color: var(--ink); will-change: transform; transition: transform .26s var(--out); }
+    .final-mode .text { align-items: flex-end; -webkit-mask-image: none; mask-image: none; overflow-y: auto; }
+    .final-mode .text::-webkit-scrollbar { display: none; }
+    .final-mode .track { white-space: normal; flex: 1 1 auto; transform: none !important; padding: 5px 0; }
+    .final-mode.one-line .track { white-space: nowrap; }
+    .w { display: inline-block; transition: color .3s ease, opacity .3s ease, text-decoration-color .3s ease; }
+    .w.in { animation: wordIn .3s var(--out) both; }
+    @keyframes wordIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+    /* edits: removed words are struck through and fade, new words arrive in the accent colour */
+    .w.del { text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: transparent; }
+    .w.del.struck { color: var(--danger); text-decoration-color: var(--danger); opacity: .75; }
+    .w.add { color: var(--accent); opacity: 0; transform: translateY(5px); transition: color .3s ease, opacity .3s ease, transform .4s var(--out); }
+    .w.add.shown { opacity: 1; transform: none; }
+    .note { color: var(--accent); }
+
+    /* single-message capsule (errors, "Inserted") and the Replace / Enhance chooser */
+    .msg { position: absolute; inset: 0; display: flex; align-items: center; gap: 9px; padding: 0 16px 0 12px; font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; }
+    .msg span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .msg .dot { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--surface); font-size: 11px; font-weight: 700; }
+    .msg.error .dot { background: var(--danger); }
+    .l-select { display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+    .choice { flex: 1; height: 28px; border-radius: 14px; background: var(--faint); color: var(--ink); font-size: 12px; font-weight: 600; transition: background .16s ease, color .16s ease; }
+    .choice:hover { background: var(--accent-strong); color: #fff; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #pill, #pill[data-ready="true"], .layer, .w, .slot > *, .track, #ring .arc { transition-duration: 1ms !important; }
+      .w.in, .status .disc, .status .mark, .working .hint, .thinking .w { animation: none !important; }
+      .status .disc { transform: none; } .status .mark { stroke-dashoffset: 0; }
+      .working .hint, .thinking .w { background: none; color: var(--mute); }
+    }
   </style>
 </head>
 <body>
   <main id="stage">
-    <div id="pill" data-mode="circle" data-ready="false"><div class="selchip" id="selchip"><span class="tag" id="seltag"></span><span class="quote" id="selquote"></span></div><div class="clip">
-      <div class="layer" id="l-dot"></div>
-      <div class="layer l-main" id="l-main">
-        <div class="row" id="row">
-          <button class="ctl cancel" id="cancel" type="button" aria-label="Cancel dictation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-          <div class="mid" id="mid">
-            <div class="meter" id="meter" aria-hidden="true"></div>
-            <div class="text" id="text"><div class="track" id="track"></div></div>
-            <div class="label" id="label">Thinking</div>
-          </div>
-          <div class="endwrap">
-            <button class="ctl stop glyph" id="primary" type="button" aria-label="Stop recording"><i></i></button>
-            <span class="spin glyph off" id="dots"><i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i><i style="--i:4"></i></span>
-            <span class="badge glyph off" id="badge"></span>
+    <div id="pill" data-mode="circle" data-ready="false" role="status" aria-live="polite">
+      <div class="selchip" id="selchip"><span class="tag" id="seltag"></span><span class="quote" id="selquote"></span></div>
+      <div class="clip" id="clip">
+        <div class="layer" id="l-dot"><div class="row"><div class="slot"><span class="spinner"></span></div></div></div>
+        <div class="layer" id="l-main">
+          <div class="row" id="row">
+            <div class="slot" id="lead">
+              <canvas class="lead-live" id="meter" width="56" height="56" aria-hidden="true"></canvas>
+              <span class="spinner lead-live off" id="spinner"></span>
+              <span class="status lead-live off" id="status"></span>
+              <button class="cancel" id="cancel" type="button" aria-label="Cancel dictation" title="Cancel (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </div>
+            <div class="mid" id="mid">
+              <div class="hint" id="hint">Listening</div>
+              <div class="text" id="text"><div class="track" id="track"></div></div>
+            </div>
+            <div class="slot" id="end">
+              <button class="stop" id="primary" type="button" aria-label="Finish dictation" title="Finish"><i></i></button>
+              <svg id="ring" viewBox="0 0 34 34" aria-hidden="true"><circle class="trail" cx="17" cy="17" r="15.5"/><circle class="arc" id="arc" cx="17" cy="17" r="15.5"/></svg>
+            </div>
           </div>
         </div>
+        <div class="layer" id="l-msg"><div class="msg" id="msg"><i class="dot" id="msgdot">!</i><span id="msgtext"></span></div></div>
+        <div class="layer l-select" id="l-select"><button class="cancel" id="selection-cancel" type="button" aria-label="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><button class="choice" id="replace" type="button">Replace</button><button class="choice" id="enhance" type="button">Enhance</button></div>
       </div>
-      <div class="layer" id="l-msg"><div class="msg" id="msg"></div></div>
-      <div class="layer l-select" id="l-select"><button class="ctl cancel" id="selection-cancel" type="button" aria-label="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button><button class="choice" id="replace" type="button">Replace</button><button class="choice" id="enhance" type="button">Enhance</button></div>
-    </div></div>
+    </div>
   </main>
   <script>
     const pill = document.getElementById('pill');
     const api = window.clyraDictationPill;
     const $ = (id) => document.getElementById(id);
-    const clipEl = pill.querySelector('.clip'), meter = $('meter'), mid = $('mid'), track = $('track'), row = $('row');
-    const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const H = 44;
+    const mid = $('mid'), track = $('track'), row = $('row'), textBox = $('text'), hint = $('hint');
+    const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const H = 44, LINE = 18;
     let phase = 'idle', mode = 'circle', hovering = false, dragging = null;
-    let inputLevel = 0, currentVolume = .06, phaseValue = 0, cardOpen = false, liveText = '', timers = [];
+    let cardOpen = false, liveText = '', timers = [];
     const later = (fn, ms) => { timers.push(setTimeout(fn, ms)); };
     const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
-    const bars = Array.from({ length: 11 }, () => { const bar = document.createElement('i'); bar.className = 'bar'; meter.append(bar); return bar; });
     const isVisible = () => pill.dataset.ready === 'true';
-    const maxW = () => Math.max(220, Math.min(340, innerWidth - 32));
+    const maxW = () => Math.max(220, Math.min(348, innerWidth - 32));
 
     // ---------------------------------------------------------------- shape
-    function setSize(w, h, r) { pill.style.setProperty('--w', w + 'px'); pill.style.setProperty('--h', h + 'px'); pill.style.setProperty('--r', r + 'px'); row.style.setProperty('--rw', w + 'px'); }
-    const glyph = (name) => { for (const id of ['primary', 'dots', 'badge']) $(id).classList.toggle('off', id !== name); };
+    function setSize(w, h, r) { pill.style.setProperty('--w', w + 'px'); pill.style.setProperty('--h', h + 'px'); pill.style.setProperty('--r', r + 'px'); }
+    /** Which glyph the lead slot shows: the live meter, the working spinner, a status mark, or nothing. */
+    function lead(name) { for (const id of ['meter', 'spinner', 'status']) $(id).classList.toggle('off', id !== name); }
     function show(next) {
       mode = next; pill.dataset.mode = next;
-      if (next !== 'card') mid.style.height = '';
       const key = next === 'circle' ? 'l-dot' : next === 'msg' ? 'l-msg' : next === 'select' ? 'l-select' : 'l-main';
       for (const id of ['l-dot', 'l-main', 'l-msg', 'l-select']) $(id).classList.toggle('on', id === key);
-      if (next === 'circle') setSize(40, 40, 20);
+      pill.classList.toggle('card', next === 'card');
+      // Cancel only makes sense while there is something to cancel.
+      pill.classList.toggle('locked', next === 'card');
+      if (next === 'circle') setSize(H, H, H / 2);
       else if (next === 'select') setSize(236, H, H / 2);
-      else if (next === 'msg') setSize(maxW(), H, H / 2);
-      else if (next === 'card') setSize(parseFloat(pill.style.getPropertyValue('--w')) || widthFor('card'), parseFloat(pill.style.getPropertyValue('--h')) || H, parseFloat(pill.style.getPropertyValue('--r')) || H / 2);
-      else { lastWidth = widthFor(next); setSize(lastWidth, H, H / 2); }   // listening/thinking: constant height; width follows the words
+      else if (next === 'msg') setSize(Math.min(maxW(), Math.max(150, 58 + textWidth($('msgtext').textContent, 12.5))), H, H / 2);
+      else if (next !== 'card') { lastWidth = widthFor(next); setSize(lastWidth, H, H / 2); }
       const hasText = Boolean(liveText) && next !== 'circle';
-      mid.classList.toggle('has-text', hasText);
-      mid.classList.toggle('show-label', next === 'think' && !hasText);
+      mid.classList.toggle('has-text', hasText || next === 'card');
+      mid.classList.toggle('working', next === 'think');
       mid.classList.toggle('thinking', next === 'think');
-      if (next === 'listen') glyph('primary'); else if (next === 'think') glyph('dots');
-      if (!INTERACTIVE_HOVER_OK()) setHover(false);
+      $('end').classList.toggle('gone', next !== 'listen');
+      if (next === 'listen') lead('meter'); else if (next === 'think') lead('spinner');
+      if (next !== 'listen') setEnding(0);
+      if (!isVisible()) setHover(false);
     }
-    const INTERACTIVE_HOVER_OK = () => isVisible();
     function appear(next) {
       if (isVisible()) { next(); return; }
       show('circle');
       requestAnimationFrame(() => requestAnimationFrame(() => { pill.dataset.ready = 'true'; next(); }));
     }
 
-    // Listening/thinking capsule: starts at BASE_W and widens with the words by at most 50%, then the newest words
-    // slide in from the right. Widths come from canvas text measurement (no layout reads) and move in 8px steps, so
-    // a live transcript never forces layout or keeps retargeting the width transition.
-    const BASE_W = 200, GROW_W = 300, CHROME_W = 28 + 28 + 8 * 2 + 6 * 2 + 14;
+    // Widths come from canvas text measurement (no layout reads) and move in 8px steps, so a live transcript never
+    // forces layout or keeps retargeting the width transition.
+    const BASE_W = 168, GROW_W = 348;
     const measureCtx = document.createElement('canvas').getContext('2d');
-    measureCtx.font = '500 13.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif';
-    const textWidth = (t) => t ? measureCtx.measureText(t).width - t.length * .135 : 0;
+    const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif';
+    function textWidth(t, size = 13.5) { if (!t) return 0; measureCtx.font = `500 ${size}px ${FONT}`; return measureCtx.measureText(t).width - t.length * (size === 13.5 ? .135 : 0); }
     let lastWidth = 0;
+    /** Chrome around the words: side padding, the lead slot, gaps and (while listening) the stop button. */
+    const chromeW = (m) => 8 + 28 + 8 + (m === 'listen' ? 8 + 28 : 6) + 8;
     function widthFor(m) {
-      if (m === 'card') return maxW();
-      const need = CHROME_W + textWidth(track.textContent);
-      return Math.min(Math.ceil(Math.max(BASE_W, need) / 8) * 8, GROW_W, maxW());
+      const words = track.textContent.trim();
+      const need = chromeW(m) + (words ? textWidth(words) + 4 : textWidth(hint.textContent, 13) + 6);
+      // While you speak the capsule only ever grows: a first short word must not make it shrink and re-expand.
+      const floor = m === 'listen' ? Math.max(BASE_W, mode === 'listen' ? lastWidth : 0) : 120;
+      return Math.min(Math.ceil(Math.max(floor, need) / 8) * 8, GROW_W, maxW());
     }
-    /** Keep the newest words in view: the track slides left as it outgrows the capsule. */
+    /** Keep the newest words in view: the track slides left once it outgrows the capsule. */
     function followTail() {
       if (mode !== 'listen' && mode !== 'think') return;
       const w = widthFor(mode);
       if (w !== lastWidth) { lastWidth = w; setSize(w, H, H / 2); }
-      const visible = w - (CHROME_W - 14) - 2;   // width of the text window inside the capsule
-      const over = Math.max(0, textWidth(track.textContent) - visible + 6);
-      track.style.transform = `translateX(${-Math.round(over)}px)`;
+      const visible = w - chromeW(mode);
+      const over = Math.max(0, textWidth(track.textContent.trim()) + 4 - visible);
+      textBox.classList.toggle('fits', over === 0);
+      track.style.transform = over ? `translateX(${-Math.round(over)}px)` : '';
     }
+
     // ---------------------------------------------------------------- words
     function wordSpan(text, cls, i) { const s = document.createElement('span'); s.className = 'w ' + cls; s.style.setProperty('--i', i); s.textContent = text; return s; }
-    function setWords(segments, animate) {
+    function setWords(segments) {
       track.textContent = '';
       let i = 0;
-      for (const seg of segments) for (const word of String(seg.text).split(/\s+/).filter(Boolean)) { track.append(wordSpan(word, seg.type + (animate ? ' in' : ''), i++), document.createTextNode(' ')); }
+      for (const seg of segments) for (const word of String(seg.text).split(/\s+/).filter(Boolean)) track.append(wordSpan(word, seg.type, i++), document.createTextNode(' '));
     }
-    // Words are released one at a time at a steady, slightly faster pace when there is a backlog, so a phrase that arrives
-    // all at once still *types in* smoothly instead of popping.
-    let target = [], paceTimer = 0, paceBase = 92, printing = false;
+    // Words are released at a steady pace (faster when there is a backlog), so a phrase that arrives all at once
+    // still types in smoothly instead of popping.
+    let target = [], paceTimer = 0, paceBase = 70, printing = false;
     function revealNext() {
       paceTimer = 0;
       let have = track.querySelectorAll('.w').length;
       if (have >= target.length) { printing = false; return; }
       const backlog = target.length - have;
-      const step = Math.min(backlog, printing ? Math.max(1, Math.ceil(backlog / 14)) : backlog > 12 ? 3 : backlog > 6 ? 2 : 1);
+      const step = Math.min(backlog, printing ? Math.max(1, Math.ceil(backlog / 12)) : backlog > 10 ? 3 : backlog > 4 ? 2 : 1);
       const batch = document.createDocumentFragment();
       for (let k = 0; k < step; k++, have++) batch.append(wordSpan(target[have], 'same in', have), document.createTextNode(' '));
       track.append(batch);
       followTail();
-      if (have < target.length) paceTimer = setTimeout(revealNext, Math.max(paceBase > 40 ? 38 : 16, paceBase - backlog * 5));
+      if (have < target.length) paceTimer = setTimeout(revealNext, Math.max(16, paceBase - backlog * 6));
       else printing = false;
     }
     function flushWords() {
@@ -232,135 +259,135 @@
       for (let i = have; i < target.length; i++) track.append(wordSpan(target[i], 'same', i), document.createTextNode(' '));
       followTail();
     }
-    /** Live transcript: displayed words are revised in place, new words are paced in on the right, older ones slide off left. */
+    /** Live transcript: shown words are revised in place, new words are paced in on the right. */
     function setLive(text, flush) {
       const next = String(text || '').split(/\s+/).filter(Boolean);
-      // Level updates re-send the same transcript ~14x a second: do nothing unless the words changed.
       if (!flush && next.join(' ') === liveText) return;
-      printing = false; paceBase = 92;
+      printing = false; paceBase = 70;
       liveText = next.join(' ');
       target = next;
       const spans = Array.from(track.querySelectorAll('.w'));
       for (let i = 0; i < Math.min(spans.length, next.length); i++) if (spans[i].textContent !== next[i]) spans[i].textContent = next[i];
       for (let i = spans.length - 1; i >= next.length; i--) { spans[i].nextSibling?.remove(); spans[i].remove(); }
       mid.classList.toggle('has-text', next.length > 0);
-      mid.classList.remove('final-mode', 'sweep', 'note-in');
-      if (flush) flushWords();
+      mid.classList.remove('final-mode', 'one-line');
+      if (flush || reduceMotion) flushWords();
       else if (!paceTimer && track.querySelectorAll('.w').length < next.length) paceTimer = setTimeout(revealNext, 0);
       followTail();
     }
 
-    /** Measures how text will lay out in the card without touching the live track (one off-screen probe). */
+    /** How text will lay out in the card, measured on an off-screen probe (never the live track). */
     const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;font-size:13.5px;font-weight:500;letter-spacing:-.01em;line-height:16px;white-space:normal;';
+    probe.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;font-size:13.5px;font-weight:500;letter-spacing:-.01em;line-height:${LINE}px;white-space:normal;`;
     document.body.append(probe);
-    const CHROME = 28 + 28 + 8 * 2 + 6 * 2 + 14;
     function measure(text) {
+      const chrome = chromeW('card');
       probe.style.whiteSpace = 'nowrap'; probe.style.width = 'auto'; probe.textContent = text;
-      const single = probe.scrollWidth;
-      const textMax = maxW() - CHROME;
-      if (single <= textMax) return { lines: 1, width: Math.round(Math.max(150, Math.min(maxW(), CHROME + single))) };
+      const single = probe.scrollWidth + 2;
+      const textMax = maxW() - chrome;
+      if (single <= textMax) return { lines: 1, width: Math.round(Math.max(120, chrome + single)) };
       probe.style.whiteSpace = 'normal'; probe.style.width = textMax + 'px';
-      return { lines: Math.max(1, Math.round(probe.scrollHeight / 16)), width: maxW() };
+      return { lines: Math.max(1, Math.round(probe.scrollHeight / LINE)), width: maxW() };
     }
-    /** Done: one line stays a one-line capsule sized to the words; longer text grows upward (the pill is anchored
-     *  at the bottom) once, to its final height, up to nine lines, then scrolls. */
+    /** Result card: one line stays a capsule sized to the words; longer text grows upward once, to its final height. */
     function fitCard(text) {
       if (mode !== 'card') return;
       const words = text != null ? String(text) : Array.from(track.querySelectorAll('.w')).map((w) => w.textContent).join(' ');
       const { lines, width } = measure(words);
       const oneLine = lines <= 1;
       mid.classList.toggle('one-line', oneLine);
-      const h = oneLine ? H : Math.max(H, Math.min(9, lines) * 16 + 24);
-      setSize(width, h, oneLine ? H / 2 : Math.min(h / 2, 24));
-      mid.style.height = (oneLine ? 36 : h - 12) + 'px';
-    }
-    // ---------------------------------------------------------------- edits + final
-    function openDiff(payload) {
-      clearTimers(); cardOpen = true;
-      mid.classList.remove('thinking', 'show-label', 'sweep'); mid.classList.add('has-text', 'final-mode');
-      track.style.transition = 'none'; track.style.transform = ''; void track.offsetWidth; track.style.transition = '';
-      setWords(payload.diff, false);
-      show('card'); glyph('badge'); $('badge').className = 'badge glyph off';
-      requestAnimationFrame(() => fitCard());
-      const dels = Array.from(track.querySelectorAll('.w.del')), adds = Array.from(track.querySelectorAll('.w.add'));
-      dels.forEach((el, i) => later(() => el.classList.add('struck'), 600 + i * 110));
-      const t = 600 + dels.length * 110 + 260;
-      adds.forEach((el, i) => later(() => el.classList.add('shown'), t + i * 140));
-      track.style.transform = ''; track.style.transition = '';
-    }
-    function revealFinal(payload) {
-      if (!cardOpen) { cardOpen = true; show('card'); }
-      track.querySelectorAll('.w.del').forEach((el) => el.classList.add('struck'));
-      track.querySelectorAll('.w.add').forEach((el) => el.classList.add('shown'));
-      clearTimers();
-      mid.classList.remove('thinking', 'show-label'); mid.classList.add('has-text', 'final-mode');
-      // Print the final text the same way the words appeared while you spoke: one by one, easing in, the capsule growing
-      // upward line by line as it fills.
-      const words = String(payload.finalText || '').split(/\s+/).filter(Boolean);
-      track.style.transition = 'opacity .16s ease'; track.style.opacity = '0';
-      setTimeout(() => {
-        track.textContent = ''; track.style.transform = ''; track.style.opacity = '1';
-        target = words; printing = true; paceBase = Math.max(16, Math.min(46, 1100 / Math.max(1, words.length)));
-        clearTimeout(paceTimer); paceTimer = 0;
-        revealNext();
-      }, 170);
-      // Settle to the final shape in one move — a one-line answer never grows into a taller card.
-      fitCard(words.join(' '));
-    }
-    const ICON_CHECK = '<svg viewBox="0 0 26 26"><circle class="wave" cx="13" cy="13" r="12"/><circle class="disc" cx="13" cy="13" r="12"/><path class="tick" d="M7.6 13.4l3.7 3.7 7.2-7.6"/></svg>';
-    const ICON_CLIP = '<svg viewBox="0 0 26 26"><circle class="wave" cx="13" cy="13" r="12"/><circle class="disc" cx="13" cy="13" r="12"/><g fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9.2" y="7.2" width="7.6" height="2.8" rx="1"/><path d="M16.8 8.6h.8a1.2 1.2 0 0 1 1.2 1.2v8a1.2 1.2 0 0 1-1.2 1.2H8.4a1.2 1.2 0 0 1-1.2-1.2v-8a1.2 1.2 0 0 1 1.2-1.2h.8"/></g></svg>';
-    function landStatus(detail, clipboard) {
-      // Like Flow itself there is no tick: the loader simply gives way and the text is in place. Only the
-      // clipboard case keeps a small icon, because the text went somewhere you need to know about.
-      const badge = $('badge'); badge.className = 'badge glyph' + (clipboard ? ' clip' : '');
-      if (clipboard) { badge.innerHTML = ICON_CLIP; glyph('badge'); requestAnimationFrame(() => badge.classList.add('show')); }
-      else glyph('none');
-      if (clipboard) {   // say where the text went
-        later(() => { mid.classList.remove('sweep'); track.textContent = ''; const s = wordSpan(detail || 'Saved to clipboard', 'same', 0); s.style.display = 'inline'; s.style.color = '#1d4ed8'; track.append(s); mid.classList.add('note-in'); }, 1100);
-      }
+      const h = oneLine ? H : Math.min(8, lines) * LINE + 26;
+      setSize(width, h, oneLine ? H / 2 : 20);
     }
 
-    // ---------------------------------------------------------------- premium sound design
-    // Soft, layered tones (sine + a quiet octave harmonic) through a gentle low-pass and a short
-    // synthetic room, so every cue feels like one family: rising = on, falling = off, bright triad = done.
-    let audio = null, bus = null, dryBus = null;
+    // ---------------------------------------------------------------- edits + final
+    function openCard() {
+      cardOpen = true;
+      mid.classList.remove('thinking', 'working'); mid.classList.add('has-text', 'final-mode');
+      track.style.transition = 'none'; track.style.transform = ''; void track.offsetWidth; track.style.transition = '';
+      show('card'); lead('spinner');
+    }
+    function openDiff(payload) {
+      clearTimers(); clearTimeout(paceTimer); paceTimer = 0;
+      setWords(payload.diff);
+      openCard();
+      fitCard();
+      const dels = Array.from(track.querySelectorAll('.w.del')), adds = Array.from(track.querySelectorAll('.w.add'));
+      dels.forEach((el, i) => later(() => el.classList.add('struck'), 220 + i * 60));
+      const t = 220 + dels.length * 60 + 160;
+      adds.forEach((el, i) => later(() => el.classList.add('shown'), t + i * 80));
+    }
+    function revealFinal(payload) {
+      clearTimers(); clearTimeout(paceTimer); paceTimer = 0;
+      const words = String(payload.finalText || '').split(/\s+/).filter(Boolean);
+      if (!cardOpen) flushWords();
+      const plain = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '');
+      const spans = Array.from(track.querySelectorAll('.w'));
+      // The same words you watched appear (at most their case or punctuation was tidied): fix them in place.
+      const already = !cardOpen && spans.length === words.length && plain(liveText) === plain(words.join(' '));
+      if (!cardOpen) openCard();
+      fitCard(words.join(' '));
+      // What you watched appear while speaking is already the final text: leave it exactly where it is.
+      if (already) { spans.forEach((span, i) => { if (span.textContent !== words[i]) span.textContent = words[i]; }); liveText = words.join(' '); target = words; return; }
+      track.style.transition = 'opacity .12s ease'; track.style.opacity = '0';
+      later(() => {
+        track.textContent = ''; track.style.opacity = '1';
+        target = words; printing = true; paceBase = Math.max(16, Math.min(40, 700 / Math.max(1, words.length)));
+        if (reduceMotion) flushWords(); else revealNext();
+      }, 120);
+    }
+    const ICON_CHECK = '<svg viewBox="0 0 20 20"><circle class="disc" cx="10" cy="10" r="10" fill="var(--ok)"/><path class="mark" d="M5.8 10.4l2.8 2.8 5.6-6"/></svg>';
+    const ICON_CLIP = '<svg viewBox="0 0 20 20"><circle class="disc" cx="10" cy="10" r="10" fill="var(--accent)"/><path class="mark" d="M7 6.5h6v8H7zM8.6 6.5v-1h2.8v1"/></svg>';
+    function landStatus(detail, clipboard) {
+      const status = $('status');
+      status.innerHTML = clipboard ? ICON_CLIP : ICON_CHECK;
+      status.className = 'status lead-live';
+      lead('status');
+      requestAnimationFrame(() => status.classList.add('show'));
+      // The text went to the clipboard instead of a field: say so, in place of the words.
+      if (clipboard) later(() => {
+        track.textContent = ''; const s = wordSpan(detail || 'Saved to clipboard', 'same in note', 0); s.style.display = 'inline'; track.append(s);
+        fitCard(detail || 'Saved to clipboard');
+      }, 900);
+    }
+
+    // ---------------------------------------------------------------- sound design
+    // Soft, layered tones (sine + a quiet octave harmonic) through a gentle low-pass and a short synthetic room,
+    // so every cue is one family: falling = off, bright triad = done.
+    let audio = null, bus = null;
     function ensureAudio() {
       if (audio) { if (audio.state === 'suspended') audio.resume().catch(() => {}); return audio; }
       audio = new (window.AudioContext || window.webkitAudioContext)();
       const master = audio.createGain(); master.gain.value = .9;
       const lp = audio.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200; lp.Q.value = .4;
       const dry = audio.createGain(); dry.gain.value = 1;
-      const wet = audio.createGain(); wet.gain.value = .26;
+      const wet = audio.createGain(); wet.gain.value = .22;
       const conv = audio.createConvolver();
-      const len = Math.floor(audio.sampleRate * .55), ir = audio.createBuffer(2, len, audio.sampleRate);
+      const len = Math.floor(audio.sampleRate * .45), ir = audio.createBuffer(2, len, audio.sampleRate);
       for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
       conv.buffer = ir;
       lp.connect(dry).connect(master); lp.connect(conv); conv.connect(wet).connect(master); master.connect(audio.destination);
       bus = lp;
-      // The start cue skips the room so no reverb tail lingers into the microphone.
-      dryBus = audio.createGain(); dryBus.gain.value = 1; dryBus.connect(master);
       if (audio.state === 'suspended') audio.resume().catch(() => {});
       return audio;
     }
-    function note(freq, at, dur, { gain = .14, glide = 0, harm = .22, attack = .012, dry = false } = {}) {
+    function note(freq, at, dur, { gain = .14, glide = 0, harm = .22, attack = .012 } = {}) {
       const ctx = ensureAudio(); const t0 = ctx.currentTime + .005 + at;
-      const out = dry ? dryBus : bus;
       for (const [mult, g] of [[1, gain], [2, gain * harm]]) {
         const osc = ctx.createOscillator(), amp = ctx.createGain();
         osc.type = 'sine'; osc.frequency.setValueAtTime(freq * mult, t0);
         if (glide) osc.frequency.exponentialRampToValueAtTime(glide * mult, t0 + dur);
         amp.gain.setValueAtTime(.0001, t0); amp.gain.exponentialRampToValueAtTime(g, t0 + attack); amp.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
-        osc.connect(amp).connect(out); osc.start(t0); osc.stop(t0 + dur + .05);
+        osc.connect(amp).connect(bus); osc.start(t0); osc.stop(t0 + dur + .05);
       }
     }
     const SOUNDS = {
       start:  () => {},   // silent on purpose: a beep here leaks into the microphone and swallows the first words
-      stop:   () => { note(659.25, 0, .13, { gain: .11 }); note(493.88, .07, .22, { gain: .11 }); },                         // E5 -> B4
-      done:   () => { note(659.25, 0, .18, { gain: .11 }); note(830.61, .08, .2, { gain: .11 }); note(1046.5, .16, .42, { gain: .12 }); }, // E-G#-C triad sparkle
-      copied: () => { note(783.99, 0, .14, { gain: .1 }); note(987.77, .09, .3, { gain: .1 }); },
-      cancel: () => note(440, 0, .2, { gain: .1, glide: 261.63 }),
-      error:  () => { note(196, 0, .22, { gain: .13, harm: .1 }); note(155.56, .16, .34, { gain: .13, harm: .1 }); },
+      stop:   () => { note(659.25, 0, .13, { gain: .1 }); note(493.88, .07, .2, { gain: .1 }); },
+      done:   () => { note(659.25, 0, .16, { gain: .1 }); note(830.61, .07, .18, { gain: .1 }); note(1046.5, .14, .36, { gain: .11 }); },
+      copied: () => { note(783.99, 0, .14, { gain: .1 }); note(987.77, .09, .28, { gain: .1 }); },
+      cancel: () => note(440, 0, .18, { gain: .09, glide: 261.63 }),
+      error:  () => { note(196, 0, .2, { gain: .12, harm: .1 }); note(155.56, .15, .3, { gain: .12, harm: .1 }); },
     };
     let lastPhase = 'idle';
     function playFor(payload) {
@@ -375,90 +402,126 @@
       } catch { /* audio is best-effort */ }
       lastPhase = next;
     }
-    // Warm the audio engine as soon as the page loads so the very first cue is instant.
-    try { ensureAudio(); } catch { /* no audio device */ }
+    // The audio engine is built on the first cue, not at load: an idle spare pill costs nothing.
 
-    // ---------------------------------------------------------------- waveform
-    function animateWave() {
-      phaseValue += .2;
-      const desired = Math.max(inputLevel * 1.35, phase === 'listening' ? .07 : .035);
-      currentVolume += (desired - currentVolume) * .2;
-      const mid_ = (bars.length - 1) / 2;
-      bars.forEach((bar, index) => {
-        const d = (index - mid_) / mid_, bell = Math.exp(-(d * d) * 2.2);
-        const w = (Math.sin(phaseValue + index * .45) + Math.sin(phaseValue * .7 - index * .25) + 2) / 4;
-        const px = 3 + bell * (2 + w * (5 + currentVolume * 18));
-        bar.style.transform = `scaleY(${Math.min(1, px / 18).toFixed(3)})`;
-        bar.style.opacity = String(.35 + bell * (.3 + Math.min(.35, currentVolume * .6)));
-      });
-      // Set on the one element that uses it: a custom property changed on #pill would restyle the whole subtree every frame.
-      clipEl.style.borderColor = phase === 'listening' ? `rgba(0,82,251,${(.11 + Math.min(1, currentVolume * 1.2) * .32).toFixed(2)})` : '';
-      waveRaf = (!prefersReducedMotion && phase === 'listening') ? requestAnimationFrame(animateWave) : 0;
+    // ---------------------------------------------------------------- voice meter + auto-stop ring
+    // Five bars that are the microphone: each bar eases toward the live level with its own weight and a little
+    // per-bar motion, drawn on one small canvas. The loop only runs while listening and the pill is visible.
+    const meterCanvas = $('meter'), meterCtx = meterCanvas.getContext('2d');
+    const BARS = [.55, .85, 1, .8, .5];
+    const bars = BARS.map(() => 0);
+    let inputLevel = 0, smoothLevel = 0, wavePhase = 0, waveRaf = 0, lastFrame = 0;
+    function drawMeter(now) {
+      waveRaf = 0;
+      const dt = Math.min(48, now - (lastFrame || now)) / 16.7; lastFrame = now;
+      wavePhase += .16 * dt;
+      smoothLevel += (inputLevel - smoothLevel) * Math.min(1, .28 * dt);
+      const w = meterCanvas.width, h = meterCanvas.height, s = w / 28;
+      meterCtx.clearRect(0, 0, w, h);
+      const active = Math.min(1, smoothLevel * 1.5);
+      meterCtx.fillStyle = active > .06 ? '#6c9bff' : '#5a6272';
+      for (let i = 0; i < BARS.length; i++) {
+        const wobble = .72 + .28 * Math.sin(wavePhase * (1.1 + i * .23) + i * 1.7);
+        const want = 3 + BARS[i] * (active * 17 * wobble + (active > .06 ? 1.5 : .8 + .8 * Math.sin(wavePhase * .5 + i)));
+        bars[i] += (want - bars[i]) * Math.min(1, .35 * dt);
+        const bh = Math.max(3, Math.min(20, bars[i])) * s, bw = 2.6 * s, x = (5.2 + i * 3.9) * s, y = (h - bh) / 2;
+        meterCtx.beginPath(); meterCtx.roundRect(x, y, bw, bh, bw / 2); meterCtx.fill();
+      }
+      if (phase === 'listening' && isVisible() && !reduceMotion) waveRaf = requestAnimationFrame(drawMeter);
     }
-    let waveRaf = 0;
-    function ensureWave() { if (!waveRaf && !prefersReducedMotion) waveRaf = requestAnimationFrame(animateWave); }
+    function ensureMeter() { if (!waveRaf) { lastFrame = 0; waveRaf = requestAnimationFrame(drawMeter); } }
+    const RING = 97.4;
+    function setEnding(value) {
+      const v = Math.max(0, Math.min(1, Number(value) || 0));
+      $('ring').classList.toggle('on', v > 0.02);
+      $('arc').style.strokeDashoffset = String(-RING * v);   // the arc drains clockwise from the top
+    }
+    function onMeter(meter) {
+      if (phase !== 'listening') return;
+      inputLevel = Math.max(0, Math.min(1, Number(meter && meter.level) || 0));
+      setEnding(meter && meter.ending);
+      if (reduceMotion) ensureMeter();
+    }
 
     // ---------------------------------------------------------------- state machine
     let readyTimer = 0;
     function collapse() {
-      clearTimers(); cardOpen = false;
-      glyph('primary'); $('badge').className = 'badge glyph off';
-      show('circle');
+      clearTimers(); clearTimeout(paceTimer); paceTimer = 0; cardOpen = false;
+      setEnding(0);
       clearTimeout(readyTimer);
+      // Leave as it arrived: fade and sink in place, then reset out of sight.
+      pill.dataset.ready = 'false';
+      setHover(false);
       readyTimer = setTimeout(() => {
-        pill.dataset.ready = 'false';
-        setTimeout(() => { track.textContent = ''; track.style.transform = ''; liveText = ''; mid.className = 'mid'; mid.style.height = ''; }, 450);
-      }, prefersReducedMotion ? 10 : 680);
+        show('circle'); lead('meter'); $('status').className = 'status lead-live off';
+        track.textContent = ''; track.style.transform = ''; liveText = ''; target = [];
+        mid.className = 'mid'; hint.textContent = 'Listening';
+      }, 260);
     }
     function updateSelection(payload) {
       const chip = $('selchip');
       const sel = String(payload.selectedText || '').replace(/\s+/g, ' ').trim();
-      const active = ['listening', 'processing', 'optimising', 'refining', 'revealing'].includes(payload.phase);
+      const active = ['listening', 'processing', 'optimising'].includes(payload.phase);
       if (!sel || !active) { chip.classList.remove('show'); return; }
       const edit = payload.edit;
       $('seltag').textContent = edit === 'rewrite' ? 'Rewriting selection' : edit === 'replace' ? 'Replacing selection' : 'Selected text';
       const instruction = edit === 'rewrite' ? String(payload.partial || '').trim() : '';
       const text = instruction || sel;
-      $('selquote').textContent = (instruction ? '\u201c' : '') + (text.length > 70 ? text.slice(0, 67) + '\u2026' : text) + (instruction ? '\u201d' : '');
+      $('selquote').textContent = (instruction ? '“' : '') + (text.length > 64 ? text.slice(0, 61) + '…' : text) + (instruction ? '”' : '');
       chip.classList.add('show');
+    }
+    function message(text, kind) {
+      $('msg').className = 'msg' + (kind === 'error' ? ' error' : '');
+      $('msgdot').textContent = kind === 'error' ? '!' : '✓';
+      $('msgtext').textContent = text;
+      show('msg');
     }
     function render(payload = {}) {
       updateSelection(payload);
       playFor(payload);
       phase = payload.phase || 'idle';
-      inputLevel = Math.max(0, Math.min(1, Number(payload.level) || 0));
       const detail = String(payload.detail || '').trim();
       if (phase === 'idle') { collapse(); return; }
       clearTimeout(readyTimer);
-      if (phase === 'arming') { if (!isVisible()) { cardOpen = false; track.textContent = ''; liveText = ''; mid.className = 'mid'; appear(() => show('circle')); } return; }
-      if (phase === 'listening') { ensureWave(); appear(() => { setLive(payload.partial || ''); if (mode !== 'listen') show('listen'); }); return; }
-      if (phase === 'processing' || phase === 'optimising') {
-        $('label').textContent = detail || 'Thinking';
-        appear(() => { if (payload.partial) setLive(payload.partial, true); else flushWords(); if (mode !== 'think') show('think'); else { mid.classList.toggle('show-label', !liveText); } });
+      if (phase === 'arming') {
+        if (!isVisible()) { cardOpen = false; track.textContent = ''; liveText = ''; target = []; mid.className = 'mid'; lead('meter'); $('status').className = 'status lead-live off'; appear(() => show('circle')); }
         return;
       }
-      appear(() => later_(payload, detail));
+      if (phase === 'listening') {
+        hint.textContent = 'Listening';
+        if (payload.level != null) inputLevel = Math.max(0, Math.min(1, Number(payload.level) || 0));
+        if (payload.ending != null) setEnding(payload.ending);
+        appear(() => { setLive(payload.partial || ''); if (mode !== 'listen') { show('listen'); followTail(); } ensureMeter(); });
+        return;
+      }
+      if (phase === 'processing' || phase === 'optimising') {
+        hint.textContent = detail && detail !== 'Thinking' ? detail : 'Transcribing';
+        appear(() => { if (payload.partial) setLive(payload.partial, true); else flushWords(); show('think'); followTail(); });
+        return;
+      }
+      appear(() => settle(payload, detail));
     }
-    function later_(payload, detail) {
+    function settle(payload, detail) {
       if (phase === 'refining') { if (!cardOpen) openDiff(payload); return; }
       if (phase === 'revealing') { revealFinal(payload); return; }
       if (phase === 'done') {
         if (cardOpen) { landStatus(detail, Boolean(payload.clipboard)); return; }
-        $('msg').className = 'msg'; $('msg').textContent = detail || 'Inserted'; show('msg'); return;
+        message(detail || 'Inserted'); return;
       }
-      if (phase === 'error') { cardOpen = false; $('msg').className = 'msg error'; $('msg').textContent = (detail || 'Something went wrong. Press Esc to dismiss.').slice(0, 90); show('msg'); return; }
-      if (phase === 'preview') { $('msg').className = 'msg'; $('msg').textContent = detail || 'Ready'; show('msg'); return; }
+      if (phase === 'error') { cardOpen = false; message((detail || 'Something went wrong. Press Esc to dismiss.').slice(0, 110), 'error'); return; }
+      if (phase === 'preview') { message(detail || 'Ready'); return; }
       if (phase === 'selection') show('select');
     }
 
     // ---------------------------------------------------------------- input: hover hit-testing + dragging
-    function setHover(next) { if (next !== hovering) { hovering = next; api.setInteractive && api.setInteractive(next); } }
+    function setHover(next) { if (next !== hovering) { hovering = next; pill.classList.toggle('hovered', next); api.setInteractive && api.setInteractive(next); } }
     document.addEventListener('mousemove', (event) => {
       if (dragging) return;
       if (!isVisible()) { setHover(false); return; }
       const r = pill.getBoundingClientRect();
       setHover(event.clientX >= r.left - 4 && event.clientX <= r.right + 4 && event.clientY >= r.top - 4 && event.clientY <= r.bottom + 4);
     });
+    document.addEventListener('mouseleave', () => { if (!dragging) setHover(false); });
     pill.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || event.target.closest('button')) return;
       dragging = { x: event.screenX, y: event.screenY }; pill.setPointerCapture(event.pointerId); pill.classList.add('dragging');
@@ -477,7 +540,7 @@
     $('enhance').addEventListener('click', action('enhance'));
 
     api.onState(render);
-
+    api.onMeter && api.onMeter(onMeter);
   </script>
 </body>
 </html>

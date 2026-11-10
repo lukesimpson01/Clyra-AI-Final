@@ -42,6 +42,7 @@
     "test:word-diff": "node tools/word-diff-tests.mjs",
     "test:dictation-hotkey": "node tools/dictation-hotkey-tests.mjs",
     "test:flow-native": "node tools/flow-native-contract-tests.mjs",
+    "test:flow-endpoint": "node tools/flow-endpoint-tests.mjs",
     "test:voice-e2e:dictation": "node tools/voice-call-e2e.mjs --dictation",
     "test:voice-call-e2e": "node tools/voice-call-webrtc-e2e.mjs",
     "test:browser": "tsx tools/openbrowser-e2e.ts",
