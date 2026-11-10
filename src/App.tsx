@@ -3588,6 +3588,7 @@ export default function App() {
     elapsedSeconds: composerDictation.elapsedSeconds,
     detail: flowSession ? flowSession.detail : composerDictation.detail,
     flow: flowSession,
+    steps: composerDictation.steps,
     // In the desktop app the mic button drives the same Flow engine as the global hotkey, shown inline here.
     onStart: () => {
       const flow = getElectronDesktop()?.dictation;

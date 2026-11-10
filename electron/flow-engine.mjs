@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { cpus, tmpdir, constants as osConstants, setPriority } from "node:os";
 import path from "node:path";
+import { analyzeSpeech, estimateSpeechRate, pickTempo, timeStretch } from "../lib/speech/speechSegments.mjs";
 
 /**
  * Clyra Flow's own speech engine, living in the Electron main process so the
@@ -104,6 +105,13 @@ export class FlowEngine {
 
   /** @param {Buffer} pcm 16-bit mono PCM @ sampleRate */
   async transcribe(pcm, sampleRate = 16_000) {
+    // Only speech reaches the model: silence and room noise are what it invents words from, and cutting them is faster.
+    const heard = analyzeSpeech(pcm, sampleRate);
+    if (heard.noSpeech) return "";
+    pcm = heard.trimmed;
+    // Fast talkers are slowed a little (pitch kept) before decoding: measured to cut errors a lot on rapid speech.
+    const tempo = pickTempo(estimateSpeechRate(pcm, sampleRate));
+    if (tempo < 1) pcm = timeStretch(pcm, tempo);
     await this.warm();
     const child = this.child;
     if (!child) throw new Error("The speech engine is unavailable.");

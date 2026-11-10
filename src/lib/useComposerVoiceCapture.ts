@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { VoicePcmCapturer } from "./voicePcmCapture";
 import { canStartDictation, type ComposerDictationPhase } from "./composerDictation";
 import { getElectronDesktop } from "./electron-runtime";
+import { SpeechEndpointer } from "./dictationEndpoint";
+import { summarizeFix, type DictationStep, type DictationStepId, type DictationStepState } from "./dictationSteps";
 
 /** The chat composer's microphone: one capture session that streams audio to Clyra's local speech engine (or the
  * browser's recognizer when that is what the engine asks for), then returns the cleaned transcript. Shared by
@@ -11,6 +13,21 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
   const [level, setLevel] = useState(0);
   const [detail, setDetail] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [steps, setSteps] = useState<DictationStep[]>([]);
+  const endpointerRef = useRef(new SpeechEndpointer());
+  const endedByRef = useRef<"auto" | "manual">("manual");
+  const stepsClearRef = useRef<number | null>(null);
+  /** Adds or updates one row of the visible timeline. */
+  const setStep = useCallback((id: DictationStepId, label: string, state: DictationStepState, detail?: string) => {
+    setSteps((list) => {
+      const next = list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? { id, label, state, detail } : x)) : [...list, { id, label, state, detail }];
+      return next;
+    });
+  }, []);
+  const clearStepsSoon = useCallback((ms = 2800) => {
+    if (stepsClearRef.current != null) window.clearTimeout(stepsClearRef.current);
+    stepsClearRef.current = window.setTimeout(() => { stepsClearRef.current = null; setSteps([]); }, ms);
+  }, []);
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef("");
@@ -52,6 +69,7 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
     release();
     setPhase("idle");
     setDetail("");
+    setSteps([]);
   }, [release]);
 
   /** Ends capture and asks the local engine for the final transcript (stop keeps the audio). */
@@ -60,6 +78,10 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
     phaseRef.current = "transcribing";
     setPhase("transcribing");
     setDetail("Transcribing");
+    const heard = Math.max(0, (Date.now() - startedAtRef.current) / 1000);
+    setStep("listen", "Listened", "done", `${heard.toFixed(1)}s`);
+    setStep("endpoint", endedByRef.current === "auto" ? "Heard you stop" : "Stopped by you", "done");
+    setStep("transcribe", "Transcribing", "active", "on this device");
     captureRef.current?.stop();
     captureRef.current = null;
     if (socketRef.current?.readyState !== WebSocket.OPEN) {
@@ -77,7 +99,7 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
       setPhase("error");
       setDetail("Transcription timed out. Try again.");
     }, 25_000);
-  }, [release]);
+  }, [release, setStep]);
 
   /** Enters "listening" only when capture has really started for this socket. */
   const markListening = useCallback((socket: WebSocket) => {
@@ -89,6 +111,10 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
     phaseRef.current = "listening";
     setPhase("listening");
     setDetail("Listening");
+    endpointerRef.current.reset();
+    endedByRef.current = "manual";
+    if (stepsClearRef.current != null) { window.clearTimeout(stepsClearRef.current); stepsClearRef.current = null; }
+    setSteps([{ id: "listen", label: "Listening", state: "active" }]);
   }, []);
 
   const start = useCallback(async () => {
@@ -130,22 +156,21 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
             if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "audio", sessionId: session.sessionId, codec: "pcm16", data, seq }));
           }, Number(message.sampleRate) || 16_000, (nextLevel) => {
             setLevel(nextLevel);
-            const now = performance.now();
-            if (nextLevel >= 0.07) {
-              heardSpeechRef.current = true;
-              lastSpeechAtRef.current = now;
-              if (silenceTimerRef.current != null) window.clearTimeout(silenceTimerRef.current);
-              silenceTimerRef.current = null;
-              return;
+            if (phaseRef.current !== "listening") return;
+            // Clyra decides when you are done: it learns the room, waits for speech, then ends after a pause longer
+            // than the ones you took while talking. Tapping the mic still ends it at once.
+            const verdict = endpointerRef.current.push(nextLevel);
+            if (verdict.kind === "end" || verdict.kind === "max-length") {
+              endedByRef.current = "auto";
+              flush();
+            } else if (verdict.kind === "no-speech") {
+              setStep("listen", "Listening", "failed", "heard nothing");
+              release();
+              setPhase("error");
+              setDetail("I didn't hear anything. Tap the mic and try again.");
+              clearStepsSoon(3500);
             }
-            if (!heardSpeechRef.current || silenceTimerRef.current != null || now - lastSpeechAtRef.current < 1_100) return;
-            // Recording is ended by the user (tap or release). This is only a
-            // safety net for a forgotten mic, so it waits for a long silence.
-            silenceTimerRef.current = window.setTimeout(() => {
-              silenceTimerRef.current = null;
-              if (performance.now() - lastSpeechAtRef.current >= 4_000) flush();
-            }, 4_000);
-          });
+          }, { echoCancellation: false });
           captureRef.current = capture;
           void capture.start().then(() => markListening(socket)).catch((error) => {
             release();
@@ -178,12 +203,18 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
         } else if (message.type === "dictation_final") {
           const transcript = String(message.text || "").trim();
           release();
-          if (!transcript) {
+          const engine = message.engine === "parakeet" ? "Parakeet" : message.engine === "whisper" ? "Whisper" : "speech engine";
+          const ms = typeof message.elapsedMs === "number" ? `${(message.elapsedMs / 1000).toFixed(1)}s` : "";
+          if (!transcript || message.noSpeech) {
+            setStep("transcribe", "Transcribing", "failed", message.noSpeech ? "no speech in the recording" : "nothing recognised");
             setPhase("error");
-            setDetail("No speech was detected.");
-            window.setTimeout(cancel, 1_600);
+            setDetail(message.noSpeech ? "I didn't hear any speech. Check your microphone and try again." : "No speech was detected.");
+            clearStepsSoon(3500);
+            window.setTimeout(cancel, 3_600);
             return;
           }
+          setStep("transcribe", "Transcribed", "done", [engine, ms].filter(Boolean).join(" · "));
+          setStep("fix", "Fixing", "active", "fillers, corrections, punctuation");
           setPhase("transcribing");
           setDetail("Refining your prompt");
           void fetch("/api/dictation/cleanup", {
@@ -194,12 +225,18 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
             .then(async (cleanup) => {
               const payload = await cleanup.json().catch(() => ({}));
               if (!cleanup.ok || !payload?.ok) throw new Error(payload?.error || "Prompt cleanup failed.");
-              onComplete(String(payload.text || transcript));
+              const cleaned = String(payload.text || transcript);
+              setStep("fix", "Fixed", "done", summarizeFix(transcript, cleaned));
+              if (payload.source === "clyra-llm") setStep("polish", "Polished with AI", "done", "corrections resolved");
+              onComplete(cleaned);
+              clearStepsSoon();
               setPhase("idle");
               setDetail("");
             })
             .catch(() => {
+              setStep("fix", "Fixing", "skipped", "used the raw transcript");
               onComplete(transcript);
+              clearStepsSoon();
               setPhase("idle");
               setDetail("");
             });
@@ -219,8 +256,9 @@ export function useComposerVoiceCapture(onComplete: (text: string) => void) {
       setPhase("error");
       setDetail(error instanceof Error ? error.message : "Voice service is unavailable.");
     }
-  }, [cancel, flush, onComplete, release]);
+  }, [cancel, clearStepsSoon, flush, onComplete, release, setStep]);
 
   useEffect(() => () => release(), [release]);
-  return { phase, level, detail, elapsedSeconds, start, stop: flush, cancel };
+  const manualStop = useCallback(() => { endedByRef.current = "manual"; flush(); }, [flush]);
+  return { phase, level, detail, elapsedSeconds, steps, start, stop: manualStop, cancel };
 }

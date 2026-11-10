@@ -12,6 +12,8 @@ function classifyApp(application) {
 const FILLER = /(?:^|(?<=[\s,.;:!?]))(?:u+m+|u+h+|e+r+m*|a+h+m+|h+m+|m+m+h*m*|uh-huh)(?=[\s,.;:!?]|$)[\s,]*/gi;
 const COMMA_FILLER = /,\s*(?:you know|i mean|sort of|kind of|like|basically|literally)\s*,/gi;
 function removeFillers(text) {
+  // "and, uh, add it" -> "and add it": a filler wedged between a conjunction and its clause takes its commas with it
+  text = text.replace(/\b(and|but|so|or|then|because|if|that)\s*,\s*(?:u+m+|u+h+|e+r+m*|a+h+m+|h+m+)\s*,?\s*/gi, "$1 ");
   return text.replace(FILLER, "").replace(COMMA_FILLER, ",");
 }
 function removeStutters(text) {
@@ -53,10 +55,16 @@ function applyNumberCorrections(text) {
     const trailing = a.slice(ai + 1);
     if (trailing.length > 1 || (trailing[0] && STOP_AFTER_NUMBER.has(trailing[0].toLowerCase().replace(/[^\p{L}]/gu, "")))) return match;
     const unitAfter = trailing[0];
+    // A spoken number can be several words ("ten thirty", "twenty five"): replace the whole run, not its last word.
+    let aStart = ai;
+    while (aStart > 0 && isNumberWord(a[aStart - 1])) aStart -= 1;
+    let bStart = bi;
+    while (bStart > 0 && isNumberWord(b[bStart - 1])) bStart -= 1;
+    const newNumber = a.slice(aStart, ai + 1).join(" ");
     const replaced = [...b];
     // New unit given ("6 hours") replaces number+old unit; otherwise only the number changes.
     const oldUnit = b[bi + 1] && !STOP_AFTER_NUMBER.has(b[bi + 1].toLowerCase().replace(/[^\p{L}]/gu, "")) ? 1 : 0;
-    replaced.splice(bi, unitAfter ? 1 + oldUnit : 1, unitAfter ? `${a[ai]} ${unitAfter}` : a[ai]);
+    replaced.splice(bStart, bi - bStart + 1 + (unitAfter ? oldUnit : 0), unitAfter ? `${newNumber} ${unitAfter}` : newNumber);
     return replaced.join(" ") + rest;
   });
 }
@@ -189,6 +197,20 @@ function ensureTerminalPunctuation(text, kind) {
   return /\b(?:who|what|when|where|why|how|is|are|do|does|did|can|could|would|should|will)\b/i.test(text.split(/\s+/)[0] || "") && words <= 18 && !/[.]/.test(text) ? `${text}?` : `${text}.`;
 }
 const NEEDS_MODEL = /\b(?:actually|i mean|no wait|wait no|scratch that|sorry,|rather|on second thought|let me rephrase|correction)\b/i;
+/**
+ * The speech model sometimes writes a spoken time as one run of digits ("ten thirty" -> "1030"). After a time word
+ * ("at", "by", "make that") a 3-4 digit run that reads as a clock time becomes h:mm, so "at 9, no wait, make that
+ * 1030" means 10:30 and a correction can swap it in properly.
+ */
+const TIME_CUE = /\b(at|by|before|after|around|until|till|from|to|make that|make it|changed? it to|changed? that to|actually|i mean)\s+(\d{1,2})(\d{2})\b(?!\s*(?::|%|percent|dollars?|bucks|people|items|km|kg|miles|k\b|pounds|euros|words|pages|times|degrees|calories|steps))/gi;
+function fixSpokenTimes(text) {
+  return text.replace(TIME_CUE, (match, cue, h, m) => {
+    const hour = Number(h), minute = Number(m);
+    if (hour < 1 || hour > 12 || minute > 59) return match;
+    return `${cue} ${hour}:${String(minute).padStart(2, "0")}`;
+  });
+}
+
 function cleanDictation(input, options = {}) {
   const level = options.level ?? "light";
   const kind = classifyApp(options.application);
@@ -196,6 +218,7 @@ function cleanDictation(input, options = {}) {
   if (!original || level === "raw") return { text: original, changed: false, kind, needsModel: false };
   let text = original;
   text = removeFillers(text);
+  text = fixSpokenTimes(text);
   text = applyCorrections(text);
   if (kind !== "code") text = removeStutters(text);
   if (kind !== "code") text = applySpokenPunctuation(text);

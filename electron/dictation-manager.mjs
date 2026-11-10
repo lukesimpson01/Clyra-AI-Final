@@ -181,7 +181,10 @@ export class DictationManager {
     if (this.native) this.native.onLevel = (level) => {
       if (!this.nativeActive || this.phase !== "listening") return;
       const now = Date.now();
-      // The pill animates the level itself; a few updates a second are plenty and keep IPC and repaints light.
+      // The waveform gets every reading (~30/s) on its own light channel so it moves in time with the voice;
+      // full state updates (which do more work) stay at ~11/s.
+      const live = this.window;
+      if (live && !live.isDestroyed()) live.webContents.send("dictation:pill-level", level);
       if (now - (this.lastLevelPush || 0) >= 90) { this.lastLevelPush = now; this.setState({ level: Math.max(0, Math.min(1, level)) }); }
       // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
       // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
@@ -200,22 +203,24 @@ export class DictationManager {
           const preRoll = 16_000 * 2 * (this.segments.length ? 0.4 : 0.6);
           this.segStart = Math.max(this.segStart, this.cueEndBytes || 0, bytes - preRoll);
         }
+        // Remember how long you pause between phrases: the end-of-speech wait adapts to your own rhythm.
+        if (this.heardSpeech && this.lastSpeechAt && now - this.lastSpeechAt > 250) this.longestPause = Math.max(this.longestPause || 0, now - this.lastSpeechAt);
         this.heardSpeech = true;
         this.lastSpeechAt = now;
         // Very long unbroken speech: commit at the next natural dip so partials stay fast.
         if (now - this.segSpeechAt >= 8_000) this.commitSegment();
         return;
       }
-      this.noiseFloor = level < this.noiseFloor ? level : this.noiseFloor + (level - this.noiseFloor) * 0.04;
+      this.noiseFloor = level < this.noiseFloor ? level : this.noiseFloor + (level - this.noiseFloor) * 0.012;
       // A short pause closes the current phrase: it is transcribed once, in the background, and kept.
       // A phrase under ~0.9 s ("So", "Hey Sam") is kept open and joined to what follows: decoded alone it has no
       // context and is the most common source of a misheard opening word.
       if (this.segHasSpeech && now - this.lastSpeechAt >= 420 && this.lastSpeechAt - this.segSpeechAt >= 900) this.commitSegment();
       else if (this.segHasSpeech && now - this.segSpeechAt >= 4_500 && level < threshold * 2.2) this.commitSegment();
       if (!this.autoStop) return;
-      // Only a long silence ends a session on its own: pausing for a second or two to think must never cut you off
-      // (tap again to finish sooner). Words are already being transcribed phrase by phrase during the pause.
-      if (this.heardSpeech && now - this.lastSpeechAt >= 8_000 && this.lastSpeechAt - this.speechStartedAt >= 250) void this.nativeFinish();
+      // Clyra decides when you are done: a sentence that sounds finished ends after a short beat, one that trails off
+      // ("... and the") waits longer, and the wait grows to fit how long you pause mid-thought. Tap to end sooner.
+      if (this.heardSpeech && now - this.lastSpeechAt >= this.endSilenceMs() && this.lastSpeechAt - this.speechStartedAt >= 350) void this.nativeFinish();
       else if (!this.heardSpeech && now - this.nativeStartedAt >= 12_000) this.forceReset("No speech was detected.");
     };
     this.preloadPath = preloadPath;
@@ -336,6 +341,7 @@ export class DictationManager {
     this.heardSpeech = false;
     this.lastSpeechAt = startedAt;
     this.noiseFloor = 0.008;
+    this.longestPause = 0;
     this.segments = [];
     this.segStart = 0;
     this.segHasSpeech = false;
@@ -375,6 +381,18 @@ export class DictationManager {
       ? this.engine.transcribe(pcm).then((text) => { segment.text = text || ""; this.pushLive(); return segment.text; }).catch(() => { segment.text = ""; return ""; })
       : Promise.resolve((segment.text = ""));
     this.segments.push(segment);
+  }
+
+  /** How long a silence ends the dictation, from what has been said and how you pace yourself. */
+  endSilenceMs() {
+    const heard = String(this.payload.partial || this.partialText || "").trim();
+    const last = heard.replace(/[.,?!;:"')\]]+$/, "").split(/\s+/).pop()?.toLowerCase() || "";
+    let base = 1100;
+    if (/[.!?]["')\]]?$/.test(heard)) base = 850;            // sounds finished
+    else if (/,$/.test(heard) || OPEN_ENDINGS.has(last)) base = 1900; // clearly mid-thought
+    if (this.lastSpeechAt - this.speechStartedAt < 1400) base *= 0.85; // a short command ends quickly
+    const habit = (this.longestPause || 0) * 1.5;
+    return Math.round(Math.min(2600, Math.max(base, habit)));
   }
 
   /** Everything transcribed so far (finished phrases + the phrase in progress) as one string. */
@@ -422,7 +440,7 @@ export class DictationManager {
     this.handsFree = false;
     clearInterval(this.partialTimer);
     const activationId = this.activationId;
-    this.setState({ phase: "processing", detail: "Thinking", level: 0 });
+    this.setState({ phase: "processing", detail: "Transcribing", level: 0 });
     try {
       await this.nativeStartPromise?.catch(() => undefined);
       const pcm = await this.native.stop();
@@ -438,7 +456,7 @@ export class DictationManager {
       if (!raw) raw = await this.engine.transcribe(this.cueEndBytes && pcm.length > this.cueEndBytes + 16_000 * 2 * 0.3 ? pcm.subarray(this.cueEndBytes - (this.cueEndBytes % 2)) : pcm);
       if (activationId !== this.activationId) return;
       if (!raw) throw new Error("No speech was detected.");
-      this.setState({ phase: "processing", detail: "Thinking", partial: raw });
+      this.setState({ phase: "processing", detail: "Fixing", partial: raw });
       const { level, dictionary } = this.readFlowSettings();
       const application = this.target?.application || "";
       // Text is selected: speech that sounds like an instruction ("make it sound smarter") is applied to
@@ -461,6 +479,7 @@ export class DictationManager {
       // Language-model polish only for messy self-corrections / "polished" mode, and only when
       // the Clyra service happens to be up; otherwise the local pass above is the result.
       if (local.needsModel && local.kind !== "code" && this.cleanupViaService) {
+        this.setState({ phase: "processing", detail: "Polishing with AI", partial: raw });
         text = (await this.cleanupViaService({ transcript: raw, level, dictionary, application }).catch(() => "")) || text;
       }
       if (activationId !== this.activationId) return;
@@ -1156,12 +1175,12 @@ export class DictationManager {
     const diff = raw && raw.trim() !== text.trim() ? wordDiff(raw, text) : null;
     const display = text.length > 420 ? `${text.slice(0, 420).trimEnd()}…` : text;
     // The paste is released when the final text starts to sweep in (right away if there are no edits to show).
-    const probe = focusedElementKind();
+    // The focus check happens at paste time (not now): you may click into a different field while the words animate.
     let result = null;
     let failure = null;
     let startPaste = () => undefined;
     const pasteGate = new Promise((resolve) => { startPaste = resolve; });
-    const insertion = (async () => { await pasteGate; await sleep(60); if (!live()) throw new Error("Cancelled."); return this.insert({ text, target, probe }); })()
+    const insertion = (async () => { await pasteGate; await sleep(60); if (!live()) throw new Error("Cancelled."); return this.insert({ text, target, probe: null }); })()
       .then((value) => { result = value; }, (error) => { failure = error; });
     // Wait up to `ms`, surfacing a failed paste immediately instead of after the animation.
     const settle = async (ms) => {
@@ -1169,16 +1188,17 @@ export class DictationManager {
       while (Date.now() < end) { if (failure) throw failure; if (!live()) throw new Error("Cancelled."); await sleep(40); }
     };
     // Long text glides inside the fixed-height pill; give it time to be read.
-    const overflowMs = Math.min(3_000, Math.max(0, Math.ceil(display.length / 60) - 2) * 800);
+    const overflowMs = Math.min(2_400, Math.max(0, Math.ceil(display.length / 60) - 2) * 600);
     if (hasEdits(diff) && process.env.CLYRA_FLOW_NO_PREVIEW !== "1") {
       const count = (type) => diff.filter((segment) => segment.type === type).reduce((n, segment) => n + String(segment.text).split(/\s+/).filter(Boolean).length, 0);
       this.setState({ phase: "refining", detail: "", diff, finalText: display });
-      // Long enough for every removed word to be crossed out and every new word to appear, plus time to read it.
-      await settle(Math.min(6_000, 650 + count("del") * 110 + 280 + count("add") * 140 + 1_200 + overflowMs));
+      // Matches the pill's own timeline: strike each removed word in red, fold them away, grow the new words in, settle to ink.
+      const dels = count("del"), adds = count("add");
+      await settle(Math.min(4_200, 420 + dels * 100 + 360 + 120 + adds * 120 + 520 + 340));
     }
     this.setState({ phase: "revealing", detail: "", diff: null, finalText: display });
-    startPaste();   // the paste lands as the final text sweeps in
-    await settle(1_100 + overflowMs);
+    startPaste();   // the text lands in your field as the pill settles
+    await settle(520 + overflowMs);
     await insertion;
     if (failure) throw failure;
     console.log(`[flow] insert result: ${result?.method || "ok"}${result?.note ? ` (${result.note})` : ""}`);
@@ -1222,7 +1242,11 @@ export class DictationManager {
     if (process.platform !== "darwin") throw new Error("Native insertion is currently supported on macOS and Windows only.");
     let trustedNow = true;
     try { trustedNow = systemPreferences.isTrustedAccessibilityClient(false); } catch { trustedNow = true; }
-    if (!trustedNow) return this.clipboardOnly(text, { reason: "no-permission" });
+    if (!trustedNow) {
+      // Pasting into other apps needs Accessibility. Ask the system to show its prompt (once per launch), and keep the text safe meanwhile.
+      if (!this.askedAccessibility) { this.askedAccessibility = true; try { systemPreferences.isTrustedAccessibilityClient(true); } catch { /* ignore */ } }
+      return this.clipboardOnly(text, { reason: "no-permission" });
+    }
     // Nothing editable is focused (desktop, Finder, a page that isn't a field...): never fire a
     // blind Cmd+V. Save the text where it can't be lost and tell the user.
     if (nowhere) return this.clipboardOnly(text);
@@ -1248,22 +1272,18 @@ export class DictationManager {
     const intended = String(target?.application || this.target?.application || "").trim();
     let current = await frontmostApplication().catch(() => "");
 
-    if (intended && current !== intended) {
+    if (isClyraProcessName(current) && intended && !isClyraProcessName(intended)) {
+      // One of Clyra's own windows has focus (a click on the pill): hand it back to the app you were typing in.
       await focusApplication(intended).catch(() => undefined);
       current = await frontmostApplication().catch(() => "");
-      if (current !== intended) {
-        throw new Error(`Focus moved away from ${intended}. Click back into that app, then use the dictation hotkey again.`);
-      }
-    } else if (!intended && isClyraProcessName(current)) {
-      // We never learned the target app (usually missing Accessibility) and
-      // Clyra is frontmost — refuse to paste into ourselves with a vague error.
+    }
+    if (!current || isClyraProcessName(current)) {
+      // We never learned a target app (usually missing Accessibility) and Clyra is frontmost — refuse to paste into ourselves.
       const trusted = systemPreferences.isTrustedAccessibilityClient(false);
-      if (!trusted) {
-        throw new Error("Clyra needs Accessibility permission in System Settings → Privacy & Security → Accessibility to paste into other apps.");
-      }
+      if (!trusted) throw new Error("Clyra needs Accessibility permission in System Settings → Privacy & Security → Accessibility to paste into other apps.");
       throw new Error("Click into the app where you want the text, then use the dictation hotkey again.");
     }
-
+    // Otherwise paste into whatever app you are in now, even if it is not the one you started in.
     const saved = snapshotClipboard();
     try {
       clipboard.writeText(text);

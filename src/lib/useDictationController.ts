@@ -4,6 +4,7 @@ import { appendDictatedText, type ComposerDictationPhase } from "./composerDicta
 import { getElectronDesktop } from "./electron-runtime";
 import { playFlowSound } from "./flowSounds";
 import type { FlowSession } from "../components/chat/FlowComposerOverlay";
+import type { DictationStep } from "./dictationSteps";
 
 export interface DictationControls {
   phase: ComposerDictationPhase;
@@ -12,6 +13,8 @@ export interface DictationControls {
   detail?: string;
   /** Live words and edits, when the desktop Flow engine is driving this dictation. */
   flow: FlowSession | null;
+  /** The stages of this dictation as tool-call rows: listening, end of speech, transcribing, fixing. */
+  steps: DictationStep[];
   onStart: () => void;
   onStop: () => void;
   onCancel: () => void;
@@ -73,6 +76,7 @@ export function useDictationController(onText: (text: string) => void): Dictatio
     elapsedSeconds: capture.elapsedSeconds,
     detail: flowSession ? flowSession.detail : capture.detail,
     flow: flowSession,
+    steps: capture.steps,
     onStart: () => {
       const flow = getElectronDesktop()?.dictation;
       if (flow?.toggle) {

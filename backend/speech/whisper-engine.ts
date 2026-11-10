@@ -5,6 +5,8 @@ import { cpus, freemem, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { analyzeSpeech, estimateSpeechRate, pickTempo, timeStretch } from "../../lib/speech/speechSegments.mjs";
+
 const execFileAsync = promisify(execFile);
 const root = path.resolve(process.cwd());
 // Packaged builds ship the runtime under resources/speech-runtime. In dev,
@@ -52,7 +54,7 @@ const parakeetUsesGpu = () => process.platform === "darwin" && process.arch === 
  * dictation begins (so loading overlaps with speaking) and unloaded after
  * IDLE_UNLOAD_MS without use to give the ~640MB back.
  */
-const IDLE_UNLOAD_MS = 20 * 60_000;
+const IDLE_UNLOAD_MS = 4 * 60_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 
 class ParakeetDaemon {
@@ -230,6 +232,15 @@ async function runParakeet(parakeet: { executable: string; model: string }, inpu
 /** Runs the local STT engine only for an active utterance; there is no idle AI process. */
 export async function transcribePcm(pcm: Buffer, sampleRate = 16000, options: { language?: string; profile?: string; prompt?: string[]; engine?: SpeechEngine } = {}) {
   if (!pcm.length) return { text: "", runtime: null, elapsedMs: 0, engine: "none" as const };
+  // Only speech goes to the model: leading/trailing silence and long pauses are cut (faster, and no invented words
+  // from room noise), and a clip with no speech in it returns nothing rather than a guess.
+  const speech = analyzeSpeech(pcm, sampleRate);
+  if (speech.noSpeech) return { text: "", runtime: null, elapsedMs: 0, engine: "none" as const, noSpeech: true, speechMs: speech.speechMs, audioMs: speech.durationMs, trimmedMs: 0 };
+  const audioMs = speech.durationMs;
+  const trimmedMs = Math.round((speech.trimmed.length / 2 / sampleRate) * 1000);
+  pcm = speech.trimmed;
+  const tempo = pickTempo(estimateSpeechRate(pcm, sampleRate));
+  if (tempo < 1) pcm = timeStretch(pcm, tempo);
   const directory = await mkdtemp(path.join(tmpdir(), "clyra-stt-"));
   const input = path.join(directory, "utterance.wav");
   const started = performance.now();
@@ -245,7 +256,7 @@ export async function transcribePcm(pcm: Buffer, sampleRate = 16000, options: { 
       }
       if (!viaDaemon) text = await runParakeet(parakeet, input, parakeetUsesGpu());
       if (!text && !viaDaemon && parakeetUsesGpu()) text = await runParakeet(parakeet, input, false);
-      return { text, runtime: null, elapsedMs: Math.round(performance.now() - started), engine: "parakeet" as const, warm: viaDaemon };
+      return { text, runtime: null, elapsedMs: Math.round(performance.now() - started), engine: "parakeet" as const, warm: viaDaemon, speechMs: speech.speechMs, audioMs, trimmedMs };
     }
     const runtime = await resolveWhisperRuntime(options);
     const output = path.join(directory, "transcript");
@@ -254,7 +265,7 @@ export async function transcribePcm(pcm: Buffer, sampleRate = 16000, options: { 
     if (options.prompt?.length) args.push("-p", options.prompt.slice(0, 80).join(", "));
     await execFileAsync(runtime.executable, args, { timeout: 90_000, maxBuffer: 1024 * 1024 });
     const text = (await readFile(`${output}.txt`, "utf8")).replace(/\s+/g, " ").trim();
-    return { text, runtime, elapsedMs: Math.round(performance.now() - started), engine: "whisper" as const };
+    return { text, runtime, elapsedMs: Math.round(performance.now() - started), engine: "whisper" as const, speechMs: speech.speechMs, audioMs, trimmedMs };
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

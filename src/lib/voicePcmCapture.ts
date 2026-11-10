@@ -43,7 +43,43 @@ function rmsLevel(samples: Float32Array) {
   return Math.max(0, Math.min(1, normalized));
 }
 
+/** Averages each window of input samples into one output sample. Picking every Nth sample (the old approach) aliases:
+ * consonants blur and the speech model mishears words. Averaging is a simple low-pass that avoids that. */
+function downsample(input: Float32Array, ratio: number) {
+  const length = Math.floor(input.length / ratio);
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const from = Math.floor(i * ratio);
+    const to = Math.max(from + 1, Math.min(input.length, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let k = from; k < to; k += 1) sum += input[k]!;
+    out[i] = sum / (to - from);
+  }
+  return out;
+}
+
+/** Runs on the audio thread, so capture never drops audio even when the page is busy (a heavy workspace, a slow
+ * machine). It hands the page 2048-sample chunks of audio and a loudness reading every ~32 ms. */
+const WORKLET_SOURCE = `
+class ClyraPcm extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; this.sum = 0; this.count = 0; this.every = Math.round(sampleRate * 0.032); }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      const v = ch[i];
+      this.buf[this.n++] = v; this.sum += v * v; this.count++;
+      if (this.count >= this.every) { this.port.postMessage({ level: Math.sqrt(this.sum / this.count) }); this.sum = 0; this.count = 0; }
+      if (this.n === 2048) { const copy = this.buf.slice(0); this.port.postMessage({ audio: copy }, [copy.buffer]); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor("clyra-pcm", ClyraPcm);`;
+
 export class VoicePcmCapturer {
+  private worklet: AudioWorkletNode | null = null;
+  private workletUrl: string | null = null;
   private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
@@ -57,11 +93,15 @@ export class VoicePcmCapturer {
   private onLevel: PcmLevelHandler | null;
   private targetRate: number;
 
+  private options: { echoCancellation?: boolean };
+
   constructor(
     onChunk: PcmChunkHandler,
     targetRate = 16000,
     onLevel: PcmLevelHandler | null = null,
+    options: { echoCancellation?: boolean } = {},
   ) {
+    this.options = options;
     this.onChunk = onChunk;
     this.onLevel = onLevel;
     this.targetRate = targetRate;
@@ -82,7 +122,7 @@ export class VoicePcmCapturer {
     } else {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
+          echoCancellation: this.options.echoCancellation ?? true,
           noiseSuppression: true,
           autoGainControl: true,
           channelCount: 1,
@@ -93,42 +133,53 @@ export class VoicePcmCapturer {
     }
     // Reuse the context created directly from the call-button gesture. A
     // second context created after WebSocket.onopen can remain suspended.
+    // A context that already runs at the speech model's rate needs no resampling at all (Chromium's own resampler is high quality).
     this.ctx = existingContext && existingContext.state !== "closed"
       ? existingContext
-      : new AudioContext();
+      : (() => { try { return new AudioContext({ sampleRate: this.targetRate }); } catch { return new AudioContext(); } })();
     this.ownsContext = this.ctx !== existingContext;
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this.source = this.ctx.createMediaStreamSource(this.stream);
-    // ~128ms @ 16k / ~42ms @ 48k — responsive meter + low capture latency.
-    const bufferSize = this.ctx.sampleRate >= 44100 ? 2048 : 2048;
-    this.processor = this.ctx.createScriptProcessor(bufferSize, 1, 1);
     this.silentGain = this.ctx.createGain();
     this.silentGain.gain.value = 0;
-    this.processor.onaudioprocess = (event) => {
+    const handleAudio = (input: Float32Array) => {
       const context = this.ctx;
-      if (!context) return;
-      const input = event.inputBuffer.getChannelData(0);
-      const level = this.muted ? 0 : rmsLevel(input);
-      this.onLevel?.(level);
-      if (this.muted) return;
-
-      let samples: Float32Array = input;
-      if (Math.abs(context.sampleRate - this.targetRate) > 1) {
-        const ratio = context.sampleRate / this.targetRate;
-        const length = Math.floor(input.length / ratio);
-        const resampled = new Float32Array(length);
-        for (let i = 0; i < length; i += 1) {
-          resampled[i] = input[Math.floor(i * ratio)] ?? 0;
-        }
-        samples = resampled;
-      }
-      const pcm = floatTo16BitPCM(samples);
+      if (!context || this.muted) return;
+      const samples = Math.abs(context.sampleRate - this.targetRate) > 1 ? downsample(input, context.sampleRate / this.targetRate) : input;
       this.seq += 1;
-      this.onChunk(int16ToBase64(pcm), this.seq);
+      this.onChunk(int16ToBase64(floatTo16BitPCM(samples)), this.seq);
     };
-    this.source.connect(this.processor);
+    const toLevel = (rms: number) => Math.max(0, Math.min(1, (rms - 0.006) / 0.1));
+    // Preferred: an AudioWorklet (audio thread). Falls back to the main-thread ScriptProcessor where it is unavailable.
+    let usedWorklet = false;
+    if (this.ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
+      try {
+        this.workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "application/javascript" }));
+        await this.ctx.audioWorklet.addModule(this.workletUrl);
+        this.worklet = new AudioWorkletNode(this.ctx, "clyra-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+        this.worklet.port.onmessage = (event: MessageEvent) => {
+          const data = event.data as { level?: number; audio?: Float32Array };
+          if (typeof data.level === "number") this.onLevel?.(this.muted ? 0 : toLevel(data.level));
+          if (data.audio) handleAudio(data.audio);
+        };
+        this.source.connect(this.worklet);
+        this.worklet.connect(this.silentGain);
+        usedWorklet = true;
+      } catch {
+        this.worklet = null;
+      }
+    }
+    if (!usedWorklet) {
+      this.processor = this.ctx.createScriptProcessor(2048, 1, 1);
+      this.processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        this.onLevel?.(this.muted ? 0 : rmsLevel(input));
+        handleAudio(input);
+      };
+      this.source.connect(this.processor);
+      this.processor.connect(this.silentGain);
+    }
     // CRITICAL: never route mic into speakers — that caused feedback/clicks/pops.
-    this.processor.connect(this.silentGain);
     this.silentGain.connect(this.ctx.destination);
   }
 
@@ -143,6 +194,8 @@ export class VoicePcmCapturer {
   stop() {
     try {
       if (this.processor) this.processor.onaudioprocess = null;
+      if (this.worklet) this.worklet.port.onmessage = null;
+      this.worklet?.disconnect();
       this.processor?.disconnect();
       this.source?.disconnect();
       this.silentGain?.disconnect();
@@ -150,6 +203,8 @@ export class VoicePcmCapturer {
       // ignore
     }
     this.processor = null;
+    this.worklet = null;
+    if (this.workletUrl) { URL.revokeObjectURL(this.workletUrl); this.workletUrl = null; }
     this.source = null;
     this.silentGain = null;
     if (this.ownsStream) {

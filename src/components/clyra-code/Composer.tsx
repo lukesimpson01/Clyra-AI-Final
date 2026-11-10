@@ -14,6 +14,8 @@ import type { ComposerEffortOption } from "../chat/ClyraComposerShell";
 import type { BriefPlatform } from "./appBrief";
 import { BriefHeader, BriefSkeleton, IOSHostNote } from "./BriefComponents";
 import { useClickAway } from "./useClickAway";
+import { useDictationController, appendDictatedText } from "../../lib/useDictationController";
+import { DictationMicButton, DictationStepsDrawer, DictationStrip } from "../chat/DictationMic";
 
 export type ComposerContext = {
   id: string;
@@ -109,6 +111,8 @@ export function Composer({
 }) {
   const reducedMotion = useReducedMotion();
   const [value, setValue] = useState("");
+  /* the same microphone as Chat: speech fills the field and never sends */
+  const dictation = useDictationController((spoken) => { setValue((previous) => appendDictatedText(previous, spoken)); requestAnimationFrame(() => textareaRef.current?.focus()); });
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentMenu, setAttachmentMenu] = useState(false);
   const [command, setCommand] = useState<ComposerCommand | null>(null);
@@ -354,7 +358,9 @@ export function Composer({
         </AnimatePresence>
         {command ? (() => { const item = CODING_COMMANDS.find((candidate) => candidate.id === command)!; const Icon = item.icon; return <div className="px-3 pt-2"><span className="inline-flex h-5 items-center gap-1 rounded-[6px] bg-[var(--accent-blue)]/[0.1] px-1.5 text-[10.5px] font-medium text-[var(--accent-blue)]"><Icon className="h-3 w-3" strokeWidth={1.7} />{item.name}<button type="button" aria-label={`Remove ${item.name} command`} onClick={() => { setCommand(null); onCommandChange?.(null); }} className="ml-0.5 rounded text-[var(--accent-blue)]/70 hover:text-[var(--accent-blue)]"><X className="h-2.5 w-2.5" /></button></span></div>; })() : null}
         {brief ? <BriefHeader platform={brief} onClear={() => onBriefClear?.()} /> : null}
+        <DictationStepsDrawer dictation={dictation} />
         <div className="relative">
+        <DictationStrip dictation={dictation} height={fieldHeight ? Math.min(Number(fieldHeight) || 44, 120) : 44} />
         <div
           ref={mirrorRef}
           aria-hidden
@@ -433,7 +439,7 @@ export function Composer({
                 )
               : null}
           </div>
-          <button type="button" aria-label="Voice input" onClick={() => textareaRef.current?.focus()} className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover)]"><Mic className="h-[17px] w-[17px]" strokeWidth={1.6} /></button>
+          <DictationMicButton dictation={dictation} />
           {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--app-background)] transition-colors duration-150 hover:opacity-90 active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[var(--accent-blue)] text-white hover:brightness-110" : "bg-[var(--accent-blue)]/45 text-white")}><ArrowUp className="h-4 w-4" strokeWidth={2.1} /></button>}
         </div>
             </motion.div>

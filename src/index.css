@@ -11589,3 +11589,37 @@ body,
 
 /* Words found by a search: blue text, no highlighter box. */
 .clyra-search-hit { background: transparent; color: #0066ff; font-weight: 600; padding: 0; transition: color .2s ease; }
+
+/* Dictation progress rows: the stages of a dictation, shown like a tool run */
+.clyra-dsteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.clyra-dsteps__row { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 12.5px; line-height: 18px; color: #6b6f76; animation: clyra-dsteps-in .26s cubic-bezier(.22,1,.36,1) both; }
+.clyra-dsteps__node { display: grid; place-items: center; width: 16px; height: 16px; flex: none; border-radius: 50%; background: rgba(16,18,24,.06); color: #6b6f76; }
+.clyra-dsteps__row[data-state="active"] .clyra-dsteps__node { background: rgba(0,102,255,.1); color: #0066ff; }
+.clyra-dsteps__row[data-state="done"] .clyra-dsteps__node { background: rgba(21,128,61,.1); color: #15803d; }
+.clyra-dsteps__row[data-state="failed"] .clyra-dsteps__node { background: rgba(185,28,28,.1); color: #b91c1c; }
+.clyra-dsteps__icon { flex: none; opacity: .55; }
+.clyra-dsteps__label { color: #15171c; font-weight: 500; white-space: nowrap; }
+.clyra-dsteps__row[data-state="active"] .clyra-dsteps__label { background: linear-gradient(100deg, #15171c 30%, #8a8f98 50%, #15171c 70%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: clyra-dsteps-shine 1.8s linear infinite; }
+.clyra-dsteps__detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9a9ea6; }
+.clyra-dsteps__spin { animation: clyra-dsteps-spin .8s linear infinite; }
+@keyframes clyra-dsteps-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes clyra-dsteps-shine { to { background-position: -120% 0; } }
+@keyframes clyra-dsteps-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .clyra-dsteps__row, .clyra-dsteps__spin, .clyra-dsteps__row[data-state="active"] .clyra-dsteps__label { animation: none; color: #15171c; background: none; } }
+
+/* Shared dictation controls (Vibe Coder, and any composer): the mic button and the recording strip */
+.clyra-mic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-primary, #15171c); cursor: pointer; touch-action: none; user-select: none; transition: background-color .16s ease, color .16s ease, transform .2s cubic-bezier(.22,1,.36,1); }
+.clyra-mic:hover { background: var(--surface-hover, rgba(16,18,24,.06)); }
+.clyra-mic[data-on="true"] { background: #3977f6; color: #fff; transform: scale(1.06); box-shadow: 0 4px 10px -4px rgba(57,119,246,.6); }
+.clyra-dstrip { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 0 6px 0 8px; background: inherit; border-radius: inherit; }
+.clyra-dstrip__label { display: inline-flex; align-items: center; gap: 7px; flex: none; font-size: 12.5px; font-weight: 500; color: #6b6f76; white-space: nowrap; }
+.clyra-dstrip__label i { width: 7px; height: 7px; border-radius: 50%; background: #3977f6; }
+.clyra-dstrip__label i[data-live="true"] { background: #e0483a; animation: clyra-dstrip-pulse 1.6s ease-in-out infinite; }
+@keyframes clyra-dstrip-pulse { 0%,100% { transform: scale(.8); opacity: .7; } 50% { transform: scale(1.15); opacity: 1; } }
+.clyra-dstrip__wave { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 3px; height: 30px; overflow: hidden; }
+.clyra-dstrip__wave b { display: block; width: 3px; flex: none; border-radius: 2px; background: #3977f6; transition: height .08s linear; }
+.clyra-dstrip__partial { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: #3a3d44; }
+.clyra-dstrip__time { flex: none; min-width: 30px; text-align: right; font-size: 12.5px; font-weight: 500; color: #6b6f76; font-variant-numeric: tabular-nums; }
+.clyra-dstrip__cancel { flex: none; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: rgba(16,18,24,.06); color: #3a3d44; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color .15s; }
+.clyra-dstrip__cancel:hover { background: rgba(16,18,24,.11); }
+@media (prefers-reduced-motion: reduce) { .clyra-dstrip__label i { animation: none !important; } }

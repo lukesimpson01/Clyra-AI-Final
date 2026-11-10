@@ -89,7 +89,9 @@
     "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
     "test:clyra-code-activity": "tsx tools/clyra-code-activity-unit-tests.ts",
     "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts",
-    "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts"
+    "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts",
+    "test:speech-endpoint": "tsx tools/speech-endpoint-tests.ts",
+    "stt:bench": "tsx tools/stt-bench.mts"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",

@@ -287,3 +287,5 @@
 .mx-dock__cancel { flex: none; height: 26px; margin-right: 8px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--mx-fill); color: var(--mx-ink-2); font-family: inherit; font-weight: 500; font-size: 12px; cursor: pointer; transition: background-color .15s; }
 .mx-dock__cancel:hover { background: var(--mx-fill-2); }
 @media (prefers-reduced-motion: reduce) { .mx-dock__voice, .mx-dock__voicelabel i { animation: none !important; } }
+
+.mx-dock__steps { padding: 12px 16px 8px; }

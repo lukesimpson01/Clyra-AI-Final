@@ -28,6 +28,8 @@ import { ClyraFace } from "../../voice/ClyraFace";
 import { setOrbAnchor } from "../../voice/orbAnchor";
 import { registerHomeFace, type HomeFaceHandle } from "../../voice/homeFace";
 import { FlowComposerOverlay, type FlowSession } from "./FlowComposerOverlay";
+import { DictationSteps } from "./DictationSteps";
+import type { DictationStep } from "../../lib/dictationSteps";
 import { EffortSlider } from "./EffortSlider";
 import {
   canStartDictation,
@@ -143,6 +145,8 @@ export interface ComposerDictationState {
   onCancel?: () => void;
   /** Present while the desktop app's Flow engine is driving this dictation (live words, edits, final text). */
   flow?: FlowSession | null;
+  /** The stages of this dictation (listening, hearing you stop, transcribing, fixing), shown like a tool run. */
+  steps?: DictationStep[];
 }
 
 export interface ClyraComposerShellProps {
@@ -1899,6 +1903,23 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         >
           {/* The plan: docked just above the bar, centred, where the agent's progress is read at a glance. */}
           {dockAbove ? <div className="clyra-composer-dock">{dockAbove}</div> : null}
+          {dictation.steps?.length ? (
+            <div
+              style={{
+                position: "absolute",
+                left: 20,
+                bottom: "calc(100% + 10px)",
+                zIndex: 30,
+                padding: "10px 14px 10px 12px",
+                borderRadius: 16,
+                background: "#FFFFFF",
+                boxShadow: "0 0 0 1px rgba(16,18,24,0.06), 0 12px 28px -14px rgba(16,18,24,0.25)",
+                animation: "clyraVoiceIn .35s cubic-bezier(.16,1,.3,1) both",
+              }}
+            >
+              <DictationSteps steps={dictation.steps} />
+            </div>
+          ) : null}
           {/* Flow dictation: covers the whole composer card (same shape), the controls underneath soften away. */}
           {dictation.flow ? (
             <FlowComposerOverlay flow={dictation.flow} onStop={dictation.onStop} onCancel={() => dictation.onCancel?.()} />

@@ -11,6 +11,7 @@ import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import type { ClyraPlace } from "../../../lib/maps/types";
 import { formatDistance } from "./mapsIcons";
 import "./maps-ui.css";
+import { DictationSteps } from "../chat/DictationSteps";
 import { useDictationController, appendDictatedText } from "../../lib/useDictationController";
 import { canStartDictation, formatDictationElapsed, isDictationHold, isDictationSessionOpen } from "../../lib/composerDictation";
 
@@ -379,7 +380,8 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
   const wave = useMemo(() => Array.from({ length: 30 }, (_, i) => ({ h: 6 + Math.round(Math.abs(Math.sin(i * 1.7) * 0.6 + Math.sin(i * 0.5)) * 8), env: 0.35 + 0.65 * Math.abs(Math.sin(i / 4.1)) })), []);
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
   const lastUser = [...turns].reverse().find((t) => t.role === "user");
-  const showCard = Boolean(lastAssistant) && lastAssistant!.id !== dismissedId;
+  const showSteps = dictation.steps.length > 0;
+  const showCard = (Boolean(lastAssistant) && lastAssistant!.id !== dismissedId) || showSteps;
   const open = hover || focus || Boolean(text) || busy || showCard || dBusy;
   const canSend = Boolean(text.trim()) && !busy;
 
@@ -399,7 +401,8 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
     >
       <div className="mx-dock__cardwrap">
         <div className="mx-dock__cardinner">
-          {lastAssistant ? (
+          {showSteps ? <div className="mx-dock__steps"><DictationSteps steps={dictation.steps} /></div> : null}
+          {lastAssistant && lastAssistant.id !== dismissedId ? (
             <div ref={cardRef} className="mx-dock__card">
               {lastUser?.text ? <p className="mx-dock__ask">{lastUser.text}</p> : null}
               <StepsLog steps={lastAssistant.steps ?? []} working={Boolean(lastAssistant.pending && !lastAssistant.text && !lastAssistant.error)} status={status} reduced={reduced} />
@@ -423,7 +426,7 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
               ) : null}
             </div>
           ) : null}
-          {showCard ? (
+          {lastAssistant && lastAssistant.id !== dismissedId ? (
             <div className="mx-dock__cardbar">
               <button type="button" className="mx-link" onClick={onOpenChat}><MessageCircle size={12} /> Open chat</button>
               <button type="button" className="mx-icon-btn !h-6 !w-6" aria-label="Dismiss answer" onClick={() => onDismiss(lastAssistant!.id)}><X size={13} /></button>

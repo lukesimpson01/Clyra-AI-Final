@@ -17,6 +17,14 @@ const TRACK_H = 26;
 const THUMB = 22;
 const INSET = (TRACK_H - THUMB) / 2;
 /* settle: quick, soft, no visible overshoot */
+/** Fixed positions (percent of the track), sizes and twinkle timings: the same every render, never in step with each other. */
+const PARTICLES = [
+  { x: 6, y: 30, s: 1.6, d: -0.4, t: 3.1 }, { x: 11, y: 68, s: 1.2, d: -1.9, t: 4.3 }, { x: 17, y: 44, s: 1.4, d: -2.6, t: 3.7 },
+  { x: 24, y: 24, s: 1.1, d: -0.9, t: 4.9 }, { x: 29, y: 72, s: 1.7, d: -3.3, t: 3.4 }, { x: 36, y: 38, s: 1.2, d: -1.3, t: 4.1 },
+  { x: 43, y: 62, s: 1.5, d: -2.2, t: 3.9 }, { x: 49, y: 22, s: 1.1, d: -3.8, t: 4.6 }, { x: 55, y: 50, s: 1.6, d: -0.2, t: 3.3 },
+  { x: 61, y: 74, s: 1.2, d: -2.9, t: 4.4 }, { x: 67, y: 32, s: 1.4, d: -1.6, t: 3.6 }, { x: 73, y: 58, s: 1.1, d: -3.1, t: 5.0 },
+  { x: 79, y: 26, s: 1.7, d: -0.7, t: 3.2 }, { x: 84, y: 66, s: 1.3, d: -2.4, t: 4.2 }, { x: 89, y: 42, s: 1.2, d: -1.1, t: 3.8 },
+];
 const SETTLE = { type: "spring", stiffness: 560, damping: 44, mass: 0.7 } as const;
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
@@ -40,6 +48,16 @@ export function EffortSlider({
   const index = Math.max(0, efforts.findIndex((e) => e.value === current));
   const reduceMotion = useReducedMotion();
   const trackRef = useRef<HTMLDivElement>(null);
+  /* the light's travel is the real width of the track, kept in a CSS variable (no state, no re-render) */
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return undefined;
+    const set = () => el.style.setProperty("--track-w", `${el.clientWidth}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const inner = WIDTH - PAD * 2;
   const travel = inner - THUMB - INSET * 2;
   const step = count > 1 ? travel / (count - 1) : 0;
@@ -52,6 +70,7 @@ export function EffortSlider({
   const session = useRef<{ id: number; grab: number; moved: boolean; downX: number } | null>(null);
   const lastShown = useRef(index);
   const shownIndex = preview ?? index;
+  const isMax = shownIndex === count - 1;
   const direction = shownIndex >= lastShown.current ? 1 : -1;
   useEffect(() => { lastShown.current = shownIndex; }, [shownIndex]);
 
@@ -184,11 +203,15 @@ export function EffortSlider({
           className="clyra-effort-track"
           style={{ height: TRACK_H, borderRadius: TRACK_H / 2 }}
         >
-          <motion.div aria-hidden className="clyra-effort-fill" style={{ width: fill, borderRadius: TRACK_H / 2, background: accentColor }} />
-          {/* At the top level a ripple travels along the fill: expanding rings that stay inside the track. */}
-          {shownIndex === count - 1 && !reduceMotion ? (
-            <span aria-hidden className="clyra-effort-ripples">
-              <i /><i /><i />
+          <motion.div aria-hidden className={"clyra-effort-fill" + (isMax ? " clyra-effort-fill--max" : "")} style={{ width: fill, borderRadius: TRACK_H / 2, background: isMax ? undefined : accentColor }} />
+          {/* At the top level the fill becomes a layered blue gradient with a soft light that travels the whole track,
+              reverses and returns, forever (CSS only: it never touches React state). Tiny lights sit inside the gradient. */}
+          {isMax ? (
+            <span aria-hidden className="clyra-effort-lit" data-still={reduceMotion ? "true" : undefined}>
+              <i className="clyra-effort-shine" />
+              {PARTICLES.map((p, n) => (
+                <b key={n} style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.s, height: p.s, ["--d" as string]: `${p.d}s`, ["--t" as string]: `${p.t}s` }} />
+              ))}
             </span>
           ) : null}
           {efforts.map((_, i) => (
@@ -235,11 +258,21 @@ export function EffortSlider({
         .clyra-effort-label { display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; margin: 0 -4px; border: 0; background: transparent; cursor: pointer; font-family: inherit; font-size: 10.5px; line-height: 14px; font-weight: 500; letter-spacing: 0; color: #8F8F8F; border-radius: 8px; white-space: nowrap; transition: color .18s ease; }
         .clyra-effort-label[data-on] { font-weight: 600; }
         .clyra-effort-label:hover { color: #0D0D0D; }
-        .clyra-effort-ripples { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
-        .clyra-effort-ripples i { position: absolute; top: 50%; left: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.75); background: radial-gradient(circle, rgba(255,255,255,.28), rgba(255,255,255,0) 70%); opacity: 0; transform: translateX(0) scale(.5); animation: clyra-effort-ripple 2.4s cubic-bezier(.3,.1,.4,1) infinite; }
-        .clyra-effort-ripples i:nth-child(2) { animation-delay: .8s; }
-        .clyra-effort-ripples i:nth-child(3) { animation-delay: 1.6s; }
-        @keyframes clyra-effort-ripple { 0% { opacity: 0; transform: translateX(8px) scale(.5); } 15% { opacity: .9; } 100% { opacity: 0; transform: translateX(230px) scale(1.6); } }
+        /* max effort: layered electric blues, a diffused light that travels the full track and back, tiny lights inside */
+        .clyra-effort-fill--max { background:
+          radial-gradient(ellipse 60% 120% at 22% 20%, rgba(120,181,255,.55), rgba(120,181,255,0) 62%),
+          radial-gradient(ellipse 55% 110% at 78% 85%, rgba(13,63,173,.7), rgba(13,63,173,0) 65%),
+          linear-gradient(90deg, #0D3FAD 0%, #1555E8 34%, #1E6FFF 66%, #3E85FF 100%); }
+        .clyra-effort-lit { --shine-w: 132px; position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+        /* the light's bright centre starts on the left edge, reaches the right edge, then comes all the way back */
+        .clyra-effort-shine { position: absolute; left: 0; top: -20%; bottom: -20%; width: var(--shine-w); will-change: transform; transform: translate3d(calc(var(--shine-w) / -2), 0, 0);
+          background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(185,222,255,.95) 0%, rgba(120,181,255,.62) 30%, rgba(120,181,255,.22) 56%, rgba(120,181,255,0) 78%);
+          animation: clyra-effort-sweep 3.3s cubic-bezier(.45,0,.55,1) infinite alternate; }
+        @keyframes clyra-effort-sweep { from { transform: translate3d(calc(var(--shine-w) / -2), 0, 0); } to { transform: translate3d(calc(var(--track-w, 220px) - var(--shine-w) / 2), 0, 0); } }
+        .clyra-effort-lit[data-still] .clyra-effort-shine { animation: none; transform: translate3d(calc(var(--track-w, 220px) / 2 - var(--shine-w) / 2), 0, 0); }
+        .clyra-effort-lit b { position: absolute; border-radius: 50%; background: #fff; opacity: .4; box-shadow: 0 0 3px rgba(185,222,255,.9); animation: clyra-effort-twinkle var(--t, 4s) ease-in-out var(--d, 0s) infinite; }
+        @keyframes clyra-effort-twinkle { 0%, 100% { opacity: .28; transform: scale(.85); } 50% { opacity: .85; transform: scale(1.1); } }
+        .clyra-effort-lit[data-still] b { animation: none; }
         .clyra-effort-reset { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 0; border-radius: 11px; background: transparent; color: #A0A0A0; cursor: pointer; transition: color .15s ease, background-color .15s ease, transform .3s cubic-bezier(.22,1,.36,1); }
         .clyra-effort-reset:hover { background: rgba(16,18,24,.05); color: #5D5D5D; transform: rotate(-40deg); }
       `}</style>
