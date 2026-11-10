@@ -18,6 +18,8 @@ import { AppRail, APP_RAIL_WIDTH, type WorkspaceMode } from "./ModeTabs";
 import { DesignPicker } from "./DesignPicker";
 import { OpenDesignPanel } from "./OpenDesignPanel";
 import { TemplateLibrary } from "./TemplateLibrary";
+import { AiKeyPill } from "./AiKeyPill";
+import { addUserApp, removeUserApp, useUserApps } from "../../lib/user-apps";
 import { WelcomeProjectPicker, formatRecentTime } from "./WelcomeProjectPicker";
 import { designDirective, type DesignSystemSummary, type DesignTemplateSummary } from "../../../lib/clyra-design/directive";
 
@@ -727,7 +729,20 @@ export default function ClyraCodeWorkspace({
   // the live preview (usePreview starts the dev server for the active project),
   // then send one setup prompt once that project is actually active so the
   // message can never land in a different project.
-  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
+  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string; aiPowered: boolean } | null>(null);
+  // Imported apps whose features need a model API: the pill above the composer offers Clyra AI or the user's own key.
+  const userApps = useUserApps();
+  const AI_PROJECTS_KEY = "clyra.library.aiProjects";
+  const [aiProjects, setAiProjects] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(AI_PROJECTS_KEY) ?? "{}") as Record<string, string>; } catch { return {}; }
+  });
+  const rememberAiProject = useCallback((projectId: string, name: string) => {
+    setAiProjects((current) => {
+      const next = { ...current, [projectId]: name };
+      try { localStorage.setItem(AI_PROJECTS_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+      return next;
+    });
+  }, []);
   // Library hand-off: the shell fades out (same pure fade as first entering
   // Vibe Coder), the project lands with the sidebar and preview open, then the
   // shell fades back in while the dev server's build animation runs.
@@ -740,17 +755,30 @@ export default function ClyraCodeWorkspace({
   }, [libraryWelcome, running, state.sessionId]);
   useEffect(() => {
     if (!autoStart || state.activeProjectId !== autoStart.projectId || running) return;
-    const { name, repositoryUrl } = autoStart;
+    const { name, repositoryUrl, aiPowered } = autoStart;
     setAutoStart(null);
     setRightPanelOpen(true);
     setRightTab("browser");
     void submitPrompt(
-      `I just installed ${name} (source: ${repositoryUrl}) into this project from the Clyra Library. Set it up to run: read its README and package files, install dependencies, start the dev server and confirm the live preview loads, fixing any setup problems you hit. When it is running, give me a two-line summary of what the app does, then ask what I would like to change, and offer to publish it when I am happy.`,
+      `I just installed ${name} (source: ${repositoryUrl}) into this project from the Clyra Library. Set it up to run: read its README and package files, install dependencies, start the dev server and confirm the live preview loads, fixing any setup problems you hit. Remove every external account, sign-in, sign-up, authentication or third-party connection screen so the app opens straight into its main interface: replace logins with a single local default user (or no auth), and delete or stub anything that needs an outside account, such as OAuth, billing, cloud sync, analytics or telemetry. Keep the change minimal and tell me what you removed.${aiPowered ? " This app's AI features need an AI model API. Say so plainly: tell me the AI features need an API, and that I can use Clyra AI (nothing to set up) or add my own API key with the AI setup card above the composer. Never ask me to paste a key into chat. Once I choose, read the settings from .env.local (OPENAI_API_KEY, OPENAI_BASE_URL, CLYRA_AI_MODEL), map them to whatever variable names the app expects, and never print, log or hard-code a key or token." : ""} When it is running, give me a two-line summary of what the app does, then ask what I would like to change, and offer to publish it when I am happy.`,
       [],
       undefined,
       { userText: `Set up and run ${name}` },
     );
   }, [autoStart, running, state.activeProjectId, submitPrompt]);
+
+  const aiPill = activeProject && aiProjects[activeProject.id] ? (
+                  <AiKeyPill
+                    projectId={activeProject.id}
+                    appName={aiProjects[activeProject.id]}
+                    onChosen={(mode) => void submitPrompt(
+                      mode === "clyra"
+                        ? `I chose Clyra AI for ${aiProjects[activeProject.id]}'s AI features. The project's .env.local now holds the Clyra AI address and a project token. Wire the app to use it and confirm the AI features work. Never print or hard-code the token.`
+                        : `I added my own API key for ${aiProjects[activeProject.id]}'s AI features. It is saved in the project's .env.local. Wire the app to use it and confirm the AI features work. Never print or hard-code the key.`,
+                      [], undefined, { userText: mode === "clyra" ? "Use Clyra AI for this app" : "I added my own API key" },
+                    )}
+                  />
+                ) : null;
 
   // The welcome composer sends with the chosen app type. The brief clears only
   // after a send succeeds, so a rejected send keeps the user's choice.
@@ -1011,6 +1039,8 @@ export default function ClyraCodeWorkspace({
         }}
         onDeleteChat={(projectId, sessionId) => void handleDeleteChat(projectId, sessionId)}
         onRemoveProject={hideProject}
+        launcherProjectIds={userApps.map((app) => app.projectId)}
+        onToggleLauncher={(projectId, name, add) => { if (add) addUserApp(projectId, name); else removeUserApp(projectId); }}
         onOpenProjectFolder={(projectId) => {
           void api.openProjectFolder(projectId).catch((error) => {
             console.error("Could not open the project folder:", error);
@@ -1166,6 +1196,7 @@ export default function ClyraCodeWorkspace({
                       onOpenChange={(open) => setWelcomeMenu(open ? "projects" : null)}
                     />
                   </div>
+                  {aiPill ? <div className="mt-4 w-full">{aiPill}</div> : null}
                   <div ref={welcomeComposerRef} className="mt-[26px] w-full">
                     <Composer
                       running={false}
@@ -1272,6 +1303,7 @@ export default function ClyraCodeWorkspace({
                     </button>
                   </div>
                 ) : null}
+                {aiPill}
                 {/* Codex keeps the space above the composer clear: only the token count, when there is one. */}
                 {tokensLabel ? (
                   <footer className="flex h-[17px] shrink-0 items-center justify-end px-4 text-[10.5px] text-[#A0A2A6]">
@@ -1359,7 +1391,8 @@ export default function ClyraCodeWorkspace({
             setRightPanelOpen(true);
             setRightTab("browser");
             setLibraryWelcome({ name: entry.name, sessionId: null });
-            setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+            if (entry.aiPowered) rememberAiProject(projectId, entry.name);
+            setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl, aiPowered: entry.aiPowered });
             await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 0 : 240));
             setHandoffFading(false);
           });

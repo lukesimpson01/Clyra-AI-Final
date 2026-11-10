@@ -24,6 +24,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { USER_APP_BADGE, removeUserApp, requestOpenUserApp, useUserApps } from "../lib/user-apps";
 import { cn } from "../lib/utils";
 import type { OrbColorTheme } from "./AiOrb";
 import { MemorySettingsPanel } from "./memory/MemorySettingsPanel";
@@ -87,8 +88,36 @@ export type SettingsSheetProps = Omit<SettingsModalProps, "isOpen"> & {
   embedded?: boolean;
 };
 
+
+function UserAppsPanel({ onClose }: { onClose: () => void }) {
+  const apps = useUserApps();
+  if (!apps.length) {
+    return (
+      <div className="rounded-[14px] border border-dashed border-[var(--border-subtle,rgba(15,23,42,0.12))] p-6 text-[13px] leading-[1.55] text-slate-500">
+        No apps yet. In Vibe Coder, open a project's menu and choose <span className="font-medium text-slate-700">Add to Clyra launcher</span>. It then appears here and in the app launcher.
+      </div>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-2" aria-label="Your apps">
+      {apps.map((app) => (
+        <li key={app.id} className="flex items-center gap-3 rounded-[14px] border border-slate-200/80 bg-white p-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-slate-900 text-[14px] font-semibold text-white" aria-hidden>{app.name.trim().charAt(0).toUpperCase() || "A"}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13.5px] font-semibold text-slate-900">{app.name}</span>
+            <span className="mt-0.5 inline-block rounded-full bg-blue-50 px-2 py-[1px] text-[10px] font-semibold uppercase tracking-[0.04em] text-blue-600">{USER_APP_BADGE}</span>
+          </span>
+          <button type="button" onClick={() => { onClose(); requestOpenUserApp(app.projectId); }} className="h-8 rounded-full bg-slate-900 px-4 text-[12.5px] font-semibold text-white transition-colors hover:bg-slate-700">Open</button>
+          <button type="button" onClick={() => removeUserApp(app.projectId)} className="h-8 rounded-full px-3 text-[12.5px] font-medium text-slate-500 transition-colors hover:bg-slate-100">Remove</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 const sections = [
   { id: "account", label: "Account", detail: "Your profile, your data, and everything tied to this device.", icon: UserRound, category: "Account" },
+  { id: "apps", label: "Your apps", detail: "Apps you made in Vibe Coder and added to the Clyra launcher.", icon: Grid3X3, category: "Account" },
   { id: "workspace", label: "Workspace", detail: "Make the controls around Chat feel like your own.", icon: Grid3X3, category: "Account" },
   { id: "look", label: "Appearance", detail: "Adjust how Clyra looks and feels.", icon: Palette, category: "Preferences" },
   { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle, category: "Preferences" },
@@ -820,6 +849,8 @@ export function SettingsSheet({
                       </SettingsCard>
                     </>
                   ) : null}
+
+                  {activeSection === "apps" ? <UserAppsPanel onClose={onClose} /> : null}
 
                   {activeSection === "memory" ? (
                     <MemorySettingsPanel

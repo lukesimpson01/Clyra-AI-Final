@@ -150,6 +150,7 @@ import {
   type DocumentRewriteRequest,
 } from "./components/ui/document-card";
 import { AppLauncher } from "./components/AppLauncher";
+import { requestOpenUserApp } from "./lib/user-apps";
 import { AgentControlledPreview } from "./components/AgentControlledPreview";
 type CreatorMode = "fake-text" | "would-rather" | "reddit-story";
 import { isGroundedWebResearchAnswer, type WebCitationView } from "../lib/research/research-grounding";
@@ -10650,6 +10651,12 @@ Please analyze the code you just wrote and fix this error.`;
         {isAppLauncherOpen ? (
           <AppLauncher
             onClose={() => setIsAppLauncherOpen(false)}
+            onOpenUserApp={(app) => {
+              setIsAppLauncherOpen(false);
+              setSelectedCommand(null);
+              setShowCommandPalette(false);
+              requestOpenUserApp(app.projectId);
+            }}
             onOpenTool={(tool) => {
               setIsAppLauncherOpen(false);
               setSelectedCommand(null);

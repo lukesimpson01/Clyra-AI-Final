@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "../lib/clyra-code/library/registry";
+import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary, templateLibraryCategories } from "../lib/clyra-code/library/registry";
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
 
 let passed = 0;
@@ -12,27 +12,99 @@ async function test(name: string, run: () => void | Promise<void>) {
   console.log(`PASS  ${name}`);
 }
 
-await test("the curated source library is a real 50+ inventory with stable identities", () => {
-  assert.ok(TEMPLATE_LIBRARY.length >= 50);
+const ORIGINAL_CATEGORIES = [
+  "AI Chats & Agents",
+  "Automation & Data",
+  "Business & SaaS",
+  "Design, Video & Creative",
+  "Developer Tools",
+  "Productivity & Collaboration",
+  "Social & Entertainment",
+  "Websites & Publishing",
+];
+const ADDED_CATEGORIES = ["AI Agents & Automation", "AI App Builders", "AI Clippers", "AI Coding", "AI Tools", "Adobe alternatives", "Microsoft Office alternatives", "Notes, Docs & Presentations"];
+
+await test("the catalogue holds the 40 starter templates plus the added entries with unique identities", () => {
+  assert.ok(TEMPLATE_LIBRARY.length >= 40);
   assert.equal(new Set(TEMPLATE_LIBRARY.map((entry) => entry.id)).size, TEMPLATE_LIBRARY.length);
   assert.equal(new Set(TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl)).size, TEMPLATE_LIBRARY.length);
-  assert.ok(TEMPLATE_LIBRARY.every((entry) => entry.repositoryUrl.startsWith("https://github.com/")));
+  const original = TEMPLATE_LIBRARY.filter((entry) => ORIGINAL_CATEGORIES.includes(entry.category));
+  assert.ok(original.length >= 40);
 });
 
-await test("unverified records do not claim runnable builds or invented screenshots", () => {
-  const entry = getTemplateManifest("purffle-shorts");
-  assert.ok(entry);
-  assert.equal(entry?.pinnedCommit, null);
-  assert.equal(entry?.lastVerifiedAt, null);
-  assert.equal(entry?.capabilitiesVerified.length, 0);
-  assert.equal(entry?.sourceScreenshots.length, 0);
-  assert.equal(entry?.status, "unverified");
+await test("categories are the eight originals plus the added ones, and every record has a GitHub URL", () => {
+  assert.deepEqual(templateLibraryCategories(), [...ORIGINAL_CATEGORIES, ...ADDED_CATEGORIES].sort((a, b) => a.localeCompare(b)));
+  assert.ok(TEMPLATE_LIBRARY.every((entry) => /^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(entry.repositoryUrl)));
 });
 
-await test("source search matches independent comparison labels and capabilities", () => {
-  assert.ok(searchTemplateLibrary({ query: "OpusClip" }).some((entry) => entry.id === "chopify"));
-  assert.ok(searchTemplateLibrary({ category: "Maps" }).some((entry) => entry.id === "maplibre"));
+await test("every declared screenshot file exists on disk and is served from /library-shots", async () => {
+  for (const entry of TEMPLATE_LIBRARY) {
+    for (const shot of entry.sourceScreenshots) {
+      assert.ok(shot.url.startsWith("/library-shots/"), `${entry.id}: ${shot.url}`);
+      assert.ok(shot.alt.length > 3, `${entry.id}: missing alt text`);
+      await access(path.join(process.cwd(), "public", shot.url));
+    }
+  }
+});
+
+await test("records without launch-testing make no runnable or screenshot claims", () => {
+  for (const entry of TEMPLATE_LIBRARY.filter((item) => item.lastVerifiedAt === null)) {
+    assert.equal(entry.sourceScreenshots.length, 0, entry.id);
+    assert.equal(entry.capabilitiesVerified.length, 0, entry.id);
+    assert.notEqual(entry.status, "runnable-now", entry.id);
+  }
+});
+
+await test("launch-tested records carry captures, a date and a non-empty note list", () => {
+  const verified = TEMPLATE_LIBRARY.filter((item) => item.lastVerifiedAt !== null);
+  assert.ok(verified.length >= 25);
+  for (const entry of verified) {
+    assert.ok(entry.capabilitiesVerified.length > 0, entry.id);
+    assert.ok(entry.warnings.length > 0, entry.id);
+  }
+  const captured = TEMPLATE_LIBRARY.filter((item) => item.sourceScreenshots.length > 0);
+  assert.ok(captured.length >= 25);
+  assert.ok(captured.every((entry) => entry.sourceScreenshots.length >= 2), "every captured app has at least two screenshots (one-screen apps such as Chatbot UI Lite have two)");
+  assert.ok(captured.filter((entry) => entry.sourceScreenshots.length >= 3).length >= captured.length - 1);
+});
+
+await test("licences found in the repository files replace the generic review placeholders", () => {
+  assert.equal(getTemplateManifest("vercel-chatbot")?.licenseSpdxOrReview, "Apache-2.0");
+  assert.equal(getTemplateManifest("minipaint")?.licenseSpdxOrReview, "MIT");
+  assert.equal(getTemplateManifest("nocodb")?.licenseSpdxOrReview, "License review");
+  assert.ok(getTemplateManifest("nocodb")?.warnings.some((warning) => /Sustainable Use License/.test(warning)));
+});
+
+await test("source search matches names, categories and comparison labels", () => {
+  assert.ok(searchTemplateLibrary({ query: "Photoshop" }).some((entry) => entry.id === "svgedit" || entry.id === "filerobot-image-editor" || entry.id === "minipaint"));
+  assert.ok(searchTemplateLibrary({ category: "Adobe alternatives" }).some((entry) => entry.id === "stirling-pdf"));
   assert.equal(searchTemplateLibrary({ query: "this will not match" }).length, 0);
+});
+
+await test("featured entries lead with OpenFilm, then the Adobe-style and Microsoft-style tools, each with its own icon", () => {
+  const featured = TEMPLATE_LIBRARY.filter((entry) => entry.featuredRank !== null).sort((a, b) => (a.featuredRank ?? 0) - (b.featuredRank ?? 0));
+  assert.equal(featured[0]?.id, "openfilm");
+  for (const id of ["photocraft", "vectorcraft", "filmcraft", "lightcraft", "pdfcraft", "wordcraft", "gridcraft", "deckcraft"]) {
+    assert.ok(featured.some((entry) => entry.id === id), `${id} is featured`);
+  }
+  assert.ok(featured.every((entry) => entry.iconUrl?.startsWith("/library-icons/")));
+  assert.equal(getTemplateManifest("pdfcraft")?.category, "Adobe alternatives");
+  assert.equal(getTemplateManifest("deckcraft")?.category, "Microsoft Office alternatives");
+});
+
+await test("every featured icon file exists on disk", async () => {
+  for (const entry of TEMPLATE_LIBRARY.filter((item) => item.iconUrl)) await access(path.join(process.cwd(), "public", entry.iconUrl!));
+});
+
+await test("AI-powered apps are flagged so the agent can ask which API to use; plain apps are not", () => {
+  for (const id of ["librechat", "chatbot-ui-lite", "anything-llm", "flowise", "bolt-diy"]) assert.equal(getTemplateManifest(id)?.aiPowered, true, id);
+  for (const id of ["excalidraw", "gitea", "slidev", "umami"]) assert.equal(getTemplateManifest(id)?.aiPowered, false, id);
+});
+
+await test("a captured app's cover is its main working screen, not a welcome or login page", () => {
+  assert.match(getTemplateManifest("actual")?.sourceScreenshots[0]?.url ?? "", /actual-2\.jpg$/);
+  assert.match(getTemplateManifest("anything-llm")?.sourceScreenshots[0]?.url ?? "", /anything-llm-3\.jpg$/);
+  assert.match(getTemplateManifest("flowise")?.sourceScreenshots[0]?.url ?? "", /flowise-3\.jpg$/);
 });
 
 await test("the bounded checkout scan discovers notices and scripts without executing them", async () => {
