@@ -249,19 +249,100 @@ const seeds: readonly Seed[] = [
 
 /* Real captures, taken by cloning, installing and running each app locally (see provenance). Only apps that were actually run have any. */
 const CAPTURED: Record<string, Array<[file: string, alt: string]>> = {
+  activepieces: [["activepieces-1.jpg", "Activepieces project dashboard listing a flow"], ["activepieces-2.jpg", "Activepieces flow builder with an empty trigger step"], ["activepieces-3.jpg", "Activepieces trigger picker open on the canvas"]],
+  actual: [["actual-1.jpg", "Actual Budget welcome screen"], ["actual-2.jpg", "Actual monthly budget with categories"], ["actual-3.jpg", "Actual account register with transactions"], ["actual-4.jpg", "Actual reports dashboard"]],
   astrofy: [["astrofy-1.jpg", "Astrofy home page"], ["astrofy-2.jpg", "Astrofy project list"], ["astrofy-3.jpg", "Astrofy blog"]],
-  minipaint: [["minipaint-1.jpg", "miniPaint editor with tools, layers and colour panels"]],
-  "uptime-kuma": [["uptime-kuma-1.jpg", "Uptime Kuma first-run setup (database choice)"]],
+  "bolt-diy": [["bolt-diy-1.jpg", "bolt.diy home with provider picker and prompt box"], ["bolt-diy-2.jpg", "bolt.diy with the chat history sidebar open"], ["bolt-diy-3.jpg", "bolt.diy control panel for providers and integrations"]],
+  "code-server": [["code-server-1.jpg", "code-server password login"], ["code-server-2.jpg", "code-server editing a JavaScript file in the browser"], ["code-server-3.jpg", "code-server with the integrated terminal open"]],
+  docusaurus: [["docusaurus-1.jpg", "Docusaurus monorepo website home page"], ["docusaurus-2.jpg", "Docusaurus documentation page with sidebar"], ["docusaurus-3.jpg", "Docusaurus blog index and post"]],
+  excalidraw: [["excalidraw-1.jpg", "Excalidraw welcome screen"], ["excalidraw-2.jpg", "Excalidraw flowchart drawn with coloured shapes"], ["excalidraw-3.jpg", "Excalidraw flowchart in the dark theme"]],
+  formbricks: [["formbricks-1.jpg", "Formbricks first-run welcome"], ["formbricks-2.jpg", "Formbricks project setup with live survey preview"], ["formbricks-3.jpg", "Formbricks survey template gallery"], ["formbricks-4.jpg", "Formbricks survey editor with preview"]],
+  ghost: [["ghost-1.jpg", "Ghost publication front page"], ["ghost-2.jpg", "Ghost article page"], ["ghost-3.jpg", "Ghost admin analytics dashboard"], ["ghost-4.jpg", "Ghost admin post list"]],
+  gitea: [["gitea-1.jpg", "Gitea dashboard with activity feed"], ["gitea-2.jpg", "Gitea repository view with README"], ["gitea-3.jpg", "Gitea pull request diff"], ["gitea-4.jpg", "Gitea issue list"], ["gitea-5.jpg", "Gitea commit history"]],
+  hoppscotch: [["hoppscotch-1.jpg", "Hoppscotch REST request builder"], ["hoppscotch-2.jpg", "Hoppscotch response with status and body"], ["hoppscotch-3.jpg", "Hoppscotch GraphQL client"], ["hoppscotch-4.jpg", "Hoppscotch realtime WebSocket client"]],
+  hycanvas: [["hycanvas-1.jpg", "HyCanvas workspace home with design presets"], ["hycanvas-2.jpg", "HyCanvas template gallery"], ["hycanvas-3.jpg", "HyCanvas editor with a launch-card template"]],
+  librechat: [["librechat-1.jpg", "LibreChat new chat screen"], ["librechat-2.jpg", "LibreChat model and provider picker"], ["librechat-3.jpg", "LibreChat agent builder panel"], ["librechat-4.jpg", "LibreChat settings dialog"]],
+  metabase: [["metabase-2.jpg", "Metabase dashboard with KPI tiles and charts"], ["metabase-3.jpg", "Metabase saved question as a line chart"], ["metabase-1.jpg", "Metabase home after sign-in"], ["metabase-4.jpg", "Metabase browsing the sample database"]],
+  minipaint: [["minipaint-1.jpg", "miniPaint canvas with brush strokes, tools and colour panel"], ["minipaint-2.jpg", "miniPaint Effects menu with filters"], ["minipaint-3.jpg", "miniPaint Image menu"]],
+  navidrome: [["navidrome-1.jpg", "Navidrome album grid"], ["navidrome-2.jpg", "Navidrome album with track list"], ["navidrome-3.jpg", "Navidrome now-playing bar"], ["navidrome-4.jpg", "Navidrome song list"]],
+  nocodb: [["nocodb-1.jpg", "NocoDB spreadsheet grid of deals"], ["nocodb-2.jpg", "NocoDB kanban view grouped by stage"], ["nocodb-3.jpg", "NocoDB gallery view"], ["nocodb-4.jpg", "NocoDB form view"]],
+  openhands: [["openhands-4.jpg", "OpenHands workspace home with prompt and recommended automations"], ["openhands-1.jpg", "OpenHands onboarding: choose an agent"], ["openhands-2.jpg", "OpenHands onboarding: LLM settings"], ["openhands-3.jpg", "OpenHands onboarding: first message"]],
+  penpot: [["penpot-1.jpg", "Penpot board with a mobile wireframe"], ["penpot-2.jpg", "Penpot design panel for a selected layer"], ["penpot-3.jpg", "Penpot prototype tab"], ["penpot-4.jpg", "Penpot inspect tab with measurements"]],
+  perplexica: [["perplexica-4.jpg", "Perplexica (Vane) search home"], ["perplexica-2.jpg", "Perplexica add-connection dialog"], ["perplexica-3.jpg", "Perplexica model selection"]],
+  "saas-starter": [["saas-starter-1.jpg", "SaaS Starter landing page"], ["saas-starter-2.jpg", "SaaS Starter team settings dashboard"], ["saas-starter-3.jpg", "SaaS Starter general settings"], ["saas-starter-4.jpg", "SaaS Starter activity log"]],
+  umami: [["umami-1.jpg", "Umami overview with visitors, views and traffic chart"], ["umami-2.jpg", "Umami breakdown by page path"], ["umami-3.jpg", "Umami sessions list with browser and location"], ["umami-4.jpg", "Umami period comparison"]],
+  "uptime-kuma": [["uptime-kuma-1.jpg", "Uptime Kuma dashboard with monitors up and one down"], ["uptime-kuma-2.jpg", "Uptime Kuma monitor detail with response-time chart"], ["uptime-kuma-3.jpg", "Uptime Kuma monitor in the down state"], ["uptime-kuma-4.jpg", "Uptime Kuma add-monitor form"]],
+  "vercel-chatbot": [["vercel-chatbot-1.jpg", "Vercel AI Chatbot empty chat with suggestions"], ["vercel-chatbot-2.jpg", "Vercel AI Chatbot model picker"], ["vercel-chatbot-3.jpg", "Vercel AI Chatbot register page"]],
+  wekan: [["wekan-1.jpg", "WeKan kanban board with four lists"], ["wekan-2.jpg", "WeKan card detail panel"], ["wekan-3.jpg", "WeKan all-boards view"]],
+};
+
+/* Facts observed while launch-testing each app on 2026-11-10; they replace the generic unverified warnings. */
+type Verified = {
+  license?: string;
+  status: TemplateStatus;
+  port?: number;
+  dev?: string;
+  build?: string[];
+  footprint?: string;
+  secrets?: string[];
+  commit?: string;
+  verified: string[];
+  notes: string[];
+};
+const VERIFIED: Record<string, Verified> = {
+  activepieces: { license: "License review", status: "requires-setup", port: 8080, dev: "docker compose up -d", commit: "217384ba", footprint: "Docker: app + worker + Postgres(pgvector) + Redis; ~2 GB images.", verified: ["Starts and serves the UI", "Sign-up and project dashboard"], notes: ["MIT outside packages/ee and server/api/src/app/ee, which are commercial: review before distributing.", "The documented compose uses ghcr.io images; the sandbox blocks ghcr, so Docker Hub activepieces/activepieces was used.", "The server hard-codes IPv6 listen (::); on hosts without IPv6 it needs patching.", "Piece catalogue stays empty without access to the cloud piece registry, so no flow could be built offline."] },
+  actual: { license: "MIT", status: "runnable-now", port: 3001, dev: "yarn start:browser", build: ["yarn install"], commit: "5ffb72a", footprint: "~1 GB node_modules; install ~80 s.", verified: ["Install", "Browser dev server", "Demo budget, accounts and reports"], notes: ["Needs Yarn 4 (corepack download may be blocked; install @yarnpkg/cli-dist from npm).", "Runs with Node 22; no external services."] },
+  astrofy: { license: "MIT", status: "runnable-now", port: 4321, dev: "npm run dev", build: ["npm install"], commit: "9398dea", footprint: "npm install ~20 s.", verified: ["Install and dev server (re-checked)", "Home, projects and blog pages"], notes: ["Static site; no external services.", "Screenshots are from an earlier pass; this pass re-confirmed install and boot only."] },
+  "bolt-diy": { license: "MIT", status: "requires-setup", port: 5173, dev: "pnpm exec react-router dev --host 127.0.0.1", build: ["pnpm install"], commit: "353b44c", secrets: ["A model provider API key"], footprint: "pnpm install ~12 s.", verified: ["Install", "Dev server and UI"], notes: ["README `pnpm run dev` binds IPv6 (`--host ::`) and fails on hosts without IPv6; use an IPv4 host.", "UI renders without a key; generating apps needs your own model provider key (not tested)."] },
+  "code-server": { license: "MIT", status: "requires-setup", port: 8080, dev: "docker run -p 8080:8080 -e PASSWORD=… codercom/code-server", commit: "fcd14dc", footprint: "Docker image ~0.7 GB.", verified: ["Official image runs", "Login, editor and terminal in the browser"], notes: ["Verified through the official Docker image, not a source build (the source build needs the VS Code toolchain).", "The install.sh script host is blocked in some environments."] },
+  docusaurus: { license: "MIT", status: "requires-setup", port: 3000, dev: "pnpm --filter website start", build: ["pnpm install --frozen-lockfile"], commit: "c00f04e", footprint: "pnpm install ~45 s plus package builds.", verified: ["Install", "The monorepo's own documentation website"], notes: ["Cloning gives the framework monorepo, not a starter site; the screenshots show the monorepo's own website.", "Needs Node 24 or newer (RegExp.escape); Node 22 fails."] },
+  excalidraw: { license: "MIT", status: "runnable-now", port: 3001, dev: "yarn start", build: ["yarn install"], commit: "701b901", footprint: "yarn install ~60 s.", verified: ["Install", "Dev server", "Drawing, fills, text and dark theme"], notes: ["`yarn start` opens a browser; on headless hosts set BROWSER=none.", "No external services."] },
+  formbricks: { license: "License review", status: "requires-setup", port: 3000, dev: "docker run formbricks/formbricks (with Postgres + Valkey)", commit: "4d9a14f", secrets: ["NEXTAUTH_SECRET", "ENCRYPTION_KEY", "CRON_SECRET"], footprint: "Docker: app + pgvector Postgres + Valkey.", verified: ["Setup wizard", "Organisation and project", "Survey templates and editor"], notes: ["AGPLv3 outside apps/web/modules/ee and the SDK directories, which carry other licences: review before distributing.", "The repo compose and installer use ghcr.io images and Traefik with Let's Encrypt; Docker Hub formbricks/formbricks was used.", "Start-up migration needs outbound npm access; email needs SMTP (verification disabled for the test)."] },
+  ghost: { license: "MIT", status: "requires-setup", port: 2368, dev: "docker run ghost", commit: "912930c", footprint: "Docker image ~0.5 GB.", verified: ["Official image runs on SQLite", "Site, posts and admin"], notes: ["Verified via the official Docker image.", "On hosts without IPv6 set server__host=0.0.0.0; staff device verification emails need a mail provider."] },
+  gitea: { license: "MIT", status: "runnable-now", port: 3300, dev: "./gitea web", build: ["TAGS=\"bindata sqlite sqlite_unicode\" make build"], commit: "25c5b6a", footprint: "Build ~2.5 min; binary ~120 MB.", verified: ["Built from source", "SQLite install", "Repos, issues, pull requests"], notes: ["Needs a recent Go toolchain (downloaded automatically) and Node to build the frontend.", "Refuses to run as root unless GITEA_I_AM_BEING_UNSAFE_RUNNING_AS_ROOT=true."] },
+  hoppscotch: { license: "MIT", status: "requires-setup", port: 3000, dev: "docker compose up -d (hoppscotch/hoppscotch AIO + Postgres)", commit: "55908a7", secrets: ["JWT_SECRET", "SESSION_SECRET", "DATA_ENCRYPTION_KEY"], footprint: "Docker: AIO image ~1.2 GB + Postgres.", verified: ["Official AIO image and Postgres run", "REST, GraphQL and realtime clients"], notes: ["Verified via the prebuilt image; the repo's own compose builds from source and was not run.", "The backend exits once on first boot and needs a restart policy.", "Sign-in needs SMTP or OAuth; the client works anonymously."] },
+  hycanvas: { license: "AGPL-3.0", status: "requires-setup", port: 8005, dev: "docker compose up -d (docker/docker-compose.yml)", commit: "ba7b2c0", secrets: ["JWT_SECRET"], footprint: "Docker: app image + Postgres 16.", verified: ["Compose quickstart runs in ~20 s", "Sign-up, templates and editor"], notes: ["AGPL-3.0; COMMERCIAL.md describes a commercial alternative.", "Quickstart uses the prebuilt hycanvas/hycanvas image."] },
+  librechat: { license: "MIT", status: "requires-setup", port: 3080, dev: "npm run backend", build: ["npm install", "npm run frontend"], commit: "f4154b6", secrets: ["A model provider API key (not set)"], footprint: "~3000 packages; frontend build ~35 s; MongoDB required.", verified: ["Built from source", "Registration, chat UI, agent builder, settings"], notes: ["The documented compose image host (registry.librechat.ai) was blocked; ran from source with MongoDB in Docker.", "npm ci failed because xlsx is pinned to cdn.sheetjs.com; the registry xlsx was substituted for the test.", "Needs MongoDB; chatting needs your own model API keys."] },
+  metabase: { license: "License review", status: "requires-setup", port: 3000, dev: "docker run -p 3000:3000 metabase/metabase", commit: "da359da4", footprint: "Docker image ~0.5 GB; source build needs a JDK 21 and Clojure toolchain.", verified: ["Official image runs", "Setup, saved questions and dashboard on the sample database"], notes: ["Mixed licence: AGPL outside /enterprise, Metabase Commercial License inside /enterprise.", "Verified via the official Docker image, not a source build."] },
+  minipaint: { license: "MIT", status: "runnable-now", dev: "npm run build, then serve the folder statically", build: ["npm install", "npm run build"], commit: "c9192c1", footprint: "npm install ~10 s, webpack build ~17 s.", verified: ["Install and production build", "Served as a static site; drawing and menus"], notes: ["The licence file is MIT-LICENSE.txt (which is why it is not auto-detected) and package.json also says MIT.", "Runs as a static site; no external services."] },
+  navidrome: { license: "GPL-3.0", status: "requires-setup", port: 4533, dev: "docker run -p 4533:4533 -v ./music:/music deluan/navidrome", commit: "93cead9", footprint: "Docker image ~0.1 GB.", verified: ["Official image runs", "Library scan, albums, playback bar"], notes: ["Verified via the official image; a source build needs Go, Node and TagLib.", "Needs a music library; the demo used generated tracks."] },
+  nocodb: { license: "License review", status: "requires-setup", port: 8080, dev: "docker run -p 8080:8080 nocodb/nocodb", commit: "7f1f236", footprint: "Docker image ~1.3 GB; SQLite by default.", verified: ["Official image runs", "Grid, kanban, gallery and form views"], notes: ["Not open source: LICENSE.md is the Sustainable Use License v1.0 (internal business or non-commercial use; redistribution only free of charge for non-commercial purposes).", "Verified via the official image; the repo's pnpm monorepo was not built."] },
+  openhands: { license: "MIT", status: "requires-setup", port: 8000, dev: "npm run dev", build: ["npm ci"], commit: "e14b76c", secrets: ["An LLM API key"], footprint: "npm ci ~40 s; uses uvx for the agent server.", verified: ["Install", "Agent Canvas UI and onboarding"], notes: ["The project is now Agent Canvas; the README source path needs Node 24 or newer.", "The Docker option uses a ghcr.io image.", "An agent run needs an LLM API key (not tested)."] },
+  penpot: { license: "MPL-2.0", status: "requires-setup", port: 9001, dev: "docker compose -p penpot up -d (docker/images/docker-compose.yaml)", commit: "cd1ece4", footprint: "Docker: 8 services, ~3 GB of images.", verified: ["Stack runs", "Sign-up, board with shapes, prototype and inspect tabs"], notes: ["The frontend nginx needs IPv6; on hosts without it set PENPOT_IPV6_LISTEN_DIRECTIVE to a comment.", "Uses prebuilt penpotapp images; built-in template libraries need internet."] },
+  perplexica: { license: "MIT", status: "requires-setup", port: 3000, dev: "docker run -p 3000:3000 itzcrazykns1337/vane", commit: "348feca", secrets: ["A model provider key or local model"], footprint: "Docker image; SearxNG bundled in the full image.", verified: ["Official image runs", "Setup wizard and search home"], notes: ["The repository is now Vane; the clone URL redirects.", "The setup wizard needs a model connection; live search was not tested without a key."] },
+  "saas-starter": { license: "MIT", status: "requires-setup", port: 3000, dev: "pnpm dev", build: ["pnpm install", "pnpm db:migrate", "pnpm db:seed"], commit: "6e33e58", secrets: ["POSTGRES_URL", "AUTH_SECRET", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"], footprint: "pnpm install ~6 s; Postgres in Docker.", verified: ["Install, migrations", "Landing page, sign-in and dashboard"], notes: ["db:seed creates test@test.com and then needs a live Stripe key to create products; with a dummy key it stops after the user is created.", "The pricing page needs the Stripe API and errors without it."] },
+  umami: { license: "MIT", status: "requires-setup", port: 3000, dev: "pnpm run start", build: ["pnpm install", "pnpm run build"], commit: "559e3c6", secrets: ["DATABASE_URL"], footprint: "Install ~10 s, build ~90 s; Postgres in Docker.", verified: ["Build, migrations, start", "Website analytics views with generated traffic"], notes: ["Default login is admin / umami: change it.", "`next start` warns about output: standalone but works."] },
+  "uptime-kuma": { license: "MIT", status: "requires-setup", port: 3001, dev: "node --import=tsx server/server.js", build: ["npm ci", "npm run build"], commit: "fb8ef0f", footprint: "npm ci ~25 s, frontend build ~5 s; SQLite.", verified: ["Install and build", "Setup wizard, monitors, dashboard"], notes: ["The current branch needs Node 26.2 or newer; the README's plain `node server/server.js` fails on this branch.", "Account setup checks passwords against haveibeenpwned; set UPTIME_KUMA_DISABLE_LEAK_PWD_CHECK=1 on offline hosts."] },
+  "vercel-chatbot": { license: "Apache-2.0", status: "requires-setup", port: 3000, dev: "pnpm dev", build: ["pnpm install", "pnpm db:migrate"], commit: "a8989b5", secrets: ["POSTGRES_URL", "AUTH_SECRET", "AI_GATEWAY_API_KEY"], footprint: "pnpm install ~6 s; Postgres in Docker.", verified: ["Install and migrations", "Chat UI as a guest"], notes: ["Licence verified: Apache-2.0.", "Replies need an AI Gateway key (not tested)."] },
+  wekan: { license: "MIT", status: "requires-setup", port: 80, dev: "docker compose (MongoDB 7 + wekanteam/wekan)", commit: "bc69880", footprint: "Docker: MongoDB + app ~2.5 GB.", verified: ["Stack runs", "Registration, boards, lists and cards"], notes: ["The default compose uses ghcr.io images and a FerretDB download; Docker Hub wekanteam/wekan with MongoDB 7 was used.", "The placeholder MAIL_URL crashes start-up; set a valid smtp:// URL."] },
+  opencut: { license: "MIT", status: "requires-setup", port: 5173, dev: "bun run dev (apps/web)", build: ["bun install"], commit: "e668010", footprint: "bun install ~6 s.", verified: ["Install and dev server start"], notes: ["The default branch is a rewrite in progress: apps/web renders only a placeholder page, so no screenshots were taken.", "The README points to opencut-classic as the working editor."] },
 };
 
 function withCaptures(manifest: TemplateManifest): TemplateManifest {
   const shots = CAPTURED[manifest.id];
-  if (!shots) return manifest;
+  const facts = VERIFIED[manifest.id];
+  let out = manifest;
+  if (facts) {
+    out = {
+      ...out,
+      licenseSpdxOrReview: facts.license ?? out.licenseSpdxOrReview,
+      status: facts.status,
+      port: facts.port ?? out.port,
+      devCommand: facts.dev ?? out.devCommand,
+      buildCommands: facts.build ?? out.buildCommands,
+      estimatedBuildFootprint: facts.footprint ?? out.estimatedBuildFootprint,
+      requiredSecrets: facts.secrets ?? out.requiredSecrets,
+      capabilitiesVerified: facts.verified,
+      lastVerifiedAt: "2026-11-10T00:00:00.000Z",
+      warnings: facts.notes,
+    };
+  }
+  if (!shots) return out;
   const capturedAt = "2026-11-10";
   return {
-    ...manifest,
+    ...out,
     sourceScreenshots: shots.map(([file, alt]) => ({ url: `/library-shots/${file}`, alt, capturedAt, provenance: "Captured by Clyra from a local run of the unmodified upstream source." })),
-    captureProvenance: "Captured from a local run of the upstream source on 2026-11-10.",
+    captureProvenance: `Captured from a local run of the upstream source on 2026-11-10${facts?.commit && facts.commit !== "n/a" ? ` (commit ${facts.commit})` : ""}.`,
   };
 }
 
