@@ -26,8 +26,8 @@ const PARTICLES = [
   { x: 79, y: 26, s: 1.7, d: -0.7, t: 3.2 }, { x: 84, y: 66, s: 1.3, d: -2.4, t: 4.2 }, { x: 89, y: 42, s: 1.2, d: -1.1, t: 3.8 },
 ];
 /** Energy gathering toward the thumb: where each spark starts (px from the thumb) before it is pulled in. */
-const SPARKS = Array.from({ length: 16 }, (_, i) => {
-  const a = (i / 16) * Math.PI * 2 + (i % 2) * 0.35;
+const SPARKS = Array.from({ length: 8 }, (_, i) => {
+  const a = (i / 8) * Math.PI * 2 + (i % 2) * 0.35;
   const r = 46 + ((i * 37) % 38);
   return { sx: Math.round(Math.cos(a) * r), sy: Math.round(Math.sin(a) * r * 0.45), d: (i % 5) * 0.045 };
 });
@@ -259,7 +259,9 @@ export function EffortSlider({
           className="clyra-effort-track"
           style={{ height: TRACK_H, borderRadius: TRACK_H / 2 }}
         >
-          <motion.div aria-hidden key={isMax ? `fill${intro}` : "fill"} className={"clyra-effort-fill" + (isMax ? " clyra-effort-fill--max" : "") + (intro ? " clyra-effort-fill--flood" : "")} style={{ width: fill, borderRadius: TRACK_H / 2, background: isMax ? undefined : accentColor }} />
+          <motion.div aria-hidden className="clyra-effort-fill" style={{ width: fill, borderRadius: TRACK_H / 2, background: accentColor }}>
+            <span className="clyra-effort-fill__max" data-on={isMax ? "true" : undefined} />
+          </motion.div>
           {/* At the top level the fill becomes a layered blue gradient with a soft light that travels the whole track,
               reverses and returns, forever (CSS only: it never touches React state). Tiny lights sit inside the gradient. */}
           {intro ? <span key={`f${intro}`} aria-hidden className="clyra-effort-flash" /> : null}
@@ -316,11 +318,14 @@ export function EffortSlider({
         .clyra-effort-label { display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; margin: 0 -4px; border: 0; background: transparent; cursor: pointer; font-family: inherit; font-size: 10.5px; line-height: 14px; font-weight: 500; letter-spacing: 0; color: #8F8F8F; border-radius: 8px; white-space: nowrap; transition: color .18s ease; }
         .clyra-effort-label[data-on] { font-weight: 600; }
         .clyra-effort-label:hover { color: #0D0D0D; }
-        /* max effort: layered electric blues, a diffused light that travels the full track and back, tiny lights inside */
-        .clyra-effort-fill--max { background:
+        /* max effort: the blue you already had deepens into layered electric blues in place (an overlay that fades in,
+           so the fill never empties or restarts as you move up to it) */
+        .clyra-effort-fill { overflow: hidden; }
+        .clyra-effort-fill__max { position: absolute; inset: 0; border-radius: inherit; opacity: 0; transition: opacity .6s cubic-bezier(.3,0,.2,1); will-change: opacity; background:
           radial-gradient(ellipse 60% 120% at 22% 20%, rgba(120,181,255,.55), rgba(120,181,255,0) 62%),
           radial-gradient(ellipse 55% 110% at 78% 85%, rgba(13,63,173,.7), rgba(13,63,173,0) 65%),
           linear-gradient(90deg, #0D3FAD 0%, #1555E8 34%, #1E6FFF 66%, #3E85FF 100%); }
+        .clyra-effort-fill__max[data-on] { opacity: 1; }
         .clyra-effort-lit { --shine-w: 132px; position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
         /* the light's bright centre starts on the left edge, reaches the right edge, then comes all the way back */
         .clyra-effort-shine { position: absolute; left: 0; top: -20%; bottom: -20%; width: var(--shine-w); will-change: transform; transform: translate3d(calc(var(--shine-w) / -2), 0, 0);
@@ -332,37 +337,34 @@ export function EffortSlider({
         @keyframes clyra-effort-twinkle { 0%, 100% { opacity: .28; transform: scale(.85); } 50% { opacity: .85; transform: scale(1.1); } }
         .clyra-effort-lit[data-still] b { animation: none; }
 
-        /* ── entering max: charge up, release ───────────────────────────────────────────────────────────────── */
+        /* ── entering max: charge up, release. Everything below animates only transform and opacity, so it stays on the
+              compositor: no filters, no animated shadows, no clipping. ──────────────────────────────────────────── */
         .clyra-effort-fx { position: absolute; pointer-events: none; z-index: 4; }
-        .clyra-effort-fx > * { position: absolute; left: 50%; top: 50%; }
-        /* 0-650 ms: energy gathers in the thumb: three pulses, each stronger, a growing blue glow, sparks pulled in */
+        .clyra-effort-fx > * { position: absolute; left: 50%; top: 50%; will-change: transform, opacity; }
         .clyra-effort-fx__core { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: radial-gradient(circle, rgba(185,222,255,.95) 0%, rgba(30,111,255,.6) 45%, rgba(30,111,255,0) 72%); opacity: 0; transform: scale(.3);
-          animation: clyra-effort-core 1.25s cubic-bezier(.3,0,.2,1) both; }
-        @keyframes clyra-effort-core { 0% { opacity: 0; transform: scale(.3); } 14% { opacity: .55; transform: scale(1.1); } 24% { opacity: .25; transform: scale(.8); } 38% { opacity: .75; transform: scale(1.5); } 48% { opacity: .35; transform: scale(1); } 60% { opacity: 1; transform: scale(2.1); } 74% { opacity: .9; transform: scale(3.4); } 100% { opacity: 0; transform: scale(5.2); } }
-        /* 650 ms: the release: two shock rings leave the thumb */
-        .clyra-effort-fx__ring { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 1.6px solid rgba(185,222,255,.95); box-shadow: 0 0 10px rgba(30,111,255,.65), inset 0 0 8px rgba(120,181,255,.5); opacity: 0; animation: clyra-effort-ring .7s cubic-bezier(.12,.7,.2,1) .62s both; }
-        .clyra-effort-fx__ring--2 { animation-delay: .78s; border-width: 1px; }
-        @keyframes clyra-effort-ring { 0% { opacity: .95; transform: scale(.5); } 100% { opacity: 0; transform: scale(5.6); } }
-        .clyra-effort-fx > s { width: 2.4px; height: 2.4px; margin: -1.2px 0 0 -1.2px; border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(185,222,255,1); opacity: 0; text-decoration: none; animation: clyra-effort-gather .64s cubic-bezier(.55,0,.85,.35) both; }
-        @keyframes clyra-effort-gather { 0% { opacity: 0; transform: translate(var(--sx), var(--sy)) scale(.6); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(0,0) scale(.2); } }
-        .clyra-effort-thumb[data-charge] { animation: clyra-effort-thumb 1.05s cubic-bezier(.3,0,.2,1) both; }
-        @keyframes clyra-effort-thumb { 0% { box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); } 20%,45% { box-shadow: 0 0 0 3px rgba(30,111,255,.25), 0 0 14px rgba(30,111,255,.7); } 32% { box-shadow: 0 0 0 1px rgba(30,111,255,.2), 0 0 6px rgba(30,111,255,.4); } 62% { box-shadow: 0 0 0 7px rgba(120,181,255,.45), 0 0 30px rgba(120,181,255,1); } 100% { box-shadow: 0 1px 3px rgba(16,18,24,.22), 0 0 0 .5px rgba(16,18,24,.1); } }
-        /* 650 ms: a bright band sweeps the whole track and the gradient floods in behind it */
+          animation: clyra-effort-core 1.15s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-core { 0% { opacity: 0; transform: scale(.3); } 16% { opacity: .55; transform: scale(1.1); } 28% { opacity: .3; transform: scale(.85); } 44% { opacity: .8; transform: scale(1.6); } 56% { opacity: .4; transform: scale(1.1); } 68% { opacity: 1; transform: scale(2.3); } 82% { opacity: .8; transform: scale(3.6); } 100% { opacity: 0; transform: scale(5); } }
+        .clyra-effort-fx__ring { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 1.5px solid rgba(185,222,255,.95); opacity: 0; animation: clyra-effort-ring .72s cubic-bezier(.12,.7,.2,1) .6s both; }
+        .clyra-effort-fx__ring--2 { animation-delay: .74s; border-width: 1px; }
+        @keyframes clyra-effort-ring { 0% { opacity: .9; transform: scale(.5); } 100% { opacity: 0; transform: scale(5.4); } }
+        .clyra-effort-fx > s { width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: radial-gradient(circle, #fff 30%, rgba(185,222,255,0) 72%); opacity: 0; text-decoration: none; animation: clyra-effort-gather .6s cubic-bezier(.55,0,.85,.35) both; }
+        @keyframes clyra-effort-gather { 0% { opacity: 0; transform: translate3d(var(--sx), var(--sy), 0) scale(.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate3d(0,0,0) scale(.3); } }
+        /* the thumb's glow is a pseudo-element that fades and scales, not a shadow that repaints */
+        .clyra-effort-thumb { position: absolute; }
+        .clyra-effort-thumb[data-charge]::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, rgba(120,181,255,.95) 0%, rgba(30,111,255,.55) 42%, rgba(30,111,255,0) 70%); opacity: 0; transform: scale(.6); animation: clyra-effort-thumbglow 1.05s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-thumbglow { 0% { opacity: 0; transform: scale(.6); } 18% { opacity: .7; transform: scale(1); } 30% { opacity: .3; transform: scale(.8); } 46% { opacity: .85; transform: scale(1.15); } 58% { opacity: .5; transform: scale(.95); } 70% { opacity: 1; transform: scale(1.5); } 100% { opacity: 0; transform: scale(2.4); } }
+        /* the release: one bright band crosses the track */
         .clyra-effort-flash { position: absolute; top: -30%; bottom: -30%; left: 0; width: 120px; z-index: 3; pointer-events: none; opacity: 0; will-change: transform, opacity;
           background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(185,222,255,.5) 38%, rgba(255,255,255,.98) 50%, rgba(185,222,255,.5) 62%, rgba(255,255,255,0) 100%);
-          animation: clyra-effort-flash .55s cubic-bezier(.55,0,.35,1) .64s both; }
+          animation: clyra-effort-flash .55s cubic-bezier(.55,0,.35,1) .62s both; }
         @keyframes clyra-effort-flash { 0% { opacity: 0; transform: translate3d(-120px,0,0); } 12% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translate3d(calc(var(--track-w, 220px) + 20px),0,0); } }
-        .clyra-effort-fill--flood { animation: clyra-effort-flood 1.25s cubic-bezier(.3,0,.2,1) both; }
-        @keyframes clyra-effort-flood { 0% { filter: saturate(.4) brightness(.9); clip-path: inset(0 100% 0 0); } 52% { filter: saturate(.7) brightness(1); clip-path: inset(0 100% 0 0); } 62% { clip-path: inset(0 100% 0 0); filter: saturate(1.4) brightness(1.6); } 100% { clip-path: inset(0 0 0 0); filter: saturate(1) brightness(1); } }
         /* the light and the tiny lights wait for the release, then carry on forever */
-        .clyra-effort-lit[data-intro] { animation: clyra-effort-lit-show .01s linear 1.15s both; }
+        .clyra-effort-lit[data-intro] { animation: clyra-effort-lit-show .45s ease 1.0s both; }
         @keyframes clyra-effort-lit-show { from { opacity: 0; } to { opacity: 1; } }
-        /* the whole popover takes the glow, then lets go */
-        [data-effort-intro] { animation: clyra-effort-glow 1.9s cubic-bezier(.3,0,.2,1) both; }
-        @keyframes clyra-effort-glow { 0%,40% { box-shadow: 0 0 0 1px rgba(16,18,24,.07), 0 8px 24px -10px rgba(16,18,24,.18); } 52% { box-shadow: 0 0 0 1px rgba(30,111,255,.5), 0 0 46px rgba(30,111,255,.55), 0 8px 24px -10px rgba(16,18,24,.18); } 100% { box-shadow: 0 0 0 1px rgba(16,18,24,.07), 0 8px 24px -10px rgba(16,18,24,.18); } }
-        [data-effort-intro] .clyra-effort-label[data-on] { animation: clyra-effort-label 1.2s cubic-bezier(.3,0,.2,1) .6s both; }
-        @keyframes clyra-effort-label { 0% { text-shadow: 0 0 0 rgba(30,111,255,0); } 30% { text-shadow: 0 0 10px rgba(30,111,255,.85); } 100% { text-shadow: 0 0 0 rgba(30,111,255,0); } }
-        @media (prefers-reduced-motion: reduce) { [data-effort-intro], .clyra-effort-fx, .clyra-effort-flash, .clyra-effort-thumb[data-charge], .clyra-effort-fill--flood, .clyra-effort-lit[data-intro] { animation: none !important; } .clyra-effort-fx, .clyra-effort-flash { display: none; } }
+        /* the popover takes a blue glow and lets go: a fixed shadow whose opacity changes */
+        [data-effort-intro]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: 0 0 0 1px rgba(30,111,255,.5), 0 0 40px rgba(30,111,255,.5); opacity: 0; will-change: opacity; animation: clyra-effort-glow 1.7s cubic-bezier(.3,0,.2,1) both; }
+        @keyframes clyra-effort-glow { 0%, 38% { opacity: 0; } 54% { opacity: 1; } 100% { opacity: 0; } }
+        @media (prefers-reduced-motion: reduce) { [data-effort-intro]::after, .clyra-effort-fx, .clyra-effort-flash, .clyra-effort-thumb[data-charge]::after, .clyra-effort-lit[data-intro], .clyra-effort-fill__max { animation: none !important; transition: none !important; } .clyra-effort-fx, .clyra-effort-flash { display: none; } }
         .clyra-effort-reset { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border: 0; border-radius: 11px; background: transparent; color: #A0A0A0; cursor: pointer; transition: color .15s ease, background-color .15s ease, transform .3s cubic-bezier(.22,1,.36,1); }
         .clyra-effort-reset:hover { background: rgba(16,18,24,.05); color: #5D5D5D; transform: rotate(-40deg); }
       `}</style>
