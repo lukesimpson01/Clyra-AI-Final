@@ -84,3 +84,52 @@ Sidebar (`Sidebar.tsx`): Recent (5) + collapsible "All projects" (state in `loca
 - Respect licences and third-party branding; do not redistribute cloned repos in this repo (screenshots only).
 - Verify in a real browser (screenshots at 1440/1024/768/375). Report honestly: what you ran, what passed, what could not be done and why.
 - Commit in small logical commits; end each with `Co-Authored-By: Claude <noreply@anthropic.com>`.
+
+## 3. The 40 repositories (clone commands, category, licence, notes)
+
+Source of truth is `seeds` in `lib/clyra-code/library/registry.ts`. All 40 URLs were checked against the GitHub API on 2026-11-10 (exist, not archived).
+
+| # | Category | Template (replaces) | Clone | Licence | Known requirements (unverified) |
+|---|---|---|---|---|---|
+| 1 | AI Chats & Agents | LibreChat (ChatGPT) | `git clone https://github.com/danny-avila/LibreChat.git` | MIT | TypeScript, Node, MongoDB. Needs MongoDB and your own model API keys. |
+| 2 | AI Chats & Agents | Vercel AI Chatbot (Claude) | `git clone https://github.com/vercel/chatbot.git` | License review | TypeScript, Next.js, Postgres. Needs a Postgres database and AI provider keys. Licence is not auto-detected; review it. |
+| 3 | AI Chats & Agents | Perplexica (Perplexity) | `git clone https://github.com/ItzCrazyKns/Perplexica.git` | MIT | TypeScript, Next.js, SearxNG. Needs a SearxNG instance and a model provider. The repository has been renamed upstream (Vane). |
+| 4 | AI Chats & Agents | OpenHands (Codex, Cursor) | `git clone https://github.com/OpenHands/OpenHands.git` | MIT | TypeScript, Python, Docker. Needs Docker and a model API key; very large repository. |
+| 5 | AI Chats & Agents | bolt.diy (Lovable, Bolt) | `git clone https://github.com/stackblitz-labs/bolt.diy.git` | MIT | TypeScript, Remix, Node. Needs your own model provider keys. |
+| 6 | Developer Tools | code-server (VS Code) | `git clone https://github.com/coder/code-server.git` | MIT | TypeScript, Node. Needs a built VS Code toolchain; heavy to build locally. |
+| 7 | Developer Tools | Gitea (GitHub) | `git clone https://github.com/go-gitea/gitea.git` | MIT | Go, Node. Needs Go and Node to build. |
+| 8 | Developer Tools | Hoppscotch (Postman) | `git clone https://github.com/hoppscotch/hoppscotch.git` | MIT | TypeScript, Vue, Postgres. Self-hosting needs a Postgres database. |
+| 9 | Developer Tools | NocoDB (Airtable) | `git clone https://github.com/nocodb/nocodb.git` | License review | TypeScript, Vue, Node. Licence is custom / mixed — review before distributing. Very large repository. |
+| 10 | Developer Tools | Uptime Kuma (Uptime monitoring) | `git clone https://github.com/louislam/uptime-kuma.git` | MIT | JavaScript, Vue, Node, SQLite. Runs with Node; no external services needed. |
+| 11 | Productivity & Collaboration | AppFlowy (Notion) | `git clone https://github.com/AppFlowy-IO/AppFlowy.git` | AGPL-3.0 | Dart, Flutter, Rust. AGPL licence. Needs Flutter and Rust toolchains. |
+| 12 | Productivity & Collaboration | Plane (Linear) | `git clone https://github.com/makeplane/plane.git` | AGPL-3.0 | TypeScript, Next.js, Python, Postgres. AGPL licence. Needs Postgres, Redis and Docker. |
+| 13 | Productivity & Collaboration | WeKan (Trello) | `git clone https://github.com/wekan/wekan.git` | MIT | JavaScript, Meteor, MongoDB. Needs MongoDB and Meteor. |
+| 14 | Productivity & Collaboration | ONLYOFFICE Docs (Google Docs, Office) | `git clone https://github.com/ONLYOFFICE/DocumentServer.git` | AGPL-3.0 | Shell, Docker. AGPL licence. Distributed as a server image; the repository is mostly packaging. |
+| 15 | Productivity & Collaboration | Cal.com (Calendly) | `git clone https://github.com/calcom/cal.com.git` | MIT | TypeScript, Next.js, Postgres. Needs Postgres and calendar integrations. The repository is now cal.diy upstream. |
+| 16 | Design, Video & Creative | Penpot (Figma) | `git clone https://github.com/penpot/penpot.git` | MPL-2.0 | Clojure, ClojureScript, Postgres. MPL-2.0. Full-stack deployment (Docker) required. |
+| 17 | Design, Video & Creative | HyCanvas (Canva) | `git clone https://github.com/hyscaler/HyCanvas.git` | AGPL-3.0 | TypeScript, React. AGPL licence. A small project; confirm it runs before relying on it. |
+| 18 | Design, Video & Creative | miniPaint (Photoshop) | `git clone https://github.com/viliusle/miniPaint.git` | License review | JavaScript. Licence is not auto-detected; review it. Runs as a static site. |
+| 19 | Design, Video & Creative | OpenCut (CapCut) | `git clone https://github.com/OpenCut-app/OpenCut.git` | MIT | TypeScript, Next.js. Needs Node and a database for accounts. |
+| 20 | Design, Video & Creative | Cap (Loom) | `git clone https://github.com/CapSoftware/Cap.git` | License review | Rust, Tauri, TypeScript. Mixed licence (AGPL and MIT parts) — review. Desktop capture needs native permissions. |
+| 21 | Business & SaaS | Medusa (Shopify backend) | `git clone https://github.com/medusajs/medusa.git` | License review | TypeScript, Node, Postgres. Licence is not auto-detected; review it. Needs Postgres and Redis. |
+| 22 | Business & SaaS | Twenty CRM (HubSpot, Salesforce) | `git clone https://github.com/twentyhq/twenty.git` | License review | TypeScript, React, NestJS, Postgres. Mixed licence (AGPL and commercial) — review. Needs Postgres and Redis. Very large repository. |
+| 23 | Business & SaaS | Chatwoot (Intercom) | `git clone https://github.com/chatwoot/chatwoot.git` | License review | Ruby, Rails, Vue, Postgres. Mixed licence (MIT plus enterprise parts) — review. Needs Postgres and Redis. |
+| 24 | Business & SaaS | Invoice Ninja (Invoicing, accounting) | `git clone https://github.com/invoiceninja/invoiceninja.git` | License review | PHP, Laravel, MySQL. Source-available licence — review the terms. Needs PHP and MySQL. |
+| 25 | Business & SaaS | Formbricks (Typeform) | `git clone https://github.com/formbricks/formbricks.git` | License review | TypeScript, Next.js, Postgres. Mixed licence (AGPL plus enterprise parts) — review. Needs Postgres. |
+| 26 | Social & Entertainment | Stoat (Discord) | `git clone https://github.com/stoatchat/stoatchat.git` | License review | Rust, MongoDB. Licence is not auto-detected; review it. Needs MongoDB and Redis. |
+| 27 | Social & Entertainment | Pixelfed (Instagram) | `git clone https://github.com/pixelfed/pixelfed.git` | AGPL-3.0 | PHP, Laravel, MySQL. AGPL licence. Needs PHP, a database and Redis. |
+| 28 | Social & Entertainment | PeerTube (YouTube) | `git clone https://github.com/Chocobozzz/PeerTube.git` | AGPL-3.0 | TypeScript, Node, Postgres, FFmpeg. AGPL licence. Needs Postgres, Redis and FFmpeg. |
+| 29 | Social & Entertainment | Mastodon (Twitter / X) | `git clone https://github.com/mastodon/mastodon.git` | AGPL-3.0 | Ruby, Rails, Postgres. AGPL licence. Needs Postgres, Redis and Ruby. |
+| 30 | Social & Entertainment | Navidrome (Spotify) | `git clone https://github.com/navidrome/navidrome.git` | GPL-3.0 | Go, React. GPL-3.0 licence. Needs Go and Node to build, and a music library. |
+| 31 | Websites & Publishing | Next.js SaaS Starter (SaaS website) | `git clone https://github.com/nextjs/saas-starter.git` | MIT | TypeScript, Next.js, Postgres. Needs Postgres and Stripe keys for payments. |
+| 32 | Websites & Publishing | Astrofy (Portfolio website) | `git clone https://github.com/manuelernestog/astrofy.git` | MIT | Astro, Tailwind. Static site; no external services. |
+| 33 | Websites & Publishing | Medusa DTC Starter (Ecommerce storefront) | `git clone https://github.com/medusajs/dtc-starter.git` | MIT | TypeScript, Next.js. Needs a running Medusa backend. |
+| 34 | Websites & Publishing | Ghost (Blog and newsletter) | `git clone https://github.com/TryGhost/Ghost.git` | MIT | TypeScript, Node, MySQL. Needs Node and MySQL; email needs a provider. |
+| 35 | Websites & Publishing | Docusaurus (Documentation website) | `git clone https://github.com/facebook/docusaurus.git` | MIT | TypeScript, React. Cloning gives the framework monorepo, not a starter site; very large. |
+| 36 | Automation & Data | Activepieces (Zapier) | `git clone https://github.com/activepieces/activepieces.git` | License review | TypeScript, Angular, NestJS, Postgres. Mixed licence (MIT plus enterprise parts) — review. Needs Postgres and Redis. |
+| 37 | Automation & Data | Umami (Google Analytics) | `git clone https://github.com/umami-software/umami.git` | MIT | TypeScript, Next.js, Postgres. Needs Postgres. |
+| 38 | Automation & Data | Actual Budget (Personal finance) | `git clone https://github.com/actualbudget/actual.git` | MIT | TypeScript, Node. Runs with Node; no external services. |
+| 39 | Automation & Data | Metabase (Business intelligence) | `git clone https://github.com/metabase/metabase.git` | License review | Clojure, TypeScript. Mixed licence (AGPL plus commercial) — review. Needs a JDK; very large repository. |
+| 40 | Automation & Data | Excalidraw (Miro) | `git clone https://github.com/excalidraw/excalidraw.git` | MIT | TypeScript, React. Runs with Node; no external services. |
+
+Templates with captures already: astrofy, minipaint, uptime-kuma (setup screen only).

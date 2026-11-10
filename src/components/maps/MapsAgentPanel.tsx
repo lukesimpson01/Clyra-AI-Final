@@ -1,6 +1,6 @@
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, MapPin, MessageCircle, PanelRightOpen, Square, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowUp, Check, ChevronDown, MapPin, MessageCircle, Mic, PanelRightOpen, Square, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   assistantBubbleInnerStyle,
   chatBubbleStyle,
@@ -11,6 +11,8 @@ import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import type { ClyraPlace } from "../../../lib/maps/types";
 import { formatDistance } from "./mapsIcons";
 import "./maps-ui.css";
+import { useDictationController, appendDictatedText } from "../../lib/useDictationController";
+import { canStartDictation, formatDictationElapsed, isDictationHold, isDictationSessionOpen } from "../../lib/composerDictation";
 
 /** One exchange in the map chat. Tool steps and places are attached to the
  * assistant turn that produced them, so the thread reads like the Clyra chat. */
@@ -359,10 +361,26 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
   const [focus, setFocus] = useState(false);
   const ref = useRef<HTMLInputElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  /* the same microphone as Chat: dictation fills the field and never sends */
+  const textRef = useRef(text);
+  textRef.current = text;
+  const dictation = useDictationController((spoken) => { onText(appendDictatedText(textRef.current, spoken)); requestAnimationFrame(() => ref.current?.focus()); });
+  const dPhase = dictation.phase;
+  const dBusy = dPhase === "starting" || dPhase === "listening" || dPhase === "transcribing";
+  const micPress = useRef<{ downAt: number; startedHere: boolean } | null>(null);
+  const micIgnoreClick = useRef(false);
+  useEffect(() => {
+    if (!isDictationSessionOpen(dPhase)) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") dictation.onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dPhase]);
+  const wave = useMemo(() => Array.from({ length: 30 }, (_, i) => ({ h: 6 + Math.round(Math.abs(Math.sin(i * 1.7) * 0.6 + Math.sin(i * 0.5)) * 8), env: 0.35 + 0.65 * Math.abs(Math.sin(i / 4.1)) })), []);
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
   const lastUser = [...turns].reverse().find((t) => t.role === "user");
   const showCard = Boolean(lastAssistant) && lastAssistant!.id !== dismissedId;
-  const open = hover || focus || Boolean(text) || busy || showCard;
+  const open = hover || focus || Boolean(text) || busy || showCard || dBusy;
   const canSend = Boolean(text.trim()) && !busy;
 
   useEffect(() => {
@@ -414,9 +432,29 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
         </div>
       </div>
 
-      <div className="mx-dock__row" onClick={() => ref.current?.focus()}>
+      <div className="mx-dock__row" onClick={() => { if (!dBusy) ref.current?.focus(); }}>
         <span className="mx-dock__icon" aria-hidden><MessageCircle size={17} strokeWidth={1.9} /></span>
-        {busy ? (
+        {dBusy ? (
+          <div className="mx-dock__voice" role="status" aria-live="polite">
+            <span className="mx-dock__voicelabel">
+              <i data-live={dPhase === "listening"} aria-hidden />
+              {dPhase === "transcribing" ? "Transcribing…" : dPhase === "starting" ? "Starting microphone…" : "Listening…"}
+            </span>
+            {dictation.flow?.partial ? (
+              <span className="mx-dock__partial">{dictation.flow.partial}</span>
+            ) : (
+              <span className="mx-dock__wave" aria-hidden>
+                {dPhase === "listening" ? wave.map((b, i) => (
+                  <b key={i} style={{ height: b.h * (0.6 + dictation.level * 0.9), opacity: 0.3 + 0.6 * b.env }} />
+                )) : null}
+              </span>
+            )}
+            <span className="mx-dock__time">{dPhase === "listening" ? formatDictationElapsed(dictation.elapsedSeconds) : ""}</span>
+            {isDictationSessionOpen(dPhase) ? (
+              <button type="button" className="mx-dock__cancel" onClick={(e) => { e.stopPropagation(); dictation.onCancel(); }} title="Cancel dictation (Esc)" aria-label="Cancel dictation">Cancel</button>
+            ) : null}
+          </div>
+        ) : busy ? (
           <span className="mx-dock__status"><ShiningText text={status || "Thinking…"} className="text-[13px]" /></span>
         ) : (
           <input
@@ -424,7 +462,7 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
             value={text}
             tabIndex={open ? 0 : -1}
             aria-label="Ask Clyra about the map"
-            placeholder={placeholder}
+            placeholder={dPhase === "error" && dictation.detail ? dictation.detail : placeholder}
             onChange={(e) => onText(e.target.value)}
             onFocus={() => { setFocus(true); onFocus(); }}
             onBlur={() => setFocus(false)}
@@ -436,8 +474,37 @@ function MapsDock({ text, onText, onSubmit, busy, placeholder, onFocus, turns, s
           <button type="button" aria-label="Stop" onClick={(e) => { e.stopPropagation(); onStop(); }} className="mx-dock__send mx-dock__send--stop"><Square size={11} fill="currentColor" strokeWidth={0} /></button>
         ) : (
           <>
-            <button type="button" aria-label="Open chat" title="Open chat" tabIndex={open ? 0 : -1} onClick={(e) => { e.stopPropagation(); onOpenChat(); }} className="mx-dock__chat"><PanelRightOpen size={16} /></button>
-            <button type="button" aria-label="Send" tabIndex={open ? 0 : -1} disabled={!canSend} onClick={(e) => { e.stopPropagation(); if (canSend) onSubmit(); }} className="mx-dock__send"><ArrowUp size={15} strokeWidth={2.4} /></button>
+            <button
+              type="button"
+              className="mx-dock__mic"
+              data-on={dPhase === "listening"}
+              tabIndex={open ? 0 : -1}
+              aria-label={dPhase === "listening" ? "Stop dictation" : dPhase === "starting" ? "Cancel starting dictation" : "Dictate"}
+              aria-pressed={dPhase === "listening"}
+              aria-busy={dPhase === "transcribing"}
+              title={dPhase === "listening" ? "Tap to stop and transcribe" : dPhase === "transcribing" ? "Transcribing…" : "Dictate: tap to start, or hold to talk"}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                const starts = canStartDictation(dPhase);
+                micPress.current = { downAt: performance.now(), startedHere: starts };
+                micIgnoreClick.current = starts;
+                if (starts) dictation.onStart();
+              }}
+              onPointerUp={() => { const p = micPress.current; micPress.current = null; if (p?.startedHere && isDictationHold(p.downAt, performance.now())) dictation.onStop(); }}
+              onPointerLeave={() => { const p = micPress.current; micPress.current = null; if (p?.startedHere && isDictationHold(p.downAt, performance.now())) { dictation.onStop(); micIgnoreClick.current = false; } }}
+              onPointerCancel={() => { micPress.current = null; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (micIgnoreClick.current) { micIgnoreClick.current = false; return; }
+                if (dPhase === "listening") dictation.onStop();
+                else if (dPhase === "starting") dictation.onCancel();
+                else if (canStartDictation(dPhase)) dictation.onStart();
+              }}
+            >
+              <Mic size={16} strokeWidth={2} style={{ opacity: dPhase === "transcribing" ? 0.45 : 1 }} />
+            </button>
+            {dBusy ? null : <button type="button" aria-label="Open chat" title="Open chat" tabIndex={open ? 0 : -1} onClick={(e) => { e.stopPropagation(); onOpenChat(); }} className="mx-dock__chat"><PanelRightOpen size={16} /></button>}
+            <button type="button" aria-label="Send" tabIndex={open ? 0 : -1} disabled={!canSend || dBusy} onClick={(e) => { e.stopPropagation(); if (canSend) onSubmit(); }} className="mx-dock__send"><ArrowUp size={15} strokeWidth={2.4} /></button>
           </>
         )}
       </div>

@@ -265,3 +265,22 @@
 .mx-go:hover { background: var(--mx-go-2); } .mx-go:active { transform: scale(.98); }
 .mx-fly { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 48px; padding: 0 16px; border: 0; border-radius: 16px; background: var(--mx-ink); color: #fff; font-family: inherit; font-weight: 600; font-size: 14px; letter-spacing: -.01em; cursor: pointer; transition: background-color .15s, transform .15s var(--mx-ease); }
 .mx-fly:hover { background: #26282d; } .mx-fly:active { transform: scale(.98); }
+
+/* Dictation in the Ask Clyra pill: the chat composer's microphone, sized for the pill */
+.mx-dock__mic { display: grid; place-items: center; width: 30px; height: 30px; margin-right: 2px; flex: none; border: 0; border-radius: 50%; background: transparent; color: var(--mx-muted); cursor: pointer; opacity: 0; transform: scale(.8); transition: opacity .2s ease, transform .3s var(--mx-ease), background-color .16s, color .16s; touch-action: none; user-select: none; }
+.mx-dock[data-open="true"] .mx-dock__mic { opacity: 1; transform: none; transition-delay: .1s; }
+.mx-dock__mic:hover { background: var(--mx-fill); color: var(--mx-ink); }
+.mx-dock__mic[data-on="true"] { background: var(--mx-accent); color: #fff; transform: scale(1.06); box-shadow: 0 4px 10px -4px rgba(0,102,255,.6); }
+.mx-dock__voice { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; height: 46px; animation: mx-voice-in .4s var(--mx-ease) both; }
+@keyframes mx-voice-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.mx-dock__voicelabel { display: inline-flex; align-items: center; gap: 7px; flex: none; font-size: 12.5px; font-weight: 500; color: var(--mx-muted); white-space: nowrap; }
+.mx-dock__voicelabel i { width: 7px; height: 7px; border-radius: 50%; background: var(--mx-accent); }
+.mx-dock__voicelabel i[data-live="true"] { background: #e0483a; animation: mx-pulse 1.6s ease-in-out infinite; }
+@keyframes mx-pulse { 0%,100% { transform: scale(.8); opacity: .7; } 50% { transform: scale(1.15); opacity: 1; } }
+.mx-dock__wave { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 3px; height: 30px; overflow: hidden; }
+.mx-dock__wave b { display: block; width: 3px; flex: none; border-radius: 2px; background: var(--mx-accent); transition: height .12s ease; }
+.mx-dock__partial { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--mx-ink-2); }
+.mx-dock__time { flex: none; min-width: 28px; text-align: right; font-size: 12.5px; font-weight: 500; color: var(--mx-muted); font-variant-numeric: tabular-nums; }
+.mx-dock__cancel { flex: none; height: 26px; margin-right: 8px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--mx-fill); color: var(--mx-ink-2); font-family: inherit; font-weight: 500; font-size: 12px; cursor: pointer; transition: background-color .15s; }
+.mx-dock__cancel:hover { background: var(--mx-fill-2); }
+@media (prefers-reduced-motion: reduce) { .mx-dock__voice, .mx-dock__voicelabel i { animation: none !important; } }
