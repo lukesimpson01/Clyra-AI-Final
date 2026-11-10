@@ -203,7 +203,7 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
   };
 }
 
-/* The 40 starter templates, each a public GitHub repository verified to exist. Clone happens on "Get". */
+/* The starter templates (40 original plus Adobe/Office alternatives and AI tools), each a public GitHub repository verified to exist. Clone happens on "Get". */
 const seeds: readonly Seed[] = [
   ["librechat", "LibreChat", "ChatGPT", "AI Chats & Agents", "danny-avila/LibreChat", "Multi-provider AI chat with agents, files and plugins.", "full-app", "TypeScript, Node, MongoDB", "MIT", "Needs MongoDB and your own model API keys."],
   ["vercel-chatbot", "Vercel AI Chatbot", "Claude", "AI Chats & Agents", "vercel/chatbot", "Next.js chat app built on the Vercel AI SDK.", "full-app", "TypeScript, Next.js, Postgres", "License review", "Needs a Postgres database and AI provider keys. Licence is not auto-detected; review it."],
@@ -245,6 +245,19 @@ const seeds: readonly Seed[] = [
   ["actual", "Actual Budget", "Personal finance", "Automation & Data", "actualbudget/actual", "Local-first personal finance manager.", "full-app", "TypeScript, Node", "MIT", "Runs with Node; no external services."],
   ["metabase", "Metabase", "Business intelligence", "Automation & Data", "metabase/metabase", "Dashboards and analytics on your databases.", "full-app", "Clojure, TypeScript", "License review", "Mixed licence (AGPL plus commercial) — review. Needs a JDK; very large repository."],
   ["excalidraw", "Excalidraw", "Miro", "Automation & Data", "excalidraw/excalidraw", "Virtual whiteboard for sketching diagrams.", "full-app", "TypeScript, React", "MIT", "Runs with Node; no external services."],
+  ["stirling-pdf", "Stirling-PDF", "Adobe Acrobat", "Adobe alternatives", "Stirling-Tools/Stirling-PDF", "Web PDF toolkit: merge, compress, convert, sign, redact and OCR.", "full-app", "Java, React, Docker", "License review"],
+  ["svgedit", "SVG-Edit", "Adobe Illustrator", "Adobe alternatives", "SVG-Edit/svgedit", "Vector graphics editor that runs in the browser.", "full-app", "JavaScript", "MIT"],
+  ["filerobot-image-editor", "Filerobot Image Editor", "Adobe Photoshop, Lightroom", "Adobe alternatives", "scaleflex/filerobot-image-editor", "Embeddable image editor with crop, filters, annotations and resize.", "framework", "JavaScript, React", "MIT"],
+  ["opencut-classic", "OpenCut Classic", "Adobe Premiere Pro, CapCut", "Adobe alternatives", "OpenCut-app/opencut-classic", "Original OpenCut browser video editor with a timeline.", "full-app", "TypeScript, Next.js", "MIT"],
+  ["omniclip", "omniclip", "Adobe Premiere Pro", "Adobe alternatives", "omni-media/omniclip", "Open-source video editing web application.", "full-app", "TypeScript, Vite", "MIT"],
+  ["photoprism", "PhotoPrism", "Adobe Lightroom", "Adobe alternatives", "photoprism/photoprism", "AI-assisted photo library with browsing, search and albums.", "full-app", "Go, Docker, MariaDB", "License review"],
+  ["univer", "Univer", "Microsoft Word, Excel, PowerPoint", "Microsoft Office alternatives", "dream-num/univer", "Office SDK with document, spreadsheet and slide editors.", "framework", "TypeScript, React", "Apache-2.0"],
+  ["pptist", "PPTist", "Microsoft PowerPoint", "Microsoft Office alternatives", "pipipi-pikachu/PPTist", "Online presentation editor that imitates PowerPoint.", "full-app", "TypeScript, Vue", "AGPL-3.0"],
+  ["anything-llm", "AnythingLLM", "ChatGPT, Notion AI", "AI Tools", "Mintplex-Labs/anything-llm", "Private chat with documents, agents and any model provider.", "full-app", "JavaScript, Node, Docker", "MIT"],
+  ["flowise", "Flowise", "Zapier AI, Botpress", "AI Tools", "FlowiseAI/Flowise", "Visual builder for AI agents and LLM flows.", "full-app", "TypeScript, Node, Docker", "License review"],
+  ["langflow", "Langflow", "Flowise, Botpress", "AI Tools", "langflow-ai/langflow", "Visual builder and runtime for AI agents and workflows.", "full-app", "Python, React, Docker", "MIT"],
+  ["openwhispr", "OpenWhispr", "Wispr Flow, Superwhisper", "AI Tools", "OpenWhispr/openwhispr", "Voice-to-text dictation with local Whisper or Parakeet models.", "reference-only", "Electron, TypeScript", "MIT", "Desktop app needing microphone access; not a browser import."],
+  ["natively", "Natively", "Cluely", "AI Tools", "Natively-AI-assistant/natively-cluely-ai-assistant", "Open-source AI meeting assistant and interview copilot (Cluely alternative).", "reference-only", "Electron, TypeScript", "License review", "Desktop app using screen and audio capture; licence reported as unspecified by GitHub."],
 ];
 
 /* Real captures, taken by cloning, installing and running each app locally (see provenance). Only apps that were actually run have any. */
@@ -271,6 +284,7 @@ const CAPTURED: Record<string, Array<[file: string, alt: string]>> = {
   perplexica: [["perplexica-4.jpg", "Perplexica (Vane) search home"], ["perplexica-2.jpg", "Perplexica add-connection dialog"], ["perplexica-3.jpg", "Perplexica model selection"]],
   "saas-starter": [["saas-starter-1.jpg", "SaaS Starter landing page"], ["saas-starter-2.jpg", "SaaS Starter team settings dashboard"], ["saas-starter-3.jpg", "SaaS Starter general settings"], ["saas-starter-4.jpg", "SaaS Starter activity log"]],
   umami: [["umami-1.jpg", "Umami overview with visitors, views and traffic chart"], ["umami-2.jpg", "Umami breakdown by page path"], ["umami-3.jpg", "Umami sessions list with browser and location"], ["umami-4.jpg", "Umami period comparison"]],
+  "stirling-pdf": [["stirling-pdf-1.jpg", "Stirling-PDF home with the PDF tool list"], ["stirling-pdf-2.jpg", "Stirling-PDF library with two uploaded PDFs"], ["stirling-pdf-3.jpg", "Stirling-PDF compress tool with settings"]],
   "uptime-kuma": [["uptime-kuma-1.jpg", "Uptime Kuma dashboard with monitors up and one down"], ["uptime-kuma-2.jpg", "Uptime Kuma monitor detail with response-time chart"], ["uptime-kuma-3.jpg", "Uptime Kuma monitor in the down state"], ["uptime-kuma-4.jpg", "Uptime Kuma add-monitor form"]],
   "vercel-chatbot": [["vercel-chatbot-1.jpg", "Vercel AI Chatbot empty chat with suggestions"], ["vercel-chatbot-2.jpg", "Vercel AI Chatbot model picker"], ["vercel-chatbot-3.jpg", "Vercel AI Chatbot register page"]],
   wekan: [["wekan-1.jpg", "WeKan kanban board with four lists"], ["wekan-2.jpg", "WeKan card detail panel"], ["wekan-3.jpg", "WeKan all-boards view"]],
@@ -315,6 +329,7 @@ const VERIFIED: Record<string, Verified> = {
   "uptime-kuma": { license: "MIT", status: "requires-setup", port: 3001, dev: "node --import=tsx server/server.js", build: ["npm ci", "npm run build"], commit: "fb8ef0f", footprint: "npm ci ~25 s, frontend build ~5 s; SQLite.", verified: ["Install and build", "Setup wizard, monitors, dashboard"], notes: ["The current branch needs Node 26.2 or newer; the README's plain `node server/server.js` fails on this branch.", "Account setup checks passwords against haveibeenpwned; set UPTIME_KUMA_DISABLE_LEAK_PWD_CHECK=1 on offline hosts."] },
   "vercel-chatbot": { license: "Apache-2.0", status: "requires-setup", port: 3000, dev: "pnpm dev", build: ["pnpm install", "pnpm db:migrate"], commit: "a8989b5", secrets: ["POSTGRES_URL", "AUTH_SECRET", "AI_GATEWAY_API_KEY"], footprint: "pnpm install ~6 s; Postgres in Docker.", verified: ["Install and migrations", "Chat UI as a guest"], notes: ["Licence verified: Apache-2.0.", "Replies need an AI Gateway key (not tested)."] },
   wekan: { license: "MIT", status: "requires-setup", port: 80, dev: "docker compose (MongoDB 7 + wekanteam/wekan)", commit: "bc69880", footprint: "Docker: MongoDB + app ~2.5 GB.", verified: ["Stack runs", "Registration, boards, lists and cards"], notes: ["The default compose uses ghcr.io images and a FerretDB download; Docker Hub wekanteam/wekan with MongoDB 7 was used.", "The placeholder MAIL_URL crashes start-up; set a valid smtp:// URL."] },
+  "stirling-pdf": { license: "License review", status: "requires-setup", port: 8080, dev: "docker run -p 8080:8080 stirlingtools/stirling-pdf", commit: "0b7d3a4", footprint: "Docker image ~1 GB.", verified: ["Official image runs", "Upload and tool panels"], notes: ["LICENSE is MIT for the core, but app/proprietary, app/saas, engine and parts of the frontend editor carry their own licences: review before distributing.", "Verified via the official Docker image; default login admin/stirling unless security is disabled (done for the test)."] },
   opencut: { license: "MIT", status: "requires-setup", port: 5173, dev: "bun run dev (apps/web)", build: ["bun install"], commit: "e668010", footprint: "bun install ~6 s.", verified: ["Install and dev server start"], notes: ["The default branch is a rewrite in progress: apps/web renders only a placeholder page, so no screenshots were taken.", "The README points to opencut-classic as the working editor."] },
 };
 
