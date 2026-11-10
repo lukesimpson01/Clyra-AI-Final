@@ -42,10 +42,8 @@ export interface PlaceEnrichResult {
   photos: EnrichedPhoto[];
   hours?: { weekly: Array<{ day: string; text: string }>; source: string };
   ratings: EnrichedRating[];
-  priceLevel?: string;
   website?: string;
   phone?: string;
-  mapsUrl?: string;
   sources: string[];
   summary?: string;
   summaryUrl?: string;
@@ -191,7 +189,7 @@ export function getPlaceWeb(place: ClyraPlace): Promise<PlaceWebResult | null> {
   const promise = fetch("/api/maps/place-web", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: place.name, locality: place.locality, website: place.website }),
+    body: JSON.stringify({ name: place.name, locality: place.locality, website: place.website, coordinates: place.coordinates }),
   })
     .then((r) => r.json())
     .then((d: PlaceWebResult & { ok: boolean }) => (d.ok ? d : null))

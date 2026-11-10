@@ -128,7 +128,7 @@ import {
 import { fetchLiveWeather, fetchLiveWeatherByCoords, geocodePlace, reverseGeocode } from "./lib/research/weather";
 import { searchPlaces as mapsSearchPlaces, searchNearby as mapsSearchNearby, routingProvider as mapsRoutingProvider, findAlongRoute as mapsFindAlongRoute } from "./lib/maps/providers";
 import { lookupPlaceInfo } from "./lib/maps/placeInfo";
-import { enrichPlace, googlePhotoBytes, type EnrichDeps } from "./lib/maps/placeEnrich";
+import { enrichPlace, discoverOsm, type EnrichDeps } from "./lib/maps/placeEnrich";
 import { fetchUrl as mapsFetchUrl } from "./lib/agent/research-tools";
 import { lookupWeb, type WebPage } from "./lib/maps/placeWeb";
 import { identifyPoint } from "./lib/maps/identify";
@@ -4371,21 +4371,16 @@ async function startServer() {
     const hit = webCache.get(key);
     if (hit && Date.now() - hit.at < 30 * 60_000) { res.json({ ok: true, ...(hit.value as object) }); return; }
     try {
-      const found = await lookupWeb({ name, locality, website }, mapsPlacePages);
+      // a place without a website on record often has one in OpenStreetMap: find it, then read it
+      const coords = req.body?.coordinates as [number, number] | undefined;
+      const osm = !website && Array.isArray(coords) && coords.length === 2 ? await discoverOsm(name, coords).catch(() => ({} as { website?: string })) : {};
+      const found = await lookupWeb({ name, locality, website: website || osm.website }, mapsPlacePages);
       const rich = Boolean(found.hours || found.ratings.length);
       webCache.set(key, { at: rich ? Date.now() : Date.now() - 29 * 60_000, value: found });
       res.json({ ok: true, ...found });
     } catch (err) {
       res.status(502).json({ ok: false, error: err instanceof Error ? err.message : "Lookup failed" });
     }
-  });
-
-  app.get("/api/maps/google-photo", async (req, res) => {
-    const photo = await googlePhotoBytes(String(req.query.n ?? ""));
-    if (!photo) { res.status(404).end(); return; }
-    res.setHeader("Content-Type", photo.type);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.send(Buffer.from(photo.body));
   });
 
   app.post("/api/maps/search", async (req, res) => {

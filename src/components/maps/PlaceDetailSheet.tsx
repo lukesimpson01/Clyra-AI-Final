@@ -515,7 +515,7 @@ export function PlaceDetailSheet({ place, identifying, nearby, route, routeLoadi
                 ) : null}
               </div>
             ))}
-            <p className="mt-2 text-[10.5px] text-slate-400">Shown with the source each rating came from.{enrich.sources.includes("Google Places") ? "" : " Add a Google Places key to show Google reviews."}</p>
+            <p className="mt-2 text-[10.5px] text-slate-400">Shown with the source each rating came from.</p>
           </motion.div>
         ) : null}
 

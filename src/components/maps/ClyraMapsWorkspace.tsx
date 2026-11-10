@@ -110,7 +110,7 @@ type AgentAction =
 
 type AgentEvent =
   | { type: "status"; label: string }
-  | { type: "tool"; name: string; ok: boolean; summary: string }
+  | { type: "tool"; name: string; ok: boolean; summary: string; label?: string }
   | { type: "actions"; actions: AgentAction[] }
   | { type: "final"; reply: string }
   | { type: "error"; message: string };
