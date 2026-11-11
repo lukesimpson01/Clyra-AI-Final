@@ -91,8 +91,9 @@ test.describe("desktop and medium widths", () => {
     await openWorkspace(page, 1280, 800);
     const rail = page.locator('aside[aria-label="Projects"]');
     const width = (await rail.boundingBox())?.width ?? 0;
-    expect(width).toBeGreaterThan(240);
-    expect(width).toBeLessThan(270);
+    // The user-adjustable desktop rail currently defaults to 280px.
+    expect(width).toBeGreaterThanOrEqual(276);
+    expect(width).toBeLessThanOrEqual(284);
     await page.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
     expect(await documentFits(page)).toBeTruthy();
@@ -108,7 +109,8 @@ test.describe("desktop and medium widths", () => {
     await openWorkspace(page, 1280, 800);
     await page.locator(`[data-project-row="${projectId}"]`).click();
     await expect(page.getByRole("button", { name: "New task", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "New project" }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Add project" }).click();
+    await expect(page.getByRole("menuitem", { name: "New project" })).toBeVisible();
   });
 });
 
