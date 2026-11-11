@@ -149,8 +149,19 @@ Design quality:
 
   app.post("/api/opencode/sessions", async (req, res) => {
     const projectId = safeProjectId(String(req.body?.projectId || ""));
-    try { res.json(await codingRuntimeManager().createSession(projectId, String(req.body?.title || "").slice(0, 160))); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Could not create session." }); }
+    if (!projectId) return res.status(400).json({ error: "A valid project ID is required." });
+    try {
+      const runtime = codingRuntimeManager();
+      // Session metadata does not need to run a model. The DSH runtime must
+      // restore/register the project before creating a local conversation; keep
+      // the legacy OpenCode provider's existing session lifecycle intact.
+      if (codingBackend() === "deepseek-harness") {
+        await runtime.listSessions(projectId, projectPath(projectId));
+      }
+      res.json(await runtime.createSession(projectId, String(req.body?.title || "").slice(0, 160)));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Could not create session." });
+    }
   });
 
   app.get("/api/opencode/sessions/:projectId", async (req, res) => {
