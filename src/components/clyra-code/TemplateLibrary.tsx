@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
+import { TemplateRatingGlance, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
 
@@ -762,6 +763,7 @@ export function TemplateLibrary({
                   <div className="min-w-0 flex-1">
                     <h2 className="text-[30px] font-bold leading-tight tracking-[-0.035em] text-[#1D1D1F] md:text-[34px]">{selected.name}</h2>
                     <p className="mt-0.5 text-[15px] text-[#86868B]">{subtitleOf(selected)}</p>
+                    <TemplateRatingGlance entry={selected} />
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
@@ -787,19 +789,14 @@ export function TemplateLibrary({
                   ))}
                 </div>
 
-                <section className="mt-7">
-                  <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#1D1D1F]">Preview</h3>
-                  <div className="cc-scroll mt-3 flex snap-x gap-4 overflow-x-auto pb-2 [scrollbar-width:none]">
-                    <div className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><SourceVisual entry={selected} className="aspect-[16/10] w-full" iconSize={110} /></div>
-                    {selected.sourceScreenshots.slice(1).map((shot) => <figure key={shot.url} className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><img src={shot.url} alt={shot.alt} loading="lazy" className="aspect-[16/10] w-full object-cover" /></figure>)}
-                  </div>
-                  {selected.sourceScreenshots.length ? null : <p className="mt-1.5 text-[12px] text-[#86868B]">No screenshots yet — Get it and Open it to see it running live in Clyra Code.</p>}
-                </section>
+                <TemplateScreenshotGallery entry={selected} />
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <p className="max-w-[720px] text-[15px] leading-[1.6] text-[#1D1D1F]/85">{selected.description}</p>
                   {coverCapabilities(selected).length ? <ul className="mt-3 space-y-1.5 text-[14px] text-[#424245]">{coverCapabilities(selected).map((cap) => <li key={cap} className="flex gap-2"><span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[#86868B]" />{cap}</li>)}</ul> : null}
                 </section>
+
+                <TemplateFeaturesAndRequirements entry={selected} />
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#1D1D1F]">What happens when you open it</h3>
@@ -818,6 +815,8 @@ export function TemplateLibrary({
                   </ol>
                   {selected.compatibility.length ? <ul className="mt-4 grid gap-2 text-[13px] leading-[1.5] text-[#424245] sm:grid-cols-2">{selected.compatibility.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />{item}</li>)}</ul> : null}
                 </section>
+
+                <TemplateRatingsAndReviews entry={selected} />
 
                 {related(selected).length ? (
                   <section className="mt-8 border-t border-black/[0.08] pt-5">
