@@ -1,0 +1,80 @@
+name: Clyra AI Browser — agent and visual QA
+
+on:
+  push:
+    branches:
+      - feat/atlas-browser-native-agent-hardening
+  pull_request:
+    paths:
+      - "lib/openbrowser/**"
+      - "electron/browser-manager.mjs"
+      - "src/components/WebBrowserWorkspace.tsx"
+      - "src/components/browser/**"
+      - "src/styles/atlas-browser.css"
+      - "tools/openbrowser-e2e.ts"
+      - "tools/browser-complex-task-e2e.mjs"
+      - "tools/browser-companion-visual-smoke.mjs"
+      - ".github/workflows/clyra-ai-browser.yml"
+
+concurrency:
+  group: clyra-ai-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser-agent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install application dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Install Chromium and shared libraries
+        run: npx playwright install chromium
+      - name: Typecheck
+        run: npm run lint
+      - name: Build application
+        run: npm run build
+      - name: Start application
+        run: |
+          npm run dev:source > /tmp/clyra-ai-browser.log 2>&1 &
+          echo $! > /tmp/clyra-ai-browser.pid
+          for attempt in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:3000/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -150 /tmp/clyra-ai-browser.log
+          exit 1
+      - name: Real page-control regression (incl. native contract + ARIA iframe)
+        run: npm run test:browser
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Complex multi-step task and Atlas screenshots
+        run: npm run test:browser-complex
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+          CLYRA_VISUAL_ARTIFACTS: qa-artifacts/browser-complex
+      - name: Browser and companion real UI screenshot smoke
+        run: npm run test:browser-companion-visual
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+          CLYRA_VISUAL_ARTIFACTS: qa-artifacts/browser-visual
+      - name: Upload screenshots and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-ai-browser-agent-qa
+          path: |
+            qa-artifacts/browser-complex/**
+            qa-artifacts/browser-visual/**
+            /tmp/clyra-ai-browser.log
+          if-no-files-found: warn

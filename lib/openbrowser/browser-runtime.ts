@@ -187,6 +187,8 @@ export type StructuredObservation = {
   visibleText: string[];
   mainText: string;
   structuredData: string[];
+  /** Bounded, text-only ARIA tree from the same active Chromium page. */
+  accessibilitySnapshot?: string;
   tabs: BrowserTabState[];
   diff: { urlChanged: boolean; titleChanged: boolean; addedText: string[]; removedText: string[] };
   promptInjectionSignals: string[];
@@ -377,10 +379,46 @@ async function refreshElectronTabState() {
 async function getElectronObservation(tabId?: string) {
   const route = tabId ? `/observe?tabId=${encodeURIComponent(tabId)}` : "/observe";
   const payload = await electronBridgeRequest<{ ok: true; observation: ElectronBrowserBridgeObservation }>(route);
-  return payload.observation;
+  const observation: StructuredObservation = payload.observation;
+  // Augment the fast native DOM map with Playwright's accessibility tree,
+  // including iframe controls. All observation remains text-only.
+  try {
+    const active = await ensurePage();
+    const targetId = tabId || electronActiveTabId;
+    const live = targetId ? await waitForElectronPage(targetId, 2_000) : active;
+    observation.accessibilitySnapshot = (await live.locator("body").ariaSnapshot({
+      mode: "ai", depth: 7, timeout: 1_800,
+    })).slice(0, 10_000);
+  } catch {
+    // CDP may briefly disconnect during a navigation; retain the native map.
+  }
+  return observation;
 }
 
+// Native BrowserManager does not implement these advanced input operations.
+// Use Playwright on the SAME visible Electron tab, never a separate browser.
+const PLAYWRIGHT_NATIVE_ACTIONS = new Set([
+  "hover", "drag", "download", "wait", "scroll_to", "find_text",
+]);
 async function runElectronAction(action: BrowserAction, observation: StructuredObservation, source: "agent" | "user", tabId?: string) {
+  // A control inside an iframe has an accessible role/name, but no element in
+  // BrowserManager's top-level DOM map. Route that exact observed target
+  // through Playwright/CDP too, including ordinary click and form actions.
+  const frameOnlyTarget = "target" in action && action.target != null
+    && !targetFromAction(action.target, observation)
+    && observedAccessibleTarget(action.target, observation);
+  if (PLAYWRIGHT_NATIVE_ACTIONS.has(action.type) || frameOnlyTarget) {
+    await ensurePage();
+    const targetId = tabId || electronActiveTabId;
+    if (!targetId) throw new Error("No browser tab is available for the requested action.");
+    const active = await waitForElectronPage(targetId, 3_000);
+    await executeAction(active, action, observation, source);
+    const [after, state] = await Promise.all([
+      getElectronObservation(targetId),
+      electronBridgeRequest<{ ok: true; state: ManagedBrowserState }>("/state"),
+    ]);
+    return { ok: true as const, observation: after, state: state.state };
+  }
   return electronBridgeRequest<{ ok: true; state: ManagedBrowserState; observation: StructuredObservation }>("/action", { action, observation, source, tabId });
 }
 
@@ -996,6 +1034,10 @@ async function inspectPageOnce(activePage: Page): Promise<Omit<StructuredObserva
     };
   }, { maxChars: MAX_OBSERVATION_CHARS });
 
+  const accessibilitySnapshot = await activePage.locator("body").ariaSnapshot({
+    mode: "ai", depth: 7, timeout: 1_800,
+  }).then((value) => value.slice(0, 10_000)).catch(() => "");
+
   // `visibleText` intentionally samples only semantic content nodes. That is
   // ideal for a compact agent prompt, but it can omit a legitimate status
   // change inside a custom control (for example a cart counter updated by an
@@ -1011,6 +1053,7 @@ async function inspectPageOnce(activePage: Page): Promise<Omit<StructuredObserva
     visibleText: data.visibleText.filter((line) => !signals.includes(line)),
     mainText: signals.reduce((text, signal) => text.replaceAll(signal, "[untrusted instruction-like page text removed]"), data.mainText),
     structuredData: data.structuredData,
+    accessibilitySnapshot: signals.reduce((value, match) => value.replaceAll(match, "[untrusted instruction-like text removed]"), accessibilitySnapshot),
     promptInjectionSignals: signals,
   };
 }
@@ -1180,6 +1223,38 @@ function locatorForTarget(activePage: Page, target: number | ElementTarget, obse
   return {};
 }
 
+/** Selectors for controls in cross-origin frames must be grounded in a
+ * current ARIA tree, never invented from a stale model action. */
+const ACCESSIBLE_ROLES = new Set([
+  "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
+  "option", "menuitem", "tab", "switch", "slider", "spinbutton", "listbox",
+]);
+function observedAccessibleTarget(target: number | ElementTarget, observation: StructuredObservation): target is ElementTarget {
+  if (typeof target === "number" || !target.role || !target.name) return false;
+  const role = target.role.trim().toLowerCase();
+  const name = target.name.trim();
+  if (!ACCESSIBLE_ROLES.has(role) || !name || name.length > 180) return false;
+  const prefix = `- ${role} "${name}"`;
+  return Boolean(observation.accessibilitySnapshot?.split("\n").some((line) => line.trim().startsWith(prefix)));
+}
+
+/** Playwright's Frame.getByRole can operate within cross-origin frames,
+ * without requesting visual models or bypassing origin protections. */
+async function locatorForObservedAccessibility(activePage: Page, target: ElementTarget): Promise<Locator | undefined> {
+  if (!target.role || !target.name) return undefined;
+  const role = target.role.trim().toLowerCase() as Parameters<Page["getByRole"]>[0];
+  for (const frame of activePage.frames()) {
+    if (frame.isDetached()) continue;
+    const candidate = frame.getByRole(role, { name: target.name.trim(), exact: true });
+    try {
+      if (await candidate.count() === 1 && await candidate.isVisible({ timeout: 500 })) return candidate;
+    } catch {
+      // Navigating or detached frames are not reliable targets.
+    }
+  }
+  return undefined;
+}
+
 function actionLabel(action: BrowserAction, element?: InteractiveElement) {
   const name = element?.name || element?.text || element?.label || element?.placeholder;
   const verb = action.type === "type" ? "Typing in" : action.type === "double_click" ? "Opening" : action.type === "right_click" ? "Opening menu for" : action.type === "hover" ? "Hovering over" : action.type === "scroll_to" ? "Scrolling to" : "Clicking";
@@ -1199,7 +1274,8 @@ function cursorForAction(action: BrowserAction, observation: StructuredObservati
 function isHighImpactTarget(action: BrowserAction, observation: StructuredObservation) {
   if (!("target" in action) || action.target == null) return false;
   const element = targetFromAction(action.target, observation);
-  const text = `${element?.name || ""} ${element?.text || ""}`;
+  const semantic = typeof action.target === "number" ? "" : [action.target.name, action.target.label, action.target.text, action.target.placeholder].filter(Boolean).join(" ");
+  const text = `${element?.name || ""} ${element?.text || ""} ${semantic}`;
   // Login/registration is also an explicit user boundary: the agent may read
   // public pages but never starts an authentication flow on its own.
   return /(?:sign in|log in|login|register|create account|buy now|place order|confirm purchase|send message|send email|post|publish|delete|remove account|change password|submit application|book now|cancel subscription|agree and submit)/i.test(text);
@@ -1209,12 +1285,16 @@ export function validateBrowserAction(action: BrowserAction, observation: Struct
   const targeted = new Set(["click", "double_click", "right_click", "hover", "focus", "scroll_to", "inspect_element", "download", "type", "select_option", "check", "uncheck"]);
   if (targeted.has(action.type) && "target" in action && action.target != null) {
     const observed = targetFromAction(action.target, observation);
-    const fallback = typeof action.target !== "number" && Boolean(action.target.css || action.target.coordinates);
+    const fallback = typeof action.target !== "number" && Boolean(action.target.css || action.target.coordinates || observedAccessibleTarget(action.target, observation));
     if (!observed && !fallback) throw new Error("The target is not present in the latest page observation");
   }
   if (action.type === "navigate" || (action.type === "open_tab" && action.url)) {
     const value = normalizeBrowserInput(action.type === "navigate" ? action.url : action.url!, profile?.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine);
     if (!/^https?:\/\//i.test(value)) throw new Error("Only HTTP and HTTPS navigation is allowed");
+  }
+  if (action.type === "drag" &&
+    (![action.source, action.destination].every((target) => Boolean(targetFromAction(target, observation) || observedAccessibleTarget(target, observation))))) {
+    throw new Error("Drag source and destination must be visible in the current page observation");
   }
   if (action.type === "wait" && (action.milliseconds || 0) > 5_000) throw new Error("Wait exceeds the five second limit");
   if (action.type === "key_combination" && action.keys.length > 4) throw new Error("Key combination is too large");
@@ -1400,7 +1480,12 @@ async function runAgentGoogleSearch(
 
 async function executeAction(activePage: Page, action: BrowserAction, observation: StructuredObservation, source: "agent" | "user") {
   const currentProfile = await loadProfile();
-  const target = "target" in action && action.target != null ? locatorForTarget(activePage, action.target, observation) : {};
+  const target: { locator?: Locator; element?: InteractiveElement; coordinates?: { x: number; y: number } } =
+    "target" in action && action.target != null ? locatorForTarget(activePage, action.target, observation) : {};
+  if ("target" in action && action.target != null && !target.locator && observedAccessibleTarget(action.target, observation)) {
+    target.locator = await locatorForObservedAccessibility(activePage, action.target);
+    if (!target.locator) throw new Error("The accessible control is no longer available in its iframe");
+  }
   if (source === "agent" && target.coordinates && !["select_option", "check", "uncheck"].includes(action.type)) {
     await moveAgentPointer(activePage, target.coordinates);
   }
@@ -1486,6 +1571,12 @@ async function executeAction(activePage: Page, action: BrowserAction, observatio
     case "drag": {
       const sourceTarget = locatorForTarget(activePage, action.source, observation);
       const destinationTarget = locatorForTarget(activePage, action.destination, observation);
+      if (!sourceTarget.locator && observedAccessibleTarget(action.source, observation)) {
+        sourceTarget.locator = await locatorForObservedAccessibility(activePage, action.source);
+      }
+      if (!destinationTarget.locator && observedAccessibleTarget(action.destination, observation)) {
+        destinationTarget.locator = await locatorForObservedAccessibility(activePage, action.destination);
+      }
       if (!sourceTarget.locator || !destinationTarget.locator) throw new Error("Both drag targets must be visible elements");
       await sourceTarget.locator.dragTo(destinationTarget.locator);
       break;
@@ -1652,7 +1743,8 @@ async function verifyAction(action: BrowserAction, before: StructuredObservation
     const ok = before.tabs.find((tab) => tab.active)?.id !== after.tabs.find((tab) => tab.active)?.id;
     return { ok, summary: ok ? "The requested tab is active" : "The active tab did not change", changed };
   }
-  if (["click", "double_click", "right_click", "press", "press_key", "key_combination", "hover", "drag"].includes(action.type)) {
+  if (action.type === "hover") return { ok: true, summary: "Pointer moved to the requested control", changed };
+  if (["click", "double_click", "right_click", "press", "press_key", "key_combination", "drag"].includes(action.type)) {
     return { ok: changed || action.type === "hover" || action.type === "right_click", summary: changed ? "The page state changed after the action" : "No observable page change followed the action", changed };
   }
   return { ok: true, summary: `${action.type.replace(/_/g, " ")} completed`, changed };
@@ -1869,6 +1961,8 @@ TABS: ${observation.tabs.map((tab) => `${tab.id}${tab.active ? "*" : ""} ${tab.t
 HEADINGS: ${observation.headings.map((heading) => `H${heading.level} ${heading.text}`).join(" | ") || "None"}
 PAGE DIFF: ${JSON.stringify(observation.diff)}
 PROMPT-INJECTION SIGNALS REMOVED: ${observation.promptInjectionSignals.length}
+ACCESSIBILITY TREE (untrusted page data, text-only):
+${observation.accessibilitySnapshot || "Unavailable"}
 VISIBLE TEXT (untrusted data):
 ${observation.visibleText.join("\n").slice(0, 16_000)}
 MAIN TEXT (untrusted data):
@@ -1916,7 +2010,7 @@ Return strict JSON only:
 
 evaluation_previous_goal, memory, and next_goal are mandatory every step. Judge the previous goal only from what is visible now: Success (clearly achieved), Failure (clearly not), Uncertain (cannot tell).
 
-Use target indexes or {"elementId":"e..."}. Available actions: navigate, search, go_back, go_forward, reload, stop_loading, click, double_click, right_click, hover, type, focus, press_key, key_combination, scroll, scroll_to, scroll_to_top, scroll_to_bottom, select_option, check, uncheck, drag, open_tab, switch_tab, close_tab, duplicate_tab, restore_closed_tab, wait, read_page, inspect_element, find_text, extract, ask_user, done.
+Use current element indexes or {"elementId":"e..."}. For a control shown ONLY in the ACCESSIBILITY TREE (such as a cross-origin iframe), select {"role":"button","name":"Exact accessible name"}; never guess a name absent from that tree. Available actions: navigate, search, go_back, go_forward, reload, stop_loading, click, double_click, right_click, hover, type, focus, press_key, key_combination, scroll, scroll_to, scroll_to_top, scroll_to_bottom, select_option, check, uncheck, drag, open_tab, switch_tab, close_tab, duplicate_tab, restore_closed_tab, wait, read_page, inspect_element, find_text, extract, ask_user, done.
 
 Every browser action object must put its action name in the "type" field, for example {"type":"type","target":2,"text":"laptop"}. Never use an "action" field in place of "type".
 
@@ -2390,7 +2484,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
   let lastFingerprint = "";
   let lastNudgeStep = 0;
   const localPageTask = taskExplicitlyTargetsLocalPage(task);
-  const lockedTabId = options.tabId || (await refreshElectronTabState())?.activeTabId || electronActiveTabId || undefined;
+  let workingTabId = options.tabId || (await refreshElectronTabState())?.activeTabId || electronActiveTabId || undefined;
   const requiresVisibleProgress = /\b(?:search|find|go to|navigate|open|click|fill|submit|compare|research)\b/i.test(task);
   // A summary is a real browser task, but its evidence is the page observation
   // itself. Requiring an unrelated click before it may finish led the native
@@ -2409,7 +2503,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
       await waitWhilePaused(taskAbort.signal, emit);
       if (taskAbort.signal.aborted) throw new DOMException("Task cancelled", "AbortError");
-      const observation = await serializeOperation(() => getElectronObservation(lockedTabId));
+      const observation = await serializeOperation(() => getElectronObservation(workingTabId));
       if (/^https?:\/\//i.test(observation.page.url)) {
         visitedUrls.add(observation.page.url);
         if (isLikelyDetailPage(observation.page.url)) visitedDetailUrls.add(observation.page.url);
@@ -2507,17 +2601,24 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
           emit({ phase: "waiting_for_user", message: candidate.question, step });
           return { message: `${candidate.question}\n\n${candidate.reason}`, steps: history, plan, facts, waitingForUser: true, state: await getManagedBrowserState() };
         }
-        const before = await serializeOperation(() => getElectronObservation(lockedTabId));
+        const before = await serializeOperation(() => getElectronObservation(workingTabId));
         const signature = `${before.page.fingerprint}|${JSON.stringify(candidate)}`;
         if ((attempted.get(signature) || 0) >= 2) continue;
         actionRepeats.set(repeatSignature(candidate), (actionRepeats.get(repeatSignature(candidate)) || 0) + 1);
         try {
           const action = validateBrowserAction(candidate, before, "agent");
           const cursor = cursorForAction(action, before);
-          await setElectronCursor(cursor, lockedTabId);
+          await setElectronCursor(cursor, workingTabId);
           agentStatus = "executing";
           emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
-          const result = await serializeOperation(() => runElectronAction(action, before, "agent", lockedTabId));
+          const result = await serializeOperation(() => runElectronAction(action, before, "agent", workingTabId));
+          // Multi-tab tasks must follow an explicit tab lifecycle operation.
+          // Previously every subsequent observation stayed pinned to the
+          // original tab, so opening a result in a new tab stranded the agent.
+          if (["open_tab", "switch_tab", "close_tab", "duplicate_tab", "restore_closed_tab"].includes(action.type)
+            && result.state?.activeTabId) {
+            workingTabId = result.state.activeTabId;
+          }
           if (/^https?:\/\//i.test(result.observation.page.url)) {
             visitedUrls.add(result.observation.page.url);
             if (isLikelyDetailPage(result.observation.page.url)) visitedDetailUrls.add(result.observation.page.url);
@@ -2556,7 +2657,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
         }
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        const lastObservation = await serializeOperation(() => getElectronObservation(lockedTabId)).catch(() => null);
+        const lastObservation = await serializeOperation(() => getElectronObservation(workingTabId)).catch(() => null);
         finalMessage = `I could not complete the task: ${MAX_CONSECUTIVE_FAILURES} browser actions in a row failed. Most recent problem: ${failures[failures.length - 1] || "the page did not respond to any attempted control"}. I stopped instead of looping.`;
         agentStatus = "failed";
         const failEvidence = completionEvidence(lastObservation, plan, completedCriteria);
@@ -2568,7 +2669,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     }
     finalMessage = `${finalMessage}\n\nI reached the bounded action limit without claiming the task was complete.`;
     agentStatus = "failed";
-    const limitEvidence = completionEvidence(await serializeOperation(() => getElectronObservation(lockedTabId)).catch(() => null), plan, completedCriteria);
+    const limitEvidence = completionEvidence(await serializeOperation(() => getElectronObservation(workingTabId)).catch(() => null), plan, completedCriteria);
     emit({ phase: "failed", kind: "complete", message: finalMessage, plan: plan || undefined, success: false, evidence: limitEvidence, completedCriteria: completedCriteria.size, totalCriteria: plan?.successCriteria.length || 0, facts: facts.length });
     finishAgentSession({ message: finalMessage, steps: history, facts });
     return { message: finalMessage, steps: history, plan: plan || { goal: task, steps: [], successCriteria: [] }, facts, success: false, evidence: limitEvidence, state: await getManagedBrowserState() };
@@ -2590,7 +2691,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     agentPaused = false;
     manualControl = false;
     wakeAgent();
-    await setElectronCursor(undefined, lockedTabId);
+    await setElectronCursor(undefined, workingTabId);
     if (["completed", "failed", "cancelled"].includes(agentStatus)) setTimeout(() => { if (!activeTask) agentStatus = "idle"; }, 1_000);
   }
 }
@@ -2857,19 +2958,10 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
           const cursor = cursorForAction(action, before);
           agentStatus = "executing";
           emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || finalMessage || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
-          const agentDestination = action.type === "navigate"
-            ? normalizeBrowserInput(action.url, (await loadProfile()).settings.defaultSearchEngine)
-            : undefined;
-          const shouldUseVisibleGoogleFlow = Boolean(
-            (action.type === "search" || action.type === "navigate") &&
-            !taskExplicitlyTargetsLocalPage(task) &&
-            (action.type === "search" || (agentDestination && !isGoogleUrl(agentDestination))),
-          );
-          if (shouldUseVisibleGoogleFlow) {
-            const query = action.type === "search"
-              ? action.query
-              : googleQueryForNavigation(agentDestination!);
-            await serializeOperation(() => runAgentGoogleSearch(activePage, query, emit, step, agentDestination));
+          // Only searches use the visible Google flow. A navigate action
+          // MUST open the exact requested URL, without a detour via results.
+          if (action.type === "search" && !taskExplicitlyTargetsLocalPage(task)) {
+            await serializeOperation(() => runAgentGoogleSearch(activePage, action.query, emit, step));
           } else {
             await serializeOperation(() => executeAction(activePage, action, before, "agent"));
           }
