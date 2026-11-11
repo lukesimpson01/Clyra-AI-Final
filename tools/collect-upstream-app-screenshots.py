@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 import re
 import time
+import subprocess
+import tempfile
 from urllib.parse import urlparse, urljoin, quote, unquote
 from urllib.request import Request, urlopen
 from PIL import Image, ImageOps, ImageStat, UnidentifiedImageError
@@ -129,6 +131,32 @@ def normalize(url: str, repo: str, branch: str) -> str:
     # Leading /image.png in a GitHub README denotes a repo-relative asset.
     return f"https://raw.githubusercontent.com/{repo}/{branch}/{url[2:] if url.startswith('./') else url.lstrip('/')}"
 
+def frames_from_official_opencluely_video():
+    """Real UI frames from the video linked directly under the upstream README Demo heading."""
+    source="https://github.com/user-attachments/assets/896a7140-1e85-405d-bfbe-e05c9f3a816b"
+    try:
+        req=Request(source,headers={"User-Agent":"Clyra-source-screenshot-audit/1.0"})
+        with urlopen(req,timeout=28) as r:
+            video=r.read(75*1024*1024+1)
+        if len(video)>75*1024*1024 or len(video)<30_000:
+            raise ValueError("Unexpectedly small or large upstream demo video")
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as temp:
+            temp.write(video);temp.flush()
+            duration=float(subprocess.check_output(
+                ["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",temp.name],
+                timeout=18,text=True).strip())
+            if not 2<duration<1200:
+                raise ValueError(f"Unexpected video duration: {duration}")
+            frames=[]
+            for fraction in [0.10,0.28,0.47,0.65,0.83,0.94]:
+                rawframe=subprocess.check_output(
+                    ["ffmpeg","-hide_banner","-loglevel","error","-ss",str(duration*fraction),"-i",temp.name,"-frames:v","1","-f","image2pipe","-vcodec","mjpeg","-q:v","3","pipe:1"],timeout=35)
+                frames.extend(candidate_frames(rawframe,f"OpenCluely live desktop demo at {int(duration*fraction)}s"))
+            return source, frames
+    except Exception as exc:
+        return source, []
+
+
 def candidate_frames(raw: bytes, label: str):
     try:
         with Image.open(BytesIO(raw)) as image:
@@ -139,8 +167,8 @@ def candidate_frames(raw: bytes, label: str):
                 image.seek(index)
                 frame=ImageOps.exif_transpose(image).convert("RGB")
                 w,h=frame.size
-                if w<560 or h<300:continue
-                if ImageStat.Stat(frame.convert("L").resize((64,42))).stddev[0]<14:continue
+                if w<380 or h<215:continue
+                if ImageStat.Stat(frame.convert("L").resize((64,42))).stddev[0]<8:continue
                 out=ImageOps.contain(frame,(1200,750),Image.Resampling.LANCZOS)
                 bg=Image.new("RGB",(1200,750),(248,248,247))
                 bg.paste(out,((1200-out.width)//2,(750-out.height)//2))
@@ -174,6 +202,23 @@ def collect(item: tuple[str,str]) -> tuple[str,list[dict],str|None]:
         # Curated direct paths are still usable if README API is unavailable.
         branch="main";body="";warnings.append(f"README: {str(e)[:110]}")
     candidates=PREFERRED.get(id,[])+screenshots_from_readme(body)
+    # OpenCluely's README publishes an actual demonstration VIDEO rather than
+    # screenshots. Extract real, separated video frames, never fake icons.
+    if id == "opencluely":
+        origin, video_images = frames_from_official_opencluely_video()
+        accepted, previews = [], []
+        for image, caption in video_images:
+            if any(difference(image,other)<7.5 for other in previews):continue
+            previews.append(image)
+            file=f"app-opencluely-source-{len(accepted)+1}.jpg"
+            dest=ASSETS/file
+            if not dest.exists():image.save(dest,quality=83,optimize=True,progressive=True)
+            if dest.stat().st_size<8000:continue
+            accepted.append({"file":file,"alt":caption+" (real upstream demo video frame)","origin":origin})
+            if len(accepted)>=need:break
+        if len(accepted)>=need:return id,accepted,None
+        warnings.append(f"Upstream demo yielded only {len(accepted)} distinct frames")
+
     seenURLs=set();found=[];frames=[]
     for value,label in candidates[:25]:
         try:
