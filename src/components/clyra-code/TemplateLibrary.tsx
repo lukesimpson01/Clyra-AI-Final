@@ -18,6 +18,7 @@ import {
   Palette,
   Search,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
