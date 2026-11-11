@@ -51,7 +51,7 @@ try {
       await dialog.getByRole("button", { name: "Discover", exact: true }).first().click();
       await input.fill("");
       await dialog.getByRole("button", { name: "See All", exact: true }).first().click();
-      await dialog.getByText("75 landing page designs").waitFor();
+      await dialog.getByText("75 designs across 17 industries").waitFor();
       await page.waitForTimeout(400);
       await page.screenshot({ path: path.join(output, `landing-pages-all-${width}.png`), animations: "allow" });
       await dialog.getByRole("button", { name: "SaaS & AI", exact: true }).click();
