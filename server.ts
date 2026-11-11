@@ -3554,7 +3554,7 @@ async function startServer() {
         const time = Number(frame?.time);
         const image = String(frame?.image || "");
         if (!Number.isFinite(time) || time < 0 ||
-            !/^data:image\\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image) ||
+            !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image) ||
             image.length > 4_000_000 || (samples.length > 0 && time < samples[samples.length - 1].time)) {
           res.status(400).json({ ok: false, error: "Frames must be valid, ordered JPEG captures below 3MB each." });
           return;
@@ -3575,7 +3575,7 @@ async function startServer() {
       let point: { x: number; y: number; width: number; height: number; confidence: number } | undefined;
       if (pointing) {
         try {
-          const raw = vision.text.replace(/^\`\`\`(?:json)?\\s*/i, "").replace(/\\s*\`\`\`$/, "");
+          const raw = vision.text.replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
           const parsed = JSON.parse(raw) as { answer?: unknown; box?: Record<string, unknown> };
           if (typeof parsed.answer === "string" && parsed.answer.trim()) answer = parsed.answer.slice(0, 2500);
           const box = parsed.box;
