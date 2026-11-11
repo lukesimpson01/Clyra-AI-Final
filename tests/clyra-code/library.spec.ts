@@ -34,7 +34,10 @@ test("search, App Store-style details, requirements and honest screenshot state"
   await expect(dialog.getByRole("heading", { name: "Excalidraw", exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Preview" })).toBeVisible();
-  await expect(dialog.getByText("No verified screenshots available")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Enlarge screenshot 1/ })).toBeVisible();
+  await dialog.getByRole("button", { name: /Enlarge screenshot 1/ }).click();
+  await expect(page.getByRole("dialog", { name: /Screenshot 1 of 1/ })).toBeVisible();
+  await page.getByRole("button", { name: "Close screenshot" }).click();
   await expect(dialog.getByRole("heading", { name: "Features" })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Technical requirements" })).toBeVisible();
   await expect(dialog.getByText("API keys / secrets")).toBeVisible();
