@@ -401,7 +401,13 @@ const PLAYWRIGHT_NATIVE_ACTIONS = new Set([
   "hover", "drag", "download", "wait", "scroll_to", "find_text",
 ]);
 async function runElectronAction(action: BrowserAction, observation: StructuredObservation, source: "agent" | "user", tabId?: string) {
-  if (PLAYWRIGHT_NATIVE_ACTIONS.has(action.type)) {
+  // A control inside an iframe has an accessible role/name, but no element in
+  // BrowserManager's top-level DOM map. Route that exact observed target
+  // through Playwright/CDP too, including ordinary click and form actions.
+  const frameOnlyTarget = "target" in action && action.target != null
+    && !targetFromAction(action.target, observation)
+    && observedAccessibleTarget(action.target, observation);
+  if (PLAYWRIGHT_NATIVE_ACTIONS.has(action.type) || frameOnlyTarget) {
     await ensurePage();
     const targetId = tabId || electronActiveTabId;
     if (!targetId) throw new Error("No browser tab is available for the requested action.");
