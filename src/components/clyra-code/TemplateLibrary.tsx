@@ -787,6 +787,19 @@ export function TemplateLibrary({
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[rgba(55,53,47,0.06)] text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
                     {install.error(selected.id) ? <p role="alert" className="mt-2 text-[12px] text-[#C0392B]">{install.error(selected.id)}</p> : null}
+                    {selected.requiredSecrets.length ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-[12px] border border-[#E5E2DB] bg-[#FAF9F7] px-3 py-2.5" role="note">
+                        <CircleAlert className="h-4 w-4 shrink-0 text-[#7F7B72]" aria-hidden />
+                        <div className="min-w-[190px] flex-1">
+                          <p className="text-[12px] font-medium text-[#393832]">AI provider setup may be required</p>
+                          <p className="text-[11px] leading-[1.5] text-[#78766F]">Review upstream configuration. Clyra's model key is never inserted into downloaded source.</p>
+                        </div>
+                        <button type="button" onClick={() => { onAskClyra(selected); onClose(); }}
+                          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-2 text-[12px] font-medium text-[#3977F6] hover:bg-[#3977F6]/[0.06]">
+                          <Sparkles className="h-3.5 w-3.5" aria-hidden /> Review AI setup
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -812,7 +825,7 @@ export function TemplateLibrary({
                     <div className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><SourceVisual entry={selected} className="aspect-[16/10] w-full" iconSize={110} /></div>
                     {selected.sourceScreenshots.slice(1).map((shot) => <figure key={shot.url} className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><img src={shot.url} alt={shot.alt} loading="lazy" className="aspect-[16/10] w-full object-cover" /></figure>)}
                   </div>
-                  {selected.sourceScreenshots.length ? null : <p className="mt-1.5 text-[12px] text-[#78766F]">No screenshots yet — Get it and Open it to see it running live in Clyra Code.</p>}
+                  {selected.sourceScreenshots.length ? null : <p className="mt-1.5 text-[12px] text-[#78766F]">No verified screenshots yet. Importing source does not guarantee the upstream app can run here.</p>}
                 </section>
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
