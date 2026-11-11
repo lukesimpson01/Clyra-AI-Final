@@ -1,0 +1,38 @@
+name: Clyra Code contracts
+
+on:
+  push:
+    branches:
+      - vibe-coder-polish-and-templates
+    paths:
+      - ".github/workflows/clyra-code-checks.yml"
+      - "lib/clyra-code/**"
+      - "src/components/clyra-code/**"
+      - "src/lib/userGeneratedApps.ts"
+      - "src/components/AppLauncher.tsx"
+      - "src/components/SettingsModal.tsx"
+      - "src/App.tsx"
+      - "tools/clyra-code-library-unit-tests.ts"
+  pull_request:
+    paths:
+      - "lib/clyra-code/**"
+      - "src/components/clyra-code/**"
+      - "src/lib/userGeneratedApps.ts"
+      - "tools/clyra-code-library-unit-tests.ts"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies without executing project scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Source-library unit tests
+        run: npm run test:clyra-code-library
+      - name: TypeScript compile check
+        run: npx tsc --noEmit
