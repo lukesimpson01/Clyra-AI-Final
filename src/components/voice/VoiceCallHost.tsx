@@ -112,6 +112,20 @@ export function VoiceCallHost({ call }: VoiceCallHostProps) {
 
     const preventDemoKeys = (event: KeyboardEvent) => {
       const target = event.target as Element | null;
+      const input = target?.closest('input[aria-label="Message Clyra"]') as HTMLInputElement | null;
+      if (event.key === "Enter" && !event.shiftKey && input) {
+        // The paste-ready embedded UI also runs a scripted demo on Enter.
+        // Intercept both submission paths so real voice agent execution wins.
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        const text = input.value.trim();
+        if (text) {
+          void callRef.current.sendText(text);
+          document.querySelector<HTMLButtonElement>('button[aria-label="Close composer"]')?.click();
+        }
+        return;
+      }
       if (!target?.closest("input,textarea,[contenteditable]") && /^[1-7]$/.test(event.key)) {
         event.stopImmediatePropagation();
       }
