@@ -37,6 +37,7 @@
     "sqlite:electron": "node tools/sqlite-abi.mjs electron",
     "test:maps": "tsx tools/maps-unit-tests.ts",
     "test:voice": "tsx tools/voice-unit-tests.ts",
+    "test:voice-multimodal": "tsx tools/voice-multimodal-tests.ts",
     "test:speech-flow": "tsx tools/speech-flow-unit-tests.ts",
     "test:dictation-cleanup": "tsx tools/dictation-cleanup-tests.ts",
     "test:word-diff": "node tools/word-diff-tests.mjs",

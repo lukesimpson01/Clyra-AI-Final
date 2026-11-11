@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceCallScreenCall, VoiceCallScreenProps } from "./VoiceCallScreen";
 import { VOICE_CALL_TRIGGER_EVENT, type VoiceCallTriggerDetail } from "./voiceCallTrigger";
+import type { VoiceVisionFrame } from "../../voice/multimodal";
+import { VoiceMultimodalLayer } from "./VoiceMultimodalLayer";
 
 /** The session controller adds lifecycle actions to the pasted UI's view contract. */
 export type VoiceCallHostCall = VoiceCallScreenCall & {
   startCall: () => void | Promise<void>;
+  answerWithVision: (question: string, frames: VoiceVisionFrame[]) => Promise<{ ok: boolean; text: string; point?: { x: number; y: number; width: number; height: number; confidence: number } }>;
+  respondVisual: (text: string) => void;
+  startVoiceMission: (text: string) => Promise<boolean>;
 };
 
 export type VoiceCallHostProps = Omit<VoiceCallScreenProps, "call"> & {
@@ -93,12 +98,44 @@ export function VoiceCallHost({ call }: VoiceCallHostProps) {
       } else if (label === "Send") {
         const input = document.querySelector<HTMLInputElement>('input[aria-label="Message Clyra"]');
         const text = input?.value.trim();
-        if (text) void controller.sendText(text);
+        if (text) {
+          // Prevent the supplied standalone demo's scripted placeholder reply.
+          // Its real controller now owns the entire turn and transcript.
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          void controller.sendText(text);
+          document.querySelector<HTMLButtonElement>('button[aria-label="Close composer"]')?.click();
+        }
       }
     };
 
+    const preventDemoKeys = (event: KeyboardEvent) => {
+      const target = event.target as Element | null;
+      const input = target?.closest('input[aria-label="Message Clyra"]') as HTMLInputElement | null;
+      if (event.key === "Enter" && !event.shiftKey && input) {
+        // The paste-ready embedded UI also runs a scripted demo on Enter.
+        // Intercept both submission paths so real voice agent execution wins.
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        const text = input.value.trim();
+        if (text) {
+          void callRef.current.sendText(text);
+          document.querySelector<HTMLButtonElement>('button[aria-label="Close composer"]')?.click();
+        }
+        return;
+      }
+      if (!target?.closest("input,textarea,[contenteditable]") && /^[1-7]$/.test(event.key)) {
+        event.stopImmediatePropagation();
+      }
+    };
     document.addEventListener("click", onControlClick, true);
-    unbindFrameRef.current = () => document.removeEventListener("click", onControlClick, true);
+    document.addEventListener("keydown", preventDemoKeys, true);
+    unbindFrameRef.current = () => {
+      document.removeEventListener("click", onControlClick, true);
+      document.removeEventListener("keydown", preventDemoKeys, true);
+    };
   }, []);
 
   useEffect(() => () => unbindFrameRef.current?.(), []);
@@ -127,6 +164,7 @@ export function VoiceCallHost({ call }: VoiceCallHostProps) {
         title="Clyra voice call"
         onLoad={bindPastedUi}
       />
+      <VoiceMultimodalLayer call={call} />
     </div>
   );
 }

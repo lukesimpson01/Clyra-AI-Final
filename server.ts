@@ -3539,6 +3539,71 @@ async function startServer() {
     } catch (e) { res.status(e instanceof VisionInputError ? 400 : 502).json({ error: e instanceof Error ? e.message : String(e) }); }
   });
 
+  // Clyra voice-call vision: user-approved local camera/screen sampling only.
+  // Never falls back to another paid provider or silently invents observations.
+  app.post("/api/voice/vision", async (req, res) => {
+    try {
+      const question = String(req.body?.question || "").trim().slice(0, 1800);
+      const frames = req.body?.frames;
+      if (!question || !Array.isArray(frames) || frames.length < 1 || frames.length > 4) {
+        res.status(400).json({ ok: false, error: "Provide a question and 1–4 selected frames." });
+        return;
+      }
+      const samples: Array<{ time: number; image: string }> = [];
+      for (const frame of frames) {
+        const time = Number(frame?.time);
+        const image = String(frame?.image || "");
+        if (!Number.isFinite(time) || time < 0 ||
+            !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image) ||
+            image.length > 4_000_000 || (samples.length > 0 && time < samples[samples.length - 1].time)) {
+          res.status(400).json({ ok: false, error: "Frames must be valid, ordered JPEG captures below 3MB each." });
+          return;
+        }
+        samples.push({ time, image });
+      }
+      const pointing = req.body?.pointing === true;
+      const instruction = pointing
+        ? `Answer the user's request and locate the visible target if unambiguous. Return ONLY a JSON object: {"answer":"brief spoken answer","box":{"x":0.1,"y":0.2,"width":0.1,"height":0.1,"confidence":0.9}}. Coordinates are NORMALISED 0–1 relative to the LAST frame; omit box entirely if uncertain. Do not fabricate coordinates. User request: ${question}`
+        : question;
+      const vision = await analyseDeepseekVisionFrame(samples[0].image, instruction, {
+        frames: samples,
+        detail: "high",
+        maxTokens: 700,
+        timeoutMs: 35_000,
+      });
+      let answer = vision.text;
+      let point: { x: number; y: number; width: number; height: number; confidence: number } | undefined;
+      if (pointing) {
+        try {
+          const raw = vision.text.replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
+          const parsed = JSON.parse(raw) as { answer?: unknown; box?: Record<string, unknown> };
+          if (typeof parsed.answer === "string" && parsed.answer.trim()) answer = parsed.answer.slice(0, 2500);
+          const box = parsed.box;
+          if (box) {
+            const [x, y, width, height, confidence] = ["x", "y", "width", "height", "confidence"].map(key => Number(box[key]));
+            if ([x, y, width, height, confidence].every(Number.isFinite) &&
+                x >= 0 && y >= 0 && width > 0 && height > 0 &&
+                x + width <= 1 && y + height <= 1 && confidence >= 0.75 && confidence <= 1) {
+              point = { x, y, width, height, confidence };
+            }
+          }
+        } catch {
+          // An ordinary useful text answer is valid; do not invent a pointer.
+        }
+      }
+      void recordApiUsage({
+        provider: "deepseek", model: vision.model, feature: "voice-visual",
+        usage: { inputTokens: vision.usage?.promptTokens ?? 0, cachedInputTokens: 0,
+          outputTokens: vision.usage?.completionTokens ?? 0, totalTokens: vision.usage?.totalTokens ?? 0 },
+      }).catch(() => undefined);
+      res.json({ ok: true, text: answer, point, model: vision.model, source: vision.source, observedFrames: samples.length });
+    } catch (error) {
+      res.status(error instanceof VisionInputError ? 400 : 502).json({
+        ok: false, error: error instanceof Error ? error.message : "Visual analysis failed.",
+      });
+    }
+  });
+
   app.post("/api/companion/vision-frame", async (req, res) => {
     try {
       const image = String(req.body?.image || "").trim();

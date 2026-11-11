@@ -1,0 +1,59 @@
+name: Voice multimodal contract tests
+
+on:
+  push:
+    branches:
+      - feat/voice-multimodal-agent-20261112
+  pull_request:
+    paths:
+      - 'src/voice/multimodal.ts'
+      - 'tools/voice-multimodal-tests.ts'
+      - 'src/components/voice/**'
+      - 'src/hooks/useVoiceCall.ts'
+      - 'electron/**'
+      - 'server.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  multimodal-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            src/voice/multimodal.ts
+            tools/voice-multimodal-tests.ts
+            package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run actual visual-intent/frame-buffer regression tests
+        run: npm exec --yes --package=tsx@4.21.0 -- tsx tools/voice-multimodal-tests.ts
+
+  syntax-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            src/voice/multimodal.ts
+            src/components/voice/VoiceMultimodalLayer.tsx
+            src/components/voice/VoiceCallHost.tsx
+            src/hooks/useVoiceCall.ts
+            server.ts
+            electron/main.mjs
+            electron/preload.cjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse and transform every modified runtime module
+        run: |
+          npm exec --yes --package=esbuild@0.28.0 -- esbuild \
+            src/voice/multimodal.ts src/components/voice/VoiceMultimodalLayer.tsx \
+            src/components/voice/VoiceCallHost.tsx src/hooks/useVoiceCall.ts \
+            server.ts electron/main.mjs electron/preload.cjs \
+            --outdir=/tmp/clyra-voice-syntax --target=es2022 --log-level=warning
