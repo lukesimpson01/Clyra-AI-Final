@@ -2176,7 +2176,7 @@ async function startServer() {
     const allowedModes = ["full-app", "framework", "engine", "integration", "reference-only"] as const;
     const mode = rawMode && allowedModes.includes(rawMode as typeof allowedModes[number]) ? rawMode as typeof allowedModes[number] : undefined;
     const offset = Math.max(0, Math.min(10_000, Number(req.query.offset) || 0));
-    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 24));
+    const limit = Math.max(1, Math.min(250, Number(req.query.limit) || 24));
     const results = searchTemplateLibrary({
       query: typeof req.query.q === "string" ? req.query.q.slice(0, 160) : undefined,
       category: typeof req.query.category === "string" ? req.query.category.slice(0, 80) : undefined,
