@@ -300,27 +300,26 @@ function SourceCard({ entry, onChoose, install, index = 0, wide = false }: { ent
   const reduce = useReducedMotion();
   return (
     <motion.div
-      role="button"
-      tabIndex={0}
-      aria-label={`${entry.name}, ${entry.category}`}
       initial={reduce ? false : { opacity: 0, y: 5 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: Math.min(index, 10) * 0.035, ease: EASE }}
-      onClick={() => onChoose(entry)}
-      onKeyDown={activate(() => onChoose(entry))}
-      className={cn("group flex shrink-0 cursor-pointer flex-col rounded-[12px] text-left outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45 focus-visible:ring-offset-4", wide ? "w-[272px] snap-start sm:w-[296px]" : "w-full")}
+      className={cn("group flex min-w-0 shrink-0 flex-col rounded-[12px] text-left", wide ? "w-[272px] snap-start sm:w-[296px]" : "w-full")}
     >
-      <span className="relative block overflow-hidden rounded-[12px] ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 group-hover:ring-[rgba(55,53,47,0.2)]">
+      <button type="button" aria-label={`View ${entry.name} details`} onClick={() => onChoose(entry)}
+        className="block min-w-0 w-full cursor-pointer overflow-hidden rounded-[12px] text-left outline-none ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 group-hover:ring-[rgba(55,53,47,0.2)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45 focus-visible:ring-offset-2">
         <SourceVisual entry={entry} className="aspect-[16/10] w-full" iconSize={wide ? 66 : 70} />
-      </span>
-      <span className="mt-3 flex items-center gap-3 px-0.5">
-        <AppIcon entry={entry} size={42} />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[14px] font-semibold tracking-[-0.012em] text-[#2C2C2B]">{entry.name}</span>
-          <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
-        </span>
+      </button>
+      <div className="mt-3 flex min-w-0 items-center gap-3 px-0.5">
+        <button type="button" aria-label={`View ${entry.name} details`} onClick={() => onChoose(entry)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+          <AppIcon entry={entry} size={42} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[14px] font-semibold tracking-[-0.012em] text-[#2C2C2B]">{entry.name}</span>
+            <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
+          </span>
+        </button>
         <Get entry={entry} install={install} />
-      </span>
+      </div>
     </motion.div>
   );
 }
@@ -330,27 +329,23 @@ function RankRow({ entry, rank, onChoose, install, index }: { entry: TemplateMan
   const reduce = useReducedMotion();
   return (
     <motion.div
-      role="button"
-      tabIndex={0}
-      aria-label={rank ? `${rank}. ${entry.name}` : entry.name}
       initial={reduce ? false : { opacity: 0, y: 5 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: Math.min(index, 12) * 0.03, ease: EASE }}
-      onClick={() => onChoose(entry)}
-      onKeyDown={activate(() => onChoose(entry))}
-      className="group flex cursor-pointer items-center gap-3 rounded-[12px] px-1.5 outline-none transition-colors duration-150 hover:bg-[rgba(55,53,47,0.05)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45"
+      className="group flex min-w-0 items-center gap-3 rounded-[12px] border-b border-black/[0.07] px-1.5 transition-colors duration-150 hover:bg-[rgba(55,53,47,0.05)] last:border-transparent"
     >
-      <span className="py-2.5"><AppIcon entry={entry} size={56} /></span>
-      <span className="flex min-w-0 flex-1 items-center gap-3 self-stretch border-b border-black/[0.07] py-2.5 group-last:border-transparent">
+      <button type="button" aria-label={`View ${entry.name} details`} onClick={() => onChoose(entry)}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+        <AppIcon entry={entry} size={56} />
         {rank ? <span className="w-5 shrink-0 text-[16px] font-semibold tabular-nums text-[#2C2C2B]">{rank}</span> : null}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14.5px] font-medium tracking-[-0.012em] text-[#2C2C2B]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
         </span>
-        <span className="flex flex-col items-center gap-1">
-          <Get entry={entry} install={install} />
-          <span className="text-[9.5px] leading-none text-[#A19E99]">{entry.licenseSpdxOrReview && entry.licenseSpdxOrReview.length < 14 ? entry.licenseSpdxOrReview : "Open source"}</span>
-        </span>
+      </button>
+      <span className="flex shrink-0 flex-col items-center gap-1">
+        <Get entry={entry} install={install} />
+        <span className="text-[9.5px] leading-none text-[#A19E99]">{entry.licenseSpdxOrReview && entry.licenseSpdxOrReview.length < 14 ? entry.licenseSpdxOrReview : "Open source"}</span>
       </span>
     </motion.div>
   );
