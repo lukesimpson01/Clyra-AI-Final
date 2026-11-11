@@ -2900,19 +2900,10 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
           const cursor = cursorForAction(action, before);
           agentStatus = "executing";
           emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || finalMessage || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
-          const agentDestination = action.type === "navigate"
-            ? normalizeBrowserInput(action.url, (await loadProfile()).settings.defaultSearchEngine)
-            : undefined;
-          const shouldUseVisibleGoogleFlow = Boolean(
-            (action.type === "search" || action.type === "navigate") &&
-            !taskExplicitlyTargetsLocalPage(task) &&
-            (action.type === "search" || (agentDestination && !isGoogleUrl(agentDestination))),
-          );
-          if (shouldUseVisibleGoogleFlow) {
-            const query = action.type === "search"
-              ? action.query
-              : googleQueryForNavigation(agentDestination!);
-            await serializeOperation(() => runAgentGoogleSearch(activePage, query, emit, step, agentDestination));
+          // Only searches use the visible Google flow. A navigate action
+          // MUST open the exact requested URL, without a detour via results.
+          if (action.type === "search" && !taskExplicitlyTargetsLocalPage(task)) {
+            await serializeOperation(() => runAgentGoogleSearch(activePage, action.query, emit, step));
           } else {
             await serializeOperation(() => executeAction(activePage, action, before, "agent"));
           }
