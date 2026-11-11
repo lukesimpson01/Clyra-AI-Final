@@ -582,6 +582,8 @@ export function TemplateLibrary({
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [justInstalled, setJustInstalled] = useState<TemplateManifest | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const previewRail = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { previewRail.current?.scrollTo({ left: 0, behavior: "auto" }); }, [selected?.id]);
 
   const selectedChoice = useMemo(() => IMPORT_CHOICES.find((choice) => choice.id === mode) ?? IMPORT_CHOICES[0], [mode]);
   const needsCurrentProject = mode === "integrate-existing-project" || mode === "dependency-source";
@@ -909,8 +911,23 @@ export function TemplateLibrary({
                 </div>
 
                 <section className="mt-7">
-                  <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#2C2C2B]">Preview</h3>
-                  <div className="cc-scroll mt-3 flex snap-x gap-4 overflow-x-auto pb-2 [scrollbar-width:none]">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#2C2C2B]">Preview</h3>
+                    {selected.sourceScreenshots.length > 1 ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11.5px] tabular-nums text-[#898780]">{selected.sourceScreenshots.length} real screenshots</span>
+                        <button type="button" aria-label="Previous preview screenshot" onClick={() => previewRail.current?.scrollBy({ left: -Math.max(360,previewRail.current.clientWidth*0.8), behavior: reduce ? "auto" : "smooth" })}
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+                          <ChevronRight className="h-4 w-4 rotate-180" aria-hidden />
+                        </button>
+                        <button type="button" aria-label="Next preview screenshot" onClick={() => previewRail.current?.scrollBy({ left: Math.max(360,previewRail.current.clientWidth*0.8), behavior: reduce ? "auto" : "smooth" })}
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+                          <ChevronRight className="h-4 w-4" aria-hidden />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div ref={previewRail} aria-label="Template screenshot gallery" className="cc-scroll mt-3 flex snap-x gap-4 overflow-x-auto pb-2 [scrollbar-width:none]">
                     <div className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><SourceVisual entry={selected} className="aspect-[16/10] w-full" iconSize={110} /></div>
                     {selected.sourceScreenshots.slice(1).map((shot) => <figure key={shot.url} className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><img src={shot.url} alt={shot.alt} loading="lazy" className="aspect-[16/10] w-full object-cover" /></figure>)}
                   </div>
