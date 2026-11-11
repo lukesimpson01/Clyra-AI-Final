@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { EvidenceLedger, canonicalUrl, extractReadable, findInSource, fuseRankings, openPage, rankPassages, splitPassages, validateCitations } from "../lib/chat-agent/web-engine";
 import { runChatAgent, type AgentEvent, type ModelCall } from "../lib/chat-agent/agent";
+import { parsePublicRepo, isSafePublicCodePath, inspectPublicGitHubRepo, readPublicGitHubFile } from "../lib/chat-agent/github-reader";
 
 const results: string[] = [];
 const test = async (name: string, fn: () => unknown | Promise<unknown>) => { await fn(); results.push(name); };
@@ -71,6 +72,41 @@ await test("find works inside an opened source without refetching", () => {
   const found = findInSource(ledger, "S1", ["RAM"], "pro plan price");
   assert.ok(found.ok && found.matches.length >= 2);
   assert.equal(findInSource(ledger, "S9", ["x"]).ok, false);
+});
+
+await test("public GitHub reader validates the domain and blocks credential files", () => {
+  assert.equal(parsePublicRepo("https://github.com/example/repo/tree/main")?.fullName, "example/repo");
+  assert.equal(parsePublicRepo("example/repo")?.fullName, "example/repo");
+  assert.equal(parsePublicRepo("https://github.com.evil.example/example/repo"), null);
+  assert.equal(parsePublicRepo("https://evil.example/example/repo"), null);
+  assert.equal(parsePublicRepo("example/../repo"), null);
+  assert.equal(isSafePublicCodePath("src/App.tsx"), true);
+  assert.equal(isSafePublicCodePath(".chromium-google-profile/Default/Cookies"), false);
+  assert.equal(isSafePublicCodePath("playwright/.auth/session.json"), false);
+  assert.equal(isSafePublicCodePath("../.env"), false);
+});
+
+await test("GitHub tool retrieves actual metadata and line-numbered source, never fabricated text", async () => {
+  const originalFetch = globalThis.fetch;
+  const visited: string[] = [];
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      visited.push(url);
+      const payload = url.endsWith("/repos/example/repo")
+        ? { full_name: "example/repo", html_url: "https://github.com/example/repo", description: "Example", default_branch: "main", updated_at: "2026-10-01T00:00:00Z", private: false, archived: false, size: 200 }
+        : url.includes("/git/trees/main")
+          ? { tree: [{ path: "README.md", type: "blob" }, { path: "src/chat.ts", type: "blob" }, { path: ".chromium-google-profile/Default/Cookies", type: "blob" }], truncated: false }
+          : { type: "file", name: "chat.ts", path: "src/chat.ts", sha: "abc123", size: 14, encoding: "base64", content: Buffer.from("hello\nworld\n").toString("base64"), html_url: "https://github.com/example/repo/blob/main/src/chat.ts" };
+      return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const info = await inspectPublicGitHubRepo("example/repo", "chat");
+    assert.deepEqual(info.matchingPaths, ["src/chat.ts"]);
+    assert.equal(info.totalPublicReadableFiles, 2);
+    const file = await readPublicGitHubFile("example/repo", "src/chat.ts");
+    assert.ok(file.content.includes("1: hello") && file.content.includes("2: world"));
+    assert.ok(visited.every((url) => url.startsWith("https://api.github.com/")));
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 /* ----- the loop, driven by a scripted model ----- */
