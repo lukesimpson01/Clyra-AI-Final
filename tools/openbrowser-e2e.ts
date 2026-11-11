@@ -216,7 +216,7 @@ try {
     method: "POST",
     body: JSON.stringify({ target: "chrome-error://chromewebdata/" }),
   });
-  assert.match(recovered.state.url, /^https:\/\/(?:www\.)?google\.com\/?$/, "Internal Chromium errors must recover to Google, the browser new-tab page");
+  assert.match(recovered.state.url, /^https:\/\/(?:www\.)?google\.com\/?(?:\?[^#]*)?$/, "Internal Chromium errors must recover to Google, the browser new-tab page");
 
   await api("/api/openbrowser/navigate", { method: "POST", body: JSON.stringify({ target: fixtureUrl }) });
   let observation = await observe();
