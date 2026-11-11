@@ -5,6 +5,7 @@ import path from "node:path";
 import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "../lib/clyra-code/library/registry";
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
 import { displayNameFor, htmlTitleOf } from "../lib/clyra-code/projects/display-name";
+import { sampleTemplateReviews, sampleTemplateRating } from "../src/components/clyra-code/templateReviewSamples";
 
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) {
@@ -54,6 +55,28 @@ await test("missing project-name helper restores safe display labels without cha
   assert.equal(displayNameFor({ name: "Untitled project", htmlTitle: "Acme Dashboard" }), "Acme Dashboard");
   assert.equal(displayNameFor({ name: "Build me a dashboard", htmlTitle: "Vite + React", packageName: "@org/sales-panel" }), "Sales Panel");
   assert.equal(displayNameFor({ name: "My Custom Project", htmlTitle: "Other Name", renamedByUser: true }), "My Custom Project");
+});
+
+await test("all catalogue entries have three clearly synthetic, distinctive, accurate 4–5-star sample previews", () => {
+  for (const entry of TEMPLATE_LIBRARY) {
+    const reviews = sampleTemplateReviews(entry);
+    const score = sampleTemplateRating(entry);
+    assert.equal(reviews.length, 3, entry.id);
+    assert.equal(new Set(reviews.map((r) => r.id)).size, 3, entry.id);
+    assert.equal(new Set(reviews.map((r) => r.title)).size, 3, entry.id);
+    assert.ok(reviews.every((r) => r.isSample && r.author === "Sample review" && [4, 5].includes(r.rating)), entry.id);
+    assert.ok(reviews.every((r) => r.title.includes(entry.name) || r.title.includes(entry.category)), entry.id);
+    assert.ok(reviews.every((r) => r.body.length > 38), entry.id);
+    assert.ok(reviews.some((r) => r.body.includes(entry.name) || r.body.includes(entry.description.split(" ")[0])), entry.id);
+    assert.ok(score.average >= 4 && score.average <= 5, entry.id);
+    assert.equal(score.count, 3);
+    assert.equal(score.distribution[4] + score.distribution[5], 3);
+    assert.equal(score.distribution[1] + score.distribution[2] + score.distribution[3], 0);
+    assert.equal(Number((reviews.reduce((sum, r) => sum + r.rating, 0) / 3).toFixed(6)), Number(score.average.toFixed(6)));
+  }
+  assert.match(sampleTemplateReviews(getTemplateManifest("excalidraw")!)[0].body, /hand-drawn/);
+  assert.match(sampleTemplateReviews(getTemplateManifest("appflowy")!)[0].body, /docs, tasks and database/);
+  assert.match(sampleTemplateReviews(getTemplateManifest("bolt-diy")!)[0].body, /Prompt-to-app/);
 });
 
 await test("source search matches independent comparison labels and capabilities", () => {
