@@ -8,6 +8,8 @@
  * a card, a screenshot, or a comparison label from becoming a fake claim.
  */
 
+import { LANDING_PAGE_SOURCES } from "./landing-pages";
+
 export type TemplateMode = "full-app" | "framework" | "engine" | "integration" | "reference-only";
 export type TemplateStatus = "unverified" | "runnable-now" | "requires-setup" | "integration-sdk" | "reference-only" | "unavailable";
 export type TemplateImportMode = "clean-derived-project" | "integrate-existing-project" | "isolated-sandbox" | "dependency-source";
@@ -25,6 +27,10 @@ export type TemplateManifest = {
   alternativeTo: string[];
   description: string;
   category: string;
+  /** Optional facet for the Landing Pages category, e.g. SaaS & AI or Restaurants. */
+  landingPageType?: string;
+  /** Public demo provided by the upstream author; opening it never installs scripts. */
+  livePreviewUrl?: string;
   repositoryUrl: string;
   defaultBranch: string | null;
   pinnedCommit: string | null;
@@ -260,6 +266,14 @@ const seeds: readonly Seed[] = [
   ["appwrite", "Appwrite", "Firebase, Supabase", "Developer Tools", "appwrite/appwrite", "Self-hosted authentication, databases, storage, functions and realtime APIs.", "full-app", "PHP, Docker, backend", "BSD-3-Clause", "Full-stack backend; Docker and several services required. Clone for review only until a real deployment is verified."],
   ["jellyfin", "Jellyfin", "Plex", "Social & Entertainment", "jellyfin/jellyfin", "Self-hosted personal movie and music streaming library.", "full-app", "backend, .NET", "GPL-2.0", "Requires own media library, server and clients; review permissions and upstream copyleft notices."],
   ["libretranslate", "LibreTranslate", "Google Translate, DeepL", "Automation & Data", "LibreTranslate/LibreTranslate", "Self-hosted language translation API and web UI.", "full-app", "Python, backend", "AGPL-3.0", "Local language models require downloads and resources; public hosted endpoints may require credentials or impose limits."],
+  // Individually cloneable, framework-free landing pages from the MIT-stated uiuxlabz collection.
+  // Images are author-provided screenshots, not evidence of local build or runtime verification.
+  ...LANDING_PAGE_SOURCES.map((item) => [
+    item.id, item.title, "", "Landing Pages", item.repository,
+    item.description, "full-app", "HTML, CSS, JavaScript",
+    "MIT (README)", "The upstream README states MIT, but third-party photographs, fonts, logos and commercial redistribution must be reviewed independently.",
+  ] as const),
+
 ];
 
 /* Real captures, taken by cloning, installing and running each app locally (see provenance). Only apps that were actually run have any. */
@@ -270,6 +284,24 @@ const CAPTURED: Record<string, Array<[file: string, alt: string]>> = {
 };
 
 function withCaptures(manifest: TemplateManifest): TemplateManifest {
+  const landing = LANDING_PAGE_SOURCES.find((item) => item.id === manifest.id);
+  if (landing) {
+    return {
+      ...manifest,
+      landingPageType: landing.kind,
+      livePreviewUrl: landing.previewUrl,
+      // screenshot.png lives in this template's own upstream GitHub repo.
+      // Images were downloaded, decoded and resized by the separate capture
+      // workflow, and are stored locally. Clyra did not execute this source.
+      sourceScreenshots: [{
+        url: `/library-shots/${landing.id}.jpg`,
+        alt: `${landing.title} — actual upstream homepage screenshot`,
+        capturedAt: "2026-11-11",
+        provenance: `Author-provided screenshot.png from ${landing.repository}; downloaded and resized on 2026-11-11. Not a Clyra local build or runtime test.`,
+      }],
+      captureProvenance: `Preview supplied in ${landing.repository}; locally optimised from upstream screenshot.png, not a screenshot of a Clyra execution.`,
+    };
+  }
   const shots = CAPTURED[manifest.id];
   if (!shots) return manifest;
   const capturedAt = "2026-11-10";
