@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
-import { TemplateRatingGlance, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
+import { TemplateRatingGlance, TemplateSampleInlineRating, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
 
@@ -327,6 +327,7 @@ function SourceCard({ entry, onChoose, install, index = 0, wide = false }: { ent
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14px] font-semibold tracking-[-0.012em] text-[#1D1D1F]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#86868B]">{subtitleOf(entry)}</span>
+          <TemplateSampleInlineRating entry={entry} />
         </span>
         <Get entry={entry} install={install} />
       </span>
@@ -355,6 +356,7 @@ function RankRow({ entry, rank, onChoose, install, index }: { entry: TemplateMan
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14.5px] font-medium tracking-[-0.012em] text-[#1D1D1F]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#86868B]">{subtitleOf(entry)}</span>
+          <TemplateSampleInlineRating entry={entry} />
         </span>
         <span className="flex flex-col items-center gap-1">
           <Get entry={entry} install={install} />
@@ -766,6 +768,10 @@ export function TemplateLibrary({
                     <TemplateRatingGlance entry={selected} />
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
+                      {install.installed(selected.id) ? <button type="button"
+                        onClick={() => document.getElementById("template-ratings-" + selected.id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })}
+                        className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"
+                        aria-label={"Rate " + selected.name}><Star className="h-3.5 w-3.5" /> Rate</button> : null}
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#F0F0F5] text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
@@ -816,7 +822,7 @@ export function TemplateLibrary({
                   {selected.compatibility.length ? <ul className="mt-4 grid gap-2 text-[13px] leading-[1.5] text-[#424245] sm:grid-cols-2">{selected.compatibility.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />{item}</li>)}</ul> : null}
                 </section>
 
-                <TemplateRatingsAndReviews entry={selected} />
+                <TemplateRatingsAndReviews entry={selected} canReview={install.installed(selected.id)} />
 
                 {related(selected).length ? (
                   <section className="mt-8 border-t border-black/[0.08] pt-5">
