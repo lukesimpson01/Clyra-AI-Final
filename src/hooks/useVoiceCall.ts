@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getElectronDesktop } from "../lib/electron-runtime";
 import { VoicePcmCapturer } from "../lib/voicePcmCapture";
 import { VOICE_SPEECH_LEVEL } from "../lib/voiceTurnDetection";
+import { routeVoiceVisualIntent, type VoiceVisionFrame } from "../voice/multimodal";
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -421,6 +422,63 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
   }, [commitTurn, touchActivity]);
 
+  /**
+   * Real multimodal response. Only selected, user-authorised JPEG frames leave
+   * the renderer; all other buffered frames remain in ephemeral local memory.
+   */
+  const answerWithVision = useCallback(async (question: string, frames: VoiceVisionFrame[]) => {
+    const selected = frames.slice(-4);
+    if (!selected.length) return { ok: false, text: "I don't have a camera or screen frame yet." };
+    const controller = new AbortController();
+    replyAbortRef.current?.abort();
+    replyAbortRef.current = controller;
+    dispatch({ type: "THINK_STARTED" });
+    try {
+      const response = await fetch("/api/voice/vision", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          frames: selected.map(frame => ({ time: (frame.time - selected[0].time) / 1000, image: frame.image })),
+          pointing: /\\b(?:point|highlight|circle|show me where|where is)\\b/i.test(question),
+        }),
+      });
+      const result = await response.json() as { ok?: boolean; text?: string; error?: string; point?: { x: number; y: number; width: number; height: number; confidence: number } };
+      if (!response.ok || !result.ok || !result.text) throw new Error(result.error || "The visual analysis did not return a result.");
+      if (controller.signal.aborted) return { ok: false, text: "Analysis cancelled." };
+      pendingAssistantTextRef.current = result.text;
+      dispatch({ type: "TOKEN", text: result.text });
+      commitTurn();
+      dispatch({ type: "RESPONSE_FINISHED" });
+      touchActivity();
+      return { ok: true, text: result.text, point: result.point };
+    } catch (error) {
+      if (!controller.signal.aborted) dispatch({ type: "ERROR", error: { code: "VOICE_VISION_FAILED", message: error instanceof Error ? error.message : "Visual analysis failed.", retryable: true } });
+      return { ok: false, text: error instanceof Error ? error.message : "Visual analysis failed." };
+    } finally {
+      if (replyAbortRef.current === controller) replyAbortRef.current = null;
+      engine.current.turnBusy = false;
+    }
+  }, [commitTurn, touchActivity]);
+
+  const respondVisual = useCallback((text: string) => {
+    pendingAssistantTextRef.current = text;
+    dispatch({ type: "TOKEN", text });
+    commitTurn();
+    dispatch({ type: "RESPONSE_FINISHED" });
+    engine.current.turnBusy = false;
+    touchActivity();
+  }, [commitTurn, touchActivity]);
+
+  /** The normal mission planner remains responsible for adaptive tool loops. */
+  const startVoiceMission = useCallback(async (text: string) => {
+    const started = await startMission(text);
+    if (!started) respondVisual("I couldn't start that task with the available tools.");
+    engine.current.turnBusy = false;
+    return started;
+  }, [respondVisual, startMission]);
+
   /** One full turn once the words are known: agent tools first, else a reply. */
   const handleUserText = useCallback(async (text: string) => {
     const clean = text.trim();
@@ -430,6 +488,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     pendingAssistantTextRef.current = "";
     dispatch({ type: "STT_FINAL", text: clean });
     e.turnBusy = true;
+    const visualIntent = routeVoiceVisualIntent(clean);
+    if (visualIntent) {
+      window.dispatchEvent(new CustomEvent("clyra:voice-visual-intent", { detail: visualIntent }));
+      return;
+    }
     try {
       if (await runSideEffect(clean)) { e.turnBusy = false; return; }
     } catch { /* fall through to a normal reply */ }
@@ -688,6 +751,9 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     endCall,
     toggleMute,
     sendText,
+    answerWithVision,
+    respondVisual,
+    startVoiceMission,
     openComposer: () => { touchActivity(); dispatch({ type: "OPEN_COMPOSER" }); },
     closeComposer: () => dispatch({ type: "CLOSE_COMPOSER" }),
     pauseTask: () => void pauseTask(),
