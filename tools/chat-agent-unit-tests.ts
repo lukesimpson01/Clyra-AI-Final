@@ -101,6 +101,7 @@ await test("todos, steps, note creation and unknown citations flow through in or
       callModel: script([
         { calls: [{ name: "update_todos", args: { todos: [{ content: "Write the note", status: "in_progress" }] } }] },
         { calls: [{ name: "create_note", args: { title: "About X", markdown: "# X\n\nFact [S3]." } }] },
+        { calls: [{ name: "update_todos", args: { todos: [{ content: "Write the note", status: "completed" }] } }] },
         { text: "I made a note about X [S4]." },
       ]),
     },
@@ -134,6 +135,85 @@ await test("credits exhaustion becomes a credits error, cancellation stops the l
   const stopped: AgentEvent[] = [];
   await runChatAgent([{ role: "user", content: "hi" }], { createNote: () => ({ id: "n", title: "t" }), callModel: script([{ text: "x" }]) }, (e) => stopped.push(e), { signal: controller.signal });
   assert.equal((stopped[0] as { code?: string }).code, "cancelled");
+});
+
+await test("unfinished tasks trigger a continuation instead of premature completion", async () => {
+  const events: AgentEvent[] = [];
+  let calls = 0;
+  await runChatAgent(
+    [{ role: "user", content: "write two sections" }],
+    {
+      createNote: () => ({ id: "n", title: "t" }),
+      callModel: async ({ messages }) => {
+        calls += 1;
+        if (calls === 1) return { content: "", toolCalls: [{ id: "t1", type: "function", function: { name: "update_todos", arguments: JSON.stringify({ todos: [{ content: "Finish second section", status: "in_progress" }] }) } }] };
+        if (calls === 2) return { content: "Done", toolCalls: [] };
+        assert.ok(messages.some((message) => message.role === "user" && typeof message.content === "string" && message.content.includes("not finished yet")));
+        if (calls === 3) return { content: "", toolCalls: [{ id: "t2", type: "function", function: { name: "update_todos", arguments: JSON.stringify({ todos: [{ content: "Finish second section", status: "completed" }] }) } }] };
+        return { content: "Both sections are complete.", toolCalls: [] };
+      },
+    },
+    (event) => events.push(event),
+  );
+  assert.equal(calls, 4, "model should be given a chance to complete its work");
+  const result = events.find((event): event is Extract<AgentEvent, { type: "done" }> => event.type === "done");
+  assert.equal(result?.text, "Both sections are complete.");
+  assert.equal(result?.diagnostics.completionStatus, "no_known_blockers");
+  assert.equal(result?.diagnostics.completionRetries, 1);
+});
+
+await test("unresolved tool failure and pending checklist are clearly marked incomplete", async () => {
+  const events: AgentEvent[] = [];
+  await runChatAgent(
+    [{ role: "user", content: "inspect my project" }],
+    {
+      createNote: () => ({ id: "n", title: "t" }),
+      nativeTools: [{ id: "git.status", name: "Git status", description: "Read git status", riskLevel: "safe", inputSchema: { type: "object" } }],
+      invokeNativeTool: async () => ({ ok: false, error: { code: "TOOL_CRASH", message: "No repository at this location." } }),
+      callModel: script([
+        { calls: [{ name: "update_todos", args: { todos: [{ content: "Inspect repository", status: "in_progress" }] } }] },
+        { calls: [{ name: "clyra_git_status", args: {} }] },
+        { text: "I inspected the repository." },
+      ]),
+    },
+    (event) => events.push(event),
+    { maxSteps: 5 },
+  );
+  const result = events.find((event): event is Extract<AgentEvent, { type: "done" }> => event.type === "done");
+  assert.ok(result?.text.includes("Not fully completed"));
+  assert.equal(result?.diagnostics.completionStatus, "incomplete");
+  assert.equal((result?.diagnostics.unresolvedToolFailures as unknown[])?.length, 1);
+});
+
+await test("only safe registered native capabilities reach DeepSeek and results generate real tool events", async () => {
+  const events: AgentEvent[] = [];
+  let invoked = "";
+  let modelRound = 0;
+  await runChatAgent(
+    [{ role: "user", content: "what is the git status?" }],
+    {
+      createNote: () => ({ id: "n", title: "t" }),
+      nativeTools: [
+        { id: "git.status", name: "Git status", description: "Read status", riskLevel: "safe", inputSchema: { type: "object" } },
+        { id: "files.delete", name: "Delete files", description: "Delete", riskLevel: "sensitive", inputSchema: { type: "object" } },
+      ],
+      invokeNativeTool: async (id) => { invoked = id; return { ok: true, data: { output: "main clean" }, evidence: [{ kind: "log", value: "git status" }] }; },
+      callModel: async ({ tools }) => {
+        const names = (tools as Array<{ function?: { name: string } }>).map((tool) => tool.function?.name);
+        assert.ok(names.includes("clyra_git_status"));
+        assert.ok(!names.includes("clyra_files_delete"));
+        modelRound += 1;
+        return modelRound === 1
+          ? { content: "", toolCalls: [{ id: "git1", type: "function", function: { name: "clyra_git_status", arguments: "{}" } }] }
+          : { content: "The working tree is clean.", toolCalls: [] };
+      },
+    },
+    (event) => events.push(event),
+  );
+  assert.equal(invoked, "git.status");
+  const step = events.find((event): event is Extract<AgentEvent, { type: "step" }> => event.type === "step" && event.state === "done");
+  assert.equal(step?.tool, "git.status");
+  assert.equal(step?.detail, "Verified by Clyra");
 });
 
 console.log(JSON.stringify({ passed: results.length, tests: results }, null, 1));
