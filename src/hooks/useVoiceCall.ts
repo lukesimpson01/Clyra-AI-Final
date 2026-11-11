@@ -203,8 +203,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   }, []);
 
   const pollMission = useCallback(async (missionId: string, signal: AbortSignal) => {
-    for (let attempt = 0; attempt < 900 && !signal.aborted; attempt += 1) {
-      await delay(850);
+    const startedAt = Date.now();
+    for (let attempt = 0; !signal.aborted; attempt += 1) {
+      if (Date.now() - startedAt > 45 * 60_000) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_MISSION_TIMEOUT", message: "The task is still running. Check the mission status in Clyra before retrying.", retryable: true } });
+        return;
+      }
+      await delay(Math.min(1600, 700 + attempt * 15));
       if (signal.aborted) return;
       const response = await fetch(`/api/agent/missions/${encodeURIComponent(missionId)}`, { signal });
       const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
@@ -233,14 +238,14 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
   }, [updateMission]);
 
-  const startMission = useCallback(async (text: string) => {
+  const startMission = useCallback(async (text: string, forceMission = false) => {
     const routeResponse = await fetch("/api/agent/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: text }),
     });
     const routePayload = await routeResponse.json().catch(() => null) as { decision?: { kind?: string; category?: string } } | null;
-    if (!routeResponse.ok || !routePayload?.decision || routePayload.decision.kind === "DIRECT_RESPONSE") return false;
+    if (!forceMission && (!routeResponse.ok || !routePayload?.decision || routePayload.decision.kind === "DIRECT_RESPONSE")) return false;
     const taskId = `voice-${crypto.randomUUID?.() || Date.now()}`;
     const response = await fetch("/api/agent/missions/start", {
       method: "POST",
@@ -473,7 +478,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   /** The normal mission planner remains responsible for adaptive tool loops. */
   const startVoiceMission = useCallback(async (text: string) => {
-    const started = await startMission(text);
+    const started = await startMission(text, true);
     if (!started) respondVisual("I couldn't start that task with the available tools.");
     engine.current.turnBusy = false;
     return started;
