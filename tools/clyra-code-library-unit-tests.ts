@@ -41,7 +41,7 @@ await test("the active catalogue preserves fifty originals, six featured additio
   assert.equal(new Set(FEATURED_APP_IDS).size, FEATURED_APP_IDS.length);
   assert.equal(FEATURED_APP_IDS.length, 9);
   for (const id of FEATURED_APP_IDS) assert.ok(ids.has(id), `Featured app ${id} is not in the live catalogue`);
-  assert.equal(getTemplateManifest("openhands")?.repositoryUrl, "https://github.com/OpenHands/OpenHands.git");
+  assert.equal(getTemplateManifest("openhands")?.repositoryUrl, "https://github.com/OpenHands/OpenHands");
   assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === "openhands").length, 1);
   assert.equal(getTemplateManifest("opencluely")?.licenseSpdxOrReview, "Apache-2.0");
   assert.equal(getTemplateManifest("openfilm")?.licenseSpdxOrReview, "MIT");
