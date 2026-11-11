@@ -16,6 +16,8 @@ on:
       - "electron/dictation-endpoint.mjs"
       - "electron/dictation-manager.mjs"
       - "tools/dictation-endpoint-tests.mjs"
+      - "tools/clyra-library-visual-smoke.mjs"
+      - "tests/clyra-code/library.spec.ts"
   pull_request:
     paths:
       - "lib/clyra-code/**"
@@ -41,3 +43,50 @@ jobs:
         run: node --test tools/dictation-endpoint-tests.mjs
       - name: TypeScript compile check
         run: npx tsc --noEmit
+
+  browser-library:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium for actual visual checks
+        run: npx playwright install --with-deps chromium
+      - name: Start source application
+        run: |
+          npm run dev:source > /tmp/clyra-source.log 2>&1 &
+          echo $! > /tmp/clyra-source.pid
+          for i in $(seq 1 100); do
+            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -n 120 /tmp/clyra-source.log
+          exit 1
+      - name: Run real Library UI regression
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+        run: npx playwright test -c playwright.clyra-code.config.ts tests/clyra-code/library.spec.ts
+      - name: Capture real Clyra Library UI at five responsive widths
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+        run: node tools/clyra-library-visual-smoke.mjs
+      - name: Upload Clyra Library browser captures and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-library-real-browser-qa
+          path: |
+            /tmp/clyra-code-ui-shots/*.png
+            /tmp/clyra-source.log
+            /tmp/clyra-code-playwright/
+          if-no-files-found: warn
+      - name: Stop temporary local app
+        if: always()
+        run: |
+          if [ -f /tmp/clyra-source.pid ]; then kill $(cat /tmp/clyra-source.pid) || true; fi
