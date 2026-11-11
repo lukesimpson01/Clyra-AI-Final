@@ -20,6 +20,7 @@
     "setup:open-design": "node tools/open-design-setup.mjs",
     "dev:open-design": "node tools/open-design-daemon.mjs",
     "setup:hermes": "node tools/install-hermes-runtime.mjs",
+    "setup:rea": "npx -y rea-agents@latest setup",
     "setup:speech": "node tools/setup-speech-engine.mjs",
     "shorts:setup": "npm --prefix apps/shorts/app install --no-audit --no-fund && cd apps/shorts/openfilm && pnpm install",
     "editor:setup": "npm --prefix vendor/openfilm install --no-audit --no-fund --legacy-peer-deps && npm --prefix vendor/openfilm run build:ui",
@@ -88,7 +89,6 @@
     "test:composer-dictation": "tsx tools/composer-dictation-unit-tests.ts",
     "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
     "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts",
-    "test:chat-rich": "tsx tools/chat-rich-results-unit-tests.ts",
     "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts"
   },
   "devDependencies": {
