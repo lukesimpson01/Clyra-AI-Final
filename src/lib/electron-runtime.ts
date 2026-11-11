@@ -223,6 +223,13 @@ export type ClyraDesktopBridge = {
     onTrigger: (callback: (payload: any) => void) => () => void;
     onAction: (callback: (payload: any) => void) => () => void;
   };
+  voice?: {
+    listSources: () => Promise<{ ok: boolean; sources?: { id: string; name: string; thumbnail?: string }[]; error?: string }>;
+    selectSource: (id: string) => Promise<{ ok: boolean; error?: string }>;
+    guide: (question: string) => Promise<{ ok: boolean; error?: string; pointer?: unknown }>;
+    beginControl: () => Promise<{ ok: boolean; error?: string }>;
+    stopControl: () => Promise<{ ok: boolean; error?: string }>;
+  };
   companion?: {
     toggle?: () => Promise<{ ok: boolean; registered?: boolean }>;
     seeScreen?: (question?: string) => Promise<{
