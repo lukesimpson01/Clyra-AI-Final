@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BorderBeam } from "border-beam";
+import { PerimeterBeam } from "./PerimeterBeam";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -309,7 +309,7 @@ export function Composer({
         </div>
       ) : null}
       {/* A single blue beam travels the border on the welcome screen and while the agent is working. */}
-      <BorderBeam size="md" colorVariant="ocean" staticColors hueRange={0} theme="light" strength={0.9} duration={2.6} active={Boolean(welcome || running)} className="cc-beam">
+      <PerimeterBeam active={Boolean(welcome || running)} className={welcome ? "max-w-[620px]" : "max-w-[688px]"}>
       <motion.div
         className={cn(
           "cc-composer relative mx-auto overflow-visible border bg-white",
@@ -438,7 +438,7 @@ export function Composer({
         </AnimatePresence>
         <AnimatePresence>{commandQuery !== null && visibleCommands.length ? <motion.div initial={{ opacity: 0, y: 4, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 3, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }} className="clyra-command-palette absolute bottom-[calc(100%+7px)] left-0 z-40 w-full overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">{visibleCommands.map((item, index) => { const Icon = item.icon; return <button key={item.id} type="button" onMouseEnter={() => setCommandIndex(index)} onClick={() => selectCommand(item.id)} className={cn("flex h-9 w-full items-center gap-2 rounded-[6px] px-2.5 text-left transition-colors", index === commandIndex ? "bg-[var(--surface-hover)]" : "hover:bg-[var(--surface-hover)]")}><Icon className="h-3.5 w-3.5 text-[var(--text-secondary)]" strokeWidth={1.65} /><span className="min-w-0 flex-1"><span className="block text-[11.5px] font-medium text-[var(--text-secondary)]">/{item.id}</span></span><span className="truncate text-[10.5px] text-[var(--text-tertiary)]">{item.description}</span></button>; })}</motion.div> : null}</AnimatePresence>
       </motion.div>
-      </BorderBeam>
+      </PerimeterBeam>
       <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files, "image"); event.currentTarget.value = ""; }} />
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
       <input ref={folderInputRef} type="file" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files, "folder"); event.currentTarget.value = ""; }} />
