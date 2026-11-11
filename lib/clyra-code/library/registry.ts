@@ -155,6 +155,9 @@ function seededStatus(mode: TemplateMode): TemplateStatus {
   return "unverified";
 }
 
+/** Model credentials belong to a project/provider, never to Clyra's host environment. */
+const MODEL_PROVIDER_SEEDS = new Set(["librechat", "vercel-chatbot", "perplexica", "openhands", "bolt-diy", "supoclip"]);
+
 function manifestFromSeed(seed: Seed): TemplateManifest {
   const [id, name, alternatives, category, repository, description, mode, rawTargets, license, warning] = seed;
   const supportedTargets = split(rawTargets);
@@ -176,7 +179,8 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
     supportedTargets,
     requiresBackend: needsServer,
     requiresNativeBuild: needsNative,
-    requiredSecrets: [],
+    // Exact env names must be confirmed against the imported checkout.
+    requiredSecrets: MODEL_PROVIDER_SEEDS.has(id) ? ["Model provider credential (if AI features are enabled; verify upstream configuration)"] : [],
     estimatedBuildFootprint: "Not measured — inspect a pinned checkout before installing dependencies.",
     buildCommands: [],
     devCommand: null,
