@@ -575,7 +575,7 @@ export function TemplateLibrary({
     setLoading(true);
     setError(null);
     try {
-      const result = await api.templateLibrary({ q: query, category: category || undefined, offset: 0, limit: 100 });
+      const result = await api.templateLibrary({ q: query, category: category || undefined, offset: 0, limit: 250 });
       setEntries(result.entries);
       setCategories(result.categories);
       setTotal(result.total);
@@ -596,7 +596,7 @@ export function TemplateLibrary({
   // The full catalogue is needed for the Installed view even when the user opens straight into a filter.
   useEffect(() => {
     if (!open || catalogue.length) return;
-    void api.templateLibrary({ offset: 0, limit: 100 }).then((result) => { setCatalogue(result.entries); setCategories(result.categories); }).catch(() => undefined);
+    void api.templateLibrary({ offset: 0, limit: 250 }).then((result) => { setCatalogue(result.entries); setCategories(result.categories); }).catch(() => undefined);
   }, [open, catalogue.length]);
 
   useEffect(() => {
