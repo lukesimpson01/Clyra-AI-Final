@@ -23,6 +23,7 @@ import {
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
+import { FEATURED_APP_IDS } from "../../lib/clyra-code/library/featured-apps";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -410,6 +411,35 @@ function Shelf({ title, subtitle, entries, onChoose, install, onSeeAll }: { titl
   );
 }
 
+/**
+ * App Store-style ranked chart directly beneath the editorial Featured hero.
+ * Three compact rows per column, with smooth horizontal scrolling and real
+ * per-source Get/Details actions. Uncaptured apps use icons, not fake UI art.
+ */
+function FeaturedApps({
+  entries, onChoose, install,
+}: {
+  entries: TemplateManifest[];
+  onChoose: (entry: TemplateManifest) => void;
+  install: InstallApi;
+}) {
+  const rail = useRef<HTMLDivElement | null>(null);
+  if (!entries.length) return null;
+  return (
+    <section aria-label="Featured Apps" className="mb-9 border-t border-black/[0.07] pt-5">
+      <SectionHeader title="Featured Apps" subtitle="Our picks · coding agents, video tools and creative software" rail={rail} />
+      <div ref={rail} className="-mx-2 grid snap-x grid-flow-col grid-rows-3 auto-cols-[minmax(260px,87%)] gap-x-5 gap-y-1 overflow-x-auto px-2 pb-3 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:auto-cols-[minmax(280px,48%)] lg:auto-cols-[minmax(295px,32%)]">
+        {entries.map((entry, index) => (
+          <div key={entry.id} className="min-w-0 snap-start">
+            <RankRow entry={entry} onChoose={onChoose} install={install} index={index} />
+          </div>
+        ))}
+      </div>
+      <p className="mt-1 px-1 text-[11px] text-[#898780]">Open-source alternatives, not exact commercial clones. Get downloads source; native apps and AI providers may require additional setup.</p>
+    </section>
+  );
+}
+
 /** A template card as in Notes' gallery: a 4:3 preview, the name and a two-line description; the action appears on hover. */
 function NoteCard({ entry, onChoose, install, index = 0 }: { entry: TemplateManifest; onChoose: (entry: TemplateManifest) => void; install: InstallApi; index?: number }) {
   const reduce = useReducedMotion();
@@ -598,9 +628,12 @@ export function TemplateLibrary({
     return [...groups.entries()].sort((x, y) => y[1].length - x[1].length);
   }, [catalogue]);
   const topPicks = useMemo(() => {
-    const featured = new Set(spotlight.map((entry) => entry.id));
-    return shelves.flatMap(([, list]) => list.filter((entry) => !featured.has(entry.id)).slice(0, 1)).slice(0, 9);
-  }, [shelves, spotlight]);
+    const byId = new globalThis.Map(catalogue.map((entry) => [entry.id, entry]));
+    return FEATURED_APP_IDS.flatMap((id) => {
+      const entry = byId.get(id);
+      return entry ? [entry] : [];
+    });
+  }, [catalogue]);
   const installedEntries = useMemo(() => catalogue.filter((entry) => liveInstalled[entry.id]), [catalogue, liveInstalled]);
   const landingPreviews = useMemo(() => interleaveLandingIndustries(catalogue.filter((entry) => entry.category === "Landing Pages" && entry.sourceScreenshots.length > 0)), [catalogue]);
   const landingKinds = useMemo(() => [...new Set(entries.filter((entry) => entry.category === "Landing Pages")
@@ -1006,6 +1039,7 @@ export function TemplateLibrary({
                 {!error && entries.length && isHome ? (
                   <>
                     {spotlight.length ? <Spotlight entries={spotlight} onChoose={choose} install={install} related={related} /> : null}
+                    <FeaturedApps entries={topPicks} onChoose={choose} install={install} />
                     {landingPreviews.length ? (
                       <section aria-label="Landing Pages" className="mb-9">
                         <SectionHeader title="Landing Pages"
