@@ -367,7 +367,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           dispatch({ type: "APPROVAL_REQUIRED", approval: { id: runId, title: "Clyra needs approval", detail: label, confirmLabel: "Allow once" } });
         }
         hermesStepsRef.current = steps.slice(-18);
-        dispatch({ type: "TOOL_PROGRESS", event: { label, steps: hermesStepsRef.current } });
+        const toolApp = String(detail.app || "");
+        const browserTask = /browser|chromium|web.navigate|web.click/i.test(toolApp);
+        dispatch({ type: "TOOL_PROGRESS", event: {
+          label, steps: hermesStepsRef.current,
+          surface: { id: runId, kind: browserTask ? "browser" : "app", title: browserTask ? "Clyra Browser" : "Clyra agent", subtitle: label },
+        } });
       } catch { /* Ignore malformed partial agent frames. */ }
     };
     source.onerror = () => { /* A lost event stream is recovered by polling the durable run receipt. */ };
