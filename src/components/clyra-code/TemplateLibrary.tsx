@@ -133,6 +133,34 @@ type InstallPhase = "verifying" | "downloading" | "finishing";
 
 const BLUE = "#3977F6";
 
+/**
+ * Round-robin the distinct landing-page industries for the unfiltered gallery.
+ * Avoid 8 near-identical SaaS screenshots dominating Discover while retaining
+ * stable ordering within a selected category and preserving all 75 templates.
+ */
+function interleaveLandingIndustries(entries: TemplateManifest[]): TemplateManifest[] {
+  const buckets = new Map<string, TemplateManifest[]>();
+  for (const entry of entries) {
+    const key = entry.landingPageType || "Other";
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(entry);
+    buckets.set(key, bucket);
+  }
+  const ordered: TemplateManifest[] = [];
+  let more = true;
+  while (more) {
+    more = false;
+    for (const bucket of buckets.values()) {
+      const next = bucket.shift();
+      if (next) {
+        ordered.push(next);
+        more = true;
+      }
+    }
+  }
+  return ordered;
+}
+
 function subtitleOf(entry: TemplateManifest) {
   return entry.landingPageType || (entry.alternativeTo.length ? `Like ${entry.alternativeTo.slice(0, 2).join(" & ")}` : entry.category);
 }
@@ -549,7 +577,7 @@ export function TemplateLibrary({
         .filter((shot) => !/setup|first.run|onboarding/i.test(shot.alt)).length;
       const established = photographed.filter((entry) => entry.category !== "Landing Pages")
         .sort((x, y) => actualScreens(y) - actualScreens(x) || x.name.localeCompare(y.name));
-      const landing = photographed.filter((entry) => entry.category === "Landing Pages");
+      const landing = interleaveLandingIndustries(photographed.filter((entry) => entry.category === "Landing Pages"));
       return [...established.slice(0, 2), ...landing.slice(0, 3)].slice(0, 5);
     }
     // For a brand-new catalogue with no captures, preserve category variety
@@ -574,12 +602,12 @@ export function TemplateLibrary({
     return shelves.flatMap(([, list]) => list.filter((entry) => !featured.has(entry.id)).slice(0, 1)).slice(0, 9);
   }, [shelves, spotlight]);
   const installedEntries = useMemo(() => catalogue.filter((entry) => liveInstalled[entry.id]), [catalogue, liveInstalled]);
-  const landingPreviews = useMemo(() => catalogue.filter((entry) => entry.category === "Landing Pages" && entry.sourceScreenshots.length > 0), [catalogue]);
+  const landingPreviews = useMemo(() => interleaveLandingIndustries(catalogue.filter((entry) => entry.category === "Landing Pages" && entry.sourceScreenshots.length > 0)), [catalogue]);
   const landingKinds = useMemo(() => [...new Set(entries.filter((entry) => entry.category === "Landing Pages")
     .map((entry) => entry.landingPageType).filter((kind): kind is string => Boolean(kind)))].sort(), [entries]);
-  const visibleEntries = useMemo(() => category === "Landing Pages" && landingKind !== "All"
-    ? entries.filter((entry) => entry.landingPageType === landingKind) : entries,
-    [category, entries, landingKind]);
+  const visibleEntries = useMemo(() => category === "Landing Pages"
+    ? landingKind === "All" ? interleaveLandingIndustries(entries) : entries.filter((entry) => entry.landingPageType === landingKind)
+    : entries, [category, entries, landingKind]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -799,7 +827,7 @@ export function TemplateLibrary({
             <motion.div key={`detail-${selected.id}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[68px] md:px-10">
               <div className="mx-auto max-w-[940px]">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-                  <AppIcon entry={selected} size={128} lifted />
+                  {selected.category !== "Landing Pages" ? <AppIcon entry={selected} size={128} lifted /> : null}
                   <div className="min-w-0 flex-1">
                     <h2 className="text-[26px] font-semibold leading-tight tracking-[-0.028em] text-[#2C2C2B] md:text-[28px]">{selected.name}</h2>
                     <p className="mt-0.5 text-[15px] text-[#78766F]">{subtitleOf(selected)}</p>
@@ -945,9 +973,9 @@ export function TemplateLibrary({
               <div className="mx-auto max-w-[1180px]">
                 <div className="mb-5">
                   <h2 className="text-[26px] font-bold tracking-[-0.02em] text-[#2C2C2B]">{pageTitle}</h2>
-                  {!isHome ? <p className="mt-1 text-[14px] text-[#78766F]">{category ? `${total} ${total === 1 ? "app" : "apps"}` : `${total} ${total === 1 ? "result" : "results"} for “${query.trim()}”`}</p> : null}
+                  {!isHome ? <p className="mt-1 text-[14px] text-[#78766F]">{category === "Landing Pages" ? `${total} designs across ${landingKinds.length} industries` : category ? `${total} ${total === 1 ? "app" : "apps"}` : `${total} ${total === 1 ? "result" : "results"} for “${query.trim()}”`}</p> : null}
                 </div>
-                <div className="relative -mt-1 mb-6 md:hidden">
+                <div className={cn("relative -mt-1 mb-6 md:hidden", category === "Landing Pages" && "hidden")}>
                   <div className="flex gap-2 overflow-x-auto pb-1 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {[{ id: "", label: "All" }, ...categories.map((item) => ({ id: item, label: item }))].map((item) => (
                       <button key={item.id || "all"} type="button" onClick={() => goCategory(item.id)}
@@ -959,9 +987,7 @@ export function TemplateLibrary({
                 </div>
                 {category === "Landing Pages" && landingKinds.length > 0 ? (
                   <div className="mb-7" aria-label="Landing page business types">
-                    <div className="mb-2 text-[12px] font-medium text-[#78766F]">
-                      {landingKind === "All" ? `${total} landing page designs` : `${visibleEntries.length} ${landingKind} designs`}
-                    </div>
+                    {landingKind !== "All" ? <div className="mb-2 text-[12px] font-medium text-[#78766F]">{visibleEntries.length} {landingKind} designs</div> : null}
                     <div className="flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Filter landing pages by type">
                       {["All", ...landingKinds].map((kind) => (
                         <button key={kind} type="button" aria-pressed={landingKind === kind}
