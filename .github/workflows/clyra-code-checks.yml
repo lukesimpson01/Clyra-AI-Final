@@ -13,6 +13,9 @@ on:
       - "src/components/SettingsModal.tsx"
       - "src/App.tsx"
       - "tools/clyra-code-library-unit-tests.ts"
+      - "electron/dictation-endpoint.mjs"
+      - "electron/dictation-manager.mjs"
+      - "tools/dictation-endpoint-tests.mjs"
   pull_request:
     paths:
       - "lib/clyra-code/**"
@@ -34,5 +37,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Source-library unit tests
         run: npm run test:clyra-code-library
+      - name: Dictation end-of-speech unit tests
+        run: node --test tools/dictation-endpoint-tests.mjs
       - name: TypeScript compile check
         run: npx tsc --noEmit
