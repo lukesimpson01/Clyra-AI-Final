@@ -1,0 +1,66 @@
+name: Chat research results QA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/chat-agent/**"
+      - "src/lib/chatAgentClient.ts"
+      - "src/components/chat/**"
+      - "tools/chat-rich-results-unit-tests.ts"
+      - ".github/workflows/chat-research-results.yml"
+  pull_request:
+    paths:
+      - "lib/chat-agent/**"
+      - "src/lib/chatAgentClient.ts"
+      - "src/components/chat/**"
+      - "tools/chat-rich-results-unit-tests.ts"
+  workflow_dispatch:
+
+jobs:
+  provider-backed-results:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install isolated test runner
+        run: npm install --prefix /tmp/clyra-chat-qa --no-audit --no-fund --save-dev tsx@4.21.0 typescript@5.8.3
+      - name: Check edited TypeScript source syntax
+        run: |
+          node <<'NODE'
+          const ts = require('/tmp/clyra-chat-qa/node_modules/typescript');
+          const fs = require('node:fs');
+          const paths = [
+            'lib/chat-agent/rich-search.ts',
+            'lib/chat-agent/agent.ts',
+            'lib/chat-agent/events.ts',
+            'src/lib/chatAgentClient.ts',
+            'src/components/chat/ChatAgentRun.tsx',
+            'src/components/chat/ChatResearchResults.tsx',
+            'tools/chat-rich-results-unit-tests.ts',
+          ];
+          let errors = 0;
+          for (const file of paths) {
+            const result = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+              fileName: file, reportDiagnostics: true,
+              compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
+            });
+            for (const item of result.diagnostics || []) {
+              if (item.category !== ts.DiagnosticCategory.Error) continue;
+              console.error(file + ': ' + ts.flattenDiagnosticMessageText(item.messageText, '\n'));
+              errors += 1;
+            }
+          }
+          if (errors) process.exit(1);
+          console.log('Transpilation syntax: 7 changed TypeScript/TSX files passed.');
+          NODE
+      - name: Test image and GitHub parsing, routing and provider contracts
+        run: /tmp/clyra-chat-qa/node_modules/.bin/tsx tools/chat-rich-results-unit-tests.ts
