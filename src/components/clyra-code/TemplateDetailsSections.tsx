@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, CircleAlert, ExternalLink, Image as ImageIcon, KeyRound, Monitor, Server, Star, X } from "lucide-react";
 import type { TemplateManifest } from "./api";
+import { sampleTemplateRating, sampleTemplateReviews } from "./templateReviewSamples";
 
 /**
  * Detail-page additions shared by every entry in the Clyra Code source catalogue.
@@ -62,20 +63,39 @@ function useLocalReview(id: string) {
 
 function Stars({ rating, size = 15 }: { rating: number; size?: number }) {
   return (
-    <span className="inline-flex items-center gap-0.5" aria-label={rating + " out of 5 stars"}>
-      {Array.from({ length: 5 }, (_, i) => (
-        <Star key={i} size={size} className={i < rating ? "fill-[#FF9500] text-[#FF9500]" : "fill-[#DEDEE2] text-[#DEDEE2]"} aria-hidden="true" />
+    <span className="inline-flex items-center gap-[2px]" aria-label={rating.toFixed(1) + " out of 5 stars"}>
+      {[0, 1, 2, 3, 4].map((index) => (
+        <span key={index} className="relative block shrink-0" style={{ height: size, width: size }} aria-hidden="true">
+          <Star size={size} strokeWidth={1.8} className="absolute inset-0 fill-[#E7E7ED] text-[#E7E7ED]" />
+          <span className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: (Math.max(0, Math.min(1, rating - index)) * 100) + "%" }}>
+            <Star size={size} strokeWidth={1.8} className="max-w-none fill-[#FF9500] text-[#FF9500]" />
+          </span>
+        </span>
       ))}
+    </span>
+  );
+}
+
+/** Listing ratings show a clearly labelled sample average; never a public rating claim. */
+export function TemplateSampleInlineRating({ entry }: { entry: TemplateManifest }) {
+  const score = sampleTemplateRating(entry);
+  return (
+    <span className="mt-0.5 inline-flex max-w-full items-center gap-1 text-[10.5px] text-[#86868B]" title="Illustrative sample reviews, not real user ratings">
+      <Stars rating={score.average} size={10} />
+      <span className="tabular-nums">{score.average.toFixed(1)}</span>
+      <span>sample</span>
     </span>
   );
 }
 
 export function TemplateRatingGlance({ entry }: { entry: TemplateManifest }) {
   const { review } = useLocalReview(entry.id);
+  const sample = sampleTemplateRating(entry);
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#6E6E73]" aria-label="Local rating summary">
-      {review ? <><Stars rating={review.rating} size={13} /><span>{review.rating.toFixed(1)} · Your rating on this device</span></> :
-        <><Stars rating={0} size={13} /><span>Not rated yet</span></>}
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#6E6E73]" aria-label="Template rating preview">
+      <Stars rating={sample.average} size={13} />
+      <span>{sample.average.toFixed(1)} · Sample average, not customer ratings</span>
+      {review ? <span>· Your rating: {review.rating}/5</span> : null}
       <span aria-hidden="true" className="h-3 w-px bg-black/10" />
       <span>{entry.sourceScreenshots.length} {entry.sourceScreenshots.length === 1 ? "source preview" : "source previews"}</span>
     </div>
@@ -214,8 +234,10 @@ export function TemplateFeaturesAndRequirements({ entry }: { entry: TemplateMani
   );
 }
 
-export function TemplateRatingsAndReviews({ entry }: { entry: TemplateManifest }) {
+export function TemplateRatingsAndReviews({ entry, canReview }: { entry: TemplateManifest; canReview: boolean }) {
   const { review, save } = useLocalReview(entry.id);
+  const previews = sampleTemplateReviews(entry);
+  const summary = sampleTemplateRating(entry);
   const [editing, setEditing] = useState(false);
   const [rating, setRating] = useState(0);
   const [title, setTitle] = useState("");
@@ -228,7 +250,10 @@ export function TemplateRatingsAndReviews({ entry }: { entry: TemplateManifest }
     setBody("");
     setError("");
   }, [entry.id]);
+  useEffect(() => { if (!canReview) setEditing(false); }, [canReview]);
+
   const start = () => {
+    if (!canReview) return;
     setRating(review?.rating ?? 0);
     setTitle(review?.title ?? "");
     setBody(review?.body ?? "");
@@ -237,6 +262,7 @@ export function TemplateRatingsAndReviews({ entry }: { entry: TemplateManifest }
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canReview) { setError("Get the template before writing a review."); return; }
     if (!rating) { setError("Choose a star rating."); return; }
     if (title.trim().length < 3 || body.trim().length < 10) { setError("Add a title (3+ characters) and review (10+ characters)."); return; }
     const ok = save({ rating, title: title.trim().slice(0, 80), body: body.trim().slice(0, 1000), updatedAt: new Date().toISOString() });
@@ -245,70 +271,105 @@ export function TemplateRatingsAndReviews({ entry }: { entry: TemplateManifest }
     setError("");
   };
   return (
-    <section className="mt-8 border-t border-black/[0.08] pt-5" aria-labelledby="template-reviews-title">
+    <section id={"template-ratings-" + entry.id} className="mt-8 scroll-mt-12 border-t border-black/[0.08] pt-5" aria-labelledby="template-reviews-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 id="template-reviews-title" className="text-[20px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">Ratings & Reviews</h3>
-        <button type="button" onClick={start} className="text-[12.5px] font-medium text-[#007AFF] hover:underline">{review ? "Edit your review" : "Write a Review"}</button>
+        {canReview ? (
+          <button type="button" onClick={start} className="text-[12.5px] font-medium text-[#007AFF] hover:underline">{review ? "Edit your review" : "Write a Review"}</button>
+        ) : <span className="text-[12px] text-[#86868B]">Get this app to leave a rating</span>}
       </div>
-      <p className="mt-1 text-[11.5px] text-[#86868B]">Local feedback only. Community ratings and reviews are not connected, so no public score is claimed.</p>
+      <p className="mt-1.5 max-w-[720px] text-[12px] leading-[1.55] text-[#86868B]">
+        Illustrative example reviews only — these are not written by customers. The sample average below excludes your real on-device review.
+      </p>
       <div className="mt-5 flex flex-wrap items-center gap-8">
-        <div className="min-w-[112px]">
-          <p className="text-[48px] font-semibold leading-none tracking-[-0.055em] text-[#424245]">{review ? review.rating.toFixed(1) : "—"}</p>
-          <p className="mt-1.5 text-[12px] text-[#86868B]">{review ? "Your rating" : "Not rated yet"}</p>
-          <div className="mt-2"><Stars rating={review?.rating ?? 0} /></div>
+        <div className="min-w-[142px]">
+          <div className="flex items-end gap-2">
+            <p className="text-[52px] font-semibold leading-none tracking-[-0.055em] tabular-nums text-[#424245]">{summary.average.toFixed(1)}</p>
+            <span className="pb-1 text-[12px] text-[#86868B]">of 5</span>
+          </div>
+          <p className="mt-1.5 text-[11px] font-medium text-[#86868B]">Sample average</p>
+          <div className="mt-2"><Stars rating={summary.average} size={14} /></div>
         </div>
-        <div className="w-full max-w-[340px] flex-1 space-y-1.5" aria-label="Rating distribution on this device">
-          {[5, 4, 3, 2, 1].map((stars) => (
+        <div className="w-full max-w-[370px] flex-1 space-y-1.5" aria-label="Illustrative sample rating distribution">
+          {([5, 4, 3, 2, 1] as const).map((stars) => (
             <div key={stars} className="flex items-center gap-2 text-[11px] text-[#86868B]">
               <span className="w-2.5 text-right tabular-nums">{stars}</span>
               <Star className="h-2.5 w-2.5 fill-[#86868B] text-[#86868B]" aria-hidden="true" />
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E8E8ED]"><div className="h-full rounded-full bg-[#86868B]" style={{ width: review?.rating === stars ? "100%" : "0%" }} /></div>
-              <span className="w-3 text-right tabular-nums">{review?.rating === stars ? "1" : "0"}</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E8E8ED]">
+                <div className="h-full rounded-full bg-[#86868B] transition-[width] duration-300" style={{ width: (100 * summary.distribution[stars] / summary.count) + "%" }} />
+              </div>
+              <span className="w-3 text-right tabular-nums">{summary.distribution[stars]}</span>
             </div>
           ))}
-          <p className="pt-1 text-right text-[11px] text-[#86868B]">{review ? "1 local rating" : "0 local ratings"}</p>
+          <p className="pt-1 text-right text-[11px] text-[#86868B]">{summary.count} illustrative sample ratings</p>
         </div>
       </div>
-      {review && !editing && (
-        <div className="mt-5 max-w-[530px] border-t border-black/[0.07] pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><Stars rating={review.rating} /><time className="text-[11px] text-[#86868B]" dateTime={review.updatedAt}>{new Date(review.updatedAt).toLocaleDateString()}</time></div>
-          <p className="mt-2 text-[14px] font-semibold text-[#303034]">{review.title}</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-[1.6] text-[#515157]">{review.body}</p>
-          <div className="mt-3 flex items-center gap-4">
-            <span className="text-[11px] text-[#86868B]">You · This device</span>
-            <button type="button" onClick={() => { if (!save(null)) setError("Could not remove the review."); }} className="text-[11.5px] text-[#007AFF] hover:underline">Delete</button>
-          </div>
-        </div>
-      )}
-      {editing && (
-        <form onSubmit={submit} className="mt-5 max-w-[560px] space-y-3 border-t border-black/[0.07] pt-4">
-          <fieldset>
-            <legend className="mb-2 text-[12px] font-medium text-[#424245]">Your rating</legend>
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map((value) => (
-                <button key={value} type="button" aria-label={"Rate " + value + (value === 1 ? " star" : " stars")} aria-pressed={rating === value} onClick={() => setRating(value)}
-                  className="rounded-[6px] p-1.5 outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-[#007AFF]/50">
-                  <Star className={"h-6 w-6 " + (value <= rating ? "fill-[#FF9500] text-[#FF9500]" : "fill-[#E8E8ED] text-[#D6D6DC]")} />
-                </button>
-              ))}
+
+      <div className="cc-scroll mt-5 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 [scrollbar-width:thin]" aria-label={entry.name + " sample review cards"}>
+        {previews.map((item) => (
+          <article key={item.id} className="w-[min(295px,86%)] shrink-0 snap-start rounded-[13px] bg-[#F5F5F7] p-4 sm:w-[310px]">
+            <div className="flex items-center justify-between gap-2">
+              <Stars rating={item.rating} size={12} />
+              <span className="text-[10.5px] font-medium text-[#86868B]">Sample · Not a user review</span>
             </div>
-          </fieldset>
-          <label className="block text-[12px] font-medium text-[#424245]">Review title
-            <input value={title} maxLength={80} onChange={(event) => setTitle(event.target.value)} placeholder="Summarise your experience" className="mt-1.5 block h-9 w-full rounded-[9px] border border-black/[0.13] bg-white px-3 text-[13px] font-normal outline-none focus:border-[#007AFF]" />
-          </label>
-          <label className="block text-[12px] font-medium text-[#424245]">Your review
-            <textarea value={body} maxLength={1000} onChange={(event) => setBody(event.target.value)} placeholder="What worked well? What would you improve?" rows={4} className="mt-1.5 block w-full resize-y rounded-[9px] border border-black/[0.13] bg-white px-3 py-2 text-[13px] font-normal leading-[1.5] outline-none focus:border-[#007AFF]" />
-          </label>
-          {error && <p role="alert" className="text-[12px] text-[#B14538]">{error}</p>}
-          <div className="flex items-center gap-3">
-            <button type="submit" className="rounded-full bg-[#007AFF] px-4 py-2 text-[12px] font-semibold text-white hover:bg-[#0066DB]">Save review</button>
-            <button type="button" onClick={() => { setEditing(false); setError(""); }} className="text-[12px] text-[#6E6E73] hover:text-[#1D1D1F]">Cancel</button>
+            <h4 className="mt-3 line-clamp-2 text-[13.5px] font-semibold leading-[1.3] text-[#1D1D1F]">{item.title}</h4>
+            <p className="mt-1.5 text-[12px] leading-[1.55] text-[#52525A]">{item.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="mt-7 border-t border-black/[0.08] pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-[15px] font-semibold tracking-[-0.015em] text-[#1D1D1F]">Your rating</h4>
+            <p className="mt-1 text-[11.5px] text-[#86868B]">{canReview ? "Your feedback is saved to this device, not published or counted in the sample average." : "Download this source with Get to unlock your review."}</p>
           </div>
-          <p className="text-[11px] leading-[1.5] text-[#86868B]">Saved on this device. It will not be published publicly or synced to other users.</p>
-        </form>
-      )}
-      {!review && !editing && <p className="mt-5 text-[12.5px] text-[#86868B]">No local reviews yet. Add your own after trying this source.</p>}
-      {error && !editing && <p role="alert" className="mt-2 text-[12px] text-[#B14538]">{error}</p>}
+          {canReview && !editing && <button type="button" onClick={start} className="rounded-full bg-[#F0F0F5] px-3.5 py-2 text-[12px] font-semibold text-[#007AFF] hover:bg-[#E5E5EA]">{review ? "Edit rating" : "Rate this app"}</button>}
+        </div>
+        {review && !editing && (
+          <div className="mt-4 max-w-[570px] rounded-[13px] border border-black/[0.08] px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Stars rating={review.rating} size={14} />
+              <time className="text-[11px] text-[#86868B]" dateTime={review.updatedAt}>{new Date(review.updatedAt).toLocaleDateString()}</time>
+            </div>
+            <p className="mt-2 text-[13.5px] font-semibold text-[#303034]">{review.title}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-[12.5px] leading-[1.6] text-[#515157]">{review.body}</p>
+            <div className="mt-3 flex items-center gap-4">
+              <span className="text-[11px] text-[#86868B]">You · On this device</span>
+              {canReview && <button type="button" onClick={() => { if (!save(null)) setError("Could not remove the review."); }} className="text-[11.5px] text-[#007AFF] hover:underline">Delete</button>}
+            </div>
+          </div>
+        )}
+        {!review && !editing && !canReview && <p className="mt-3 text-[12px] text-[#86868B]">Get the template first. You can rate it as soon as the download completes.</p>}
+        {editing && canReview && (
+          <form onSubmit={submit} className="mt-5 max-w-[560px] space-y-3">
+            <fieldset>
+              <legend className="mb-2 text-[12px] font-medium text-[#424245]">Tap a star to rate</legend>
+              <div className="flex gap-1">
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <button key={value} type="button" aria-label={"Rate " + value + (value === 1 ? " star" : " stars")} aria-pressed={rating === value} onClick={() => setRating(value)}
+                    className="rounded-[6px] p-1.5 outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-[#007AFF]/50">
+                    <Star className={"h-6 w-6 " + (value <= rating ? "fill-[#FF9500] text-[#FF9500]" : "fill-[#E8E8ED] text-[#D6D6DC]")} />
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <label className="block text-[12px] font-medium text-[#424245]">Review title
+              <input value={title} maxLength={80} onChange={(event) => setTitle(event.target.value)} placeholder="Summarise your experience" className="mt-1.5 block h-9 w-full rounded-[9px] border border-black/[0.13] bg-white px-3 text-[13px] font-normal outline-none focus:border-[#007AFF]" />
+            </label>
+            <label className="block text-[12px] font-medium text-[#424245]">Your review
+              <textarea value={body} maxLength={1000} onChange={(event) => setBody(event.target.value)} placeholder="What worked well? What would you improve?" rows={4} className="mt-1.5 block w-full resize-y rounded-[9px] border border-black/[0.13] bg-white px-3 py-2 text-[13px] font-normal leading-[1.5] outline-none focus:border-[#007AFF]" />
+            </label>
+            {error && <p role="alert" className="text-[12px] text-[#B14538]">{error}</p>}
+            <div className="flex items-center gap-3">
+              <button type="submit" className="rounded-full bg-[#007AFF] px-4 py-2 text-[12px] font-semibold text-white hover:bg-[#0066DB]">Save review</button>
+              <button type="button" onClick={() => { setEditing(false); setError(""); }} className="text-[12px] text-[#6E6E73] hover:text-[#1D1D1F]">Cancel</button>
+            </div>
+            <p className="text-[11px] leading-[1.5] text-[#86868B]">Stored only on this device. Clyra does not publish or sync this feedback.</p>
+          </form>
+        )}
+        {error && !editing && <p role="alert" className="mt-2 text-[12px] text-[#B14538]">{error}</p>}
+      </div>
     </section>
   );
 }
