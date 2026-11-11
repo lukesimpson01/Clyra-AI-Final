@@ -22,6 +22,9 @@ async function openLibrary(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Clyra Library" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
+  // The Clyra boot overlay remains visible after the underlying app becomes interactive.
+  // Wait for its actual disappearance; otherwise every screenshot is a loading bar.
+  await expect(page.locator(".clyra-boot-overlay")).toBeHidden({ timeout: 45_000 });
   return dialog;
 }
 
@@ -29,7 +32,8 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
   await page.setViewportSize({ width: 1440, height: 900 });
   const dialog = await openLibrary(page);
   const shot = async (name: string) => {
-    await page.screenshot({ path: path.join(root, name + ".png"), animations: "disabled", fullPage: false });
+    await expect(page.locator(".clyra-boot-overlay")).toBeHidden();
+    await page.screenshot({ path: path.join(root, name + ".png"), fullPage: false });
   };
 
   await shot("01-discover-top-desktop");
