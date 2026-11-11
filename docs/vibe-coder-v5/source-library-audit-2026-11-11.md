@@ -5,7 +5,7 @@
 This is a **Vibe Coder source-template catalogue update**, not an integration of donor
 applications into Clyra's production code. The existing `TemplateLibrary` and
 `/api/clyra-code/library` routes were preserved. `TEMPLATE_LIBRARY` increased
-from **68 to 83** verified-URL catalogue records. No upstream source was
+from **68 to 83** curated catalogue entries. No upstream source was
 checked into this repository, built, executed, or merged as part of this change.
 
 Every new record starts without a pinned commit, verified runtime, screenshots,
