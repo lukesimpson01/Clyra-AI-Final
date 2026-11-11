@@ -31,9 +31,8 @@ test.beforeAll(async ({ request }) => {
   const created = await request.post(`${API}/api/vibe/projects`, { data: { name: PROJECT_NAME, prompt: "sidebar test" } });
   expect(created.ok()).toBeTruthy();
   projectId = ((await created.json()) as { project: { id: string } }).project.id;
-  // The UI starts the runtime before it creates a session, so the test does the same.
-  const runtime = await request.post(`${API}/api/opencode/runtime/start`, { data: { projectId } });
-  expect(runtime.ok()).toBeTruthy();
+  // Sidebars and conversation metadata must work without a model API key,
+  // so don't boot an LLM just to create a local task title.
   const session = await request.post(`${API}/api/opencode/sessions`, { data: { projectId, title: THREAD_TITLE } });
   expect(session.ok()).toBeTruthy();
   threadId = ((await session.json()) as { id: string }).id;
