@@ -34,7 +34,7 @@ jobs:
         run: npm run test:clyra-code-library
       - name: Start Clyra app
         run: |
-          npm run dev > /tmp/clyra-dev.log 2>&1 &
+          npm run dev:source > /tmp/clyra-dev.log 2>&1 &
           echo $! > /tmp/clyra-dev.pid
           for n in $(seq 1 120); do
             if curl --silent --fail http://127.0.0.1:3000/ > /dev/null; then exit 0; fi
