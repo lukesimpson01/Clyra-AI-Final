@@ -23,7 +23,7 @@ import {
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
-import { FEATURED_APP_IDS } from "../../lib/clyra-code/library/featured-apps";
+import { FEATURED_APP_IDS } from "../../../lib/clyra-code/library/featured-apps";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
