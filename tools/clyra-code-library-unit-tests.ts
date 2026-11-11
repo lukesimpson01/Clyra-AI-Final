@@ -28,22 +28,31 @@ const additionalTen = [
   "libretranslate",
 ] as const;
 
-await test("the active catalogue preserves the original forty and adds ten distinct sources", () => {
-  assert.equal(TEMPLATE_LIBRARY.length, 50);
+await test("the active catalogue preserves fifty source apps and adds 75 distinct landing pages", () => {
+  assert.equal(TEMPLATE_LIBRARY.length, 125);
   const ids = new Set(TEMPLATE_LIBRARY.map((item) => item.id));
   const repositories = TEMPLATE_LIBRARY.map((item) => item.repositoryUrl.toLowerCase().replace(/\.git$/, ""));
-  assert.equal(ids.size, 50);
-  assert.equal(new Set(repositories).size, 50);
+  assert.equal(ids.size, 125);
+  assert.equal(new Set(repositories).size, 125);
   for (const id of [...originalForty, ...additionalTen]) assert.ok(ids.has(id), `Missing ${id}`);
+  const landing = TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages");
+  assert.equal(landing.length, 75);
+  assert.equal(new Set(landing.map((entry) => entry.landingPageType)).size, 17);
+  assert.ok(landing.every((entry) => entry.livePreviewUrl?.startsWith("https://uiuxlabz.github.io/")));
+  assert.ok(landing.every((entry) => entry.sourceScreenshots.length === 1));
+  assert.ok(landing.every((entry) => entry.status === "unverified" && entry.capabilitiesVerified.length === 0));
   assert.ok(TEMPLATE_LIBRARY.every((item) => item.repositoryUrl.startsWith("https://github.com/")));
 });
 
 await test("categories are derived from live entries, and search finds relevant comparisons", () => {
-  assert.ok(new Set(TEMPLATE_LIBRARY.map((item) => item.category)).size >= 9);
+  assert.ok(new Set(TEMPLATE_LIBRARY.map((item) => item.category)).size >= 10);
   assert.ok(searchTemplateLibrary({ query: "OpusClip" }).some((item) => item.id === "supoclip"));
   assert.ok(searchTemplateLibrary({ query: "Perplexity Comet" }).some((item) => item.id === "browseros"));
   assert.ok(searchTemplateLibrary({ query: "Google Maps" }).some((item) => item.id === "facilmap"));
   assert.ok(searchTemplateLibrary({ query: "Lovable" }).some((item) => item.id === "bolt-diy"));
+  assert.equal(searchTemplateLibrary({ category: "Landing Pages" }).length, 75);
+  assert.ok(searchTemplateLibrary({ query: "KORVA" }).some((item) => item.id === "landing-ai-studio"));
+  assert.ok(searchTemplateLibrary({ query: "Coffee" }).some((item) => item.id === "landing-coffee-shop"));
   assert.equal(searchTemplateLibrary({ query: "this will not match" }).length, 0);
 });
 
@@ -60,12 +69,26 @@ await test("no seed pretends its third-party source is fully installed or alread
 await test("real capture entries reference existing screenshots with alt text and provenance", async () => {
   const missing = TEMPLATE_LIBRARY.filter((item) => !item.sourceScreenshots.length);
   assert.ok(missing.length > 0, "Do not invent image captures for untested apps");
+  assert.equal(TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages" && item.sourceScreenshots.length === 1).length, 75);
   for (const item of TEMPLATE_LIBRARY) {
     for (const shot of item.sourceScreenshots) {
       assert.match(shot.url, /^\/library-shots\/[a-z0-9-]+\.jpg$/);
       assert.ok(shot.alt.trim().length > 8);
-      assert.ok(shot.provenance.includes("local run"));
-      await access(path.join(process.cwd(), "public", shot.url.slice(1)));
+      if (item.category === "Landing Pages") {
+        assert.match(shot.provenance, /Author-provided screenshot\.png/);
+        assert.ok(!shot.provenance.includes("local run"));
+      } else {
+        assert.ok(shot.provenance.includes("local run"));
+      }
+      const file = path.join(process.cwd(), "public", shot.url.slice(1));
+      await access(file);
+      if (item.category === "Landing Pages") {
+        const { stat, readFile } = await import("node:fs/promises");
+        assert.ok((await stat(file)).size >= 8_000, `Thumbnail too small: ${file}`);
+        const jpeg = await readFile(file);
+        assert.equal(jpeg[0], 0xff);
+        assert.equal(jpeg[1], 0xd8);
+      }
     }
   }
 });
