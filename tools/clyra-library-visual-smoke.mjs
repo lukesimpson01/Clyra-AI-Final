@@ -24,11 +24,26 @@ try {
       const dialog = page.getByRole("dialog", { name: "Clyra Library" });
       await dialog.waitFor();
       await dialog.getByRole("button", { name: "Next featured app" }).click();
+      // The carousel's text/capture cross-fade lasts 400ms. A still image of
+      // the intermediate frame is not evidence of the final, readable UI.
+      await page.waitForTimeout(550);
       await page.screenshot({ path: path.join(output, `library-discover-${width}.png`), animations: "allow" });
+
       const input = dialog.getByRole("textbox", { name: "Search the library" });
       await input.fill("bolt.diy");
-      await dialog.getByText("bolt.diy", { exact: true }).first().click();
+      await dialog.getByRole("button", { name: "View bolt.diy details" }).last().click();
+      await dialog.getByRole("heading", { name: "bolt.diy", exact: true }).waitFor();
       await dialog.getByText("Preview not captured").first().waitFor();
+      // Motion keeps the previous Results screen mounted while the new detail
+      // view fades in. Wait for its computed opacity and old-screen removal.
+      await page.waitForFunction(() => {
+        const title = [...document.querySelectorAll('[role="dialog"] h2')]
+          .find((node) => node.textContent?.trim() === "bolt.diy");
+        const detail = title?.closest(".cc-scroll");
+        const previous = [...document.querySelectorAll('[role="dialog"] h2')]
+          .some((node) => node.textContent?.trim() === "Results");
+        return !!detail && Number(getComputedStyle(detail).opacity) >= 0.99 && !previous;
+      }, null, { timeout: 10_000 });
       await page.screenshot({ path: path.join(output, `library-detail-${width}.png`), animations: "allow" });
       console.log(`PASS Clyra Library renders and navigates at ${width}px`);
     } finally {
