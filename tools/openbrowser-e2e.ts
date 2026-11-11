@@ -33,6 +33,11 @@ const fixtureHtml = `<!doctype html>
     <header><strong>Local Product Catalogue</strong></header>
     <main>
       <h1>Refurbished laptops</h1>
+      <div style="display:flex;gap:10px;margin:10px 0">
+        <button id="hover-test" type="button" aria-label="Hover test button">Hover target</button>
+        <div id="drag-source" draggable="true" tabindex="0" aria-label="Drag test token">Drag token</div>
+        <div id="drag-target" tabindex="0" aria-label="Drop test zone">Drop here</div>
+      </div>
       <form id="search-form">
         <label>Search products <input id="product-search" aria-label="Search products" placeholder="Model or specification" /></label>
         <label>Maximum price
@@ -62,6 +67,12 @@ const fixtureHtml = `<!doctype html>
       <button id="dismiss-cookie">Dismiss cookie banner</button>
     </aside>
     <script>
+      document.querySelector('#hover-test').addEventListener('mouseenter', () => { document.querySelector('#status').textContent = 'Hover completed'; });
+      document.querySelector('#drag-target').addEventListener('dragover', (event) => event.preventDefault());
+      document.querySelector('#drag-target').addEventListener('drop', (event) => {
+        event.preventDefault();
+        document.querySelector('#status').textContent = 'Drag completed';
+      });
       document.querySelector('#dismiss-cookie').addEventListener('click', () => document.querySelector('#cookie').remove());
       document.querySelector('#search-form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -225,6 +236,19 @@ try {
   await action({ type: "click", target: elementByName(observation, "Apply filters") });
   observation = await observe();
   assert.match(observation.mainText, /Filtered for MacBook Air M1 16 GB under \$700/);
+
+  // These were previously silent no-ops on native Electron. Exercise the
+  // actual visible Chromium tab (not a simulated state or alternative page).
+  await action({ type: "hover", target: elementByName(observation, "Hover test button") });
+  observation = await observe();
+  assert.match(observation.mainText, /Hover completed/, "Hover must fire real DOM mouse events");
+  await action({
+    type: "drag",
+    source: elementByName(observation, "Drag test token"),
+    destination: elementByName(observation, "Drop test zone"),
+  });
+  observation = await observe();
+  assert.match(observation.mainText, /Drag completed/, "Drag must deliver real HTML5 drop events");
 
   await action({ type: "scroll", direction: "down", amount: 900 });
   observation = await observe();
