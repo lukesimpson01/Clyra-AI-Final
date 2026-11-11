@@ -4,11 +4,11 @@
  * These are upstream UI images, not proof that an app was built or launched.
  */
 export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:string;origin:string}>> = {
-  "vercel-chatbot": [
+  "perplexica": [
     {
-      "file": "app-vercel-chatbot-source-1.jpg",
-      "alt": "vercel-chatbot: Chatbot (upstream app image)",
-      "origin": "https://raw.githubusercontent.com/vercel/chatbot/main/app/(chat)/opengraph-image.png"
+      "file": "app-perplexica-source-1.jpg",
+      "alt": "perplexica: preview (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/ItzCrazyKns/Perplexica/master/.assets/vane-screenshot.png"
     }
   ],
   "gitea": [
@@ -110,8 +110,18 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
   "hycanvas": [
     {
       "file": "app-hycanvas-source-1.jpg",
-      "alt": "hycanvas: HyCanvas: the open-source Canva alternative you can self-host (upstream app image)",
-      "origin": "https://brand.hycanvas.com/assets/png/og-image-1200x630.png"
+      "alt": "hycanvas: Editing a template in the HyCanvas editor — frame 2 (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/hyscaler/HyCanvas/development/.github/hycanvas-editor-demo.gif"
+    },
+    {
+      "file": "app-hycanvas-source-2.jpg",
+      "alt": "hycanvas: The editor with a podcast cover open and the text properties beside it (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/hyscaler/HyCanvas/development/.github/readme/editor.png"
+    },
+    {
+      "file": "app-hycanvas-source-3.jpg",
+      "alt": "hycanvas: A nine-slide pitch deck open in the editor with the slide strip below (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/hyscaler/HyCanvas/development/.github/readme/presentation.png"
     }
   ],
   "minipaint": [
@@ -143,6 +153,23 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "file": "app-twenty-source-2.jpg",
       "alt": "twenty: Customize your layouts (upstream app image)",
       "origin": "https://raw.githubusercontent.com/twentyhq/twenty/main/packages/twenty-website/public/images/readme/v2-tools-light.webp"
+    }
+  ],
+  "chatwoot": [
+    {
+      "file": "app-chatwoot-source-1.jpg",
+      "alt": "chatwoot: Header light mode (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/header.png"
+    },
+    {
+      "file": "app-chatwoot-source-2.jpg",
+      "alt": "chatwoot: Header dark mode (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/header-dark.png"
+    },
+    {
+      "file": "app-chatwoot-source-3.jpg",
+      "alt": "chatwoot: Chat dashboard dark mode (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/dashboard.png"
     }
   ],
   "formbricks": [
@@ -230,13 +257,6 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "origin": "https://excalidraw.nyc3.cdn.digitaloceanspaces.com/github%2Fproduct_showcase.png"
     }
   ],
-  "supoclip": [
-    {
-      "file": "app-supoclip-source-1.jpg",
-      "alt": "supoclip: SupoClip dashboard with video input, caption controls, and recent clips (upstream app image)",
-      "origin": "https://raw.githubusercontent.com/FujiwaraChoki/supoclip/main/assets/banner.jpg"
-    }
-  ],
   "browseros": [
     {
       "file": "app-browseros-source-1.jpg",
@@ -259,18 +279,6 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "file": "app-karakeep-source-1.jpg",
       "alt": "karakeep: homepage screenshot (upstream app image)",
       "origin": "https://raw.githubusercontent.com/karakeep-app/karakeep/main/screenshots/homepage.png?raw=true"
-    }
-  ],
-  "coolify": [
-    {
-      "file": "app-coolify-source-1.jpg",
-      "alt": "coolify: typebot (upstream app image)",
-      "origin": "https://cdn.bsky.app/img/avatar/plain/did:plc:gwxcta3pccyim4z5vuultdqx/bafkreig23hci7e2qpdxicsshnuzujbcbcgmydxhbybkewszdezhdodv42m@jpeg"
-    },
-    {
-      "file": "app-coolify-source-2.jpg",
-      "alt": "coolify: 360Creators (upstream app image)",
-      "origin": "https://opencollective-production.s3.us-west-1.amazonaws.com/account-avatar/503e0953-bff7-4296-b4cc-5e36d40eecc0/icon-360creators.png"
     }
   ],
   "libretranslate": [
@@ -304,11 +312,28 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "origin": "https://raw.githubusercontent.com/SVG-Edit/svgedit/master/docs/screenshot.png"
     }
   ],
+  "kdenlive": [
+    {
+      "file": "app-kdenlive-source-1.jpg",
+      "alt": "kdenlive: Kdenlive timeline editor (upstream app image)",
+      "origin": "https://docs.kdenlive.org/en/_images/timeline-overhaul.png"
+    }
+  ],
   "krita": [
     {
       "file": "app-krita-source-1.jpg",
-      "alt": "krita: Picture (upstream app image)",
-      "origin": "https://krita.org/images/hero-image-50.webp"
+      "alt": "krita: Krita canvas with multiple views (upstream app image)",
+      "origin": "https://docs.krita.org/en/_images/Krita_multiple_views.png"
+    },
+    {
+      "file": "app-krita-source-2.jpg",
+      "alt": "krita: Krita layers and tool dockers (upstream app image)",
+      "origin": "https://docs.krita.org/en/_images/Dockers.png"
+    },
+    {
+      "file": "app-krita-source-3.jpg",
+      "alt": "krita: Krita multiple editor windows (upstream app image)",
+      "origin": "https://docs.krita.org/en/_images/Multi-window.png"
     }
   ]
 };
