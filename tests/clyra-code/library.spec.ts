@@ -42,7 +42,8 @@ test("search, App Store-style details, requirements and honest screenshot state"
   await expect(dialog.getByRole("heading", { name: "Technical requirements" })).toBeVisible();
   await expect(dialog.getByText("API keys / secrets")).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Ratings & Reviews" })).toBeVisible();
-  await expect(dialog.getByText(/Community ratings and reviews are not connected/)).toBeVisible();
+  await expect(dialog.getByText(/Illustrative example reviews only/)).toBeVisible();
+  await expect(dialog.getByText("3 illustrative sample ratings")).toBeVisible();
 
   await dialog.getByText("Advanced import options").click();
   await expect(dialog.getByRole("button", { name: "Verify repository" })).toBeVisible();
@@ -55,6 +56,18 @@ test("a review is editable, saved locally and does not invent a community rating
   await dialog.getByRole("textbox", { name: "Search the library" }).fill("Excalidraw");
   await dialog.getByRole("button", { name: /Excalidraw/ }).first().click();
 
+  await expect(dialog.getByRole("button", { name: "Write a Review" })).toHaveCount(0);
+  await expect(dialog.getByText("Download this source with Get to unlock your review.")).toBeVisible();
+  // Mock source checkout to test Get -> installed -> reviews without executing third-party scripts.
+  await page.route("**/api/clyra-code/library/excalidraw/import-plan", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ plan: { verification: { commit: "a".repeat(40), verifiedAt: new Date().toISOString() } } }) });
+  });
+  await page.route("**/api/clyra-code/library/excalidraw/import", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: { id: "qa-import-" + Date.now(), name: "Excalidraw" }, importedIntoExisting: false, sourcePath: "/qa/excalidraw", message: "Mocked checkout for UI regression" }) });
+  });
+  await dialog.getByRole("button", { name: "Get", exact: true }).first().click();
+  await expect(dialog.getByRole("button", { name: "Open", exact: true }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.getByRole("button", { name: "Rate Excalidraw" })).toBeVisible();
   await dialog.getByRole("button", { name: "Write a Review" }).click();
   await dialog.getByRole("button", { name: "Rate 4 stars" }).click();
   await dialog.getByPlaceholder("Summarise your experience").fill("Useful drawing source");
@@ -62,8 +75,8 @@ test("a review is editable, saved locally and does not invent a community rating
   await dialog.getByRole("button", { name: "Save review" }).click();
 
   await expect(dialog.getByText("Useful drawing source")).toBeVisible();
-  await expect(dialog.getByText("1 local rating")).toBeVisible();
-  await expect(dialog.getByText(/Your rating on this device/)).toBeVisible();
+  await expect(dialog.getByText("Your rating")).toBeVisible();
+  await expect(dialog.getByText(/Your rating: 4\/5/)).toBeVisible();
   await dialog.getByRole("button", { name: "Edit your review" }).click();
   await expect(dialog.getByPlaceholder("Summarise your experience")).toHaveValue("Useful drawing source");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -75,6 +88,6 @@ test("a review is editable, saved locally and does not invent a community rating
   await reloaded.getByRole("textbox", { name: "Search the library" }).fill("Excalidraw");
   await reloaded.getByRole("button", { name: /Excalidraw/ }).first().click();
   await expect(reloaded.getByText("Useful drawing source")).toBeVisible();
-  await expect(reloaded.getByText("1 local rating")).toBeVisible();
-  await expect(reloaded.getByText(/Community ratings and reviews are not connected/)).toBeVisible();
+  await expect(reloaded.getByText(/Your rating: 4\/5/)).toBeVisible();
+  await expect(reloaded.getByText(/Illustrative example reviews only/)).toBeVisible();
 });
