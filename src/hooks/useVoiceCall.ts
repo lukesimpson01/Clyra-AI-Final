@@ -359,10 +359,21 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && activeRunRef.current) { await stopTask(); return true; }
     if (/\b(?:let me do|i(?:’|'| a)m taking over|give me control)\b/i.test(clean) && activeRunRef.current) { await takeControl(); return true; }
     if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && activeRunRef.current) { await resumeTask(); return true; }
+    if (/^(?:pause|pause task|hold on)[.!]?$/i.test(clean) && activeRunRef.current) { await pauseTask(); return true; }
+    if (activeRunRef.current) {
+      // Accept voice interruptions during work without creating a second,
+      // competing mission. Existing tasks have their own pause/stop semantics.
+      const feedback = "I'm still working on that task. You can say pause, stop, or take control.";
+      pendingAssistantTextRef.current = feedback;
+      dispatch({ type: "TOKEN", text: feedback });
+      commitTurn();
+      dispatch({ type: "RESPONSE_FINISHED" });
+      return true;
+    }
     const google = detectGoogleService(clean);
     if (google && await executeGoogle(google, clean)) return true;
     return startMission(clean);
-  }, [executeGoogle, resumeTask, startMission, stopTask, takeControl]);
+  }, [commitTurn, executeGoogle, pauseTask, resumeTask, startMission, stopTask, takeControl]);
 
   /** Streams the conversational answer straight into the subtitle (no TTS). */
   const streamReply = useCallback(async (userText: string) => {
@@ -536,7 +547,10 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           replyAbortRef.current?.abort();
           e.turnBusy = false;
         }
-        if (state === "acting_browser" || state === "acting_computer" || state === "acting_clyra" || state === "paused" || state === "awaiting_approval" || state === "user_takeover") return;
+        // The microphone stays available while an agent works, so "stop" and
+        // "pause" can interrupt a long task without touching the dock.
+        // Other instructions are guarded in runSideEffect to avoid overlap.
+        if (state === "awaiting_approval" || state === "user_takeover") return;
         e.speaking = true;
         e.speechStartedAt = now;
         touchActivity();
