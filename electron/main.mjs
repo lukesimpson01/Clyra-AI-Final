@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
 import { initAnywhereSettings, isAnywhereEnabled, isFlowBackgroundEnabled, setAnywhereEnabled, setFlowBackgroundEnabled } from "./anywhere-settings.mjs";
 
 /** Stay alive in the tray (window closed / quit from the Dock) — Anywhere OR Flow background. */
@@ -107,6 +107,7 @@ let spotifyPlayerHost = null;
 let deepResearchManager = null;
 let localMemoryManager = null;
 let companionManager = null;
+let voiceShareSource = null; // one-shot explicit picker selection, expires after 10s
 let screenCaptureService = null;
 let desktopControlService = null;
 let serviceProcess = null;
@@ -435,6 +436,9 @@ function configureUiSession() {
     if (permission === "geolocation") {
       return allowGeolocationFromClyra(requestingOrigin, details || {});
     }
+    if (permission === "display-capture") {
+      return Boolean(voiceShareSource && Date.now() - voiceShareSource.at < 10_000 && allowMediaFrom(webContents, requestingOrigin, details || {}));
+    }
     if (permission !== "media") return false;
     // Allow mic and camera for Clyra origins (voice call + camera vision).
     return allowMediaFrom(webContents, requestingOrigin, details || {});
@@ -444,12 +448,36 @@ function configureUiSession() {
       callback(allowGeolocationFromClyra(details?.securityOrigin || details?.requestingUrl, details || {}));
       return;
     }
+    if (permission === "display-capture") {
+      callback(Boolean(voiceShareSource && Date.now() - voiceShareSource.at < 10_000 && allowMediaFrom(webContents, details?.requestingUrl || details?.securityOrigin, details || {})));
+      return;
+    }
     if (permission !== "media") {
       callback(false);
       return;
     }
     // Allow audio and/or video from Clyra windows (voice call camera uses video-only).
     callback(allowMediaFrom(webContents, details?.requestingUrl || details?.securityOrigin, details || {}));
+  });
+  // Electron requires a native display media handler. The renderer first
+  // presents source thumbnails and explicitly selects one through trusted IPC.
+  // Never silently substitute the primary display if selection is missing.
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    const selection = voiceShareSource;
+    voiceShareSource = null;
+    const requester = request?.frame?.url || request?.securityOrigin || "";
+    if (!selection || Date.now() - selection.at > 10_000 || !isClyraOrigin(requester)) {
+      callback({});
+      return;
+    }
+    try {
+      const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
+      const source = sources.find(candidate => candidate.id === selection.id);
+      callback(source ? { video: source } : {});
+    } catch (error) {
+      console.warn("[voice] selected screen source unavailable", error?.message || error);
+      callback({});
+    }
   });
 }
 
@@ -1018,6 +1046,37 @@ function registerIpc() {
     const value = setAnywhereEnabled(Boolean(enabled));
     syncAnywhereTray();
     return { ok: true, enabled: value };
+  });
+  ipcMain.handle("voice:list-sources", async (event) => {
+    authorize(event);
+    try {
+      const sources = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 224, height: 132 } });
+      return { ok: true, sources: sources.slice(0, 36).map(source => ({
+        id: source.id, name: source.name,
+        thumbnail: source.thumbnail.isEmpty() ? undefined : `data:image/jpeg;base64,${source.thumbnail.toJPEG(48).toString("base64")}`,
+      })) };
+    } catch (error) { return { ok: false, error: error?.message || "Unable to list screen sources." }; }
+  });
+  ipcMain.handle("voice:select-source", async (event, sourceId) => {
+    authorize(event);
+    const sources = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 0, height: 0 } });
+    const selected = sources.find(source => source.id === sourceId);
+    if (!selected) return { ok: false, error: "The selected window or display is no longer available." };
+    voiceShareSource = { id: selected.id, at: Date.now() };
+    return { ok: true };
+  });
+  ipcMain.handle("voice:guide", (event, question) => {
+    authorize(event);
+    return companionManager?.startGuide(String(question || "").slice(0, 800)) || { ok: false, error: "Screen Companion unavailable." };
+  });
+  ipcMain.handle("voice:begin-control", (event) => {
+    authorize(event);
+    return companionManager?.startControl() || { ok: false, error: "Desktop control unavailable." };
+  });
+  ipcMain.handle("voice:stop-control", (event) => {
+    authorize(event);
+    voiceShareSource = null;
+    return companionManager?.stopControl() || { ok: true };
   });
   ipcMain.handle("care:scan", async (event) => {
     authorize(event);
