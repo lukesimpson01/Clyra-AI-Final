@@ -5,6 +5,10 @@ const API = process.env.CLYRA_URL || "http://localhost:3000";
 async function openWorkspace(page: Page) {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${API}/`);
+  // The app renders an interactive DOM beneath its initial loading cover.
+  // Wait for the actual visible UI, not just clickability through that cover.
+  await page.locator(".clyra-boot-overlay").waitFor({ state: "hidden", timeout: 45_000 });
+  await page.locator("#clyra-preboot-surface").waitFor({ state: "detached", timeout: 5_000 });
   await page.getByText("Vibe Coder", { exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible({ timeout: 60_000 });
 }
