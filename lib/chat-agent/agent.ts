@@ -27,6 +27,21 @@ import {
 import type { AgentEvent, AgentSource, TodoItem } from "./events";
 export type { AgentEvent, AgentSource, TodoItem };
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+/** Tools already registered by the verified Clyra mission host. Chat can only
+ * discover read-only adapters; writes still require the mission approval UI. */
+export type NativeReadTool = {
+  id: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  riskLevel: "safe" | "review" | "sensitive";
+};
+export type NativeToolResponse = {
+  ok: boolean;
+  data?: unknown;
+  evidence?: unknown;
+  error?: { code?: string; message: string };
+};
 export type AgentDeps = {
   /** Creates a note page and returns it. Injected so tests and the server share one agent. */
   createNote: (input: { title: string; markdown: string; parentId?: string; icon?: string }) => { id: string; title: string } | Promise<{ id: string; title: string }>;
@@ -35,6 +50,10 @@ export type AgentDeps = {
   /** Overridable for tests; defaults to the configured DeepSeek provider. */
   callModel?: ModelCall;
   now?: () => Date;
+  /** Safe tools actually available on this host; never infer from installed apps. */
+  nativeTools?: NativeReadTool[];
+  /** Reuses the mission host's schema validation, adapter and evidence check. */
+  invokeNativeTool?: (id: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<NativeToolResponse>;
 };
 export type NotesDeps = {
   search: (query: string) => Array<{ id: string; title: string; snippet: string }>;
@@ -270,7 +289,29 @@ export async function runChatAgent(
   const maxSteps = options.maxSteps ?? 20;
   const budget = { searches: options.maxSearches ?? 10, opens: options.maxOpens ?? 14, searchesUsed: 0, opensUsed: 0, toolCalls: 0 };
   let todos: TodoItem[] = [];
+  const unresolvedFailures = new Map<string, string>();
+  let completionRetries = 0;
   let stepCounter = 0;
+  const nativeCatalog = new Map<string, NativeReadTool>();
+  if (deps.invokeNativeTool) {
+    for (const tool of deps.nativeTools ?? []) {
+      if (tool.riskLevel !== "safe" || !/^[a-z][a-z0-9_.-]{1,80}$/i.test(tool.id)) continue;
+      const name = `clyra_${tool.id.replace(/[^a-z0-9]/gi, "_")}`;
+      if (!nativeCatalog.has(name)) nativeCatalog.set(name, tool);
+    }
+  }
+  const modelTools: unknown[] = [
+    ...TOOLS,
+    ...(deps.notes ? NOTES_TOOLS : []),
+    ...[...nativeCatalog.entries()].map(([name, tool]) => ({
+      type: "function",
+      function: {
+        name,
+        description: `${tool.description} Clyra capability: ${tool.id}. Read-only, verified on the current host.`,
+        parameters: tool.inputSchema,
+      },
+    })),
+  ];
   const messages: ModelMessage[] = [{ role: "system", content: systemPrompt(now, deps.notes) + (options.instructions?.trim() ? `\n\nThe person has set standing instructions. Follow them unless they conflict with being accurate or safe:\n${options.instructions.trim().slice(0, 4000)}` : "") }, ...turns.map((t) => ({ role: t.role, content: t.content }) as ModelMessage)];
   for (const turn of turns) if (turn.role === "user") ledger.allowUserUrls(turn.content);
 
@@ -284,7 +325,17 @@ export async function runChatAgent(
     switch (toolCall.function.name) {
       case "update_todos": {
         const list = Array.isArray(args.todos) ? args.todos : [];
-        todos = list.slice(0, 12).map((t: any, i: number) => ({ id: `todo-${i + 1}`, content: String(t?.content ?? "").slice(0, 160), status: ["pending", "in_progress", "completed"].includes(t?.status) ? t.status : "pending" })).filter((t: TodoItem) => t.content);
+        const updated: TodoItem[] = list.slice(0, 12).map((t: any, i: number) => ({ id: `todo-${i + 1}`, content: String(t?.content ?? "").slice(0, 160), status: ["pending", "in_progress", "completed"].includes(t?.status) ? t.status : "pending" })).filter((t: TodoItem) => t.content);
+        // A model cannot silently discard an unfinished checklist item to
+        // make its final reply look complete. Replanning may add new items.
+        const newNames = new Set(updated.map((item) => item.content.toLowerCase()));
+        for (const previous of todos) {
+          if (updated.length >= 12) break;
+          if (previous.status !== "completed" && !newNames.has(previous.content.toLowerCase())) {
+            updated.push({ ...previous, id: `todo-${updated.length + 1}` });
+          }
+        }
+        todos = updated;
         emit({ type: "todos", items: todos });
         return JSON.stringify({ ok: true, count: todos.length });
       }
@@ -430,45 +481,103 @@ export async function runChatAgent(
           return JSON.stringify({ error: "The note could not be created." });
         }
       }
-      default:
-        return JSON.stringify({ error: `Unknown tool ${toolCall.function.name}` });
+      default: {
+        const native = nativeCatalog.get(toolCall.function.name);
+        if (!native || !deps.invokeNativeTool) return JSON.stringify({ error: `Unknown tool ${toolCall.function.name}` });
+        step({ id, tool: native.id, label: native.name, state: "running" });
+        try {
+          // executeNativeTool independently rejects writes, checks the input
+          // schema, and refuses a success without verification evidence.
+          const outcome = await deps.invokeNativeTool(native.id, args, options.signal);
+          if (!outcome.ok) {
+            const reason = outcome.error?.message || "The host could not verify this action.";
+            step({ id, tool: native.id, label: native.name, state: "failed", error: reason });
+            return JSON.stringify({ ok: false, error: reason, code: outcome.error?.code });
+          }
+          step({ id, tool: native.id, label: native.name, state: "done", detail: "Verified by Clyra" });
+          return JSON.stringify({ ok: true, data: outcome.data, evidence: outcome.evidence });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "This capability is unavailable.";
+          step({ id, tool: native.id, label: native.name, state: "failed", error: reason });
+          return JSON.stringify({ ok: false, error: reason });
+        }
+      }
     }
   }
+
+  /** Finality comes from the actual tool results and outstanding checklist,
+   * not merely from the model choosing to stop calling tools. */
+  const finish = (answer: string, diagnostics: Record<string, unknown>) => {
+    const checked = validateCitations(answer, ledger);
+    const outstanding = todos.filter((item) => item.status !== "completed").map((item) => item.content);
+    const failures = [...unresolvedFailures.entries()].map(([tool, reason]) => ({ tool, reason }));
+    const complete = outstanding.length === 0 && failures.length === 0;
+    const reasons = [
+      ...outstanding.map((task) => `Unfinished: ${task}`),
+      ...failures.map((failure) => `Tool issue (${failure.tool}): ${failure.reason}`),
+    ].slice(0, 8);
+    const disclaimer = complete ? "" : `\n\n**Not fully completed.** ${reasons.join("; ")}. I haven't marked these items as done.`;
+    emit({
+      type: "done",
+      text: checked.text + disclaimer,
+      citations: sourcesCited(ledger, checked.cited.length ? checked.cited : [...ledger.sources.keys()]),
+      diagnostics: {
+        ...diagnostics,
+        completionStatus: complete ? "no_known_blockers" : "incomplete",
+        outstandingTasks: outstanding,
+        unresolvedToolFailures: failures,
+        completionRetries,
+        unknownCitationsRemoved: checked.invalid,
+      },
+    });
+  };
 
   try {
     for (let round = 0; round < maxSteps; round += 1) {
       if (options.signal?.aborted) { emit({ type: "error", code: "cancelled", message: "Stopped." }); return; }
       let roundText = "";
       const roundChunks: string[] = [];
-      const result = await call({ messages, tools: [...TOOLS, ...(deps.notes ? NOTES_TOOLS : [])] as unknown as unknown[], model: options.model, signal: options.signal, onText: (chunk) => { roundText += chunk; roundChunks.push(chunk); } });
+      const result = await call({ messages, tools: modelTools, model: options.model, signal: options.signal, onText: (chunk) => { roundText += chunk; roundChunks.push(chunk); } });
       if (!result.toolCalls.length) {
-        /* The model's final prose follows the completed tools. Emit its
-           original chunks only now that we know it is the actual answer. */
+        const outstanding = todos.filter((item) => item.status !== "completed");
+        // Give the model another opportunity to perform unfinished work,
+        // but do not spin forever when the host or model cannot progress.
+        if ((outstanding.length || unresolvedFailures.size) && completionRetries < 2 && round + 1 < maxSteps) {
+          completionRetries += 1;
+          messages.push({ role: "assistant", content: result.content || roundText || null });
+          messages.push({
+            role: "user",
+            content: `The task is not finished yet. Unfinished checklist: ${outstanding.map((item) => item.content).join("; ") || "none"}. Unresolved tool errors: ${[...unresolvedFailures].map(([name, detail]) => `${name}: ${detail}`).join("; ") || "none"}. Continue using real tools and update_todos after verified progress. If an action is impossible or needs my input, explain the blocker; never declare the unfinished work complete.`,
+          });
+          continue;
+        }
+        // Streaming the final draft happens only after the continuation gate.
         roundChunks.forEach((text) => emit({ type: "text", text, placement: "after" }));
-        const checked = validateCitations(result.content || roundText, ledger);
-        emit({
-          type: "done",
-          text: checked.text,
-          citations: sourcesCited(ledger, checked.cited.length ? checked.cited : [...ledger.sources.keys()]),
-          diagnostics: { rounds: round + 1, toolCalls: budget.toolCalls, searches: budget.searchesUsed, pagesOpened: budget.opensUsed, unknownCitationsRemoved: checked.invalid, providers: providerHealth(), ...ledger.summary() },
-        });
+        finish(result.content || roundText, { rounds: round + 1, toolCalls: budget.toolCalls, searches: budget.searchesUsed, pagesOpened: budget.opensUsed, providers: providerHealth(), ...ledger.summary() });
         return;
       }
-      /* Tool-call commentary really happened before the following actions.
-         Preserve it as such instead of placing it underneath the run. */
+      // Tool-call commentary predates the real action, not the final answer.
       roundChunks.forEach((text) => emit({ type: "text", text, placement: "before" }));
       messages.push({ role: "assistant", content: result.content || null, tool_calls: result.toolCalls });
-      /* Tool results are causal: one completed action can inform the next.
-         Running a burst in parallel made multi-step note work look finished
-         before the agent had actually followed through. */
-      const outputs: string[] = [];
-      for (const toolCall of result.toolCalls) outputs.push(await runTool(toolCall));
-      result.toolCalls.forEach((tc, i) => messages.push({ role: "tool", tool_call_id: tc.id, content: clip(outputs[i], 9000) }));
+      for (const toolCall of result.toolCalls) {
+        const output = await runTool(toolCall);
+        if (toolCall.function.name !== "update_todos") {
+          try {
+            const parsed = JSON.parse(output) as { ok?: boolean; error?: string | { message?: string } };
+            if (parsed.error || parsed.ok === false) {
+              const reason = typeof parsed.error === "string" ? parsed.error : parsed.error?.message || "Tool returned an unsuccessful result.";
+              unresolvedFailures.set(toolCall.function.name, reason);
+            } else unresolvedFailures.delete(toolCall.function.name);
+          } catch {
+            unresolvedFailures.set(toolCall.function.name, "Tool returned an unreadable result.");
+          }
+        }
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: clip(output, 9000) });
+      }
     }
-    // out of rounds: make the model answer from what it has, with no tools
-    const final = await call({ messages: [...messages, { role: "user", content: "Answer now from what you have gathered. If something could not be verified, say so." }], tools: [], model: options.model, signal: options.signal, onText: (chunk) => emit({ type: "text", text: chunk }) });
-    const checked = validateCitations(final.content, ledger);
-    emit({ type: "done", text: checked.text, citations: sourcesCited(ledger, checked.cited.length ? checked.cited : [...ledger.sources.keys()]), diagnostics: { rounds: maxSteps, toolCalls: budget.toolCalls, searches: budget.searchesUsed, pagesOpened: budget.opensUsed, hitRoundLimit: true, ...ledger.summary() } });
+    // An exhausted budget never silently converts pending work into success.
+    const final = await call({ messages: [...messages, { role: "user", content: "The execution budget has been reached. Summarise only confirmed results, list unfinished work and blockers explicitly. Do not claim actions you did not perform." }], tools: [], model: options.model, signal: options.signal, onText: (chunk) => emit({ type: "text", text: chunk }) });
+    finish(final.content, { rounds: maxSteps, toolCalls: budget.toolCalls, searches: budget.searchesUsed, pagesOpened: budget.opensUsed, hitRoundLimit: true, ...ledger.summary() });
   } catch (error) {
     if (options.signal?.aborted) { emit({ type: "error", code: "cancelled", message: "Stopped." }); return; }
     if (error instanceof CreditsError) { emit({ type: "error", code: "credits", message: "The model account is out of credits." }); return; }
