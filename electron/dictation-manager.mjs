@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { cleanDictation, looksLikeInstruction } from "./dictation-cleanup.mjs";
+import { computeEndSilenceMs } from "./dictation-endpoint.mjs";
 import { hasEdits, wordDiff } from "./word-diff.mjs";
 import { createTapMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_PRESETS, DEFAULT_HOTKEY } from "./dictation-hotkey.mjs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
@@ -383,16 +384,13 @@ export class DictationManager {
     this.segments.push(segment);
   }
 
-  /** How long a silence ends the dictation, from what has been said and how you pace yourself. */
+  /** Adaptive endpoint: incomplete phrases wait longer, brief commands finish promptly. */
   endSilenceMs() {
-    const heard = String(this.payload.partial || this.partialText || "").trim();
-    const last = heard.replace(/[.,?!;:"')\]]+$/, "").split(/\s+/).pop()?.toLowerCase() || "";
-    let base = 1100;
-    if (/[.!?]["')\]]?$/.test(heard)) base = 850;            // sounds finished
-    else if (/,$/.test(heard) || OPEN_ENDINGS.has(last)) base = 1900; // clearly mid-thought
-    if (this.lastSpeechAt - this.speechStartedAt < 1400) base *= 0.85; // a short command ends quickly
-    const habit = (this.longestPause || 0) * 1.5;
-    return Math.round(Math.min(2600, Math.max(base, habit)));
+    return computeEndSilenceMs({
+      heard: this.payload.partial || this.partialText || "",
+      speechDurationMs: Math.max(0, (this.lastSpeechAt || 0) - (this.speechStartedAt || 0)),
+      longestPauseMs: this.longestPause || 0,
+    });
   }
 
   /** Everything transcribed so far (finished phrases + the phrase in progress) as one string. */
