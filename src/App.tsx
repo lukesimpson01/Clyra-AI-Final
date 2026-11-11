@@ -10650,6 +10650,11 @@ Please analyze the code you just wrote and fix this error.`;
         {isAppLauncherOpen ? (
           <AppLauncher
             onClose={() => setIsAppLauncherOpen(false)}
+            onOpenGeneratedProject={(projectId) => {
+              setIsAppLauncherOpen(false);
+              setVibeProjectToOpen(projectId);
+              handleWorkspaceTabChange("vibe");
+            }}
             onOpenTool={(tool) => {
               setIsAppLauncherOpen(false);
               setSelectedCommand(null);
