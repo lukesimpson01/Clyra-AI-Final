@@ -54,7 +54,15 @@ await test("the active catalogue preserves fifty originals, six featured additio
   assert.equal(landing.length, 75);
   assert.equal(new Set(landing.map((entry) => entry.landingPageType)).size, 17);
   assert.ok(landing.every((entry) => entry.livePreviewUrl?.startsWith("https://uiuxlabz.github.io/")));
-  assert.ok(landing.every((entry) => entry.sourceScreenshots.length === 1));
+  assert.ok(landing.every((entry) => entry.sourceScreenshots.length === 4));
+  for (const item of landing) {
+    assert.equal(item.sourceScreenshots[0].url, `/library-shots/${item.id}.jpg`);
+    assert.match(item.sourceScreenshots[0].provenance, /Author-provided screenshot\.png/);
+    assert.deepEqual(item.sourceScreenshots.slice(1).map((shot) => shot.url), [1, 2, 3].map((number) => `/library-shots/${item.id}-section-${number}.jpg`));
+    assert.ok(item.sourceScreenshots.slice(1).every((shot) => /different content section/.test(shot.provenance)));
+  }
+  assert.equal(getTemplateManifest("astrofy")?.sourceScreenshots.length, 3, "Preserve existing multi-image galleries");
+  
   assert.ok(landing.every((entry) => entry.status === "unverified" && entry.capabilitiesVerified.length === 0));
   assert.ok(TEMPLATE_LIBRARY.every((item) => item.repositoryUrl.startsWith("https://github.com/")));
 });
@@ -87,13 +95,13 @@ await test("no seed pretends its third-party source is fully installed or alread
 await test("real capture entries reference existing screenshots with alt text and provenance", async () => {
   const missing = TEMPLATE_LIBRARY.filter((item) => !item.sourceScreenshots.length);
   assert.ok(missing.length > 0, "Do not invent image captures for untested apps");
-  assert.equal(TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages" && item.sourceScreenshots.length === 1).length, 75);
+  assert.equal(TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages" && item.sourceScreenshots.length === 4).length, 75);
   for (const item of TEMPLATE_LIBRARY) {
     for (const shot of item.sourceScreenshots) {
       assert.match(shot.url, /^\/library-shots\/[a-z0-9-]+\.jpg$/);
       assert.ok(shot.alt.trim().length > 8);
       if (item.category === "Landing Pages") {
-        assert.match(shot.provenance, /Author-provided screenshot\.png/);
+        assert.match(shot.provenance, /Author-provided screenshot\.png|Real Chromium screenshot/);
         assert.ok(!shot.provenance.includes("local run"));
       } else {
         assert.ok(shot.provenance.includes("local run"));
