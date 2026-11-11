@@ -28,6 +28,16 @@ try {
       // the intermediate frame is not evidence of the final, readable UI.
       await page.waitForTimeout(550);
       await page.screenshot({ path: path.join(output, `library-discover-${width}.png`), animations: "allow" });
+      // Verify the curated Featured Apps chart really appears beneath the
+      // editorial banner, including the AI tools and creative alternatives.
+      const featuredApps = dialog.getByRole("region", { name: "Featured Apps" });
+      await featuredApps.waitFor();
+      await featuredApps.getByRole("button", { name: "View OpenCluely details" }).waitFor();
+      await featuredApps.getByRole("button", { name: "View OpenFilm details" }).waitFor();
+      await featuredApps.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(320);
+      await page.screenshot({ path: path.join(output, `library-featured-apps-${width}.png`), animations: "allow" });
+
 
       const input = dialog.getByRole("textbox", { name: "Search the library" });
       await input.fill("bolt.diy");
