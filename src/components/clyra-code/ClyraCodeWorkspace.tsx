@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AppWindow, Bug, Folder, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { GENERATED_APPS_EVENT, readGeneratedApps, setGeneratedApp } from "../../lib/userGeneratedApps";
 import { api } from "./api";
 import { shouldAskPlatform, useClyraCode, type AgentAction } from "./store";
 import { Sidebar, ClyraMark, SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, type ChatThread, type SidebarSort } from "./Sidebar";
@@ -146,6 +147,12 @@ export default function ClyraCodeWorkspace({
   const [creating, setCreating] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [launcherAppIds, setLauncherAppIds] = useState(() => new Set(readGeneratedApps().map((app) => app.projectId)));
+  useEffect(() => {
+    const update = () => setLauncherAppIds(new Set(readGeneratedApps().map((app) => app.projectId)));
+    window.addEventListener(GENERATED_APPS_EVENT, update);
+    return () => window.removeEventListener(GENERATED_APPS_EVENT, update);
+  }, []);
   // True while a design project is being handed back to the Code workspace:
   // the design surface fades out before the switch, so the handoff reads as
   // one continuous motion instead of a hard cut.
@@ -1099,6 +1106,20 @@ export default function ClyraCodeWorkspace({
                   className="cc-thread-chip"
                 >
                   <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.7} />
+                </button>
+              ) : null}
+              {mode === "code" && activeProject ? (
+                <button type="button"
+                  aria-pressed={launcherAppIds.has(activeProject.id)}
+                  aria-label={launcherAppIds.has(activeProject.id) ? "Remove from app launcher" : "Add to app launcher"}
+                  title={launcherAppIds.has(activeProject.id) ? "Remove from app launcher" : "Add to app launcher"}
+                  onClick={() => {
+                    const next = setGeneratedApp(activeProject.id, activeProject.displayName || activeProject.name, !launcherAppIds.has(activeProject.id));
+                    setLauncherAppIds(new Set(next.map((app) => app.projectId)));
+                  }}
+                  className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                  <AppWindow className="h-[14px] w-[14px]" strokeWidth={1.7} />
+                  <span className="hidden xl:inline">{launcherAppIds.has(activeProject.id) ? "In launcher" : "Add app"}</span>
                 </button>
               ) : null}
               {mode === "code" && activeProject ? (
