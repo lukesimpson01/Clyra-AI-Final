@@ -88,6 +88,7 @@
     "test:composer-dictation": "tsx tools/composer-dictation-unit-tests.ts",
     "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
     "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts",
+    "test:chat-rich": "tsx tools/chat-rich-results-unit-tests.ts",
     "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts"
   },
   "devDependencies": {

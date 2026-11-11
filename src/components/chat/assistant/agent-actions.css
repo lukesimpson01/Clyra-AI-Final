@@ -681,3 +681,22 @@
 @keyframes clyra-pointer-breathe { from { transform: scale(.82); opacity: .65; } to { transform: scale(1.1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .clyra-bf::after, .clyra-pointer__halo, .clyra-pointer__arrow, .clyra-pointer__ripple, .clyra-pointer__flash { animation: none !important; opacity: 0; } .clyra-bf { transition: none; } }
 .clyra-bf--still::after { animation: none !important; }
+
+
+/* A completed tool run folds to one understated line; the person can inspect every real call. */
+.clyra-agent-run__summary {
+  display: flex; align-items: center; gap: 8px; align-self: flex-start;
+  max-width: 100%; min-height: 26px; padding: 2px 1px; border: 0; background: transparent;
+  color: #777; font: 400 12.5px/20px var(--chat-font); cursor: pointer; text-align: left;
+}
+.clyra-agent-run__summary:hover { color: #242424; }
+.clyra-agent-run__summary:focus-visible { outline: 2px solid #1e6fff; outline-offset: 3px; border-radius: 4px; }
+.clyra-agent-run__summary-icon { display: grid; place-items: center; color: #777; }
+.clyra-agent-run__summary > svg:last-child { transition: transform 270ms var(--act-ease); }
+.clyra-agent-run__summary > svg.is-open:last-child { transform: rotate(180deg); }
+.clyra-agent-run .clyra-ai-activity { animation: clyra-act-enter 260ms var(--act-ease) both; }
+.clyra-agent-run .clyra-research-results { animation: clyra-act-enter 330ms var(--act-ease) both; }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-agent-run__summary > svg:last-child { transition: none; }
+  .clyra-agent-run .clyra-ai-activity, .clyra-agent-run .clyra-research-results { animation: none; }
+}

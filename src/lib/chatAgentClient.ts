@@ -14,6 +14,10 @@ export function shouldUseChatAgent(text: string): boolean {
   const t = text.trim();
   if (t.length < 12 || t.startsWith("/")) return false;
   if (/https?:\/\/\S+/i.test(t)) return true;
+  // Visual search and GitHub discovery are read-only tools: no slash command required.
+  if (/\b(?:github|git repos?|repositories|repository|open.source repos?|repo clone|cloneable projects?)\b/i.test(t)) return true;
+  if (/\b(?:find|show|search|look up|compare|research)\b.{0,65}\b(?:images?|photos?|pictures?|screenshots?|photographs?|visual references?)\b/i.test(t)) return true;
+  if (/\b(?:images?|photos?|pictures?|screenshots?|visual references?)\b.{0,40}\b(?:of|for|from)\b/i.test(t) && !/\b(?:create|draw|generate|edit|render)\b/i.test(t)) return true;
   if (/\b(?:research|look\s*up|look into|investigate|find out|search (?:for|up)|google|dig into|fact[- ]?check|verify|is it true|latest|newest|current(?:ly)?|today|this (?:week|month|year)|news|price of|how much (?:is|does)|release(?:d)?|compare|versus|\bvs\b|who (?:is|are|was|made|founded|owns)|what(?:'s| is| are) (?:the )?(?:new|latest|best)|what happened|tell me about|source(?:s)?|cite|citations?)\b/i.test(t)) return true;
   if (/\b(?:make|create|write|draft|put together|generate|build)\b[^.?!]{0,40}\b(?:doc(?:ument)?|notes?|note|summary|report|write-?up|brief|one-?pager|study guide|cheat sheet)\b/i.test(t)) return true;
   return false;
