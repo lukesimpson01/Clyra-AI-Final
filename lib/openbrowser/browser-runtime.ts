@@ -1293,7 +1293,7 @@ export function validateBrowserAction(action: BrowserAction, observation: Struct
     if (!/^https?:\/\//i.test(value)) throw new Error("Only HTTP and HTTPS navigation is allowed");
   }
   if (action.type === "drag" &&
-    (![action.source, action.destination].every((target) => Boolean(targetFromAction(target, observation) || observedAccessibleTarget(target, observation)))) {
+    (![action.source, action.destination].every((target) => Boolean(targetFromAction(target, observation) || observedAccessibleTarget(target, observation))))) {
     throw new Error("Drag source and destination must be visible in the current page observation");
   }
   if (action.type === "wait" && (action.milliseconds || 0) > 5_000) throw new Error("Wait exceeds the five second limit");
