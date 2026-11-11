@@ -282,6 +282,8 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
   }, [call, pendingControl]);
 
   const activeTask = call.activeTask && call.activeTask.status !== "complete" ? call.activeTask : null;
+  const activeSurface = call.activeSurface;
+  const browserTask = Boolean(activeTask && (activeTask.kind === "browser" || activeSurface?.kind === "browser"));
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -306,7 +308,7 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
     return () => window.removeEventListener("keydown", onEscape);
   }, [choosing, pendingControl, activeTask?.id, call.stopTask]);
   useEffect(() => {
-    if (!activeTask || activeTask.kind !== "browser") {
+    if (!browserTask) {
       setTaskImage(null);
       return;
     }
@@ -324,8 +326,7 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1350);
     return () => { live = false; window.clearInterval(timer); };
-  }, [activeTask?.id, activeTask?.kind]);
-  const activeSurface = call.activeSurface;
+  }, [activeTask?.id, browserTask]);
   const previewUrl = activeSurface && isLocalOrWebPreview(activeSurface.url) ? activeSurface.url : null;
   const frameWidth = videoRef.current?.videoWidth || 1;
   const frameHeight = videoRef.current?.videoHeight || 1;
@@ -359,7 +360,7 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
 
       {activeTask ? <section className="clyra-voice-multimodal__stage" aria-label="Live Clyra task progress">
         <header><span className="clyra-voice-multimodal__stage-dot" /><span>{activeSurface?.title || "Clyra is working"}</span><button onClick={call.stopTask} aria-label="Stop agent task" title="Stop"><CircleStop size={18} /></button></header>
-        {taskImage && activeTask.kind === "browser" ? <div className="clyra-voice-multimodal__stage-live"><img src={taskImage} alt="Live capture of the real Clyra browser workspace" /></div> :
+        {taskImage && browserTask ? <div className="clyra-voice-multimodal__stage-live"><img src={taskImage} alt="Live capture of the real Clyra browser workspace" /></div> :
         previewUrl ? <iframe title="Live task workspace" src={previewUrl} sandbox="allow-scripts allow-same-origin allow-forms" /> : <div className="clyra-voice-multimodal__stage-body">
           <h3>{activeTask.label}</h3>
           <p>{activeTask.detail || activeSurface?.subtitle || "Live steps from the Clyra agent harness appear here."}</p>
