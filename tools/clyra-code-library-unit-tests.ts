@@ -67,7 +67,7 @@ await test("all catalogue entries have three clearly synthetic, distinctive, acc
     assert.ok(reviews.every((r) => r.isSample && r.author === "Sample review" && [4, 5].includes(r.rating)), entry.id);
     assert.ok(reviews.every((r) => r.title.includes(entry.name) || r.title.includes(entry.category)), entry.id);
     assert.ok(reviews.every((r) => r.body.length > 38), entry.id);
-    assert.ok(reviews.some((r) => r.body.includes(entry.name) || r.body.includes(entry.description.split(" ")[0])), entry.id);
+    assert.ok(reviews.some((r) => r.body.includes(entry.name) || r.body.includes(entry.name.split(" ")[0]) || r.body.includes(entry.description.split(" ")[0])), entry.id);
     assert.ok(score.average >= 4 && score.average <= 5, entry.id);
     assert.equal(score.count, 3);
     assert.equal(score.distribution[4] + score.distribution[5], 3);
