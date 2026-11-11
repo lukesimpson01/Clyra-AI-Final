@@ -33,7 +33,7 @@ export type NativeReadTool = {
   id: string;
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: unknown;
   riskLevel: "safe" | "review" | "sensitive";
 };
 export type NativeToolResponse = {
@@ -343,10 +343,11 @@ export async function runChatAgent(
         const queries: string[] = (Array.isArray(args.queries) ? args.queries : [args.query]).filter(Boolean).map(String);
         if (!queries.length) return JSON.stringify({ error: "queries is required" });
         if (budget.searchesUsed >= budget.searches) return JSON.stringify({ error: "Search budget for this task is used up. Answer from what you have." });
-        budget.searchesUsed += queries.length;
-        const label = queries.length === 1 ? `Searching the web for “${clip(queries[0], 70)}”` : `Searching the web (${queries.length} queries)`;
+        const allowedQueries = queries.slice(0, budget.searches - budget.searchesUsed);
+        budget.searchesUsed += allowedQueries.length;
+        const label = allowedQueries.length === 1 ? `Searching the web for “${clip(queries[0], 70)}”` : `Searching the web (${allowedQueries.length} queries)`;
         step({ id, tool: "web_search", label, state: "running", query: queries[0] });
-        const outcome = await webSearch(ledger, { queries, category: (args.category as SearchCategory) || "general", timeRange: args.time_range ?? null, allowedDomains: args.allowed_domains, blockedDomains: args.blocked_domains, maxResults: args.max_results, signal: options.signal });
+        const outcome = await webSearch(ledger, { queries: allowedQueries, category: (args.category as SearchCategory) || "general", timeRange: args.time_range ?? null, allowedDomains: args.allowed_domains, blockedDomains: args.blocked_domains, maxResults: args.max_results, signal: options.signal });
         if (!outcome.hits.length) {
           const reason = outcome.providersFailed.map((f) => `${f.name}: ${f.error}`).join("; ") || "no results";
           step({ id, tool: "web_search", label: `Searched the web for “${clip(queries[0], 70)}”`, state: "failed", error: `Nothing came back (${reason})`, query: queries[0] });
