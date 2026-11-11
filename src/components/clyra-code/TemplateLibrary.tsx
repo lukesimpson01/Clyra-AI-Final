@@ -537,6 +537,13 @@ export function TemplateLibrary({
   }, [installedMap, existingProjectIds]);
 
   const spotlight = useMemo(() => {
+    // Lead with genuine upstream screenshots when any exist. Showing five
+    // identical missing-preview cards as the editorial hero looks broken and
+    // implies we reviewed apps we have not actually run.
+    const photographed = catalogue.filter((entry) => entry.sourceScreenshots.length > 0);
+    if (photographed.length) return photographed.slice(0, 5);
+    // For a brand-new catalogue with no captures, preserve category variety
+    // and clearly mark its source-only previews as unavailable.
     const picked: TemplateManifest[] = [];
     const seen = new Set<string>();
     for (const entry of catalogue) {
