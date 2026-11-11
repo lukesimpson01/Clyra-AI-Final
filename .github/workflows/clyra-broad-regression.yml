@@ -50,7 +50,7 @@ jobs:
               test:agent-zero-runtime test:memory test:cowork test:maps test:usage-pricing
           - group: code-notes-and-creator
             tasks: >-
-              test:clipper test:clipper-publishing test:clipper-brand-kits
+              test:clipper test:clipper-publishing test:clipper-brand-kits test:face-tracking
               test:template-library test:clyra-code-platform test:clyra-code-library
               test:clyra-code-brief test:vibe-runtime test:vibe-task-controller
               test:vibe-skills test:vibe-agent-v3 test:study-brain test:notes
@@ -58,7 +58,7 @@ jobs:
             tasks: >-
               test:voice test:speech-flow test:dictation-cleanup test:word-diff
               test:dictation-hotkey test:flow-native test:deepseek-vision
-              test:smart-camera test:computer-agent test:companion
+              test:smart-camera test:computer-agent
               test:windows-compat test:composer-dictation
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +77,7 @@ jobs:
           python-version: "3.11"
       - name: Install image/clipper test prerequisites
         if: matrix.group != 'chat-agent-and-data'
-        run: python -m pip install --disable-pip-version-check "numpy>=1.26,<3" "Pillow>=10,<12"
+        run: python -m pip install --disable-pip-version-check "numpy>=1.26,<3" "Pillow>=10,<12" "opencv-python-headless>=4.10,<5"
       - name: Run all contracts, report each pass/failure
         shell: bash
         env:
@@ -113,6 +113,11 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install screen companion test prerequisites
+        run: python -m pip install --disable-pip-version-check "numpy>=1.26,<3" "Pillow>=10,<12" "opencv-python-headless>=4.10,<5"
       - name: Install real Chromium
         run: npx playwright install --with-deps chromium
       - name: Start Clyra workspace
@@ -133,6 +138,15 @@ jobs:
         run: npm run test:browser-complex
         env:
           CLYRA_URL: http://127.0.0.1:3000
+      - name: Companion API and vision integration
+        run: npm run test:companion
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Browser and companion visual smoke
+        run: node tools/browser-companion-visual-smoke.mjs
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+          CLYRA_VISUAL_ARTIFACTS: qa-artifacts/browser-visual
       - name: Real browser UI tests
         run: npx playwright test -c playwright.clyra-code.config.ts
         env:
