@@ -18,9 +18,11 @@ import {
   Palette,
   Search,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
+import { TemplateRatingGlance, TemplateSampleInlineRating, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
 
@@ -326,6 +328,7 @@ function SourceCard({ entry, onChoose, install, index = 0, wide = false }: { ent
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14px] font-semibold tracking-[-0.012em] text-[#1D1D1F]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#86868B]">{subtitleOf(entry)}</span>
+          <TemplateSampleInlineRating entry={entry} />
         </span>
         <Get entry={entry} install={install} />
       </span>
@@ -354,6 +357,7 @@ function RankRow({ entry, rank, onChoose, install, index }: { entry: TemplateMan
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14.5px] font-medium tracking-[-0.012em] text-[#1D1D1F]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#86868B]">{subtitleOf(entry)}</span>
+          <TemplateSampleInlineRating entry={entry} />
         </span>
         <span className="flex flex-col items-center gap-1">
           <Get entry={entry} install={install} />
@@ -762,8 +766,13 @@ export function TemplateLibrary({
                   <div className="min-w-0 flex-1">
                     <h2 className="text-[30px] font-bold leading-tight tracking-[-0.035em] text-[#1D1D1F] md:text-[34px]">{selected.name}</h2>
                     <p className="mt-0.5 text-[15px] text-[#86868B]">{subtitleOf(selected)}</p>
+                    <TemplateRatingGlance entry={selected} />
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
+                      {install.installed(selected.id) ? <button type="button"
+                        onClick={() => document.getElementById("template-ratings-" + selected.id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })}
+                        className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"
+                        aria-label={"Rate " + selected.name}><Star className="h-3.5 w-3.5" /> Rate</button> : null}
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#F0F0F5] text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
@@ -779,37 +788,32 @@ export function TemplateLibrary({
                     { k: "Stack", v: selected.stack[0] || "—", s: selected.stack[1] || "Primary" },
                     { k: "Status", v: statusLabel(selected), s: "Clyra check" },
                   ].map((cell, i) => (
-                    <div key={cell.k} className={cn("min-w-[132px] flex-1 px-4 text-center", i && "border-l border-black/[0.08]")}>
+                    <div key={cell.k} className={cn("min-w-[146px] flex-1 px-3 text-center", i && "border-l border-black/[0.08]")}>
                       <p className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-[#A1A1A6]">{cell.k}</p>
-                      <p className="mt-1 truncate text-[17px] font-bold tracking-[-0.02em] text-[#6E6E73]" title={cell.v}>{cell.v}</p>
+                      <p className="mt-1 break-words text-[15px] font-semibold leading-[1.35] tracking-[-0.015em] text-[#6E6E73]" title={cell.v}>{cell.v}</p>
                       <p className="mt-0.5 truncate text-[11px] text-[#A1A1A6]">{cell.s}</p>
                     </div>
                   ))}
                 </div>
 
-                <section className="mt-7">
-                  <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#1D1D1F]">Preview</h3>
-                  <div className="cc-scroll mt-3 flex snap-x gap-4 overflow-x-auto pb-2 [scrollbar-width:none]">
-                    <div className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><SourceVisual entry={selected} className="aspect-[16/10] w-full" iconSize={110} /></div>
-                    {selected.sourceScreenshots.slice(1).map((shot) => <figure key={shot.url} className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><img src={shot.url} alt={shot.alt} loading="lazy" className="aspect-[16/10] w-full object-cover" /></figure>)}
-                  </div>
-                  {selected.sourceScreenshots.length ? null : <p className="mt-1.5 text-[12px] text-[#86868B]">No screenshots yet — Get it and Open it to see it running live in Clyra Code.</p>}
-                </section>
+                <TemplateScreenshotGallery entry={selected} />
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <p className="max-w-[720px] text-[15px] leading-[1.6] text-[#1D1D1F]/85">{selected.description}</p>
                   {coverCapabilities(selected).length ? <ul className="mt-3 space-y-1.5 text-[14px] text-[#424245]">{coverCapabilities(selected).map((cap) => <li key={cap} className="flex gap-2"><span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[#86868B]" />{cap}</li>)}</ul> : null}
                 </section>
 
+                <TemplateFeaturesAndRequirements entry={selected} />
+
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#1D1D1F]">What happens when you open it</h3>
                   <ol className="mt-4 grid gap-3 sm:grid-cols-3">
                     {[
-                      { t: "Downloads the source", d: "Get pulls the pinned revision from GitHub into its own Clyra project." },
-                      { t: "Runs it live", d: "Open starts the dev server and shows the running app in the Clyra preview." },
-                      { t: "Ready to change", d: "Clyra’s agent sets it up, then asks what you’d like to change or publish." },
+                      { t: "Inspect the source", d: "Get checks the upstream repository and resolves a source revision before installation." },
+                      { t: "Download safely", d: "After confirmation, Clyra downloads the resolved source into a project. Verification does not execute scripts." },
+                      { t: "Set up and run", d: "Open your project when its dependencies are ready. Some sources require API keys, services or native tooling." },
                     ].map((step, i) => (
-                      <li key={step.t} className="rounded-[14px] bg-[#F5F5F7] p-4">
+                      <li key={step.t} className="border-t border-black/[0.09] py-4 pr-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#007AFF] text-[12px] font-semibold text-white">{i + 1}</span>
                         <p className="mt-2.5 text-[14px] font-semibold text-[#1D1D1F]">{step.t}</p>
                         <p className="mt-1 text-[12.5px] leading-[1.5] text-[#6E6E73]">{step.d}</p>
@@ -818,6 +822,8 @@ export function TemplateLibrary({
                   </ol>
                   {selected.compatibility.length ? <ul className="mt-4 grid gap-2 text-[13px] leading-[1.5] text-[#424245] sm:grid-cols-2">{selected.compatibility.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />{item}</li>)}</ul> : null}
                 </section>
+
+                <TemplateRatingsAndReviews entry={selected} canReview={install.installed(selected.id)} />
 
                 {related(selected).length ? (
                   <section className="mt-8 border-t border-black/[0.08] pt-5">
