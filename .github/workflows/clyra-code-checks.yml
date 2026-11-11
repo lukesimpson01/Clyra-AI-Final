@@ -27,6 +27,9 @@ on:
       - "lib/clyra-code/projects/**"
       - "tools/clyra-code-display-name-tests.ts"
       - "tests/clyra-code/library.spec.ts"
+      - "tests/clyra-code/activity.spec.ts"
+      - "tests/clyra-code/responsive.spec.ts"
+      - "tests/clyra-code/sidebar.spec.ts"
       - "tools/clyra-generated-app-tests.ts"
       - "tools/clyra-code-beam-tests.ts"
       - "tools/clyra-code-platform-unit-tests.ts"
@@ -113,10 +116,10 @@ jobs:
           done
           tail -n 120 /tmp/clyra-source.log
           exit 1
-      - name: Run real Library UI regression
+      - name: Run Library, agent-activity, sidebar and responsive browser regressions
         env:
           CLYRA_URL: http://127.0.0.1:3000
-        run: npx playwright test -c playwright.clyra-code.config.ts tests/clyra-code/library.spec.ts
+        run: npx playwright test -c playwright.clyra-code.config.ts tests/clyra-code/library.spec.ts tests/clyra-code/activity.spec.ts tests/clyra-code/responsive.spec.ts tests/clyra-code/sidebar.spec.ts
       - name: Capture real Clyra Library UI at five responsive widths
         env:
           CLYRA_URL: http://127.0.0.1:3000
