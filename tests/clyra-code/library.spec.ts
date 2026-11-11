@@ -37,6 +37,13 @@ test("source library has featured carousel arrows, real previews and honest miss
   const dialog = page.getByRole("dialog", { name: "Clyra Library" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Templates with previews" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Explore source projects" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "View Astrofy details" }).first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "View LibreChat details" }).first()).toBeVisible();
+  // Screenshotless records are text-and-icon rows; the home page must never
+  // be 47 giant repeated empty grey image panels.
+  await expect(dialog.getByText("Preview not captured")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Next featured app" })).toBeVisible();
   await dialog.getByRole("button", { name: "Next featured app" }).click();
   await dialog.getByRole("button", { name: "Previous featured app" }).click();
