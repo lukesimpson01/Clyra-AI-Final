@@ -68,3 +68,10 @@ vendor/gods-eye-view/.gev-cache/
 /shorts-library/music/Metro Boomin - Space Cadet.mp3
 # Advanced editor projects contain imported user media and generated analysis caches.
 /apps/shorts/app/frame-projects/
+
+# Browser automation profiles are local secrets (cookies, logins and session tokens).
+# Existing committed copies must separately be purged from Git history.
+/.chromium-google-profile/
+/.agentic-browser-profile/
+/.playwright-auth/
+/playwright/.auth/
