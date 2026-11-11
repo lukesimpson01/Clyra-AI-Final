@@ -36,17 +36,32 @@ EXISTING = {"astrofy": 3, "minipaint": 1, "uptime-kuma": 1}
 # First-party images identified in the project's own README or docs.
 # The image pipeline also searches every live source repository's README.
 PREFERRED = {
-    "opencluely": [
-        ("assests/activity.png", "OpenCluely activity view"),
-        ("assests/settings.png", "OpenCluely settings panel"),
-        ("assests/terminal.png", "OpenCluely terminal interface"),
-    ],
+    # OpenCluely's assests/*.png were visually inspected: they are OS icons,
+    # NOT application screenshots. Never pass them off as app previews.
     "openfilm": [("docs/openfilm.webp", "OpenFilm editor workflow")],
     "openhands": [
         ("https://assets.openhands.dev/screenshot/automation-preview.png", "OpenHands automation interface"),
         ("https://github.com/user-attachments/assets/cb6de6f5-ac30-4d04-a76a-b5c259f0c163", "OpenHands agent workspace"),
     ],
     "svgedit": [("docs/screenshot.png", "SVGEdit vector editing workspace")],
+    "kdenlive": [
+        ("https://docs.kdenlive.org/en/_images/timeline-overhaul.png", "Kdenlive timeline editor"),
+        ("https://docs.kdenlive.org/en/_images/timeline-video_track_right_click-2608.webp", "Kdenlive editing track controls"),
+        ("https://docs.kdenlive.org/en/_images/kdenlive_timeline_ruler.webp", "Kdenlive timeline ruler"),
+        ("https://docs.kdenlive.org/en/_images/monitor-preview_resolution-2512.webp", "Kdenlive preview monitor"),
+    ],
+    "natron": [
+        ("https://natron.readthedocs.io/en/rb-2.6/_images/node_viewer_nodetree.gif", "Natron viewer and node graph"),
+        ("https://natron.readthedocs.io/en/rb-2.6/_images/node_image_write_nodetree.jpg", "Natron output and compositing nodes"),
+        ("https://natron.readthedocs.io/en/rb-2.6/_images/node_image_write_render.gif", "Natron render controls"),
+        ("https://natron.readthedocs.io/en/rb-2.6/_images/proppanel_blur_03.png", "Natron effect properties"),
+    ],
+    "krita": [
+        ("https://docs.krita.org/en/_images/Krita_multiple_views.png", "Krita canvas with multiple views"),
+        ("https://docs.krita.org/en/_images/Dockers.png", "Krita layers and tool dockers"),
+        ("https://docs.krita.org/en/_images/Multi-window.png", "Krita multiple editor windows"),
+        ("https://docs.krita.org/en/_images/Canvas-krita.png", "Krita painting canvas"),
+    ],
     "plane": [
         ("https://media.docs.plane.so/GitHub-readme/github-work-items.webp", "Plane work item view"),
         ("https://media.docs.plane.so/GitHub-readme/github-cycles.webp", "Plane cycle planning"),
@@ -96,7 +111,7 @@ def screenshots_from_readme(content: str) -> list[tuple[str,str]]:
     for url, alt in markdown + html:
         url = url.strip().split("#")[0]
         label=(url+" "+alt).lower()
-        if any(word in label for word in ["shield", "badge", "repobeats", "contrib.rocks", "star-history", "github/actions", "travis", "sponsor", "donate", "buymeacoffee", "logo", "github-profile", "discord", "weblate", "docker-logo", "github/workflows"]):
+        if any(word in label for word in ["shield", "badge", "repobeats", "contrib.rocks", "star-history", "github/actions", "travis", "sponsor", "donate", "buymeacoffee", "logo", "github-profile", "discord", "weblate", "docker-logo", "github/workflows", "opengraph", "og-image", "social_preview", "social-preview", "sponsor", "account-avatar", "icon-360creators", "bsky.app/img/avatar", "banner.jpg", "branding/"]):
             continue
         if url.lower().endswith((".svg",".svg?")):continue
         if url in seen:continue
@@ -112,7 +127,7 @@ def normalize(url: str, repo: str, branch: str) -> str:
         url=url.replace("https://github.com/", "https://raw.githubusercontent.com/",1).replace("/blob/","/",1)
     if url.startswith("https://"):return url
     # Leading /image.png in a GitHub README denotes a repo-relative asset.
-    return f"https://raw.githubusercontent.com/{repo}/{branch}/{url.lstrip('./')}"
+    return f"https://raw.githubusercontent.com/{repo}/{branch}/{url[2:] if url.startswith('./') else url.lstrip('/')}"
 
 def candidate_frames(raw: bytes, label: str):
     try:
