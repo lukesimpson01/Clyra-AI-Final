@@ -68,8 +68,10 @@ test.describe("phone width (375px)", () => {
     await page.getByRole("button", { name: "Open sidebar" }).click();
     await page.locator(`[data-project-row="${projectId}"]`).click();
     await expect(page.getByText(`Working in ${PROJECT_NAME}`)).toBeVisible({ timeout: 30_000 });
-    const box = await page.locator('aside[aria-label="Projects"]').boundingBox();
-    expect(box?.width ?? 0).toBeLessThan(2);
+    const drawer = page.locator('aside[aria-label="Projects"]');
+    // This drawer deliberately animates closed. Assert the settled state
+    // rather than sampling its intermediate 4–5px spring frame.
+    await expect.poll(async () => (await drawer.boundingBox())?.width ?? 0, { timeout: 5_000 }).toBeLessThan(2);
     expect(await documentFits(page)).toBeTruthy();
   });
 
