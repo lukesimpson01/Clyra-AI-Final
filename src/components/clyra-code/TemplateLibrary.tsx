@@ -392,22 +392,28 @@ function NoteCard({ entry, onChoose, install, index = 0 }: { entry: TemplateMani
   const reduce = useReducedMotion();
   return (
     <motion.div
-      role="button" tabIndex={0} aria-label={`${entry.name}, ${entry.category}`}
-      initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: Math.min(index, 8) * 0.03, ease: EASE }}
-      onClick={() => onChoose(entry)} onKeyDown={activate(() => onChoose(entry))}
-      className="group flex cursor-pointer flex-col overflow-hidden rounded-[14px] border border-[rgba(55,53,47,0.09)] bg-white text-left outline-none transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[rgba(55,53,47,0.24)] hover:shadow-[0_6px_20px_rgba(15,15,15,0.08)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45"
+      initial={reduce ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index, 8) * 0.03, ease: EASE }}
+      className="group flex min-w-0 flex-col overflow-hidden rounded-[14px] border border-[rgba(55,53,47,0.09)] bg-white text-left transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[rgba(55,53,47,0.24)] hover:shadow-[0_6px_20px_rgba(15,15,15,0.08)]"
     >
-      <span className="relative block aspect-[4/3] overflow-hidden border-b border-[rgba(55,53,47,0.09)] bg-[#F7F6F5]">
-        <SourceVisual entry={entry} className="absolute inset-0" iconSize={56} />
-        <span className="absolute bottom-3 right-3 translate-y-2 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"><Get entry={entry} install={install} /></span>
-      </span>
-      <span className="flex flex-col gap-[3px] px-3.5 pb-3.5 pt-3">
+      <div className="relative aspect-[4/3] border-b border-[rgba(55,53,47,0.09)] bg-[#F7F6F5]">
+        <button type="button" aria-label={`View ${entry.name} details`} onClick={() => onChoose(entry)}
+          className="absolute inset-0 block h-full w-full cursor-pointer overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#3977F6]/55">
+          <SourceVisual entry={entry} className="absolute inset-0" iconSize={56} />
+        </button>
+        <span className="absolute bottom-3 right-3 z-10 translate-y-2 opacity-0 transition-[opacity,transform] duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
+          <Get entry={entry} install={install} />
+        </span>
+      </div>
+      <button type="button" aria-label={`View ${entry.name} details`} onClick={() => onChoose(entry)}
+        className="flex min-w-0 flex-col gap-[3px] px-3.5 pb-3.5 pt-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#3977F6]/55">
         <span className="truncate text-[14px] font-semibold leading-[1.3] text-[#2C2C2B]">{entry.name}</span>
         <span className="line-clamp-2 text-[12.5px] leading-[1.45] text-[#5F5E59]">{entry.description}</span>
         <span className="mt-1.5 flex flex-wrap gap-1">
           {entry.stack.slice(0, 3).map((item) => <span key={item} className="rounded-[5px] bg-[rgba(55,53,47,0.06)] px-1.5 py-[1px] text-[11px] text-[#5F5E59]">{item}</span>)}
         </span>
-      </span>
+      </button>
     </motion.div>
   );
 }
