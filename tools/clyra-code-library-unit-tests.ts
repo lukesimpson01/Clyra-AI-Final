@@ -29,6 +29,24 @@ await test("unverified records do not claim runnable builds or invented screensh
   assert.equal(entry?.status, "unverified");
 });
 
+await test("official upstream previews are attributed and never represented as tested Clyra screenshots", () => {
+  const supplied = ["excalidraw", "actual-budget", "open-webui", "appflowy", "n8n", "penpot", "chatwoot"];
+  for (const id of supplied) {
+    const entry = getTemplateManifest(id);
+    assert.ok(entry?.sourceScreenshots.length, "Missing upstream preview for " + id);
+    for (const shot of entry!.sourceScreenshots) {
+      assert.match(shot.url, /^https:\/\//);
+      assert.ok(shot.alt.length > 8);
+      assert.match(shot.provenance, /Upstream project README/);
+      assert.match(shot.provenance, /Not a screenshot of a running Clyra template/);
+    }
+    assert.equal(entry?.capabilitiesVerified.length, 0);
+    assert.equal(entry?.pinnedCommit, null);
+  }
+  assert.ok(getTemplateManifest("appflowy")!.sourceScreenshots.length >= 5);
+  assert.equal(getTemplateManifest("purffle-shorts")?.sourceScreenshots.length, 0);
+});
+
 await test("source search matches independent comparison labels and capabilities", () => {
   assert.ok(searchTemplateLibrary({ query: "OpusClip" }).some((entry) => entry.id === "chopify"));
   assert.ok(searchTemplateLibrary({ category: "Maps" }).some((entry) => entry.id === "maplibre"));
