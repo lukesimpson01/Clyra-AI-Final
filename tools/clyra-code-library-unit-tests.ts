@@ -62,6 +62,19 @@ await test("the active catalogue preserves fifty originals, six featured additio
     assert.ok(item.sourceScreenshots.slice(1).every((shot) => /different content section/.test(shot.provenance)));
   }
   assert.equal(getTemplateManifest("astrofy")?.sourceScreenshots.length, 3, "Preserve existing multi-image galleries");
+  assert.deepEqual(getTemplateManifest("astrofy")?.sourceScreenshots.map((shot) => shot.url), [
+    "/library-shots/astrofy-1.jpg", "/library-shots/astrofy-2.jpg", "/library-shots/astrofy-3.jpg"
+  ], "Do not replace or reorder the original multi-image gallery");
+  assert.equal(getTemplateManifest("minipaint")?.sourceScreenshots[0]?.url, "/library-shots/minipaint-1.jpg");
+  assert.equal(getTemplateManifest("uptime-kuma")?.sourceScreenshots[0]?.url, "/library-shots/uptime-kuma-1.jpg");
+  for (const id of ["openfilm", "krita", "natron", "penpot", "appflowy", "browseros"]) {
+    assert.ok((getTemplateManifest(id)?.sourceScreenshots.length ?? 0) >= 3, `${id} needs multiple authentic UI screenshots`);
+  }
+  for (const id of ["opencluely", "openhands", "kdenlive", "svgedit"]) {
+    const entry=getTemplateManifest(id);
+    assert.ok(entry, `Featured source ${id} must not disappear`);
+    assert.ok(entry!.sourceScreenshots.every((shot) => shot.provenance.includes("upstream") || shot.provenance.includes("local run")));
+  }
   
   assert.ok(landing.every((entry) => entry.status === "unverified" && entry.capabilitiesVerified.length === 0));
   assert.ok(TEMPLATE_LIBRARY.every((item) => item.repositoryUrl.startsWith("https://github.com/")));
@@ -103,6 +116,8 @@ await test("real capture entries reference existing screenshots with alt text an
       if (item.category === "Landing Pages") {
         assert.match(shot.provenance, /Author-provided screenshot\.png|Real Chromium screenshot/);
         assert.ok(!shot.provenance.includes("local run"));
+      } else if (shot.url.includes("/app-")) {
+        assert.match(shot.provenance, /published screenshot or demonstration frame from upstream/);
       } else {
         assert.ok(shot.provenance.includes("local run"));
       }
