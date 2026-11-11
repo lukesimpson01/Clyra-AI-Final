@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "../lib/clyra-code/library/registry";
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
+import { FEATURED_APP_IDS } from "../lib/clyra-code/library/featured-apps";
 
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) {
@@ -28,13 +29,27 @@ const additionalTen = [
   "libretranslate",
 ] as const;
 
-await test("the active catalogue preserves fifty source apps and adds 75 distinct landing pages", () => {
-  assert.equal(TEMPLATE_LIBRARY.length, 125);
+await test("the active catalogue preserves fifty originals, six featured additions and 75 landing pages", () => {
+  assert.equal(TEMPLATE_LIBRARY.length, 131);
   const ids = new Set(TEMPLATE_LIBRARY.map((item) => item.id));
   const repositories = TEMPLATE_LIBRARY.map((item) => item.repositoryUrl.toLowerCase().replace(/\.git$/, ""));
-  assert.equal(ids.size, 125);
-  assert.equal(new Set(repositories).size, 125);
+  assert.equal(ids.size, 131);
+  assert.equal(new Set(repositories).size, 131);
   for (const id of [...originalForty, ...additionalTen]) assert.ok(ids.has(id), `Missing ${id}`);
+  const newlyAdded = ["opencluely", "openfilm", "svgedit", "kdenlive", "natron", "krita"];
+  for (const id of newlyAdded) assert.ok(ids.has(id), `Missing added featured source: ${id}`);
+  assert.equal(new Set(FEATURED_APP_IDS).size, FEATURED_APP_IDS.length);
+  assert.equal(FEATURED_APP_IDS.length, 9);
+  for (const id of FEATURED_APP_IDS) assert.ok(ids.has(id), `Featured app ${id} is not in the live catalogue`);
+  assert.equal(getTemplateManifest("openhands")?.repositoryUrl, "https://github.com/OpenHands/OpenHands.git");
+  assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === "openhands").length, 1);
+  assert.equal(getTemplateManifest("opencluely")?.licenseSpdxOrReview, "Apache-2.0");
+  assert.equal(getTemplateManifest("openfilm")?.licenseSpdxOrReview, "MIT");
+  for (const id of ["kdenlive", "natron", "krita"]) {
+    const entry = getTemplateManifest(id);
+    assert.equal(entry?.mode, "reference-only");
+    assert.equal(entry?.status, "reference-only");
+  }
   const landing = TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages");
   assert.equal(landing.length, 75);
   assert.equal(new Set(landing.map((entry) => entry.landingPageType)).size, 17);
@@ -50,6 +65,9 @@ await test("categories are derived from live entries, and search finds relevant 
   assert.ok(searchTemplateLibrary({ query: "Perplexity Comet" }).some((item) => item.id === "browseros"));
   assert.ok(searchTemplateLibrary({ query: "Google Maps" }).some((item) => item.id === "facilmap"));
   assert.ok(searchTemplateLibrary({ query: "Lovable" }).some((item) => item.id === "bolt-diy"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe Premiere Pro" }).some((item) => item.id === "kdenlive"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe Illustrator" }).some((item) => item.id === "svgedit"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe After Effects" }).some((item) => item.id === "natron"));
   assert.equal(searchTemplateLibrary({ category: "Landing Pages" }).length, 75);
   assert.ok(searchTemplateLibrary({ query: "KORVA" }).some((item) => item.id === "landing-ai-studio"));
   assert.ok(searchTemplateLibrary({ query: "Coffee" }).some((item) => item.id === "landing-coffee-shop"));
