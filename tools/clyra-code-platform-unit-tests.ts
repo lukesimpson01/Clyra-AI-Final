@@ -257,7 +257,7 @@ let package = Package(
       const testRun = await runSwiftPackage(root, "test", { timeoutMs: 300_000 });
       equal(testRun.ok, true, `tests should pass: ${testRun.tail}`);
       equal(testRun.tests?.failed, 0);
-      ok((testRun.tests?.total ?? 0) >= 1, "at least one test must be counted from real output");
+      ok((testRun.tests?.total ?? 0) >= 1, `at least one test must be counted from real output; tail: ${testRun.tail}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
