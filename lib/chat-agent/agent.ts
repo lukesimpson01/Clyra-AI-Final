@@ -11,6 +11,7 @@
  *   error  credits | unavailable | failed
  */
 import { geocodePlace } from "../research/weather";
+import { inspectPublicGitHubRepo, readPublicGitHubFile } from "./github-reader";
 import { selectProviders } from "../ai/model-capability-registry";
 import { prepareDeepseekChatBody } from "../deepseek-models";
 import {
@@ -187,6 +188,22 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "github_public_repo",
+      description: "Inspect a public GitHub repository's verified metadata and file tree. Use when asked to look into a repo; it returns actual matching code paths, not guesses. For private repositories, report that authentication is required.",
+      parameters: { type: "object", properties: { repo: { type: "string", description: "owner/name or github.com/owner/name" }, focus: { type: "string", description: "Feature or code area to locate, such as chat agent or MCP" } }, required: ["repo"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_public_file",
+      description: "Read a specific file from a public GitHub repository with real line numbers and source URL, after finding its actual path. Never guess file contents. Private and write actions require a separately authenticated GitHub connector.",
+      parameters: { type: "object", properties: { repo: { type: "string" }, path: { type: "string" }, ref: { type: "string", description: "Optional branch or tag, otherwise repository default" } }, required: ["repo", "path"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "show_map",
       description: "Pin a specific place on a map in the chat, with its details and a Directions button. Call it when you are talking about one particular place (a landmark, venue, address, suburb, city). One place per call; use the most specific name, with its city or country.",
       parameters: { type: "object", properties: { place: { type: "string", description: "e.g. 'Sydney Opera House, Sydney, Australia'" } }, required: ["place"] },
@@ -270,6 +287,7 @@ You have tools. Use them for real: never say you searched, opened, read or wrote
 - Casual messages get a casual, short reply with no tools. Match the person's tone.
 - When you are talking about one specific place (a landmark, venue, address, suburb, city), call show_map once so it is pinned on a map. Do not use it for weather.
 - When you create a note, say what it contains in one or two lines; do not paste it all again.
+- For public GitHub repository questions, call github_public_repo to discover verified paths, then github_public_file to read the relevant source. Link to the actual GitHub URLs returned. For private repos and remote edits explain that a connected, approval-aware GitHub integration is needed; don't pretend public access grants write permissions.
 Reply in plain, readable markdown.${inNotes}`;
 }
 
@@ -388,6 +406,33 @@ export async function runChatAgent(
         const links = source.links.filter((l) => !needle || l.text.toLowerCase().includes(needle) || l.url.toLowerCase().includes(needle)).slice(0, 25);
         step({ id, tool: "web_follow_links", label: `Looking through links on ${source.host}`, state: "done", detail: `${links.length} link${links.length === 1 ? "" : "s"}` });
         return JSON.stringify({ links });
+      }
+      case "github_public_repo": {
+        const repo = String(args.repo ?? "");
+        step({ id, tool: "github_public_repo", label: `Inspecting GitHub repository ${clip(repo, 55)}`, state: "running" });
+        try {
+          const result = await inspectPublicGitHubRepo(repo, String(args.focus ?? ""), options.signal);
+          step({ id, tool: "github_public_repo", label: `Inspected ${result.repository}`, state: "done", detail: `${result.totalPublicReadableFiles} files indexed`, sources: [{ url: result.url, host: "github.com", title: result.repository }] });
+          return JSON.stringify({ ok: true, ...result });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "GitHub inspection unavailable.";
+          step({ id, tool: "github_public_repo", label: "Couldn’t inspect GitHub", state: "failed", error: reason });
+          return JSON.stringify({ ok: false, error: reason });
+        }
+      }
+      case "github_public_file": {
+        const repo = String(args.repo ?? "");
+        const filePath = String(args.path ?? "");
+        step({ id, tool: "github_public_file", label: `Reading ${clip(filePath, 60)} on GitHub`, state: "running" });
+        try {
+          const result = await readPublicGitHubFile(repo, filePath, args.ref ? String(args.ref) : undefined, options.signal);
+          step({ id, tool: "github_public_file", label: `Read ${clip(result.path, 60)}`, state: "done", detail: `${result.totalLines} lines`, sources: [{ url: result.url, host: "github.com", title: result.path }] });
+          return JSON.stringify({ ok: true, ...result });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "This GitHub file could not be read.";
+          step({ id, tool: "github_public_file", label: "Couldn’t read GitHub file", state: "failed", error: reason });
+          return JSON.stringify({ ok: false, error: reason });
+        }
       }
       case "show_map": {
         const query = String(args.place ?? "").trim();
