@@ -75,7 +75,7 @@ test("a review is editable, saved locally and does not invent a community rating
   await dialog.getByRole("button", { name: "Save review" }).click();
 
   await expect(dialog.getByText("Useful drawing source")).toBeVisible();
-  await expect(dialog.getByText("Your rating")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Your rating", exact: true })).toBeVisible();
   await expect(dialog.getByText(/Your rating: 4\/5/)).toBeVisible();
   await dialog.getByRole("button", { name: "Edit your review" }).click();
   await expect(dialog.getByPlaceholder("Summarise your experience")).toHaveValue("Useful drawing source");
