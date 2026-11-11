@@ -3081,6 +3081,10 @@ async function startServer() {
         turns,
         {
           createNote: ({ title, markdown, parentId, icon }) => { const page = createNotesPage({ title, markdown, parentId, icon }) as { id: string; title: string } | null; if (!page) throw new Error("Notes could not create the page."); return { id: String(page.id), title: String(page.title || title) }; },
+          // The shared Mission Runtime is the authority for which native
+          // capabilities exist and whether a read action actually succeeded.
+          nativeTools: missionService.nativeTools().filter((tool) => tool.riskLevel === "safe"),
+          invokeNativeTool: (id, args, signal) => missionService.executeNativeTool(id, args as any, signal),
           notes: req.body?.notes ? {
             search: (query) => (notesStore.search(query) as Array<Record<string, unknown>>).map((row) => ({ id: String(row.page_id), title: String(row.title || "Untitled"), snippet: String(row.excerpt || "").replace(/<[^>]+>/g, "") })),
             read: (id) => { const md = notesStore.pageMarkdown(id); const page = notesStore.getPage(id); return md && page ? { title: String(page.title || "Untitled"), markdown: md } : null; },
@@ -3101,7 +3105,19 @@ async function startServer() {
           } : undefined,
         },
         send,
-        { model: typeof req.body?.model === "string" ? req.body.model : undefined, instructions: typeof req.body?.instructions === "string" ? req.body.instructions : undefined, signal: controller.signal },
+        (() => {
+          // An effort setting must change *tool work*, not just the label/model.
+          // Bounded budgets prevent runaway costs on low-RAM computers.
+          const level = String(req.body?.effort || "medium");
+          const limits = level === "light"
+            ? { maxSteps: 10, maxSearches: 4, maxOpens: 6 }
+            : level === "high"
+              ? { maxSteps: 42, maxSearches: 15, maxOpens: 24 }
+              : level === "max"
+                ? { maxSteps: 64, maxSearches: 24, maxOpens: 36 }
+                : { maxSteps: 22, maxSearches: 9, maxOpens: 14 };
+          return { ...limits, model: typeof req.body?.model === "string" ? req.body.model : undefined, instructions: typeof req.body?.instructions === "string" ? req.body.instructions : undefined, signal: controller.signal };
+        })(),
       );
     } catch (error) {
       send({ type: "error", code: "failed", message: error instanceof Error ? error.message : "The agent could not finish." });
