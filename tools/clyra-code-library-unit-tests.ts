@@ -24,7 +24,7 @@ const originalForty = [
 ] as const;
 const additionalTen = [
   "facilmap", "photon-selfhost", "valhalla-router", "supoclip",
-  "browseros", "karakeep", "coolify", "pocketbase", "jellyfin",
+  "browseros", "karakeep", "coolify", "appwrite", "jellyfin",
   "libretranslate",
 ] as const;
 
