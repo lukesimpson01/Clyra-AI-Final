@@ -35,6 +35,34 @@ await test("source search matches independent comparison labels and capabilities
   assert.equal(searchTemplateLibrary({ query: "this will not match" }).length, 0);
 });
 
+await test("the expanded catalogue includes unique missing app types without duplicating existing sources", () => {
+  const added = [
+    "facilmap", "photon-self-hosted", "valhalla", "browseros", "doory",
+    "karakeep", "actual-budget", "bolt-diy", "coolify", "pocketbase",
+    "cryptpad", "jellyfin", "navidrome", "libretranslate", "gitea",
+  ];
+  assert.ok(TEMPLATE_LIBRARY.length >= 83);
+  for (const id of added) assert.ok(getTemplateManifest(id), `Missing source template: ${id}`);
+  for (const id of ["appflowy", "affine", "maplibre", "cutawan"]) {
+    assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === id).length, 1);
+  }
+  const repositorySlugs = TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl.toLowerCase().replace(/\\.git$/, ""));
+  assert.equal(new Set(repositorySlugs).size, repositorySlugs.length);
+});
+
+await test("map services are explicit self-hosted sources and browser source is reference-only", () => {
+  const photon = getTemplateManifest("photon-self-hosted");
+  const valhalla = getTemplateManifest("valhalla");
+  const browseros = getTemplateManifest("browseros");
+  assert.equal(photon?.mode, "engine");
+  assert.equal(valhalla?.mode, "engine");
+  assert.equal(browseros?.mode, "reference-only");
+  assert.match(photon?.warnings.join(" ") ?? "", /public Photon is not an unlimited/);
+  assert.match(valhalla?.warnings.join(" ") ?? "", /OSM extracts/);
+  assert.equal(browseros?.capabilitiesVerified.length, 0);
+  assert.equal(browseros?.pinnedCommit, null);
+});
+
 await test("the bounded checkout scan discovers notices and scripts without executing them", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "clyra-library-test-"));
   try {
