@@ -36,7 +36,8 @@ export function htmlTitleOf(html: string): string | undefined {
 export function displayNameFor(entry: DisplayNameCandidate): string {
   const original = clean(entry.name);
   if (entry.renamedByUser && original) return original;
-  const title = clean(entry.htmlTitle);
+  // HtmlTitleOf already returns plain text. Reject raw markup from untrusted callers.
+  const title = /<[^>]*>/.test(String(entry.htmlTitle ?? "")) ? "" : clean(entry.htmlTitle);
   if (title && !GENERIC_NAMES.has(title.toLowerCase())) return title;
   const packageName = clean(entry.packageName).replace(/^@[^/]+\//, "").replace(/[-_]+/g, " ");
   if (packageName && !GENERIC_NAMES.has(packageName.toLowerCase())) return packageName;
