@@ -1,0 +1,34 @@
+name: Voice multimodal contract tests
+
+on:
+  push:
+    branches:
+      - feat/voice-multimodal-agent-20261112
+  pull_request:
+    paths:
+      - 'src/voice/multimodal.ts'
+      - 'tools/voice-multimodal-tests.ts'
+      - 'src/components/voice/**'
+      - 'src/hooks/useVoiceCall.ts'
+      - 'electron/**'
+      - 'server.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  multimodal-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            src/voice/multimodal.ts
+            tools/voice-multimodal-tests.ts
+            package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run actual visual-intent/frame-buffer regression tests
+        run: npm exec --yes --package=tsx@4.21.0 -- tsx tools/voice-multimodal-tests.ts
