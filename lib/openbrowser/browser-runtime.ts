@@ -1217,6 +1217,38 @@ function locatorForTarget(activePage: Page, target: number | ElementTarget, obse
   return {};
 }
 
+/** Selectors for controls in cross-origin frames must be grounded in a
+ * current ARIA tree, never invented from a stale model action. */
+const ACCESSIBLE_ROLES = new Set([
+  "button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox",
+  "option", "menuitem", "tab", "switch", "slider", "spinbutton", "listbox",
+]);
+function observedAccessibleTarget(target: number | ElementTarget, observation: StructuredObservation): target is ElementTarget {
+  if (typeof target === "number" || !target.role || !target.name) return false;
+  const role = target.role.trim().toLowerCase();
+  const name = target.name.trim();
+  if (!ACCESSIBLE_ROLES.has(role) || !name || name.length > 180) return false;
+  const prefix = `- ${role} "${name}"`;
+  return Boolean(observation.accessibilitySnapshot?.split("\n").some((line) => line.trim().startsWith(prefix)));
+}
+
+/** Playwright's Frame.getByRole can operate within cross-origin frames,
+ * without requesting visual models or bypassing origin protections. */
+async function locatorForObservedAccessibility(activePage: Page, target: ElementTarget): Promise<Locator | undefined> {
+  if (!target.role || !target.name) return undefined;
+  const role = target.role.trim().toLowerCase() as Parameters<Page["getByRole"]>[0];
+  for (const frame of activePage.frames()) {
+    if (frame.isDetached()) continue;
+    const candidate = frame.getByRole(role, { name: target.name.trim(), exact: true });
+    try {
+      if (await candidate.count() === 1 && await candidate.isVisible({ timeout: 500 })) return candidate;
+    } catch {
+      // Navigating or detached frames are not reliable targets.
+    }
+  }
+  return undefined;
+}
+
 function actionLabel(action: BrowserAction, element?: InteractiveElement) {
   const name = element?.name || element?.text || element?.label || element?.placeholder;
   const verb = action.type === "type" ? "Typing in" : action.type === "double_click" ? "Opening" : action.type === "right_click" ? "Opening menu for" : action.type === "hover" ? "Hovering over" : action.type === "scroll_to" ? "Scrolling to" : "Clicking";
@@ -1236,7 +1268,8 @@ function cursorForAction(action: BrowserAction, observation: StructuredObservati
 function isHighImpactTarget(action: BrowserAction, observation: StructuredObservation) {
   if (!("target" in action) || action.target == null) return false;
   const element = targetFromAction(action.target, observation);
-  const text = `${element?.name || ""} ${element?.text || ""}`;
+  const semantic = typeof action.target === "number" ? "" : [action.target.name, action.target.label, action.target.text, action.target.placeholder].filter(Boolean).join(" ");
+  const text = `${element?.name || ""} ${element?.text || ""} ${semantic}`;
   // Login/registration is also an explicit user boundary: the agent may read
   // public pages but never starts an authentication flow on its own.
   return /(?:sign in|log in|login|register|create account|buy now|place order|confirm purchase|send message|send email|post|publish|delete|remove account|change password|submit application|book now|cancel subscription|agree and submit)/i.test(text);
@@ -1246,14 +1279,15 @@ export function validateBrowserAction(action: BrowserAction, observation: Struct
   const targeted = new Set(["click", "double_click", "right_click", "hover", "focus", "scroll_to", "inspect_element", "download", "type", "select_option", "check", "uncheck"]);
   if (targeted.has(action.type) && "target" in action && action.target != null) {
     const observed = targetFromAction(action.target, observation);
-    const fallback = typeof action.target !== "number" && Boolean(action.target.css || action.target.coordinates);
+    const fallback = typeof action.target !== "number" && Boolean(action.target.css || action.target.coordinates || observedAccessibleTarget(action.target, observation));
     if (!observed && !fallback) throw new Error("The target is not present in the latest page observation");
   }
   if (action.type === "navigate" || (action.type === "open_tab" && action.url)) {
     const value = normalizeBrowserInput(action.type === "navigate" ? action.url : action.url!, profile?.settings.defaultSearchEngine || DEFAULT_SETTINGS.defaultSearchEngine);
     if (!/^https?:\/\//i.test(value)) throw new Error("Only HTTP and HTTPS navigation is allowed");
   }
-  if (action.type === "drag" && (!targetFromAction(action.source, observation) || !targetFromAction(action.destination, observation))) {
+  if (action.type === "drag" &&
+    (![action.source, action.destination].every((target) => Boolean(targetFromAction(target, observation) || observedAccessibleTarget(target, observation)))) {
     throw new Error("Drag source and destination must be visible in the current page observation");
   }
   if (action.type === "wait" && (action.milliseconds || 0) > 5_000) throw new Error("Wait exceeds the five second limit");
@@ -1440,7 +1474,12 @@ async function runAgentGoogleSearch(
 
 async function executeAction(activePage: Page, action: BrowserAction, observation: StructuredObservation, source: "agent" | "user") {
   const currentProfile = await loadProfile();
-  const target = "target" in action && action.target != null ? locatorForTarget(activePage, action.target, observation) : {};
+  const target: { locator?: Locator; element?: InteractiveElement; coordinates?: { x: number; y: number } } =
+    "target" in action && action.target != null ? locatorForTarget(activePage, action.target, observation) : {};
+  if ("target" in action && action.target != null && !target.locator && observedAccessibleTarget(action.target, observation)) {
+    target.locator = await locatorForObservedAccessibility(activePage, action.target);
+    if (!target.locator) throw new Error("The accessible control is no longer available in its iframe");
+  }
   if (source === "agent" && target.coordinates && !["select_option", "check", "uncheck"].includes(action.type)) {
     await moveAgentPointer(activePage, target.coordinates);
   }
@@ -1526,6 +1565,12 @@ async function executeAction(activePage: Page, action: BrowserAction, observatio
     case "drag": {
       const sourceTarget = locatorForTarget(activePage, action.source, observation);
       const destinationTarget = locatorForTarget(activePage, action.destination, observation);
+      if (!sourceTarget.locator && observedAccessibleTarget(action.source, observation)) {
+        sourceTarget.locator = await locatorForObservedAccessibility(activePage, action.source);
+      }
+      if (!destinationTarget.locator && observedAccessibleTarget(action.destination, observation)) {
+        destinationTarget.locator = await locatorForObservedAccessibility(activePage, action.destination);
+      }
       if (!sourceTarget.locator || !destinationTarget.locator) throw new Error("Both drag targets must be visible elements");
       await sourceTarget.locator.dragTo(destinationTarget.locator);
       break;
@@ -1959,7 +2004,7 @@ Return strict JSON only:
 
 evaluation_previous_goal, memory, and next_goal are mandatory every step. Judge the previous goal only from what is visible now: Success (clearly achieved), Failure (clearly not), Uncertain (cannot tell).
 
-Use target indexes or {"elementId":"e..."}. Available actions: navigate, search, go_back, go_forward, reload, stop_loading, click, double_click, right_click, hover, type, focus, press_key, key_combination, scroll, scroll_to, scroll_to_top, scroll_to_bottom, select_option, check, uncheck, drag, open_tab, switch_tab, close_tab, duplicate_tab, restore_closed_tab, wait, read_page, inspect_element, find_text, extract, ask_user, done.
+Use current element indexes or {"elementId":"e..."}. For a control shown ONLY in the ACCESSIBILITY TREE (such as a cross-origin iframe), select {"role":"button","name":"Exact accessible name"}; never guess a name absent from that tree. Available actions: navigate, search, go_back, go_forward, reload, stop_loading, click, double_click, right_click, hover, type, focus, press_key, key_combination, scroll, scroll_to, scroll_to_top, scroll_to_bottom, select_option, check, uncheck, drag, open_tab, switch_tab, close_tab, duplicate_tab, restore_closed_tab, wait, read_page, inspect_element, find_text, extract, ask_user, done.
 
 Every browser action object must put its action name in the "type" field, for example {"type":"type","target":2,"text":"laptop"}. Never use an "action" field in place of "type".
 
