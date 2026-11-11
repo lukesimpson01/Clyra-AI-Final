@@ -10,6 +10,7 @@
 
 import { LANDING_PAGE_SOURCES } from "./landing-pages";
 import { LANDING_PAGE_SECTION_CAPTURES } from "./landing-page-section-captures";
+import { APP_SOURCE_SCREENSHOTS } from "./upstream-app-screenshots";
 
 export type TemplateMode = "full-app" | "framework" | "engine" | "integration" | "reference-only";
 export type TemplateStatus = "unverified" | "runnable-now" | "requires-setup" | "integration-sdk" | "reference-only" | "unavailable";
@@ -322,13 +323,29 @@ function withCaptures(manifest: TemplateManifest): TemplateManifest {
       captureProvenance: `Original homepage preview from ${landing.repository}, followed by real different-section Chromium captures of the public demo. No local build of the template is implied.`,
     };
   }
-  const shots = CAPTURED[manifest.id];
-  if (!shots) return manifest;
-  const capturedAt = "2026-11-10";
+  const previous = CAPTURED[manifest.id] ?? [];
+  // README images are author-authored source evidence, but banners, social
+  // OpenGraph thumbnails, avatars and logos are not useful UI screenshots.
+  // Preserve every originally captured image before adding any new views.
+  const supplemental = (APP_SOURCE_SCREENSHOTS[manifest.id] ?? []).filter((shot) =>
+    !/(?:opengraph|og-image|social[_-]?preview|banner\.|hero-nodes|landing-cover|github-cover|avatar|header(?:-dark)?\.png|excalidraw_github_cover|product_showcase|account-avatar)/i.test(shot.origin)
+    && manifest.id !== "peertube");
+  if (!previous.length && !supplemental.length) return manifest;
+  const oldCaptures = previous.map(([file, alt]) => ({
+    url: `/library-shots/${file}`, alt, capturedAt: "2026-11-10",
+    provenance: "Captured by Clyra from a local run of the unmodified upstream source.",
+  }));
+  const newCaptures = supplemental.map((shot) => ({
+    url: `/library-shots/${shot.file}`, alt: shot.alt,
+    capturedAt: "2026-11-12",
+    provenance: `Genuine published screenshot or demonstration frame from upstream: ${shot.origin}. Not proof of a Clyra local build.`,
+  }));
   return {
     ...manifest,
-    sourceScreenshots: shots.map(([file, alt]) => ({ url: `/library-shots/${file}`, alt, capturedAt, provenance: "Captured by Clyra from a local run of the unmodified upstream source." })),
-    captureProvenance: "Captured from a local run of the upstream source on 2026-11-10.",
+    sourceScreenshots: [...oldCaptures, ...newCaptures],
+    captureProvenance: previous.length
+      ? "Original local-run captures are shown first. Further images come from upstream source documentation or demos."
+      : "These are screenshots or demonstration frames published by the upstream project, not a Clyra-local execution.",
   };
 }
 
