@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "../lib/clyra-code/library/registry";
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
+import { displayNameFor, htmlTitleOf } from "../lib/clyra-code/projects/display-name";
 
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) {
@@ -45,6 +46,14 @@ await test("official upstream previews are attributed and never represented as t
   }
   assert.ok(getTemplateManifest("appflowy")!.sourceScreenshots.length >= 5);
   assert.equal(getTemplateManifest("purffle-shorts")?.sourceScreenshots.length, 0);
+});
+
+await test("missing project-name helper restores safe display labels without changing stored names", () => {
+  assert.equal(htmlTitleOf("<html><title>Acme Dashboard &amp; Reports</title></html>"), "Acme Dashboard & Reports");
+  assert.equal(htmlTitleOf("<html><body>No title</body></html>"), undefined);
+  assert.equal(displayNameFor({ name: "Untitled project", htmlTitle: "Acme Dashboard" }), "Acme Dashboard");
+  assert.equal(displayNameFor({ name: "Build me a dashboard", htmlTitle: "Vite + React", packageName: "@org/sales-panel" }), "Sales Panel");
+  assert.equal(displayNameFor({ name: "My Custom Project", htmlTitle: "Other Name", renamedByUser: true }), "My Custom Project");
 });
 
 await test("source search matches independent comparison labels and capabilities", () => {
