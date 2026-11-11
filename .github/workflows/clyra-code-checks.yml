@@ -1,5 +1,10 @@
 name: Clyra Code contracts
 
+# New branch commits supersede obsolete CI runs, saving runner time.
+concurrency:
+  group: clyra-code-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
