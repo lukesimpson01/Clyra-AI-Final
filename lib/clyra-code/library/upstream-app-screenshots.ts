@@ -11,33 +11,52 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "origin": "https://raw.githubusercontent.com/ItzCrazyKns/Perplexica/master/.assets/vane-screenshot.png"
     }
   ],
+  "openhands": [
+    {
+      "file": "app-openhands-source-1.jpg",
+      "alt": "openhands: OpenHands automation interface (upstream app image)",
+      "origin": "https://assets.openhands.dev/screenshot/automation-preview.png"
+    },
+    {
+      "file": "app-openhands-source-2.jpg",
+      "alt": "openhands: OpenHands agent workspace (upstream app image)",
+      "origin": "https://github.com/user-attachments/assets/cb6de6f5-ac30-4d04-a76a-b5c259f0c163"
+    }
+  ],
   "gitea": [
     {
       "file": "app-gitea-source-1.jpg",
-      "alt": "gitea: Profile (upstream app image)",
-      "origin": "https://dl.gitea.com/screenshots/user_profile.png"
+      "alt": "gitea: Register (upstream app image)",
+      "origin": "https://dl.gitea.com/screenshots/register.png"
+    }
+  ],
+  "hoppscotch": [
+    {
+      "file": "app-hoppscotch-source-1.jpg",
+      "alt": "hoppscotch: Hoppscotch (upstream app image)",
+      "origin": "https://avatars.githubusercontent.com/u/56705483"
     },
     {
-      "file": "app-gitea-source-2.jpg",
-      "alt": "gitea: Orgs (upstream app image)",
-      "origin": "https://dl.gitea.com/screenshots/explore_orgs.png"
+      "file": "app-hoppscotch-source-2.jpg",
+      "alt": "hoppscotch: Hoppscotch (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/hoppscotch/hoppscotch/main/packages/hoppscotch-common/public/images/banner-dark.png"
     }
   ],
   "nocodb": [
     {
       "file": "app-nocodb-source-1.jpg",
-      "alt": "nocodb: 2 (upstream app image)",
-      "origin": "https://github.com/nocodb/nocodb/assets/86527202/a127c05e-2121-4af2-a342-128e0e2d0291"
+      "alt": "nocodb: video avi — frame 14 (upstream app image)",
+      "origin": "https://github.com/nocodb/nocodb/assets/86527202/e2fad786-f211-4dcb-9bd3-aaece83a6783"
     },
     {
       "file": "app-nocodb-source-2.jpg",
-      "alt": "nocodb: 3 (upstream app image)",
-      "origin": "https://github.com/nocodb/nocodb/assets/86527202/674da952-8a06-4848-a0e8-a7b02d5f5c88"
+      "alt": "nocodb: video avi — frame 47 (upstream app image)",
+      "origin": "https://github.com/nocodb/nocodb/assets/86527202/e2fad786-f211-4dcb-9bd3-aaece83a6783"
     },
     {
       "file": "app-nocodb-source-3.jpg",
-      "alt": "nocodb: 4 (upstream app image)",
-      "origin": "https://github.com/nocodb/nocodb/assets/86527202/cbc5152a-9caf-4f77-a8f7-92a9d06d025b"
+      "alt": "nocodb: 2 (upstream app image)",
+      "origin": "https://github.com/nocodb/nocodb/assets/86527202/a127c05e-2121-4af2-a342-128e0e2d0291"
     }
   ],
   "uptime-kuma": [
@@ -69,6 +88,13 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "origin": "https://github.com/user-attachments/assets/388224f4-0792-4e75-96d1-f1c671b298a3"
     }
   ],
+  "plane": [
+    {
+      "file": "app-plane-source-1.jpg",
+      "alt": "plane: Plane work item view (upstream app image)",
+      "origin": "https://media.docs.plane.so/GitHub-readme/github-work-items.webp"
+    }
+  ],
   "wekan": [
     {
       "file": "app-wekan-source-1.jpg",
@@ -86,8 +112,18 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
   "cal-diy": [
     {
       "file": "app-cal-diy-source-1.jpg",
-      "alt": "cal-diy: 210054112 5955e812 a76e 4160 9ddd 58f2c72f1cce (upstream app image)",
-      "origin": "https://user-images.githubusercontent.com/8019099/210054112-5955e812-a76e-4160-9ddd-58f2c72f1cce.png"
+      "alt": "cal-diy: booking-screen — frame 45 (upstream app image)",
+      "origin": "https://github.com/calcom/cal.diy/assets/8019099/407e727e-ff19-4ca4-bcae-049dca05cf02"
+    },
+    {
+      "file": "app-cal-diy-source-2.jpg",
+      "alt": "cal-diy: booking-screen — frame 150 (upstream app image)",
+      "origin": "https://github.com/calcom/cal.diy/assets/8019099/407e727e-ff19-4ca4-bcae-049dca05cf02"
+    },
+    {
+      "file": "app-cal-diy-source-3.jpg",
+      "alt": "cal-diy: booking-screen — frame 249 (upstream app image)",
+      "origin": "https://github.com/calcom/cal.diy/assets/8019099/407e727e-ff19-4ca4-bcae-049dca05cf02"
     }
   ],
   "penpot": [
@@ -151,8 +187,13 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
     },
     {
       "file": "app-twenty-source-2.jpg",
-      "alt": "twenty: Customize your layouts (upstream app image)",
-      "origin": "https://raw.githubusercontent.com/twentyhq/twenty/main/packages/twenty-website/public/images/readme/v2-tools-light.webp"
+      "alt": "twenty: Create your apps (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/twentyhq/twenty/main/packages/twenty-website/public/images/readme/v2-build-apps-light.webp"
+    },
+    {
+      "file": "app-twenty-source-3.jpg",
+      "alt": "twenty: Stay on top with version control (upstream app image)",
+      "origin": "https://raw.githubusercontent.com/twentyhq/twenty/main/packages/twenty-website/public/images/readme/v2-version-control-light.webp"
     }
   ],
   "chatwoot": [
@@ -191,6 +232,11 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "file": "app-peertube-source-1.jpg",
       "alt": "peertube: screenshot (upstream app image)",
       "origin": "https://asso.framasoft.org/pic/wI6n1YIH/hKfCL8Xi.png"
+    },
+    {
+      "file": "app-peertube-source-2.jpg",
+      "alt": "peertube: Sx0PSrH1 (upstream app image)",
+      "origin": "https://asso.framasoft.org/pic/UbNnLlzV/Sx0PSrH1.png"
     }
   ],
   "mastodon": [
@@ -220,6 +266,16 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
   "ghost": [
     {
       "file": "app-ghost-source-1.jpg",
+      "alt": "ghost: Ghost (upstream app image)",
+      "origin": "https://user-images.githubusercontent.com/65487235/157884383-1b75feb1-45d8-4430-b636-3f7e06577347.png"
+    },
+    {
+      "file": "app-ghost-source-2.jpg",
+      "alt": "ghost: Ghost (upstream app image)",
+      "origin": "https://user-images.githubusercontent.com/65487235/157849205-aa24152c-4610-4d7d-b752-3a8c4f9319e6.png"
+    },
+    {
+      "file": "app-ghost-source-3.jpg",
       "alt": "ghost: Fiercely independent, professional publishing. Ghost is the most popular open source, head (upstream app image)",
       "origin": "https://user-images.githubusercontent.com/353959/169805900-66be5b89-0859-4816-8da9-528ed7534704.png"
     }
@@ -227,8 +283,18 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
   "activepieces": [
     {
       "file": "app-activepieces-source-1.jpg",
+      "alt": "activepieces: Activepieces (upstream app image)",
+      "origin": "https://github.com/activepieces/activepieces/assets/1812998/76c97441-c285-4480-bc75-30a0c73ed340"
+    },
+    {
+      "file": "app-activepieces-source-2.jpg",
       "alt": "activepieces: create action (upstream app image)",
       "origin": "https://raw.githubusercontent.com/activepieces/activepieces/main/docs/resources/create-action.png"
+    },
+    {
+      "file": "app-activepieces-source-3.jpg",
+      "alt": "activepieces: ShahedAlMashni (upstream app image)",
+      "origin": "https://avatars.githubusercontent.com/u/41443850?v=4?s=100"
     }
   ],
   "actual": [
@@ -281,6 +347,30 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "origin": "https://raw.githubusercontent.com/karakeep-app/karakeep/main/screenshots/homepage.png?raw=true"
     }
   ],
+  "coolify": [
+    {
+      "file": "app-coolify-source-1.jpg",
+      "alt": "coolify: Netrouting (upstream app image)",
+      "origin": "https://github.com/netroutingcom.png"
+    },
+    {
+      "file": "app-coolify-source-2.jpg",
+      "alt": "coolify: MindEd Tech (upstream app image)",
+      "origin": "https://github.com/mindedtech.png"
+    },
+    {
+      "file": "app-coolify-source-3.jpg",
+      "alt": "coolify: ULTRASERVERS (upstream app image)",
+      "origin": "https://github.com/ULTRASERVERS.png"
+    }
+  ],
+  "appwrite": [
+    {
+      "file": "app-appwrite-source-1.jpg",
+      "alt": "appwrite: image (upstream app image)",
+      "origin": "https://github.com/user-attachments/assets/55a81268-4ecc-46cd-bdf5-73f7e8662fee"
+    }
+  ],
   "libretranslate": [
     {
       "file": "app-libretranslate-source-1.jpg",
@@ -317,6 +407,23 @@ export const APP_SOURCE_SCREENSHOTS: Record<string, Array<{file:string;alt:strin
       "file": "app-kdenlive-source-1.jpg",
       "alt": "kdenlive: Kdenlive timeline editor (upstream app image)",
       "origin": "https://docs.kdenlive.org/en/_images/timeline-overhaul.png"
+    }
+  ],
+  "natron": [
+    {
+      "file": "app-natron-source-1.jpg",
+      "alt": "natron: Natron viewer and node graph (upstream app image)",
+      "origin": "https://natron.readthedocs.io/en/rb-2.6/_images/node_viewer_nodetree.gif"
+    },
+    {
+      "file": "app-natron-source-2.jpg",
+      "alt": "natron: Natron render controls (upstream app image)",
+      "origin": "https://natron.readthedocs.io/en/rb-2.6/_images/node_image_write_render.gif"
+    },
+    {
+      "file": "app-natron-source-3.jpg",
+      "alt": "natron: Natron effect properties (upstream app image)",
+      "origin": "https://natron.readthedocs.io/en/rb-2.6/_images/proppanel_blur_03.png"
     }
   ],
   "krita": [
