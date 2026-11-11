@@ -51,11 +51,11 @@ test("the Code and Design tabs switch the workspace, and Design shows the OpenDe
   await expect(
     page.locator('iframe[title="OpenDesign"], :text("Clyra Design is not running"), :text("Starting Clyra Design…")').first(),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("heading", { name: "What are we building today?" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "What are we designing?" })).toHaveCount(0);
 
   await page.getByRole("tab", { name: "Code", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "What are we building today?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible();
 });
 
 test("the Design tab keeps the workspace header with its mode switch", async ({ page }) => {
