@@ -37,4 +37,4 @@ capacity.add({ ...sample(8_000), image: "data:image/png;base64,AA==" });
 assert.equal(capacity.size, 3);
 capacity.clear();
 assert.equal(capacity.size, 0);
-console.log("voice-multimodal-tests: 21 visual-intent/frame-history assertions passed");
+console.log("voice-multimodal-tests: visual-intent and frame-history checks passed");
