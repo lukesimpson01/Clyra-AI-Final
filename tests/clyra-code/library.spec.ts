@@ -119,6 +119,13 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   await expect(dialog.getByRole("link", { name: "Live demo" })).toHaveAttribute("href", "https://uiuxlabz.github.io/ai-studio-html-template/");
   await expect(dialog.getByText(/Original homepage preview from uiuxlabz\/ai-studio-html-template/)).toBeVisible();
   await expect(dialog.locator('img[src^="/library-shots/landing-ai-studio"]')).toHaveCount(4);
+  const previews = dialog.getByLabel("Template screenshot gallery");
+  const nextImage = dialog.getByRole("button", { name: "Next preview screenshot" });
+  await expect(dialog.getByText("4 real screenshots")).toBeVisible();
+  await expect(nextImage).toBeVisible();
+  const beforeScroll = await previews.evaluate((node) => node.scrollLeft);
+  await nextImage.click();
+  await expect.poll(async () => previews.evaluate((node) => node.scrollLeft), { timeout: 5_000 }).toBeGreaterThan(beforeScroll + 50);
   const shot = dialog.locator('img[src="/library-shots/landing-ai-studio.jpg"]').first();
   await expect(shot).toBeVisible();
   expect(await shot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 500)).toBeTruthy();
