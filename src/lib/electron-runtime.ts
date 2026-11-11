@@ -226,6 +226,7 @@ export type ClyraDesktopBridge = {
   voice?: {
     listSources: () => Promise<{ ok: boolean; sources?: { id: string; name: string; thumbnail?: string }[]; error?: string }>;
     selectSource: (id: string) => Promise<{ ok: boolean; error?: string }>;
+    taskFrame: () => Promise<{ ok: boolean; image?: string; error?: string }>;
     guide: (question: string) => Promise<{ ok: boolean; error?: string; pointer?: unknown }>;
     beginControl: () => Promise<{ ok: boolean; error?: string }>;
     stopControl: () => Promise<{ ok: boolean; error?: string }>;
