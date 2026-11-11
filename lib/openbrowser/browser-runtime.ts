@@ -2484,7 +2484,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
   let lastFingerprint = "";
   let lastNudgeStep = 0;
   const localPageTask = taskExplicitlyTargetsLocalPage(task);
-  const lockedTabId = options.tabId || (await refreshElectronTabState())?.activeTabId || electronActiveTabId || undefined;
+  let workingTabId = options.tabId || (await refreshElectronTabState())?.activeTabId || electronActiveTabId || undefined;
   const requiresVisibleProgress = /\b(?:search|find|go to|navigate|open|click|fill|submit|compare|research)\b/i.test(task);
   // A summary is a real browser task, but its evidence is the page observation
   // itself. Requiring an unrelated click before it may finish led the native
@@ -2503,7 +2503,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
       await waitWhilePaused(taskAbort.signal, emit);
       if (taskAbort.signal.aborted) throw new DOMException("Task cancelled", "AbortError");
-      const observation = await serializeOperation(() => getElectronObservation(lockedTabId));
+      const observation = await serializeOperation(() => getElectronObservation(workingTabId));
       if (/^https?:\/\//i.test(observation.page.url)) {
         visitedUrls.add(observation.page.url);
         if (isLikelyDetailPage(observation.page.url)) visitedDetailUrls.add(observation.page.url);
@@ -2601,17 +2601,24 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
           emit({ phase: "waiting_for_user", message: candidate.question, step });
           return { message: `${candidate.question}\n\n${candidate.reason}`, steps: history, plan, facts, waitingForUser: true, state: await getManagedBrowserState() };
         }
-        const before = await serializeOperation(() => getElectronObservation(lockedTabId));
+        const before = await serializeOperation(() => getElectronObservation(workingTabId));
         const signature = `${before.page.fingerprint}|${JSON.stringify(candidate)}`;
         if ((attempted.get(signature) || 0) >= 2) continue;
         actionRepeats.set(repeatSignature(candidate), (actionRepeats.get(repeatSignature(candidate)) || 0) + 1);
         try {
           const action = validateBrowserAction(candidate, before, "agent");
           const cursor = cursorForAction(action, before);
-          await setElectronCursor(cursor, lockedTabId);
+          await setElectronCursor(cursor, workingTabId);
           agentStatus = "executing";
           emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
-          const result = await serializeOperation(() => runElectronAction(action, before, "agent", lockedTabId));
+          const result = await serializeOperation(() => runElectronAction(action, before, "agent", workingTabId));
+          // Multi-tab tasks must follow an explicit tab lifecycle operation.
+          // Previously every subsequent observation stayed pinned to the
+          // original tab, so opening a result in a new tab stranded the agent.
+          if (["open_tab", "switch_tab", "close_tab", "duplicate_tab", "restore_closed_tab"].includes(action.type)
+            && result.state?.activeTabId) {
+            workingTabId = result.state.activeTabId;
+          }
           if (/^https?:\/\//i.test(result.observation.page.url)) {
             visitedUrls.add(result.observation.page.url);
             if (isLikelyDetailPage(result.observation.page.url)) visitedDetailUrls.add(result.observation.page.url);
@@ -2650,7 +2657,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
         }
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        const lastObservation = await serializeOperation(() => getElectronObservation(lockedTabId)).catch(() => null);
+        const lastObservation = await serializeOperation(() => getElectronObservation(workingTabId)).catch(() => null);
         finalMessage = `I could not complete the task: ${MAX_CONSECUTIVE_FAILURES} browser actions in a row failed. Most recent problem: ${failures[failures.length - 1] || "the page did not respond to any attempted control"}. I stopped instead of looping.`;
         agentStatus = "failed";
         const failEvidence = completionEvidence(lastObservation, plan, completedCriteria);
@@ -2662,7 +2669,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     }
     finalMessage = `${finalMessage}\n\nI reached the bounded action limit without claiming the task was complete.`;
     agentStatus = "failed";
-    const limitEvidence = completionEvidence(await serializeOperation(() => getElectronObservation(lockedTabId)).catch(() => null), plan, completedCriteria);
+    const limitEvidence = completionEvidence(await serializeOperation(() => getElectronObservation(workingTabId)).catch(() => null), plan, completedCriteria);
     emit({ phase: "failed", kind: "complete", message: finalMessage, plan: plan || undefined, success: false, evidence: limitEvidence, completedCriteria: completedCriteria.size, totalCriteria: plan?.successCriteria.length || 0, facts: facts.length });
     finishAgentSession({ message: finalMessage, steps: history, facts });
     return { message: finalMessage, steps: history, plan: plan || { goal: task, steps: [], successCriteria: [] }, facts, success: false, evidence: limitEvidence, state: await getManagedBrowserState() };
@@ -2684,7 +2691,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
     agentPaused = false;
     manualControl = false;
     wakeAgent();
-    await setElectronCursor(undefined, lockedTabId);
+    await setElectronCursor(undefined, workingTabId);
     if (["completed", "failed", "cancelled"].includes(agentStatus)) setTimeout(() => { if (!activeTask) agentStatus = "idle"; }, 1_000);
   }
 }
