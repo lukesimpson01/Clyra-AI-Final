@@ -46,7 +46,7 @@ await test("the expanded catalogue includes unique missing app types without dup
   for (const id of ["appflowy", "affine", "maplibre", "cutawan"]) {
     assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === id).length, 1);
   }
-  const repositorySlugs = TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl.toLowerCase().replace(/\\.git$/, ""));
+  const repositorySlugs = TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl.toLowerCase().replace(/\.git$/, ""));
   assert.equal(new Set(repositorySlugs).size, repositorySlugs.length);
 });
 
