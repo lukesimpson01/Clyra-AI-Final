@@ -31,7 +31,7 @@ test("source-library API returns unique active entries without claiming unverifi
   expect(catalogue.entries.find((entry) => entry.id === "bolt-diy")?.sourceScreenshots).toHaveLength(0);
   const landings = catalogue.entries.filter((entry) => entry.id.startsWith("landing-"));
   expect(landings.length).toBe(75);
-  expect(landings.every((entry) => entry.sourceScreenshots.length === 1)).toBeTruthy();
+  expect(landings.every((entry) => entry.sourceScreenshots.length === 4)).toBeTruthy();
 
 });
 
@@ -84,12 +84,21 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   expect(new Set(body.entries.map((entry) => entry.landingPageType)).size).toBe(17);
   for (const entry of body.entries) {
     expect(entry.sourceScreenshots[0].url).toBe(`/library-shots/${entry.id}.jpg`);
+    expect(entry.sourceScreenshots.map((shot) => shot.url)).toEqual([
+      `/library-shots/${entry.id}.jpg`,
+      `/library-shots/${entry.id}-section-1.jpg`,
+      `/library-shots/${entry.id}-section-2.jpg`,
+      `/library-shots/${entry.id}-section-3.jpg`,
+    ]);
     expect(entry.livePreviewUrl).toMatch(/^https:\/\/uiuxlabz\.github\.io\//);
   }
   const image = await request.get(`${API}/library-shots/landing-ai-studio.jpg`);
   expect(image.ok()).toBeTruthy();
   expect(image.headers()["content-type"]).toContain("image/jpeg");
   expect((await image.body()).length).toBeGreaterThan(8000);
+  const sectionImage = await request.get(`${API}/library-shots/landing-ai-studio-section-2.jpg`);
+  expect(sectionImage.ok()).toBeTruthy();
+  expect(sectionImage.headers()["content-type"]).toContain("image/jpeg");
 
   await openWorkspace(page);
   await page.getByRole("button", { name: "Library", exact: true }).click();
