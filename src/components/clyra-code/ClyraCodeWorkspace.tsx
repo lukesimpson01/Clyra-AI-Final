@@ -745,7 +745,7 @@ export default function ClyraCodeWorkspace({
     setRightPanelOpen(true);
     setRightTab("browser");
     void submitPrompt(
-      `I just installed ${name} (source: ${repositoryUrl}) into this project from the Clyra Library. Set it up to run: read its README and package files, install dependencies, start the dev server and confirm the live preview loads, fixing any setup problems you hit. When it is running, give me a two-line summary of what the app does, then ask what I would like to change, and offer to publish it when I am happy.`,
+      `I approved setup commands for the downloaded ${name} source (source: ${repositoryUrl}). Inspect its README, scripts, licence and dependencies first. Before running anything destructive, privileged, or network-facing, request separate confirmation. Install dependencies and start a localhost-only dev server only where supported; report any missing database or third-party credentials rather than faking success. Never copy Clyra's DeepSeek API key or other host environment secrets into this project's files, prompts, previews, logs or exports. If this imported app needs a model API, explain the requirements and ask the user to configure a provider credential using a separate secure server-side setting; do not ask them to paste secrets into chat or expose them in code. Retain necessary login and authentication controls until a safe local-only alternative is explicitly approved. Verify the real preview, give a two-line summary of results and errors, then ask what to customise.`,
       [],
       undefined,
       { userText: `Set up and run ${name}` },
@@ -1235,8 +1235,8 @@ export default function ClyraCodeWorkspace({
                   <div className="mx-auto mt-3 flex w-full max-w-[688px] items-center gap-3 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                     <span className="cc-squircle flex h-8 w-8 shrink-0 items-center justify-center bg-[#3977F6]/[0.09] text-[#3977F6]"><LibraryBig className="h-4 w-4" strokeWidth={1.7} /></span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} {running ? "is being set up" : "is ready"}</span>
-                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">From the Clyra Library — what would you like to change or improve?</span>
+                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} {running ? "setup is running" : "source project"}</span>
+                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">Imported from the Clyra Library. Check the actual setup results below before editing or publishing.</span>
                     </span>
                   </div>
                 ) : null}
@@ -1350,16 +1350,26 @@ export default function ClyraCodeWorkspace({
         }}
         existingProjectIds={state.projects.map((project) => project.id)}
         onOpenInstalled={(projectId, entry) => {
+          // Downloading source is safe; installing dependencies and running scripts is a
+          // separate, explicit trust decision. Cancel still opens the files for review.
+          const allowSetup = window.confirm(
+            `Open ${entry.name} source in Clyra Code?\n\nChoose OK to also authorise the agent to inspect the README, install dependencies and run development commands from this third-party repository. These commands can execute code on your computer.\n\nChoose Cancel to open the source for review without automatic setup.`,
+          );
           setLibraryOpen(false);
           setHandoffFading(true);
           void loadProjects().then(async () => {
             selectProject(projectId);
             setSidebarCollapsed(false);
             try { localStorage.setItem(SIDEBAR_KEY, "0"); } catch { /* storage unavailable */ }
-            setRightPanelOpen(true);
+            setRightPanelOpen(allowSetup);
             setRightTab("browser");
-            setLibraryWelcome({ name: entry.name, sessionId: null });
-            setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+            if (allowSetup) {
+              setLibraryWelcome({ name: entry.name, sessionId: null });
+              setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+            } else {
+              setLibraryWelcome(null);
+              setAutoStart(null);
+            }
             await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 0 : 240));
             setHandoffFading(false);
           });
