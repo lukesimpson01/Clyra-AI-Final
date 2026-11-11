@@ -1256,7 +1256,16 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
           const next = JSON.parse(line.slice(6)) as Record<string, any>;
           if (next.type === "error") throw new Error(responseError(next, "The browser agent could not complete that task."));
           if (typeof next.message === "string") setAgentStatus(next.message);
-          if (next.state) applyState(next.state as BrowserState);
+          if (next.state) {
+            applyState(next.state as BrowserState);
+            // Explicit tab changes move the visible agent activity marker to
+            // the tab that the native Chromium agent is actually controlling.
+            const lifecycle = String(next.action?.type || "");
+            if (["open_tab", "switch_tab", "close_tab", "duplicate_tab", "restore_closed_tab"].includes(lifecycle)
+              && typeof next.state.activeTabId === "string") {
+              setAgentControlledTabId(next.state.activeTabId);
+            }
+          }
           if (next.plan) {
             setPlan(next.plan as TaskPlan);
             if (!acknowledgedPlan) {
