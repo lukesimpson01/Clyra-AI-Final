@@ -22,6 +22,7 @@ on:
       - "lib/clyra-code/projects/**"
       - "tools/clyra-code-display-name-tests.ts"
       - "tests/clyra-code/library.spec.ts"
+      - "tools/clyra-generated-app-tests.ts"
   pull_request:
     paths:
       - "lib/clyra-code/**"
@@ -51,6 +52,8 @@ jobs:
         run: npx tsx tools/clyra-code-display-name-tests.ts
       - name: Compile Node server to check missing runtime imports
         run: npm run build:server
+      - name: User-generated app launcher registry tests
+        run: npx tsx tools/clyra-generated-app-tests.ts
       - name: TypeScript compile check
         run: npx tsc --noEmit
 
