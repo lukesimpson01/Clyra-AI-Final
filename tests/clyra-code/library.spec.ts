@@ -46,3 +46,17 @@ test("source library has featured carousel arrows, real previews and honest miss
   await expect(dialog.getByRole("button", { name: "Verify repository" })).toBeVisible();
   await expect(dialog.getByText(/Review setup/).first()).toBeVisible();
 });
+
+test("featured template details open without executing or downloading any source", async ({ page }) => {
+  await openWorkspace(page);
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Clyra Library" });
+  const featured = dialog.getByRole("button", { name: /^View featured .+ details$/ }).first();
+  await expect(featured).toBeVisible();
+  const label = (await featured.getAttribute("aria-label")) || "";
+  const appName = label.replace(/^View featured /, "").replace(/ details$/, "");
+  await featured.click();
+  await expect(dialog.getByRole("heading", { name: appName, exact: true }).first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
+  await expect(dialog.getByText("source downloaded", { exact: false })).toHaveCount(0);
+});
