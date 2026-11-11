@@ -25,7 +25,7 @@ function readReview(id: string): LocalReview | null {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object") return null;
     const item = value as Partial<LocalReview>;
-    if (!Number.isInteger(item.rating) || Number(item.rating) < 1 || Number(item.rating) > 5 ||
+    if (typeof item.rating !== "number" || !Number.isInteger(item.rating) || item.rating < 1 || item.rating > 5 ||
         typeof item.title !== "string" || typeof item.body !== "string" ||
         typeof item.updatedAt !== "string") return null;
     return { rating: Number(item.rating), title: item.title.slice(0, 80), body: item.body.slice(0, 1000), updatedAt: item.updatedAt };
