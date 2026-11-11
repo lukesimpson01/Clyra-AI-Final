@@ -162,7 +162,7 @@ function seededStatus(mode: TemplateMode): TemplateStatus {
 }
 
 /** Model credentials belong to a project/provider, never to Clyra's host environment. */
-const MODEL_PROVIDER_SEEDS = new Set(["librechat", "vercel-chatbot", "perplexica", "openhands", "bolt-diy", "supoclip"]);
+const MODEL_PROVIDER_SEEDS = new Set(["librechat", "vercel-chatbot", "perplexica", "openhands", "bolt-diy", "supoclip", "opencluely", "openfilm"]);
 
 function manifestFromSeed(seed: Seed): TemplateManifest {
   const [id, name, alternatives, category, repository, description, mode, rawTargets, license, warning] = seed;
@@ -266,6 +266,13 @@ const seeds: readonly Seed[] = [
   ["appwrite", "Appwrite", "Firebase, Supabase", "Developer Tools", "appwrite/appwrite", "Self-hosted authentication, databases, storage, functions and realtime APIs.", "full-app", "PHP, Docker, backend", "BSD-3-Clause", "Full-stack backend; Docker and several services required. Clone for review only until a real deployment is verified."],
   ["jellyfin", "Jellyfin", "Plex", "Social & Entertainment", "jellyfin/jellyfin", "Self-hosted personal movie and music streaming library.", "full-app", "backend, .NET", "GPL-2.0", "Requires own media library, server and clients; review permissions and upstream copyleft notices."],
   ["libretranslate", "LibreTranslate", "Google Translate, DeepL", "Automation & Data", "LibreTranslate/LibreTranslate", "Self-hosted language translation API and web UI.", "full-app", "Python, backend", "AGPL-3.0", "Local language models require downloads and resources; public hosted endpoints may require credentials or impose limits."],
+  // Featured source projects: validated upstream GitHub repos; not claimed as runnable apps.
+  ["opencluely", "OpenCluely", "Cluely", "AI Chats & Agents", "TechyCSR/OpenCluely", "Open-source desktop screen-context assistant with an overlay and optional model integration.", "reference-only", "desktop, Electron, React", "Apache-2.0", "Native desktop build and external AI provider setup required. Check platform and assessment rules; source checkout is not a runnable in-app template."],
+  ["openfilm", "OpenFilm", "Adobe Premiere Pro, After Effects", "Design, Video & Creative", "openfilm/openfilm", "AI-assisted video authoring and timeline editing with OpenFilm Studio.", "full-app", "TypeScript, Node, pnpm, FFmpeg, desktop", "MIT", "Clyra Editor separately integrates OpenFilm; this is an independent source checkout. Requires Node 22, pnpm, FFmpeg and browser runtime. Optional generated media services require separate credentials."],
+  ["svgedit", "SVGEdit", "Adobe Illustrator", "Design, Video & Creative", "SVG-Edit/svgedit", "Browser-based SVG vector drawing and illustration editor.", "full-app", "JavaScript, browser, npm", "MIT", "SVG-first vector editor, not a full Illustrator clone. Requires source build and browser verification."],
+  ["kdenlive", "Kdenlive", "Adobe Premiere Pro", "Design, Video & Creative", "KDE/kdenlive", "Native multitrack video editor with effects and transitions.", "reference-only", "desktop, C++, Qt", "GPL-3.0", "Large native desktop application. Copyleft GPL-3.0; do not automatically bundle with proprietary Clyra or present as a browser template."],
+  ["natron", "Natron", "Adobe After Effects, Nuke", "Design, Video & Creative", "NatronGitHub/Natron", "Node-based VFX compositor for shots and motion-graphics workflows.", "reference-only", "desktop, C++, Qt", "GPL-2.0", "Native desktop compositor, not a complete After Effects clone. Build requirements and copyleft GPL terms must be reviewed."],
+  ["krita", "Krita", "Adobe Photoshop, Procreate", "Design, Video & Creative", "KDE/krita", "Desktop digital painting and illustration studio with layers and brushes.", "reference-only", "desktop, C++, Qt", "GPL-3.0", "Native desktop illustration app rather than a drop-in Photoshop or browser editor. Requires extensive build tooling; GPL licence review required."],
   // Individually cloneable, framework-free landing pages from the MIT-stated uiuxlabz collection.
   // Images are author-provided screenshots, not evidence of local build or runtime verification.
   ...LANDING_PAGE_SOURCES.map((item) => [
