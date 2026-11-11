@@ -86,6 +86,7 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
   voice: {
     listSources: () => ipcRenderer.invoke("voice:list-sources"),
     selectSource: (id) => ipcRenderer.invoke("voice:select-source", id),
+    taskFrame: () => ipcRenderer.invoke("voice:task-frame"),
     guide: (question) => ipcRenderer.invoke("voice:guide", question),
     beginControl: () => ipcRenderer.invoke("voice:begin-control"),
     stopControl: () => ipcRenderer.invoke("voice:stop-control"),
