@@ -28,6 +28,7 @@ import { cn } from "../lib/utils";
 import type { OrbColorTheme } from "./AiOrb";
 import { MemorySettingsPanel } from "./memory/MemorySettingsPanel";
 import { WorkspaceDockCustomizer } from "./WorkspaceDockCustomizer";
+import { GENERATED_APPS_EVENT, readGeneratedApps, setGeneratedApp, type GeneratedAppShortcut } from "../lib/userGeneratedApps";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -90,6 +91,7 @@ export type SettingsSheetProps = Omit<SettingsModalProps, "isOpen"> & {
 const sections = [
   { id: "account", label: "Account", detail: "Your profile, your data, and everything tied to this device.", icon: UserRound, category: "Account" },
   { id: "workspace", label: "Workspace", detail: "Make the controls around Chat feel like your own.", icon: Grid3X3, category: "Account" },
+  { id: "my-apps", label: "My apps", detail: "Manage apps you created and pinned from Clyra Code.", icon: Code2, category: "Account" },
   { id: "look", label: "Appearance", detail: "Adjust how Clyra looks and feels.", icon: Palette, category: "Preferences" },
   { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle, category: "Preferences" },
   { id: "memory", label: "Memory", detail: "Clyra’s identity, what it knows about you, what it has learned, and its skills.", icon: BrainCircuit, category: "Preferences" },
@@ -385,6 +387,27 @@ function NavItem({
   );
 }
 
+function UserGeneratedAppsSettings() {
+  const [apps, setApps] = useState<GeneratedAppShortcut[]>(() => readGeneratedApps());
+  useEffect(() => {
+    const refresh = () => setApps(readGeneratedApps());
+    window.addEventListener(GENERATED_APPS_EVENT, refresh);
+    return () => window.removeEventListener(GENERATED_APPS_EVENT, refresh);
+  }, []);
+  return (
+    <SettingsCard title="User-generated apps" description="Apps saved from Clyra Code. Removing a shortcut never deletes the project or its files.">
+      {apps.length ? apps.map((app) => (
+        <SettingRow key={app.projectId} title={app.name} detail="User generated · Opens in Clyra Code">
+          <button type="button" className="clys-btn" aria-label={`Remove ${app.name} from app launcher`}
+            onClick={() => setApps(setGeneratedApp(app.projectId, app.name, false))}>
+            <Trash2 className="h-3.5 w-3.5" aria-hidden /> Remove
+          </button>
+        </SettingRow>
+      )) : <p className="px-4 py-5 text-[12px] leading-relaxed text-[#78766F]">No user-generated apps yet. Open a project in Clyra Code and select Add app in its header.</p>}
+    </SettingsCard>
+  );
+}
+
 export function SettingsSheet({
   onClose,
   embedded = false,
@@ -637,6 +660,8 @@ export function SettingsSheet({
                   <h1 className="clys-section-title">{activeMeta.label}</h1>
                   <p className="clys-section-detail">{activeMeta.detail}</p>
                   <div className="clys-lead-gap" aria-hidden />
+
+                  {activeSection === "my-apps" ? <UserGeneratedAppsSettings /> : null}
 
                   {activeSection === "account" ? (
                     <>
