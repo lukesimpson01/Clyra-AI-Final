@@ -37,7 +37,7 @@ test("source library has featured carousel arrows, real previews and honest miss
   await dialog.getByRole("button", { name: "Next featured app" }).click();
   await dialog.getByRole("button", { name: "Previous featured app" }).click();
   await dialog.getByRole("textbox", { name: "Search the library" }).fill("bolt.diy");
-  await dialog.getByRole("button", { name: /bolt\.diy/i }).first().click();
+  await dialog.getByText("bolt.diy", { exact: true }).first().click();
   await expect(dialog.getByText("Preview not captured").first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
   await dialog.getByText("Advanced import options").click();
