@@ -54,8 +54,26 @@ jobs:
         run: npm run build:server
       - name: User-generated app launcher registry tests
         run: npx tsx tools/clyra-generated-app-tests.ts
+      - name: Vibe Coder and task recovery contract tests
+        run: |
+          npm run test:vibe-agent-v3
+          npm run test:vibe-runtime
+          npm run test:vibe-task-controller
+          npm run test:clyra-code-platform
+          npm run test:clyra-code-activity
+          npm run test:clyra-code-brief
+      - name: Chat and speech contract tests
+        run: |
+          npm run test:agent-events
+          npm run test:chat-intent
+          npm run test:effort-harness
+          npm run test:composer-dictation
+          npm run test:dictation-hotkey
+          npm run test:speech-flow
       - name: TypeScript compile check
         run: npx tsc --noEmit
+      - name: Full frontend and server production build
+        run: npm run build
 
   browser-library:
     needs: validate
