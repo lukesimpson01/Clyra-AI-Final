@@ -859,6 +859,18 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     pendingApprovalRef.current = null;
     dispatch({ type: "CLEAR_APPROVAL" });
     if (approval.kind === "google") { await executeGoogle(approval.service, approval.prompt, true); return; }
+    if (approval.kind === "hermes") {
+      try {
+        const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(approval.id)}/approval`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice: "once" }),
+        });
+        if (!response.ok) throw new Error("The agent couldn't confirm this action.");
+        dispatch({ type: "RESUME_AGENT" });
+      } catch (error) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_HERMES_APPROVAL_FAILED", message: error instanceof Error ? error.message : "Approval failed.", retryable: true } });
+      }
+      return;
+    }
     dispatch({ type: "RESUME_AGENT" });
     const response = await fetch(`/api/agent/missions/${encodeURIComponent(approval.id)}/resume`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvedStepIds: [approval.stepId] }),
@@ -872,7 +884,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   }, [executeGoogle, pollMission, updateMission]);
 
   const rejectApproval = useCallback(async () => {
+    const pending = pendingApprovalRef.current;
     pendingApprovalRef.current = null;
+    if (pending?.kind === "hermes") {
+      await fetch(`/api/agent/hermes/runs/${encodeURIComponent(pending.id)}/approval`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice: "deny" }),
+      }).catch(() => undefined);
+    }
     await cancelActiveRun();
     dispatch({ type: "CLEAR_APPROVAL" });
     dispatch({ type: "TOOL_FINISHED", result: { cancelled: true }, responseText: "Cancelled — I didn’t run that action." });
@@ -905,6 +923,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   useEffect(() => () => {
     taskAbortRef.current?.abort();
+    hermesEventsRef.current?.close();
+    hermesEventsRef.current = null;
     void teardownEngine();
     clearRestTimer();
   }, [teardownEngine, clearRestTimer]);
