@@ -62,6 +62,7 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
   await page.setViewportSize({ width: 390, height: 844 });
   await shot("11-app-detail-mobile");
   await dialog.getByRole("button", { name: /Discover/ }).first().click();
+  await dialog.getByRole("textbox", { name: "Search the library" }).fill("");
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
   await shot("12-discover-mobile");
 });
