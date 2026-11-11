@@ -45,6 +45,23 @@ try {
         return !!detail && Number(getComputedStyle(detail).opacity) >= 0.99 && !previous;
       }, null, { timeout: 10_000 });
       await page.screenshot({ path: path.join(output, `library-detail-${width}.png`), animations: "allow" });
+
+      // Capture the actual Landing Pages gallery and one business-type filter,
+      // not a faded intermediate screen or an invented thumbnail.
+      await dialog.getByRole("button", { name: "Discover", exact: true }).first().click();
+      await input.fill("");
+      await dialog.getByRole("button", { name: "See All", exact: true }).first().click();
+      await dialog.getByText("75 landing page designs").waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: path.join(output, `landing-pages-all-${width}.png`), animations: "allow" });
+      await dialog.getByRole("button", { name: "SaaS & AI", exact: true }).click();
+      await dialog.getByText("8 SaaS & AI designs").waitFor();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: path.join(output, `landing-pages-saas-${width}.png`), animations: "allow" });
+      await dialog.getByRole("button", { name: "View KORVA — AI Studio details" }).first().click();
+      await dialog.getByRole("heading", { name: "KORVA — AI Studio" }).waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: path.join(output, `landing-pages-detail-${width}.png`), animations: "allow" });
       console.log(`PASS Clyra Library renders and navigates at ${width}px`);
     } finally {
       await page.close();
