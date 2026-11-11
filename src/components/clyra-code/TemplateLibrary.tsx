@@ -399,7 +399,7 @@ function NoteCard({ entry, onChoose, install, index = 0 }: { entry: TemplateMani
     >
       <span className="relative block aspect-[4/3] overflow-hidden border-b border-[rgba(55,53,47,0.09)] bg-[#F7F6F5]">
         <SourceVisual entry={entry} className="absolute inset-0" iconSize={56} />
-        <span className="absolute bottom-3 left-1/2 -translate-x-1/2 translate-y-2 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"><Get entry={entry} install={install} /></span>
+        <span className="absolute bottom-3 right-3 translate-y-2 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"><Get entry={entry} install={install} /></span>
       </span>
       <span className="flex flex-col gap-[3px] px-3.5 pb-3.5 pt-3">
         <span className="truncate text-[14px] font-semibold leading-[1.3] text-[#2C2C2B]">{entry.name}</span>
