@@ -25,7 +25,7 @@ try {
       await page.screenshot({ path: path.join(output, `library-discover-${width}.png`), animations: "disabled" });
       const input = dialog.getByRole("textbox", { name: "Search the library" });
       await input.fill("bolt.diy");
-      await dialog.getByRole("button", { name: /bolt\.diy/i }).first().click();
+      await dialog.getByText("bolt.diy", { exact: true }).first().click();
       await dialog.getByText("Preview not captured").first().waitFor();
       await page.screenshot({ path: path.join(output, `library-detail-${width}.png`), animations: "disabled" });
       console.log(`PASS Clyra Library renders and navigates at ${width}px`);
