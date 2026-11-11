@@ -430,15 +430,13 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
   return (
     <section aria-label="Featured" className="mb-9" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={`Featured: ${entry.name}`}
-        onClick={() => onChoose(entry)}
-        onKeyDown={activate(() => onChoose(entry))}
-        className="group relative grid w-full cursor-pointer overflow-hidden rounded-[12px] bg-[#F7F6F5] text-left outline-none ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 hover:ring-[rgba(55,53,47,0.2)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/45 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
+        className="group relative grid w-full overflow-hidden rounded-[12px] bg-[#F7F6F5] text-left ring-1 ring-inset ring-[rgba(55,53,47,0.09)] transition-colors duration-150 hover:ring-[rgba(55,53,47,0.2)] sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"
       >
+        <button type="button" aria-label={`View featured ${entry.name} details`}
+          onClick={() => onChoose(entry)}
+          className="absolute inset-0 z-[1] cursor-pointer rounded-[12px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#3977F6]/55" />
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div key={`t-${entry.id}`} className="flex min-w-0 flex-col justify-center gap-1 p-6 sm:p-7" initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3, ease: EASE }}>
+          <motion.div key={`t-${entry.id}`} className="pointer-events-none relative z-[2] flex min-w-0 flex-col justify-center gap-1 p-6 sm:p-7" initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3, ease: EASE }}>
             <p className="text-[12px] font-medium" style={{ color: meta.accent }}>Featured · {entry.category}</p>
             <h3 className="line-clamp-2 text-[26px] font-semibold leading-[1.12] tracking-[-0.028em] text-[#2C2C2B]">{entry.name}</h3>
             <p className="mt-1 line-clamp-2 max-w-[420px] text-[14px] leading-[1.5] text-[#5F5E59]">{entry.description}</p>
@@ -448,11 +446,11 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
                 <span className="block truncate text-[13.5px] font-medium text-[#2C2C2B]">{entry.name}</span>
                 <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
               </span>
-              <Get entry={entry} install={install} />
+              <span className="pointer-events-auto"><Get entry={entry} install={install} /></span>
             </div>
           </motion.div>
         </AnimatePresence>
-        <div className="relative hidden min-h-[210px] sm:block" aria-hidden>
+        <div className="pointer-events-none relative hidden min-h-[210px] sm:block" aria-hidden>
           <AnimatePresence initial={false}>
             <motion.div key={`art-${entry.id}`} className="absolute inset-0" initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4, ease: EASE }}>
               <SourceVisual entry={entry} className="h-full w-full" iconSize={72} />
