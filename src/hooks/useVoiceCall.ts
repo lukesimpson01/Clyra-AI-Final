@@ -40,9 +40,11 @@ type MissionRecord = {
 type GoogleService = "gmail" | "calendar" | "docs" | "sheets" | "slides" | "drive";
 type ActiveRun =
   | { kind: "mission"; id: string }
+  | { kind: "hermes"; id: string; sessionId: string; objective: string }
   | { kind: "google"; id: string; service: GoogleService; prompt: string };
 type PendingApproval =
   | { kind: "mission"; id: string; stepId: string }
+  | { kind: "hermes"; id: string }
   | { kind: "google"; id: string; service: GoogleService; prompt: string };
 
 const TERMINAL_MISSION_STATES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
@@ -128,6 +130,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const activeRunRef = useRef<ActiveRun | null>(null);
   const pendingApprovalRef = useRef<PendingApproval | null>(null);
   const taskAbortRef = useRef<AbortController | null>(null);
+  const hermesEventsRef = useRef<EventSource | null>(null);
+  const hermesStepsRef = useRef<AgentPlanStep[]>([]);
   const lastSideEffectRef = useRef({ text: "", at: 0 });
   const endSequenceRef = useRef(0);
   const restTimerRef = useRef<number | null>(null);
