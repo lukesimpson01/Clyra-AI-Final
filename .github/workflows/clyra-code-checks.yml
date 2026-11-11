@@ -17,6 +17,8 @@ on:
       - "electron/dictation-manager.mjs"
       - "tools/dictation-endpoint-tests.mjs"
       - "tools/clyra-library-visual-smoke.mjs"
+      - "lib/vibe-runtime/validation.ts"
+      - "tools/clyra-code-security-tests.ts"
       - "tests/clyra-code/library.spec.ts"
   pull_request:
     paths:
@@ -41,6 +43,8 @@ jobs:
         run: npm run test:clyra-code-library
       - name: Dictation end-of-speech unit tests
         run: node --test tools/dictation-endpoint-tests.mjs
+      - name: Child-process API credential isolation tests
+        run: npx tsx tools/clyra-code-security-tests.ts
       - name: TypeScript compile check
         run: npx tsc --noEmit
 
