@@ -49,7 +49,7 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
   await expect(dialog.getByRole("button", { name: /Excalidraw/ }).first()).toBeVisible();
   await shot("05-search-results-desktop");
   await dialog.getByRole("button", { name: /Excalidraw/ }).first().click();
-  await expect(dialog.getByRole("heading", { name: "Excalidraw" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Excalidraw", exact: true })).toBeVisible();
   await shot("06-app-detail-header-desktop");
 
   const detail = dialog.locator("main > .cc-scroll").first();
