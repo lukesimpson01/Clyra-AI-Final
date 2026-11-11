@@ -8,6 +8,8 @@ on:
     paths:
       - "lib/chat-agent/**"
       - "src/lib/chatAgentClient.ts"
+      - "src/components/chat/ChatAgentRun.tsx"
+      - "src/components/chat/ClyraComposerShell.tsx"
       - "server.ts"
       - "tools/chat-agent-unit-tests.ts"
       - ".github/workflows/chat-agent-harness.yml"
