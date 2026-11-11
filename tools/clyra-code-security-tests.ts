@@ -23,9 +23,11 @@ try {
   try {
     // This simulates a third-party build/test script trying to read Clyra's
     // provider key. Running it must return false, without any key printed.
+    await writeFile(path.join(fixture, "check-secret.cjs"),
+      'console.log("provider-secret-present=" + Boolean(process.env.DEEPSEEK_API_KEY));\n');
     await writeFile(path.join(fixture, "package.json"), JSON.stringify({
       private: true,
-      scripts: { test: "node -e \\"console.log('provider-secret-present=' + Boolean(process.env.DEEPSEEK_API_KEY))\\"" },
+      scripts: { test: "node check-secret.cjs" },
     }));
     const evidence = await runWorkspaceValidation(fixture);
     const testEvidence = evidence.find((item) => item.name === "test");
