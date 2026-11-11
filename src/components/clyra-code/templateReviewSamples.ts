@@ -129,7 +129,7 @@ function hash(id: string): number {
 export function sampleTemplateReviews(entry: TemplateManifest): SampleTemplateReview[] {
   const passages = CUSTOM[entry.id] ?? defaultBodies(entry);
   const seed = hash(entry.id);
-  const countFours = seed % 5 === 0 ? 0 : seed % 3 === 0 ? 2 : 1;
+  const countFours = seed % 4 === 1 ? 2 : 1;
   const ratings: Array<4 | 5> = [5, 5, 5];
   for (let i = 0; i < countFours; i++) ratings[(seed + i) % 3] = 4;
   const titles = [
