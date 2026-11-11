@@ -920,6 +920,12 @@ export function TemplateLibrary({
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <p className="max-w-[720px] text-[15px] leading-[1.6] text-[#2C2C2B]/85">{selected.description}</p>
+                  {selected.warnings.slice(1, 2).map((warning) => (
+                    <p key={warning} className="mt-3 flex max-w-[730px] items-start gap-2 text-[12px] leading-relaxed text-[#898780]">
+                      <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden />
+                      <span>{warning}</span>
+                    </p>
+                  ))}
                   {coverCapabilities(selected).length ? <ul className="mt-3 space-y-1.5 text-[14px] text-[#4A4944]">{coverCapabilities(selected).map((cap) => <li key={cap} className="flex gap-2"><span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[#78766F]" />{cap}</li>)}</ul> : null}
                 </section>
 
