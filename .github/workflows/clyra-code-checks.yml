@@ -23,6 +23,8 @@ on:
       - "tools/clyra-code-display-name-tests.ts"
       - "tests/clyra-code/library.spec.ts"
       - "tools/clyra-generated-app-tests.ts"
+      - "tools/clyra-code-beam-tests.ts"
+      - "tools/clyra-code-platform-unit-tests.ts"
   pull_request:
     paths:
       - "lib/clyra-code/**"
@@ -54,6 +56,8 @@ jobs:
         run: npm run build:server
       - name: User-generated app launcher registry tests
         run: npx tsx tools/clyra-generated-app-tests.ts
+      - name: Composer border-beam geometry tests
+        run: npx tsx tools/clyra-code-beam-tests.ts
       - name: Vibe Coder and task recovery contract tests
         run: |
           npm run test:vibe-agent-v3
