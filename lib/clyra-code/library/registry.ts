@@ -9,6 +9,7 @@
  */
 
 import { LANDING_PAGE_SOURCES } from "./landing-pages";
+import { LANDING_PAGE_SECTION_CAPTURES } from "./landing-page-section-captures";
 
 export type TemplateMode = "full-app" | "framework" | "engine" | "integration" | "reference-only";
 export type TemplateStatus = "unverified" | "runnable-now" | "requires-setup" | "integration-sdk" | "reference-only" | "unavailable";
@@ -300,13 +301,25 @@ function withCaptures(manifest: TemplateManifest): TemplateManifest {
       // screenshot.png lives in this template's own upstream GitHub repo.
       // Images were downloaded, decoded and resized by the separate capture
       // workflow, and are stored locally. Clyra did not execute this source.
-      sourceScreenshots: [{
-        url: `/library-shots/${landing.id}.jpg`,
-        alt: `${landing.title} — actual upstream homepage screenshot`,
-        capturedAt: "2026-11-11",
-        provenance: `Author-provided screenshot.png from ${landing.repository}; downloaded and resized on 2026-11-11. Not a Clyra local build or runtime test.`,
-      }],
-      captureProvenance: `Preview supplied in ${landing.repository}; locally optimised from upstream screenshot.png, not a screenshot of a Clyra execution.`,
+      sourceScreenshots: [
+        // Never move or overwrite the original author-supplied cover.
+        {
+          url: `/library-shots/${landing.id}.jpg`,
+          alt: `${landing.title} — original upstream homepage screenshot`,
+          capturedAt: "2026-11-11",
+          provenance: `Author-provided screenshot.png from ${landing.repository}; downloaded and resized on 2026-11-11. Not a Clyra local build or runtime test.`,
+        },
+        // Add only genuinely different sections from a real browser run of
+        // the author's public site. Existing multi-image galleries elsewhere
+        // in the catalogue are preserved without replacement.
+        ...(LANDING_PAGE_SECTION_CAPTURES[landing.id] ?? []).map((shot) => ({
+          url: `/library-shots/${shot.file}`,
+          alt: shot.alt,
+          capturedAt: "2026-11-12",
+          provenance: `Real Chromium screenshot of a different content section at ${shot.pageUrl}. Not a Clyra-local template build.`,
+        })),
+      ],
+      captureProvenance: `Original homepage preview from ${landing.repository}, followed by real different-section Chromium captures of the public demo. No local build of the template is implied.`,
     };
   }
   const shots = CAPTURED[manifest.id];
