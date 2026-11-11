@@ -19,6 +19,8 @@ on:
       - "tools/clyra-library-visual-smoke.mjs"
       - "lib/vibe-runtime/validation.ts"
       - "tools/clyra-code-security-tests.ts"
+      - "lib/clyra-code/projects/**"
+      - "tools/clyra-code-display-name-tests.ts"
       - "tests/clyra-code/library.spec.ts"
   pull_request:
     paths:
@@ -45,6 +47,10 @@ jobs:
         run: node --test tools/dictation-endpoint-tests.mjs
       - name: Child-process API credential isolation tests
         run: npx tsx tools/clyra-code-security-tests.ts
+      - name: Project display-name regression tests
+        run: npx tsx tools/clyra-code-display-name-tests.ts
+      - name: Compile Node server to check missing runtime imports
+        run: npm run build:server
       - name: TypeScript compile check
         run: npx tsc --noEmit
 
@@ -67,8 +73,12 @@ jobs:
         run: |
           npm run dev:source > /tmp/clyra-source.log 2>&1 &
           echo $! > /tmp/clyra-source.pid
-          for i in $(seq 1 100); do
-            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+          for i in $(seq 1 50); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            if ! kill -0 $(cat /tmp/clyra-source.pid) 2>/dev/null; then
+              tail -n 120 /tmp/clyra-source.log
+              exit 1
+            fi
             sleep 2
           done
           tail -n 120 /tmp/clyra-source.log
