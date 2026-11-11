@@ -242,6 +242,51 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
   }, [updateMission]);
 
+  /** Poll the real Hermes run receipt. Streamed events supply intermediate UI. */
+  const pollHermes = useCallback(async (runId: string, signal: AbortSignal) => {
+    let failedReads = 0;
+    const startedAt = Date.now();
+    while (!signal.aborted && Date.now() - startedAt < 45 * 60_000) {
+      await delay(1200);
+      if (signal.aborted) return;
+      try {
+        const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(runId)}`, { signal });
+        const payload = await response.json().catch(() => null) as { run?: { status?: string; output?: string; error?: string; interrupted?: boolean } } | null;
+        if (!response.ok || !payload?.run) {
+          if (++failedReads < 8) continue;
+          throw new Error("The live agent status could not be retrieved.");
+        }
+        failedReads = 0;
+        const status = String(payload.run.status || "").toLowerCase();
+        if (/approv|awaiting_user|waiting_for_user/.test(status) && pendingApprovalRef.current?.id !== runId) {
+          pendingApprovalRef.current = { kind: "hermes", id: runId };
+          dispatch({ type: "APPROVAL_REQUIRED", approval: {
+            id: runId, title: "Clyra needs approval", detail: "Review the requested agent action before allowing it to continue.", confirmLabel: "Allow once",
+          } });
+        }
+        const interrupted = Boolean(payload.run.interrupted);
+        const cancelled = /cancel|stopp?ed/.test(status);
+        const failed = /fail|error|interrupt/.test(status) || interrupted;
+        const completed = /complete|finish|success/.test(status);
+        if (completed || cancelled || failed) {
+          if (activeRunRef.current?.kind === "hermes" && activeRunRef.current.id === runId) activeRunRef.current = null;
+          hermesEventsRef.current?.close();
+          hermesEventsRef.current = null;
+          const message = String(failed ? payload.run.error || "The task stopped before completion." : cancelled ? "Stopped at your request." : payload.run.output || "The agent finished. Review its activity for details.").slice(0, 2700);
+          if (failed) dispatch({ type: "ERROR", error: { code: "VOICE_HERMES_FAILED", message, retryable: true } });
+          else dispatch({ type: "TOOL_FINISHED", result: { source: "hermes", status, output: payload.run.output }, responseText: message });
+          return;
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        if (++failedReads < 8) continue;
+        dispatch({ type: "ERROR", error: { code: "VOICE_HERMES_DISCONNECTED", message: error instanceof Error ? error.message : "Agent status unavailable.", retryable: true } });
+        return;
+      }
+    }
+    if (!signal.aborted) dispatch({ type: "ERROR", error: { code: "VOICE_HERMES_TIMEOUT", message: "The agent is still running. Check Clyra's task status before restarting.", retryable: true } });
+  }, []);
+
   const startMission = useCallback(async (text: string, forceMission = false) => {
     const routeResponse = await fetch("/api/agent/route", {
       method: "POST",
@@ -279,6 +324,62 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     });
     return true;
   }, [pollMission, updateMission]);
+
+  /**
+   * Unlike the deterministic mission planner, Hermes accepts open-ended work
+   * with a real plan/act/observe loop and native MCP tool adapters.
+   * Start only after the user has approved computer control.
+   */
+  const startHermes = useCallback(async (text: string, original?: { sessionId: string; objective: string }) => {
+    const sessionId = original?.sessionId || `voice-${optionsRef.current.conversationId || crypto.randomUUID()}`;
+    const response = await fetch("/api/agent/hermes/runs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: text, sessionId, model: "deepseek-v4-flash",
+        idempotencyKey: `voice-${crypto.randomUUID()}`,
+        instructions: "Use real tools and observations; recheck the current desktop or browser before interactions, verify results, and request approval for consequential actions. Do not claim actions that have not happened.",
+      }),
+    });
+    const payload = await response.json().catch(() => null) as { run?: { run_id?: string; id?: string }; error?: string } | null;
+    const runId = String(payload?.run?.run_id || payload?.run?.id || "");
+    if (!response.ok || !runId) throw new Error(payload?.error || "The advanced Clyra agent is not available.");
+    hermesEventsRef.current?.close();
+    hermesStepsRef.current = [];
+    const source = new EventSource(`/api/agent/hermes/runs/${encodeURIComponent(runId)}/events`);
+    hermesEventsRef.current = source;
+    source.onmessage = event => {
+      if (hermesEventsRef.current !== source) return;
+      try {
+        const detail = JSON.parse(event.data) as { type?: string; label?: string; app?: string; timestamp?: string | number };
+        const label = String(detail.label || detail.app || "Clyra is working").slice(0, 160);
+        const steps = [...hermesStepsRef.current];
+        if (detail.type === "tool_start" || detail.type === "agent_start") {
+          for (const step of steps) if (step.status === "active") step.status = "complete";
+          steps.push({ id: `voice-hermes-${steps.length}-${Date.now()}`, label, status: "active" });
+        } else if (detail.type === "tool_complete" || detail.type === "agent_complete" || detail.type === "complete") {
+          const last = [...steps].reverse().find(step => step.status === "active");
+          if (last) last.status = "complete";
+        } else if (detail.type === "error") {
+          const last = [...steps].reverse().find(step => step.status === "active");
+          if (last) last.status = "blocked";
+        } else if (detail.type === "approval") {
+          pendingApprovalRef.current = { kind: "hermes", id: runId };
+          dispatch({ type: "APPROVAL_REQUIRED", approval: { id: runId, title: "Clyra needs approval", detail: label, confirmLabel: "Allow once" } });
+        }
+        hermesStepsRef.current = steps.slice(-18);
+        dispatch({ type: "TOOL_PROGRESS", event: { label, steps: hermesStepsRef.current } });
+      } catch { /* Ignore malformed partial agent frames. */ }
+    };
+    source.onerror = () => { /* A lost event stream is recovered by polling the durable run receipt. */ };
+    activeRunRef.current = { kind: "hermes", id: runId, sessionId, objective: original?.objective || text };
+    taskAbortRef.current?.abort();
+    const controller = new AbortController();
+    taskAbortRef.current = controller;
+    dispatch({ type: "TOOL_STARTED", tool: "clyra.hermes", taskId: runId, label: "Clyra is planning the task", canStop: true, canPause: true, canTakeControl: true,
+      surface: { id: runId, kind: "app", title: "Clyra agent", subtitle: original?.objective || text } });
+    void pollHermes(runId, controller.signal);
+    return true;
+  }, [pollHermes]);
 
   const executeGoogle = useCallback(async (service: GoogleService, prompt: string, confirmed = false) => {
     const desktop = getElectronDesktop();
