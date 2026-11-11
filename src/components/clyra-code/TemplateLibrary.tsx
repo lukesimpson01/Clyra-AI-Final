@@ -541,7 +541,13 @@ export function TemplateLibrary({
     // identical missing-preview cards as the editorial hero looks broken and
     // implies we reviewed apps we have not actually run.
     const photographed = catalogue.filter((entry) => entry.sourceScreenshots.length > 0);
-    if (photographed.length) return photographed.slice(0, 5);
+    if (photographed.length) {
+      // Prefer genuine full-app pages over first-run setup forms, then use
+      // number of distinct captures as a grounded tie-breaker.
+      const actualScreens = (entry: TemplateManifest) => entry.sourceScreenshots
+        .filter((shot) => !/setup|first.run|onboarding/i.test(shot.alt)).length;
+      return photographed.sort((x, y) => actualScreens(y) - actualScreens(x)).slice(0, 5);
+    }
     // For a brand-new catalogue with no captures, preserve category variety
     // and clearly mark its source-only previews as unavailable.
     const picked: TemplateManifest[] = [];
