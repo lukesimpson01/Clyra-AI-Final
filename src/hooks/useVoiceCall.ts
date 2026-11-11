@@ -417,12 +417,25 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (!active) return;
     taskAbortRef.current?.abort();
     if (active.kind === "mission") await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/stop`, { method: "POST" }).catch(() => undefined);
+    if (active.kind === "hermes") {
+      hermesEventsRef.current?.close();
+      hermesEventsRef.current = null;
+      await fetch(`/api/agent/hermes/runs/${encodeURIComponent(active.id)}/stop`, { method: "POST" }).catch(() => undefined);
+    }
     activeRunRef.current = null;
   }, []);
 
   const pauseTask = useCallback(async () => {
     const active = activeRunRef.current;
-    if (!active || active.kind !== "mission") return;
+    if (!active || active.kind === "google") return;
+    if (active.kind === "hermes") {
+      taskAbortRef.current?.abort();
+      hermesEventsRef.current?.close();
+      hermesEventsRef.current = null;
+      await fetch(`/api/agent/hermes/runs/${encodeURIComponent(active.id)}/stop`, { method: "POST" }).catch(() => undefined);
+      dispatch({ type: "PAUSE" });
+      return;
+    }
     dispatch({ type: "PAUSE" });
     taskAbortRef.current?.abort();
     await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/pause`, { method: "POST" }).catch(() => undefined);
@@ -430,8 +443,18 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   const resumeTask = useCallback(async () => {
     const active = activeRunRef.current;
-    if (!active || active.kind !== "mission") return;
+    if (!active || active.kind === "google") return;
     dispatch({ type: "RESUME_AGENT" });
+    if (active.kind === "hermes") {
+      try {
+        await startHermes(`Resume this interrupted Clyra task. Re-observe the live state before acting; then finish and verify: ${active.objective}`, {
+          sessionId: active.sessionId, objective: active.objective,
+        });
+      } catch (error) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_HERMES_RESUME_FAILED", message: error instanceof Error ? error.message : "The agent couldn't resume.", retryable: true } });
+      }
+      return;
+    }
     const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
     const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
     if (!payload?.mission) return;
@@ -439,12 +462,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const controller = new AbortController();
     taskAbortRef.current = controller;
     void pollMission(active.id, controller.signal).catch(() => undefined);
-  }, [pollMission, updateMission]);
+  }, [pollMission, startHermes, updateMission]);
 
   const takeControl = useCallback(async () => {
     const active = activeRunRef.current;
     if (!active) return;
-    if (active.kind === "mission") await pauseTask();
+    if (active.kind === "mission" || active.kind === "hermes") await pauseTask();
     dispatch({ type: "TAKE_CONTROL" });
   }, [pauseTask]);
 
@@ -466,9 +489,19 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && activeRunRef.current) { await resumeTask(); return true; }
     if (/^(?:pause|pause task|hold on)[.!]?$/i.test(clean) && activeRunRef.current) { await pauseTask(); return true; }
     if (activeRunRef.current) {
-      // Accept voice interruptions during work without creating a second,
-      // competing mission. Existing tasks have their own pause/stop semantics.
-      const feedback = "I'm still working on that task. You can say pause, stop, or take control.";
+      // Steer the same live Hermes run, never start competing missions.
+      const active = activeRunRef.current;
+      let feedback = "I'm still working on that task. You can say pause, stop, or take control.";
+      if (active.kind === "hermes") {
+        try {
+          const response = await fetch(`/api/agent/hermes/runs/${encodeURIComponent(active.id)}/steer`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: clean }),
+          });
+          if (response.ok) feedback = "I've updated the agent's instructions. It's continuing the task.";
+          else feedback = "The agent couldn't accept that change while working. Say stop to cancel or resume to restart.";
+        } catch { feedback = "I couldn't send that update to the agent. You can still say stop."; }
+      }
       pendingAssistantTextRef.current = feedback;
       dispatch({ type: "TOKEN", text: feedback });
       commitTurn();
@@ -594,11 +627,21 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   /** The normal mission planner remains responsible for adaptive tool loops. */
   const startVoiceMission = useCallback(async (text: string) => {
-    const started = await startMission(text, true);
-    if (!started) respondVisual("I couldn't start that task with the available tools.");
-    engine.current.turnBusy = false;
-    return started;
-  }, [respondVisual, startMission]);
+    const deterministicStarted = await startMission(text, true).catch(() => false);
+    if (deterministicStarted) {
+      engine.current.turnBusy = false;
+      return true;
+    }
+    try {
+      const hermesStarted = await startHermes(text);
+      engine.current.turnBusy = false;
+      return hermesStarted;
+    } catch (error) {
+      respondVisual(error instanceof Error ? error.message : "I couldn't start a compatible agent tool for that task.");
+      engine.current.turnBusy = false;
+      return false;
+    }
+  }, [respondVisual, startHermes, startMission]);
 
   /** One full turn once the words are known: agent tools first, else a reply. */
   const handleUserText = useCallback(async (text: string) => {
