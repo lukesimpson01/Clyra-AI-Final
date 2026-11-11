@@ -71,6 +71,13 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - uses: actions/setup-python@v5
+        if: matrix.group != 'chat-agent-and-data'
+        with:
+          python-version: "3.11"
+      - name: Install image/clipper test prerequisites
+        if: matrix.group != 'chat-agent-and-data'
+        run: python -m pip install --disable-pip-version-check "numpy>=1.26,<3" "Pillow>=10,<12"
       - name: Run all contracts, report each pass/failure
         shell: bash
         env:
