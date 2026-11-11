@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, Check, ChevronLeft, CircleStop, Mic2, Monitor, MousePointer2, X } from "lucide-react";
+import { Camera, CameraOff, Check, CircleStop, Mic2, Monitor, MousePointer2, X } from "lucide-react";
 import { getElectronDesktop } from "../../lib/electron-runtime";
-import { getVoiceVisualMode, RollingVoiceFrames, setVoiceVisualMode, type VoiceVisualIntent, type VoiceVisualSource, type VoiceVisionFrame } from "../../voice/multimodal";
+import { RollingVoiceFrames, setVoiceVisualMode, type VoiceVisualIntent, type VoiceVisualSource, type VoiceVisionFrame } from "../../voice/multimodal";
 import type { VoiceCallHostCall } from "./VoiceCallHost";
 import "./voice-multimodal.css";
 
@@ -30,6 +30,7 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
   const [pendingControl, setPendingControl] = useState("");
   const [pointer, setPointer] = useState<Pointer | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 1, height: 1 });
+  const [taskImage, setTaskImage] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
   const bufferRef = useRef({
@@ -277,6 +278,26 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
   }, [call, pendingControl]);
 
   const activeTask = call.activeTask && call.activeTask.status !== "complete" ? call.activeTask : null;
+  useEffect(() => {
+    if (!activeTask || activeTask.kind !== "browser") {
+      setTaskImage(null);
+      return;
+    }
+    let live = true;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const frame = await getElectronDesktop()?.voice?.taskFrame?.();
+        if (live && frame?.ok && frame.image) setTaskImage(frame.image);
+      } catch { /* Browser surface may not be active yet. */ }
+      finally { refreshing = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1350);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [activeTask?.id, activeTask?.kind]);
   const activeSurface = call.activeSurface;
   const previewUrl = activeSurface && isLocalOrWebPreview(activeSurface.url) ? activeSurface.url : null;
   const frameWidth = videoRef.current?.videoWidth || 1;
@@ -286,7 +307,8 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
   const fittedHeight = frameHeight * scale;
   const left = (previewSize.width - fittedWidth) / 2;
   const top = (previewSize.height - fittedHeight) / 2;
-  const pointX = pointer ? left + (pointer.x + pointer.width / 2) * fittedWidth : 0;
+  const rawPointX = pointer ? left + (pointer.x + pointer.width / 2) * fittedWidth : 0;
+  const pointX = mode === "camera" ? previewSize.width - rawPointX : rawPointX;
   const pointY = pointer ? top + (pointer.y + pointer.height / 2) * fittedHeight : 0;
 
   return (
@@ -310,7 +332,8 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
 
       {activeTask ? <section className="clyra-voice-multimodal__stage" aria-label="Live Clyra task progress">
         <header><span className="clyra-voice-multimodal__stage-dot" /><span>{activeSurface?.title || "Clyra is working"}</span><button onClick={call.stopTask} aria-label="Stop agent task" title="Stop"><CircleStop size={18} /></button></header>
-        {previewUrl ? <iframe title="Live task workspace" src={previewUrl} sandbox="allow-scripts allow-same-origin allow-forms" /> : <div className="clyra-voice-multimodal__stage-body">
+        {taskImage && activeTask.kind === "browser" ? <div className="clyra-voice-multimodal__stage-live"><img src={taskImage} alt="Live capture of the real Clyra browser workspace" /></div> :
+        previewUrl ? <iframe title="Live task workspace" src={previewUrl} sandbox="allow-scripts allow-same-origin allow-forms" /> : <div className="clyra-voice-multimodal__stage-body">
           <h3>{activeTask.label}</h3>
           <p>{activeTask.detail || activeSurface?.subtitle || "Live steps from the Clyra agent harness appear here."}</p>
           {activeTask.steps?.length ? <ol>{activeTask.steps.map(step => <li key={step.id} data-status={step.status}><span>{step.status === "complete" ? <Check size={13} /> : step.status === "active" ? "·" : ""}</span>{step.label}</li>)}</ol> : null}
