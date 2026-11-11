@@ -1,0 +1,71 @@
+name: Clyra real landing-page section screenshots
+
+on:
+  push:
+    branches: [vibe-coder-polish-and-templates]
+    paths:
+      - "tools/capture-landing-page-sections.mjs"
+      - ".github/workflows/clyra-landing-page-sections.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: clyra-landing-sections-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install existing browser-test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Capture three real, distinct content sections per landing page
+        env:
+          SCREENSHOT_WORKERS: "3"
+        run: node tools/capture-landing-page-sections.mjs
+      - name: Verify original image survives and all new captures exist
+        run: |
+          python3 - <<'PY'
+          import os, glob
+          d = 'public/library-shots'
+          originals = glob.glob(f'{d}/landing-*.jpg')
+          original = [x for x in originals if '-section-' not in x]
+          more = [x for x in originals if '-section-' in x]
+          assert len(original) == 75, f'Expected 75 original previews: {len(original)}'
+          assert len(more) == 225, f'Expected 225 additional section images: {len(more)}'
+          for path in originals:
+              assert os.stat(path).st_size > 8000, f'Tiny/empty image: {path}'
+          assert os.path.exists('lib/clyra-code/library/landing-page-section-captures.ts')
+          print(f'PASS: {len(original)} originals untouched; {len(more)} additional captured sections')
+          PY
+      - name: Commit newly verified captures and provenance
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/library-shots/landing-*-section-*.jpg lib/clyra-code/library/landing-page-section-captures.ts
+          if git diff --cached --quiet; then
+            echo "No missing screenshots"
+            exit 0
+          fi
+          git commit -m "assets(landing-pages): add 225 real different-section captures; preserve 75 original images"
+          git push origin "HEAD:${{ github.ref_name }}"
+      - name: Publish capture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: landing-section-capture-diagnostics
+          path: landing-page-capture-failures.json
+          if-no-files-found: ignore
+          retention-days: 14
