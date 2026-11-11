@@ -16,6 +16,10 @@ on:
       - "tools/browser-companion-visual-smoke.mjs"
       - ".github/workflows/clyra-ai-browser.yml"
 
+concurrency:
+  group: clyra-ai-browser-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -35,7 +39,7 @@ jobs:
       - name: Install application dependencies
         run: npm ci --legacy-peer-deps --no-audit --no-fund
       - name: Install Chromium and shared libraries
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Typecheck
         run: npm run lint
       - name: Build application
