@@ -946,20 +946,48 @@ export function TemplateLibrary({
                 {!error && entries.length && isHome ? (
                   <>
                     {spotlight.length ? <Spotlight entries={spotlight} onChoose={choose} install={install} related={related} /> : null}
-                    <section aria-label="Templates" className="mb-8">
-                      <div className="mb-3 flex items-end justify-between">
-                        <div>
-                          <h3 className="text-[18px] font-bold tracking-[-0.01em] text-[#2C2C2B]">Templates</h3>
-                          <p className="mt-0.5 text-[14px] text-[#5F5E59]">Starting points for your next project</p>
-                        </div>
+                    <section aria-label="Templates with previews" className="mb-9">
+                      <SectionHeader title="Templates with previews" subtitle="Real captures from locally launched upstream projects" />
+                      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {entries.filter((entry) => entry.sourceScreenshots.length > 0).map((entry, index) => (
+                          <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
+                        ))}
                       </div>
-                      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{entries.map((entry, index) => <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />)}</div>
+                    </section>
+                    <section aria-label="Source catalogue">
+                      <SectionHeader title="Explore source projects" subtitle="Browse the open-source catalogue. Uncaptured sources are shown as lists, not invented screenshots." />
+                      {shelves.map(([name, list]) => {
+                        const uncaptured = list.filter((entry) => entry.sourceScreenshots.length === 0);
+                        if (!uncaptured.length) return null;
+                        return (
+                          <section key={name} aria-label={name} className="mb-7 border-t border-black/[0.07] pt-5">
+                            <SectionHeader title={name} subtitle={`${uncaptured.length} source ${uncaptured.length === 1 ? "project" : "projects"}`}
+                              onSeeAll={() => goCategory(name)} />
+                            <div className="grid grid-cols-1 gap-x-7 sm:grid-cols-2">
+                              {uncaptured.slice(0, 4).map((entry, index) => (
+                                <RankRow key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
+                              ))}
+                            </div>
+                          </section>
+                        );
+                      })}
                     </section>
                   </>
                 ) : null}
                 {!error && entries.length && !isHome ? (
                   <section aria-label="Apps">
-                    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{entries.map((entry, index) => <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />)}</div>
+                    {entries.some((entry) => entry.sourceScreenshots.length > 0) ? (
+                      <div className="mb-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {entries.filter((entry) => entry.sourceScreenshots.length > 0).map((entry, index) => (
+                          <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="grid grid-cols-1 gap-x-7 sm:grid-cols-2">
+                      {entries.filter((entry) => entry.sourceScreenshots.length === 0).map((entry, index) => (
+                        <RankRow key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
+                      ))}
+                    </div>
                   </section>
                 ) : null}
               </div>
