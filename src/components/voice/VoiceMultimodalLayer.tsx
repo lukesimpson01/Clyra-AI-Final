@@ -130,12 +130,16 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
 
   useEffect(() => {
     if (mode === "voice") return;
+    // The user is often working in another desktop window. Continue the
+    // consented local rolling buffer while Clyra is in the background.
+    // Use fewer frames on 4-core systems to keep the microphone responsive.
+    const slowMachine = navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4;
     const id = window.setInterval(() => {
-      if (document.visibilityState === "visible" && !inFlightRef.current) {
+      if (!inFlightRef.current) {
         inFlightRef.current = true;
         try { captureFrame(mode); } finally { inFlightRef.current = false; }
       }
-    }, 900);
+    }, slowMachine ? 1350 : 900);
     return () => window.clearInterval(id);
   }, [mode, captureFrame]);
 
