@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FilePlus, FileText, Globe, Link2, Search } from "lucide-react";
+import { ChevronDown, FilePlus, FileText, Globe, Link2, Search, FolderOpen, GitBranch, TerminalSquare, Compass, BookOpen, Brain, ListChecks, Music2, Plug, ShieldCheck, FileCode2 } from "lucide-react";
 import { SourceStrip } from "./assistant";
 import { ShimmerText } from "./assistant";
 import type { AgentStepView, ChatAgentRun as Run, TodoItem } from "../../lib/chatAgentClient";
@@ -15,7 +15,41 @@ export function useFollowGrowth(ref: React.RefObject<HTMLElement | null>, signal
   }, [ref, signal, active]);
 }
 
-const ICON = { web_search: Globe, web_open: FileText, web_find: Search, web_follow_links: Link2, create_note: FilePlus } as const;
+const TOOL_ICONS = {
+  web_search: Globe,
+  web_open: FileText,
+  web_find: Search,
+  web_follow_links: Link2,
+  create_note: FilePlus,
+  notes_search: Search,
+  notes_read: BookOpen,
+  notes_insert: FileText,
+  notes_edit: FileText,
+  notes_link_page: Link2,
+  show_map: Compass,
+} as const;
+
+/** One consistent activity row for all verified Chat and native MCP tools.
+ * An unknown registered tool gets a neutral capability icon, never a fake
+ * browser globe implying a web search took place. */
+function toolIcon(tool: string) {
+  const known = TOOL_ICONS[tool as keyof typeof TOOL_ICONS];
+  if (known) return known;
+  if (tool.startsWith("git.")) return GitBranch;
+  if (tool.startsWith("files.")) return FolderOpen;
+  if (tool.startsWith("terminal.")) return TerminalSquare;
+  if (tool.startsWith("browser.")) return Compass;
+  if (tool.startsWith("notes.")) return BookOpen;
+  if (tool.startsWith("memory.") || tool.startsWith("project.memory.") || tool.startsWith("session.")) return Brain;
+  if (tool.startsWith("skill.")) return BookOpen;
+  if (tool.startsWith("spotify.")) return Music2;
+  if (tool.startsWith("vibe.")) return FileCode2;
+  if (tool.startsWith("computer.")) return ShieldCheck;
+  if (tool.startsWith("media.")) return FileText;
+  if (tool.startsWith("email.")) return FileText;
+  if (tool.startsWith("todo.")) return ListChecks;
+  return Plug;
+}
 
 /**
  * The agent's plan, as in the Clyra agent-UI kit: a compact pill (a spinning activity ring while work continues, the
@@ -83,7 +117,7 @@ export function AgentTodo({ todos, live }: { todos: TodoItem[]; live: boolean; d
 }
 
 function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: string) => void }) {
-  const Icon = ICON[step.tool as keyof typeof ICON] ?? Globe;
+  const Icon = toolIcon(step.tool);
   const running = step.state === "running";
   return (
     <li className={`clyra-ai-row clyra-ai-row--${running ? "running" : step.state}`}>

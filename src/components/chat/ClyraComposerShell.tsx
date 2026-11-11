@@ -1881,6 +1881,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           >
             {/* "/" palette */}
             <div
+              role="group"
+              aria-label="Clyra commands and modes"
+              aria-hidden={!paletteOpen}
+              inert={!paletteOpen}
               style={{
                 position: "absolute",
                 left: -4,
@@ -1893,12 +1897,19 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 boxShadow:
                   "0 1px 1px rgba(16,18,24,0.04), 0 24px 56px -16px rgba(16,18,24,0.28), inset 0 0 0 1px rgba(16,18,24,0.07)",
                 opacity: paletteOpen ? 1 : 0,
-                transform: `translateY(${paletteOpen ? 0 : 14}px) scale(${paletteOpen ? 1 : 0.97})`,
+                transform: reduceMotion ? "none" : `translate3d(0, ${paletteOpen ? 0 : 10}px, 0) scale(${paletteOpen ? 1 : 0.985})`,
+                transformOrigin: "bottom center",
                 pointerEvents: paletteOpen ? "auto" : "none",
                 visibility: paletteOpen ? "visible" : "hidden",
                 maxHeight: paletteOpen ? Math.max(64, headroom - 46) : 0,
-                overflow: paletteOpen ? "auto" : "hidden",
-                transition: `opacity .22s ease, transform .3s ${SHELL_EASE}`,
+                overflowY: paletteOpen ? "auto" : "hidden",
+                overflowX: "hidden",
+                // Closing used to cut off instantly because visibility and
+                // max-height were snapped before the opacity transition.
+                transition: reduceMotion
+                  ? "none"
+                  : `opacity 180ms ease, transform 240ms ${SHELL_EASE}, max-height 240ms ${SHELL_EASE}, visibility 0s linear ${paletteOpen ? "0ms" : "240ms"}`,
+                willChange: paletteOpen && !reduceMotion ? "opacity, transform" : undefined,
               }}
             >
               <span

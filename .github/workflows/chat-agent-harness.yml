@@ -1,0 +1,37 @@
+name: Chat agent verification
+
+on:
+  push:
+    branches:
+      - feat/chat-agent-verified-harness-20261112
+  pull_request:
+    paths:
+      - "lib/chat-agent/**"
+      - "src/lib/chatAgentClient.ts"
+      - "src/components/chat/ChatAgentRun.tsx"
+      - "src/components/chat/ClyraComposerShell.tsx"
+      - "server.ts"
+      - "tools/chat-agent-unit-tests.ts"
+      - ".github/workflows/chat-agent-harness.yml"
+
+jobs:
+  agent-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Run Chat agent contract tests
+        run: npx tsx tools/chat-agent-unit-tests.ts
+      - name: Type-check
+        run: npm run lint

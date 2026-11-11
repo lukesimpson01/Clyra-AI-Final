@@ -7773,6 +7773,7 @@ Please analyze the code you just wrote and fix this error.`;
           await streamChatAgent({
             messages: history,
             model: CHAT_EFFORT_MODEL[chatEffort],
+            effort: chatEffort,
             signal: streamController.signal,
             onEvent: (event) => {
               if (event.type === "todos") { run.todos = event.items; patch(); }
