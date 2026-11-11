@@ -96,10 +96,11 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   const dialog = page.getByRole("dialog", { name: "Clyra Library" });
   await expect(dialog.getByRole("heading", { name: "Landing Pages" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "View KORVA — AI Studio details" }).first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "View VitalApp — Mobile App details" }).first()).toBeVisible();
 
   await dialog.getByRole("button", { name: "Landing Pages", exact: true }).first().click();
   await expect(dialog.getByRole("heading", { name: "Landing Pages" })).toBeVisible();
-  await expect(dialog.getByText("75 landing page designs")).toBeVisible();
+  await expect(dialog.getByText("75 designs across 17 industries")).toBeVisible();
   await expect(dialog.getByRole("group", { name: "Filter landing pages by type" })).toBeVisible();
   await dialog.getByRole("button", { name: "SaaS & AI", exact: true }).click();
   await expect(dialog.getByText("8 SaaS & AI designs")).toBeVisible();
