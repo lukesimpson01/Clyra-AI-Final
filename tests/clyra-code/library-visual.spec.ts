@@ -75,6 +75,7 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
 
   await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
   await dialog.getByRole("button", { name: "Write a Review" }).click();
+  await dialog.getByPlaceholder("Summarise your experience").scrollIntoViewIfNeeded();
   await shot("11-app-detail-review-editor-desktop");
   await dialog.getByRole("button", { name: "Rate 5 stars" }).click();
   await dialog.getByPlaceholder("Summarise your experience").fill("QA example — personal rating");
@@ -83,7 +84,8 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
   await shot("12-app-detail-own-rating-desktop");
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await shot("13-app-detail-mobile");
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await shot("13-app-detail-ratings-mobile");
   await dialog.getByRole("button", { name: /Discover/ }).first().click();
   await dialog.getByRole("textbox", { name: "Search the library" }).fill("");
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
