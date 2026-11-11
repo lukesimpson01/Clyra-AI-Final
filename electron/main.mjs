@@ -437,7 +437,7 @@ function configureUiSession() {
       return allowGeolocationFromClyra(requestingOrigin, details || {});
     }
     if (permission === "display-capture") {
-      return Boolean(voiceShareSource && Date.now() - voiceShareSource.at < 10_000 && allowMediaFrom(webContents, requestingOrigin, details || {}));
+      return allowMediaFrom(webContents, requestingOrigin, details || {});
     }
     if (permission !== "media") return false;
     // Allow mic and camera for Clyra origins (voice call + camera vision).
@@ -449,7 +449,7 @@ function configureUiSession() {
       return;
     }
     if (permission === "display-capture") {
-      callback(Boolean(voiceShareSource && Date.now() - voiceShareSource.at < 10_000 && allowMediaFrom(webContents, details?.requestingUrl || details?.securityOrigin, details || {})));
+      callback(allowMediaFrom(webContents, details?.requestingUrl || details?.securityOrigin, details || {}));
       return;
     }
     if (permission !== "media") {
@@ -1064,6 +1064,18 @@ function registerIpc() {
     if (!selected) return { ok: false, error: "The selected window or display is no longer available." };
     voiceShareSource = { id: selected.id, at: Date.now() };
     return { ok: true };
+  });
+  ipcMain.handle("voice:task-frame", async (event) => {
+    authorize(event);
+    try {
+      const frame = await browserManager?.captureFrame();
+      if (!frame || !Buffer.isBuffer(frame) || frame.length === 0) {
+        return { ok: false, error: "No active browser frame." };
+      }
+      return { ok: true, image: `data:image/jpeg;base64,${frame.toString("base64")}` };
+    } catch (error) {
+      return { ok: false, error: error?.message || "Browser preview unavailable." };
+    }
   });
   ipcMain.handle("voice:guide", (event, question) => {
     authorize(event);
