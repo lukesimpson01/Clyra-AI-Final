@@ -781,9 +781,9 @@ export function TemplateLibrary({
                     { k: "Stack", v: selected.stack[0] || "—", s: selected.stack[1] || "Primary" },
                     { k: "Status", v: statusLabel(selected), s: "Clyra check" },
                   ].map((cell, i) => (
-                    <div key={cell.k} className={cn("min-w-[132px] flex-1 px-4 text-center", i && "border-l border-black/[0.08]")}>
+                    <div key={cell.k} className={cn("min-w-[146px] flex-1 px-3 text-center", i && "border-l border-black/[0.08]")}>
                       <p className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-[#A1A1A6]">{cell.k}</p>
-                      <p className="mt-1 truncate text-[17px] font-bold tracking-[-0.02em] text-[#6E6E73]" title={cell.v}>{cell.v}</p>
+                      <p className="mt-1 break-words text-[15px] font-semibold leading-[1.35] tracking-[-0.015em] text-[#6E6E73]" title={cell.v}>{cell.v}</p>
                       <p className="mt-0.5 truncate text-[11px] text-[#A1A1A6]">{cell.s}</p>
                     </div>
                   ))}
@@ -802,11 +802,11 @@ export function TemplateLibrary({
                   <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#1D1D1F]">What happens when you open it</h3>
                   <ol className="mt-4 grid gap-3 sm:grid-cols-3">
                     {[
-                      { t: "Downloads the source", d: "Get pulls the pinned revision from GitHub into its own Clyra project." },
-                      { t: "Runs it live", d: "Open starts the dev server and shows the running app in the Clyra preview." },
-                      { t: "Ready to change", d: "Clyra’s agent sets it up, then asks what you’d like to change or publish." },
+                      { t: "Inspect the source", d: "Get checks the upstream repository and resolves a source revision before installation." },
+                      { t: "Download safely", d: "After confirmation, Clyra downloads the resolved source into a project. Verification does not execute scripts." },
+                      { t: "Set up and run", d: "Open your project when its dependencies are ready. Some sources require API keys, services or native tooling." },
                     ].map((step, i) => (
-                      <li key={step.t} className="rounded-[14px] bg-[#F5F5F7] p-4">
+                      <li key={step.t} className="border-t border-black/[0.09] py-4 pr-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#007AFF] text-[12px] font-semibold text-white">{i + 1}</span>
                         <p className="mt-2.5 text-[14px] font-semibold text-[#1D1D1F]">{step.t}</p>
                         <p className="mt-1 text-[12.5px] leading-[1.5] text-[#6E6E73]">{step.d}</p>
