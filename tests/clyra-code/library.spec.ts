@@ -20,9 +20,9 @@ test("source-library API returns unique active entries without claiming unverifi
     entries: Array<{ id: string; status: string; sourceScreenshots: Array<{ url: string }>; pinnedCommit: string | null }>;
     total: number;
   };
-  expect(catalogue.total).toBe(125);
-  expect(catalogue.entries.length).toBe(125);
-  expect(new Set(catalogue.entries.map((entry) => entry.id)).size).toBe(125);
+  expect(catalogue.total).toBe(131);
+  expect(catalogue.entries.length).toBe(131);
+  expect(new Set(catalogue.entries.map((entry) => entry.id)).size).toBe(131);
   for (const id of ["astrofy", "excalidraw", "bolt-diy", "browseros", "facilmap", "supoclip"]) {
     expect(catalogue.entries.some((entry) => entry.id === id)).toBeTruthy();
   }
@@ -112,4 +112,30 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   const shot = dialog.locator('img[src="/library-shots/landing-ai-studio.jpg"]').first();
   await expect(shot).toBeVisible();
   expect(await shot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 500)).toBeTruthy();
+});
+
+test("Featured Apps highlights OpenCluely, OpenHands, OpenFilm and Adobe alternatives", async ({ page, request }) => {
+  const response = await request.get(`${API}/api/clyra-code/library?limit=250`);
+  expect(response.ok()).toBeTruthy();
+  const data = (await response.json()) as { entries: Array<{ id: string; name: string; repositoryUrl: string; status: string }> };
+  const featuredIds = ["opencluely", "openhands", "openfilm", "minipaint", "krita", "svgedit", "kdenlive", "natron", "penpot"];
+  expect(new Set(featuredIds).size).toBe(9);
+  for (const id of featuredIds) expect(data.entries.filter((entry) => entry.id === id)).toHaveLength(1);
+  for (const id of ["krita", "natron", "kdenlive"]) {
+    expect(data.entries.find((entry) => entry.id === id)?.status).toBe("reference-only");
+  }
+
+  await openWorkspace(page);
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Clyra Library" });
+  const featured = dialog.getByRole("region", { name: "Featured Apps" });
+  await expect(featured).toBeVisible();
+  for (const name of ["OpenCluely", "OpenHands", "OpenFilm", "miniPaint", "Krita", "SVGEdit", "Kdenlive", "Natron", "Penpot"]) {
+    await expect(featured.getByRole("button", { name: `View ${name} details` })).toHaveCount(1);
+  }
+  await expect(featured.getByRole("button", { name: "Get", exact: true })).toHaveCount(9);
+  await featured.getByRole("button", { name: "View OpenFilm details" }).click();
+  await expect(dialog.getByRole("heading", { name: "OpenFilm", exact: true })).toBeVisible();
+  await expect(dialog.getByText(/Requires Node 22, pnpm, FFmpeg/)).toBeVisible();
+  await expect(dialog.getByText("source downloaded", { exact: false })).toHaveCount(0);
 });
