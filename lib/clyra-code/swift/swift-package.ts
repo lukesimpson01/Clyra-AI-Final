@@ -108,22 +108,25 @@ export function parseSwiftTests(output: string): SwiftTestSummary | undefined {
   const xctest = /Executed (\d+) tests?, with (\d+) failures? \(\d+ unexpected\) in [\d.]+ \([\d.]+\) seconds/g;
   let lastXCTest: RegExpExecArray | null = null;
   for (let m = xctest.exec(output); m; m = xctest.exec(output)) lastXCTest = m;
-  if (lastXCTest) {
+  // Swift 6 on Linux often prints an XCTest preamble saying "Executed 0
+  // tests" before reporting its real Swift Testing cases. Do not take that
+  // empty preamble as the final result.
+  const xctestSummary: SwiftTestSummary | undefined = lastXCTest ? (() => {
     const total = Number(lastXCTest[1]);
     const failed = Number(lastXCTest[2]);
     const seconds = /Executed \d+ tests?.* in ([\d.]+) \(/.exec(lastXCTest[0]);
     return { framework: "xctest", total, failed, passed: total - failed, durationSeconds: seconds ? Number(seconds[1]) : 0 };
-  }
+  })() : undefined;
 
   const testing = /Test run with (\d+) tests? (?:in \d+ suites? )?(passed|failed) after ([\d.]+) seconds/g;
   let lastTesting: RegExpExecArray | null = null;
   for (let m = testing.exec(output); m; m = testing.exec(output)) lastTesting = m;
-  if (lastTesting) {
+  if (lastTesting && (!xctestSummary || xctestSummary.total === 0)) {
     const total = Number(lastTesting[1]);
     const failed = lastTesting[2] === "failed" ? total : 0;
     return { framework: "swift-testing", total, failed, passed: total - failed, durationSeconds: Number(lastTesting[3]) };
   }
-  return undefined;
+  return xctestSummary;
 }
 
 function tailOf(output: string) {
