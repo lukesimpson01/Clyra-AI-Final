@@ -1,0 +1,143 @@
+name: Clyra broad automated regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clyra-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-build:
+    name: Typecheck and production web/server build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Typecheck
+        run: npm run lint
+      - name: Build frontend and server
+        run: npm run build
+
+  contract-tests:
+    name: ${{ matrix.group }} contract and regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: chat-agent-and-data
+            tasks: >-
+              test:chat-intent test:chat-rich test:research test:agent-events
+              test:agent-controller test:tools test:automations test:care
+              test:agent-zero-runtime test:memory test:cowork test:maps test:usage-pricing
+          - group: code-notes-and-creator
+            tasks: >-
+              test:clipper test:clipper-publishing test:clipper-brand-kits
+              test:template-library test:clyra-code-platform test:clyra-code-library
+              test:clyra-code-brief test:vibe-runtime test:vibe-task-controller
+              test:vibe-skills test:vibe-agent-v3 test:study-brain test:notes
+          - group: voice-and-desktop-contracts
+            tasks: >-
+              test:voice test:speech-flow test:dictation-cleanup test:word-diff
+              test:dictation-hotkey test:flow-native test:deepseek-vision
+              test:smart-camera test:computer-agent test:companion
+              test:windows-compat test:composer-dictation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Run all contracts, report each pass/failure
+        shell: bash
+        env:
+          TEST_COMMANDS: ${{ matrix.tasks }}
+        run: |
+          failures=0
+          echo "### ${{ matrix.group }}" >> "$GITHUB_STEP_SUMMARY"
+          for command in $TEST_COMMANDS; do
+            echo "::group::$command"
+            if npm run "$command"; then
+              echo "- PASS \`$command\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- FAIL \`$command\`" >> "$GITHUB_STEP_SUMMARY"
+              failures=$((failures+1))
+            fi
+            echo "::endgroup::"
+          done
+          echo "Total failed test commands: $failures" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failures" -ne 0 ]; then exit 1; fi
+
+  real-browser:
+    name: Real Chromium browser and Clyra Code UI regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Install real Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Start Clyra workspace
+        run: |
+          npm run dev:source > /tmp/clyra-ci-app.log 2>&1 &
+          echo $! > /tmp/clyra-ci-app.pid
+          for n in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -150 /tmp/clyra-ci-app.log
+          exit 1
+      - name: Browser API and agent fixture tests
+        run: npm run test:browser
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Multi-step browser task
+        run: npm run test:browser-complex
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Real browser UI tests
+        run: npx playwright test -c playwright.clyra-code.config.ts
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Upload browser traces and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-main-browser-regression
+          if-no-files-found: warn
+          path: |
+            /tmp/clyra-ci-app.log
+            /tmp/clyra-code-playwright/
+            qa-artifacts/browser-complex/
+            qa-screenshots/clyra-code-template-store/
