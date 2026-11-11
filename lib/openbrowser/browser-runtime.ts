@@ -2437,7 +2437,7 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
       }
       const decision = await decideNextActions(task, apiKey, history, plan, facts, failures, observation, taskAbort.signal, { step, maxSteps: MAX_AGENT_STEPS });
       if (decision.nextGoal || decision.evaluationPreviousGoal || decision.memory) {
-        emit({ phase: "observing", kind: "reasoning", message: decision.nextGoal || "Deciding the next step", step, evaluation: decision.evaluationPreviousGoal, memory: decision.memory, nextGoal: decision.nextGoal });
+        emit({ phase: "observing", kind: "strategy", message: decision.nextGoal || "Deciding the next step", step, nextGoal: decision.nextGoal });
       }
       finalMessage = decision.message?.trim() || decision.reasoningSummary?.trim() || finalMessage;
       for (const rawFact of decision.facts || []) {
@@ -2718,7 +2718,7 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
 
       const decision = await decideNextActions(task, apiKey, history, plan, facts, failures, observation, taskAbort.signal, { step, maxSteps: MAX_AGENT_STEPS });
       if (decision.nextGoal || decision.evaluationPreviousGoal || decision.memory) {
-        emit({ phase: "observing", kind: "reasoning", message: decision.nextGoal || "Deciding the next step", step, evaluation: decision.evaluationPreviousGoal, memory: decision.memory, nextGoal: decision.nextGoal });
+        emit({ phase: "observing", kind: "strategy", message: decision.nextGoal || "Deciding the next step", step, nextGoal: decision.nextGoal });
       }
       finalMessage = decision.message?.trim() || decision.reasoningSummary?.trim() || finalMessage;
       for (const rawFact of decision.facts || []) {
