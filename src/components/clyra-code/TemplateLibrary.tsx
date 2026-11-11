@@ -61,7 +61,7 @@ function iconFor(category: string): CategoryMeta["icon"] {
   if (/map|location/.test(c)) return MapIcon;
   if (/\bai\b|assistant|knowledge/.test(c)) return Sparkles;
   if (/code|developer|tool|database|monitor|analytic/.test(c)) return FileSearch;
-  if (/app|web|commerce|form|billing|crm|email|message|schedul/.test(c)) return AppWindow;
+  if (/app|web|commerce|form|billing|crm|email|message|schedul|landing/.test(c)) return AppWindow;
   return Blocks;
 }
 
@@ -134,7 +134,7 @@ type InstallPhase = "verifying" | "downloading" | "finishing";
 const BLUE = "#3977F6";
 
 function subtitleOf(entry: TemplateManifest) {
-  return entry.alternativeTo.length ? `Like ${entry.alternativeTo.slice(0, 2).join(" & ")}` : entry.category;
+  return entry.landingPageType || (entry.alternativeTo.length ? `Like ${entry.alternativeTo.slice(0, 2).join(" & ")}` : entry.category);
 }
 
 function coverBackground(entry: TemplateManifest) {
@@ -505,6 +505,7 @@ export function TemplateLibrary({
   const [view, setView] = useState<View>("discover");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
+  const [landingKind, setLandingKind] = useState("All");
   const [entries, setEntries] = useState<TemplateManifest[]>([]);
   const [catalogue, setCatalogue] = useState<TemplateManifest[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -546,7 +547,10 @@ export function TemplateLibrary({
       // number of distinct captures as a grounded tie-breaker.
       const actualScreens = (entry: TemplateManifest) => entry.sourceScreenshots
         .filter((shot) => !/setup|first.run|onboarding/i.test(shot.alt)).length;
-      return photographed.sort((x, y) => actualScreens(y) - actualScreens(x)).slice(0, 5);
+      const established = photographed.filter((entry) => entry.category !== "Landing Pages")
+        .sort((x, y) => actualScreens(y) - actualScreens(x) || x.name.localeCompare(y.name));
+      const landing = photographed.filter((entry) => entry.category === "Landing Pages");
+      return [...established.slice(0, 2), ...landing.slice(0, 3)].slice(0, 5);
     }
     // For a brand-new catalogue with no captures, preserve category variety
     // and clearly mark its source-only previews as unavailable.
@@ -570,6 +574,12 @@ export function TemplateLibrary({
     return shelves.flatMap(([, list]) => list.filter((entry) => !featured.has(entry.id)).slice(0, 1)).slice(0, 9);
   }, [shelves, spotlight]);
   const installedEntries = useMemo(() => catalogue.filter((entry) => liveInstalled[entry.id]), [catalogue, liveInstalled]);
+  const landingPreviews = useMemo(() => catalogue.filter((entry) => entry.category === "Landing Pages" && entry.sourceScreenshots.length > 0), [catalogue]);
+  const landingKinds = useMemo(() => [...new Set(entries.filter((entry) => entry.category === "Landing Pages")
+    .map((entry) => entry.landingPageType).filter((kind): kind is string => Boolean(kind)))].sort(), [entries]);
+  const visibleEntries = useMemo(() => category === "Landing Pages" && landingKind !== "All"
+    ? entries.filter((entry) => entry.landingPageType === landingKind) : entries,
+    [category, entries, landingKind]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -706,8 +716,8 @@ export function TemplateLibrary({
     await navigator.clipboard?.writeText(`git clone ${selected.repositoryUrl}.git`).catch(() => undefined);
   };
 
-  const goHome = () => { setView("discover"); setCategory(""); setQuery(""); setSelected(null); };
-  const goCategory = (name: string) => { setView("discover"); setCategory(name); setSelected(null); };
+  const goHome = () => { setView("discover"); setCategory(""); setQuery(""); setLandingKind("All"); setSelected(null); };
+  const goCategory = (name: string) => { setView("discover"); setCategory(name); setQuery(""); setLandingKind("All"); setSelected(null); };
 
   if (!open) return null;
 
@@ -795,6 +805,12 @@ export function TemplateLibrary({
                     <p className="mt-0.5 text-[15px] text-[#78766F]">{subtitleOf(selected)}</p>
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
+                      {selected.livePreviewUrl ? (
+                        <a href={selected.livePreviewUrl} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#3977F6]/[0.07] px-3.5 text-[13px] font-medium text-[#3977F6] transition-colors hover:bg-[#3977F6]/[0.13]">
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden /> Live demo
+                        </a>
+                      ) : null}
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[rgba(55,53,47,0.06)] px-3.5 text-[13px] font-semibold text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[rgba(55,53,47,0.06)] text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
@@ -838,6 +854,7 @@ export function TemplateLibrary({
                     {selected.sourceScreenshots.slice(1).map((shot) => <figure key={shot.url} className="w-[min(640px,88%)] shrink-0 snap-start overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.06]"><img src={shot.url} alt={shot.alt} loading="lazy" className="aspect-[16/10] w-full object-cover" /></figure>)}
                   </div>
                   {selected.sourceScreenshots.length ? null : <p className="mt-1.5 text-[12px] text-[#78766F]">No verified screenshots yet. Importing source does not guarantee the upstream app can run here.</p>}
+                  {selected.captureProvenance ? <p className="mt-1.5 max-w-[690px] text-[11.5px] leading-relaxed text-[#898780]">{selected.captureProvenance}</p> : null}
                 </section>
 
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
@@ -940,16 +957,45 @@ export function TemplateLibrary({
                     ))}
                   </div>
                 </div>
+                {category === "Landing Pages" && landingKinds.length > 0 ? (
+                  <div className="mb-7" aria-label="Landing page business types">
+                    <div className="mb-2 text-[12px] font-medium text-[#78766F]">
+                      {landingKind === "All" ? `${total} landing page designs` : `${visibleEntries.length} ${landingKind} designs`}
+                    </div>
+                    <div className="flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Filter landing pages by type">
+                      {["All", ...landingKinds].map((kind) => (
+                        <button key={kind} type="button" aria-pressed={landingKind === kind}
+                          onClick={() => { setLandingKind(kind); contentRef.current?.scrollTo({ top: 0, behavior: "smooth" }); }}
+                          className={cn("h-8 shrink-0 rounded-full px-3.5 text-[12.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45",
+                            landingKind === kind ? "bg-[#2C2C2B] text-white" : "bg-black/[0.045] text-[#5F5E59] hover:bg-black/[0.09]")}>
+                          {kind}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {loading && !entries.length ? <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 9 }, (_, index) => <div key={index}><div className="cc-lib-shimmer aspect-[16/10] rounded-[14px]" /><div className="mt-3 flex items-center gap-3"><div className="cc-lib-shimmer rounded-[12px] h-[42px] w-[42px]" /><div className="flex-1 space-y-1.5"><div className="cc-lib-shimmer h-3 w-1/2 rounded" /><div className="cc-lib-shimmer h-2.5 w-1/3 rounded" /></div></div></div>)}</div> : null}
                 {error ? <div role="alert" className="rounded-[14px] bg-[#FCEBEB] p-4 text-[13px] text-[#A43D3D]">{error}</div> : null}
                 {!loading && !error && !entries.length ? <div className="rounded-[16px] bg-[#F7F6F5] p-10 text-center text-[13px] text-[#78766F]">No apps match. Try another search or category.</div> : null}
                 {!error && entries.length && isHome ? (
                   <>
                     {spotlight.length ? <Spotlight entries={spotlight} onChoose={choose} install={install} related={related} /> : null}
+                    {landingPreviews.length ? (
+                      <section aria-label="Landing Pages" className="mb-9">
+                        <SectionHeader title="Landing Pages"
+                          subtitle={`${landingPreviews.length} designs · SaaS, apps, agencies and businesses`}
+                          onSeeAll={() => goCategory("Landing Pages")} />
+                        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                          {landingPreviews.slice(0, 8).map((entry, index) => (
+                            <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                     <section aria-label="Templates with previews" className="mb-9">
-                      <SectionHeader title="Templates with previews" subtitle="Real captures from locally launched upstream projects" />
+                      <SectionHeader title="Templates with previews" subtitle="Locally captured previews of existing applications" />
                       <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {entries.filter((entry) => entry.sourceScreenshots.length > 0).map((entry, index) => (
+                        {entries.filter((entry) => entry.category !== "Landing Pages" && entry.sourceScreenshots.length > 0).slice(0, 8).map((entry, index) => (
                           <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
                         ))}
                       </div>
@@ -976,15 +1022,15 @@ export function TemplateLibrary({
                 ) : null}
                 {!error && entries.length && !isHome ? (
                   <section aria-label="Apps">
-                    {entries.some((entry) => entry.sourceScreenshots.length > 0) ? (
+                    {visibleEntries.some((entry) => entry.sourceScreenshots.length > 0) ? (
                       <div className="mb-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {entries.filter((entry) => entry.sourceScreenshots.length > 0).map((entry, index) => (
+                        {visibleEntries.filter((entry) => entry.sourceScreenshots.length > 0).map((entry, index) => (
                           <NoteCard key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
                         ))}
                       </div>
                     ) : null}
                     <div className="grid grid-cols-1 gap-x-7 sm:grid-cols-2">
-                      {entries.filter((entry) => entry.sourceScreenshots.length === 0).map((entry, index) => (
+                      {visibleEntries.filter((entry) => entry.sourceScreenshots.length === 0).map((entry, index) => (
                         <RankRow key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />
                       ))}
                     </div>
