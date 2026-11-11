@@ -117,7 +117,8 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   await dialog.getByRole("button", { name: "View KORVA — AI Studio details" }).first().click();
   await expect(dialog.getByRole("heading", { name: "KORVA — AI Studio" })).toBeVisible();
   await expect(dialog.getByRole("link", { name: "Live demo" })).toHaveAttribute("href", "https://uiuxlabz.github.io/ai-studio-html-template/");
-  await expect(dialog.getByText(/Preview supplied in uiuxlabz\/ai-studio-html-template/)).toBeVisible();
+  await expect(dialog.getByText(/Original homepage preview from uiuxlabz\/ai-studio-html-template/)).toBeVisible();
+  await expect(dialog.locator('img[src^="/library-shots/landing-ai-studio"]')).toHaveCount(4);
   const shot = dialog.locator('img[src="/library-shots/landing-ai-studio.jpg"]').first();
   await expect(shot).toBeVisible();
   expect(await shot.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 500)).toBeTruthy();
@@ -146,5 +147,6 @@ test("Featured Apps highlights OpenCluely, OpenHands, OpenFilm and Adobe alterna
   await featured.getByRole("button", { name: "View OpenFilm details" }).click();
   await expect(dialog.getByRole("heading", { name: "OpenFilm", exact: true })).toBeVisible();
   await expect(dialog.getByText(/Requires Node 22, pnpm, FFmpeg/)).toBeVisible();
+  await expect(dialog.locator('img[src^="/library-shots/app-openfilm-source-"]')).toHaveCount(3);
   await expect(dialog.getByText("source downloaded", { exact: false })).toHaveCount(0);
 });
