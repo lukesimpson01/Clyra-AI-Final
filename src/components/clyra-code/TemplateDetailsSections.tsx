@@ -77,7 +77,7 @@ export function TemplateRatingGlance({ entry }: { entry: TemplateManifest }) {
       {review ? <><Stars rating={review.rating} size={13} /><span>{review.rating.toFixed(1)} · Your rating on this device</span></> :
         <><Stars rating={0} size={13} /><span>Not rated yet</span></>}
       <span aria-hidden="true" className="h-3 w-px bg-black/10" />
-      <span>{entry.sourceScreenshots.length} verified {entry.sourceScreenshots.length === 1 ? "screenshot" : "screenshots"}</span>
+      <span>{entry.sourceScreenshots.length} {entry.sourceScreenshots.length === 1 ? "source preview" : "source previews"}</span>
     </div>
   );
 }
@@ -102,7 +102,7 @@ export function TemplateScreenshotGallery({ entry }: { entry: TemplateManifest }
     <section className="mt-8" aria-labelledby="template-preview-title">
       <div className="flex items-center justify-between gap-3">
         <h3 id="template-preview-title" className="text-[20px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">Preview</h3>
-        {screenshots.length > 0 && <span className="text-[12px] text-[#86868B]">{screenshots.length} source {screenshots.length === 1 ? "capture" : "captures"}</span>}
+        {screenshots.length > 0 && <span className="text-[12px] text-[#86868B]">{screenshots.length} source {screenshots.length === 1 ? "preview" : "previews"}</span>}
       </div>
       {screenshots.length ? (
         <>
@@ -117,13 +117,13 @@ export function TemplateScreenshotGallery({ entry }: { entry: TemplateManifest }
               </figure>
             ))}
           </div>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">Source captures are supplied with provenance and may reflect an upstream revision, not a running Clyra installation.</p>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">Upstream README previews are attributed to their source projects. They are not screenshots of a running Clyra installation.</p>
         </>
       ) : (
         <div className="mt-3 flex min-h-[166px] flex-col items-center justify-center rounded-[14px] border border-dashed border-black/[0.11] bg-[#FAFAFB] px-5 text-center">
           <ImageIcon className="h-6 w-6 text-[#B1B1B8]" strokeWidth={1.6} aria-hidden="true" />
-          <p className="mt-3 text-[14px] font-medium text-[#424245]">No verified screenshots available</p>
-          <p className="mt-1 max-w-[420px] text-[12px] leading-[1.55] text-[#86868B]">The catalogue has not captured this source app. Open the source repository or verify and run a local checkout to inspect the real interface.</p>
+          <p className="mt-3 text-[14px] font-medium text-[#424245]">No source previews available</p>
+          <p className="mt-1 max-w-[420px] text-[12px] leading-[1.55] text-[#86868B]">The catalogue has no suitable official source preview for this app. Open the source repository or verify and run a local checkout to inspect its real interface.</p>
           <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] font-medium text-[#007AFF] hover:underline">View source <ExternalLink className="h-3 w-3" /></a>
         </div>
       )}
