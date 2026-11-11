@@ -37,9 +37,11 @@ test("source library has featured carousel arrows, real previews and honest miss
   await dialog.getByRole("button", { name: "Next featured app" }).click();
   await dialog.getByRole("button", { name: "Previous featured app" }).click();
   await dialog.getByRole("textbox", { name: "Search the library" }).fill("bolt.diy");
-  await dialog.getByText("bolt.diy", { exact: true }).first().click();
+  await dialog.getByRole("button", { name: "View bolt.diy details" }).last().click();
+  await expect(dialog.getByRole("heading", { name: "bolt.diy", exact: true })).toBeVisible();
   await expect(dialog.getByText("Preview not captured").first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Get", exact: true }).first()).toBeVisible();
+  await expect(dialog.getByText("source downloaded", { exact: false })).toHaveCount(0);
   await dialog.getByText("Advanced import options").click();
   await expect(dialog.getByRole("button", { name: "Verify repository" })).toBeVisible();
   await expect(dialog.getByText(/Review setup/).first()).toBeVisible();
