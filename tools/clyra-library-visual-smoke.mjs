@@ -16,18 +16,20 @@ try {
     page.setDefaultTimeout(60_000);
     try {
       await page.goto(url, { waitUntil: "domcontentloaded" });
+      await page.locator(".clyra-boot-overlay").waitFor({ state: "hidden", timeout: 45_000 });
+      await page.locator("#clyra-preboot-surface").waitFor({ state: "detached", timeout: 5_000 });
       await page.getByText("Vibe Coder", { exact: true }).first().click();
       await page.getByRole("heading", { name: "What do you want to build?" }).waitFor();
       await page.getByRole("button", { name: "Library", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Clyra Library" });
       await dialog.waitFor();
       await dialog.getByRole("button", { name: "Next featured app" }).click();
-      await page.screenshot({ path: path.join(output, `library-discover-${width}.png`), animations: "disabled" });
+      await page.screenshot({ path: path.join(output, `library-discover-${width}.png`), animations: "allow" });
       const input = dialog.getByRole("textbox", { name: "Search the library" });
       await input.fill("bolt.diy");
       await dialog.getByText("bolt.diy", { exact: true }).first().click();
       await dialog.getByText("Preview not captured").first().waitFor();
-      await page.screenshot({ path: path.join(output, `library-detail-${width}.png`), animations: "disabled" });
+      await page.screenshot({ path: path.join(output, `library-detail-${width}.png`), animations: "allow" });
       console.log(`PASS Clyra Library renders and navigates at ${width}px`);
     } finally {
       await page.close();
