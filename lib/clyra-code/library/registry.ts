@@ -154,6 +154,55 @@ const seeds: readonly Seed[] = [
   ["gitea", "Gitea", "GitHub, GitLab", "Git Hosting", "go-gitea/gitea", "Self-hosted Git repositories, pull requests, issues and team access.", "full-app", "web, backend", "MIT", "Requires repository storage, admin configuration and security maintenance; not a plug-in for GitHub authentication."],
 ];
 
+/**
+ * Source-authorised visual previews surfaced in public upstream READMEs.
+ * They illustrate the upstream software; they do not mean Clyra has built,
+ * run or verified the corresponding template, and they are not Clyra captures.
+ * Leave entries empty where a suitable demonstrable preview is unavailable.
+ */
+const UPSTREAM_README_PREVIEWS: Readonly<Record<string, ReadonlyArray<readonly [string, string]>>> = {
+  excalidraw: [
+    ["https://excalidraw.nyc3.cdn.digitaloceanspaces.com/github%2Fproduct_showcase.png", "Excalidraw product canvas showcase from its upstream README"],
+  ],
+  "actual-budget": [
+    ["https://raw.githubusercontent.com/actualbudget/actual/master/demo.png", "Actual Budget dashboard preview from its upstream README"],
+  ],
+  "open-webui": [
+    ["https://cdn.openwebui.com/open-webui-demo.gif", "Open WebUI interface demonstration from its upstream README"],
+  ],
+  appflowy: [
+    ["https://github.com/user-attachments/assets/1c12d629-40a0-4f35-9451-97498cf31a25", "AppFlowy Kanban board for to-dos"],
+    ["https://github.com/user-attachments/assets/0cff82d3-3e40-4057-a5fa-b2e9be8dd863", "AppFlowy databases for tasks and projects"],
+    ["https://github.com/user-attachments/assets/388224f4-0792-4e75-96d1-f1c671b298a3", "AppFlowy database row and comments"],
+    ["https://github.com/user-attachments/assets/ae0cadf2-bb6f-496e-8f84-4916dce1fa62", "AppFlowy notes and report documents"],
+    ["https://github.com/user-attachments/assets/619ea154-f714-4859-ad28-4f0bdf5028f7", "AppFlowy team wiki with AI assistance"],
+    ["https://github.com/user-attachments/assets/5841c491-b564-4a26-b9b6-191def430911", "AppFlowy mobile workspace and summaries"],
+    ["https://github.com/user-attachments/assets/c2ba6bb8-746c-4743-9393-d008a669be95", "AppFlowy mobile collaboration properties"],
+    ["https://github.com/user-attachments/assets/e83dd1a3-4975-4d0e-91a1-9eb6e0d248cd", "AppFlowy mobile document blocks"],
+  ],
+  n8n: [
+    ["https://raw.githubusercontent.com/n8n-io/n8n/master/assets/n8n-screenshot-readme.png", "n8n visual workflow automation editor"],
+  ],
+  penpot: [
+    ["https://github.com/user-attachments/assets/cce75ad6-f783-473f-8803-da9eb8255fef", "Penpot design system interface"],
+    ["https://github.com/user-attachments/assets/0abc02f0-625c-45ab-ad81-4927bec7a055", "Penpot workspace hub"],
+  ],
+  chatwoot: [
+    ["https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/dashboard.png", "Chatwoot customer support dashboard"],
+    ["https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/header.png", "Chatwoot support interface overview"],
+  ],
+};
+
+function upstreamReadmePreviews(id: string, repositoryUrl: string): SourceScreenshot[] {
+  return (UPSTREAM_README_PREVIEWS[id] ?? []).map(([url, alt]) => ({
+    url,
+    alt,
+    // Upstream documentation does not state the original capture date.
+    capturedAt: "",
+    provenance: "Upstream project README (" + repositoryUrl + "); image cited as of 2026-11-12. Not a screenshot of a running Clyra template.",
+  }));
+}
+
 function split(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
@@ -200,7 +249,7 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
     healthcheck: null,
     capabilitiesVerified: [],
     capabilitiesPlanned: [description],
-    sourceScreenshots: [],
+    sourceScreenshots: upstreamReadmePreviews(id, `https://github.com/${repository}`),
     captureProvenance: null,
     compatibility: [
       "Source is not copied into a project automatically.",
