@@ -57,16 +57,35 @@ test("capture real Discover scroll states and app detail on desktop and mobile",
   await shot("07-app-detail-features-desktop");
   await detail.getByRole("heading", { name: "Technical requirements" }).scrollIntoViewIfNeeded();
   await shot("08-app-detail-technical-desktop");
-  await detail.getByRole("heading", { name: "Ratings & Reviews" }).scrollIntoViewIfNeeded();
-  await shot("09-app-detail-reviews-desktop");
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await expect(dialog.getByText("3 illustrative sample ratings")).toBeVisible();
+  await shot("09-app-detail-sample-ratings-reviews-desktop");
+  await expect(dialog.getByRole("button", { name: "Write a Review" })).toHaveCount(0);
+
+  // Mock only the checkout response. The UI still exercises the real Get button,
+  // loading ring and installed-state transition, without untrusted source execution.
+  await page.route("**/api/clyra-code/library/excalidraw/import-plan", async (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ plan: { verification: { commit: "a".repeat(40), verifiedAt: new Date().toISOString() } } }) }));
+  await page.route("**/api/clyra-code/library/excalidraw/import", async (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: { id: "qa-screenshot-excalidraw", name: "Excalidraw" }, sourcePath: "/qa/excalidraw", importedIntoExisting: false, message: "QA simulated source import" }) }));
+  await dialog.getByRole("button", { name: "Get", exact: true }).first().click();
+  await expect(dialog.getByRole("button", { name: "Open", exact: true }).first()).toBeVisible({ timeout: 20000 });
+  await expect(dialog.getByRole("button", { name: "Rate Excalidraw" })).toBeVisible();
+  await shot("10-app-detail-after-get-desktop");
+
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
   await dialog.getByRole("button", { name: "Write a Review" }).click();
-  await shot("10-app-detail-review-editor-desktop");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await shot("11-app-detail-review-editor-desktop");
+  await dialog.getByRole("button", { name: "Rate 5 stars" }).click();
+  await dialog.getByPlaceholder("Summarise your experience").fill("QA example — personal rating");
+  await dialog.getByPlaceholder("What worked well? What would you improve?").fill("Saved locally by an automated visual test, not a real customer review.");
+  await dialog.getByRole("button", { name: "Save review" }).click();
+  await shot("12-app-detail-own-rating-desktop");
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await shot("11-app-detail-mobile");
+  await shot("13-app-detail-mobile");
   await dialog.getByRole("button", { name: /Discover/ }).first().click();
   await dialog.getByRole("textbox", { name: "Search the library" }).fill("");
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
-  await shot("12-discover-mobile");
+  await shot("14-discover-mobile");
 });
