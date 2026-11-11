@@ -169,11 +169,11 @@ function SourceVisual({ entry, className = "", iconSize = 64 }: { entry: Templat
     );
   }
   return (
-    <div className={cn("relative isolate overflow-hidden", className)} aria-hidden style={{ background: coverBackground(entry) }}>
-      <IconWash entry={entry} opacity={0.42} />
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
-        <span className="transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-0.5 group-hover:scale-[1.045]"><AppIcon entry={entry} size={iconSize} lifted /></span>
-      </div>
+    <div className={cn("relative isolate flex flex-col items-center justify-center overflow-hidden bg-[#F7F6F5] p-5 text-center", className)}
+      role="img" aria-label={`No verified screenshot captured yet for ${entry.name}`}>
+      <ImageIcon className="mb-3 h-5 w-5 text-[#A19E99]" strokeWidth={1.5} aria-hidden />
+      <span className="text-[12.5px] font-medium text-[#5F5E59]">Preview not captured</span>
+      <span className="mt-1 max-w-[220px] text-[11px] leading-[1.5] text-[#8A8884]">A real screenshot will appear after the source is launch-tested.</span>
     </div>
   );
 }
@@ -459,8 +459,20 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
           </AnimatePresence>
         </div>
       </div>
-      <div className="mt-3 flex justify-center gap-1.5" role="tablist" aria-label="Featured apps">
-        {entries.map((item, i) => <button key={item.id} type="button" role="tab" aria-selected={i === index} aria-label={`Show ${item.name}`} onClick={() => setIndex(i)} className={cn("h-1.5 rounded-full transition-all duration-300", i === index ? "w-5 bg-[#2C2C2B]/70" : "w-1.5 bg-[rgba(55,53,47,0.16)] hover:bg-[rgba(55,53,47,0.3)]")} />)}
+      <div className="mt-3 flex items-center justify-center gap-3">
+        <button type="button" aria-label="Previous featured app" disabled={entries.length < 2}
+          onClick={() => { setPaused(true); setIndex((current) => (current - 1 + entries.length) % entries.length); }}
+          className="flex h-7 w-7 items-center justify-center rounded-full text-[#78766F] transition-colors hover:bg-black/[0.05] hover:text-[#2C2C2B] disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+          <ChevronRight className="h-4 w-4 rotate-180" aria-hidden />
+        </button>
+        <div className="flex items-center gap-1.5" role="tablist" aria-label="Featured apps">
+          {entries.map((item, i) => <button key={item.id} type="button" role="tab" aria-selected={i === index} aria-label={`Show ${item.name}`} onClick={() => { setPaused(true); setIndex(i); }} className={cn("h-1.5 rounded-full transition-all duration-300", i === index ? "w-5 bg-[#2C2C2B]/70" : "w-1.5 bg-[rgba(55,53,47,0.16)] hover:bg-[rgba(55,53,47,0.3)]")} />)}
+        </div>
+        <button type="button" aria-label="Next featured app" disabled={entries.length < 2}
+          onClick={() => { setPaused(true); setIndex((current) => (current + 1) % entries.length); }}
+          className="flex h-7 w-7 items-center justify-center rounded-full text-[#78766F] transition-colors hover:bg-black/[0.05] hover:text-[#2C2C2B] disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/45">
+          <ChevronRight className="h-4 w-4" aria-hidden />
+        </button>
       </div>
     </section>
   );
@@ -813,8 +825,8 @@ export function TemplateLibrary({
                   <ol className="mt-4 grid gap-3 sm:grid-cols-3">
                     {[
                       { t: "Downloads the source", d: "Get pulls the pinned revision from GitHub into its own Clyra project." },
-                      { t: "Runs it live", d: "Open starts the dev server and shows the running app in the Clyra preview." },
-                      { t: "Ready to change", d: "Clyra’s agent sets it up, then asks what you’d like to change or publish." },
+                      { t: "Review setup", d: "Open enters Clyra Code. Dependencies, credentials and services may still be needed before a live preview can start." },
+                      { t: "Build and customise", d: "Review the upstream licence and choose setup commands before asking Clyra to customise the source." },
                     ].map((step, i) => (
                       <li key={step.t} className="rounded-[14px] bg-[#F7F6F5] p-4">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#3977F6] text-[12px] font-semibold text-white">{i + 1}</span>
@@ -871,7 +883,7 @@ export function TemplateLibrary({
             <motion.div key="installed" ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
               <div className="mx-auto max-w-[1120px]">
                 <h2 className="text-[28px] font-semibold tracking-[-0.03em] text-[#2C2C2B]">Installed</h2>
-                <p className="mt-1 text-[14px] text-[#78766F]">Apps you’ve downloaded. Open one to run it live in Clyra Code and start changing it.</p>
+                <p className="mt-1 text-[14px] text-[#78766F]">Apps you’ve downloaded. Open one to review its setup in Clyra Code and start changing it.</p>
                 {installedEntries.length ? (
                   <div className="mt-5 grid grid-cols-1 gap-x-8 md:grid-cols-2 xl:grid-cols-3">
                     {installedEntries.map((entry, index) => <RankRow key={entry.id} entry={entry} onChoose={choose} install={install} index={index} />)}
@@ -908,6 +920,7 @@ export function TemplateLibrary({
                 {!loading && !error && !entries.length ? <div className="rounded-[16px] bg-[#F7F6F5] p-10 text-center text-[13px] text-[#78766F]">No apps match. Try another search or category.</div> : null}
                 {!error && entries.length && isHome ? (
                   <>
+                    {spotlight.length ? <Spotlight entries={spotlight} onChoose={choose} install={install} related={related} /> : null}
                     <section aria-label="Templates" className="mb-8">
                       <div className="mb-3 flex items-end justify-between">
                         <div>
@@ -940,8 +953,8 @@ export function TemplateLibrary({
                 <motion.span initial={reduce ? false : { scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.18, duration: 0.26, ease: EASE }} className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#34C759] text-white ring-2 ring-white"><Check className="h-3 w-3" strokeWidth={3.2} /></motion.span>
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13.5px] font-semibold text-[#2C2C2B]">{justInstalled.name} is ready</span>
-                <span className="block truncate text-[12px] text-[#78766F]">Open runs it live and Clyra asks what to change.</span>
+                <span className="block truncate text-[13.5px] font-semibold text-[#2C2C2B]">{justInstalled.name} source downloaded</span>
+                <span className="block truncate text-[12px] text-[#78766F]">Open it in Clyra Code to review the setup requirements.</span>
               </span>
               <button type="button" onClick={() => openInstalled(justInstalled)} className="h-[30px] shrink-0 rounded-full bg-[#3977F6] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-[#0068DB] active:scale-95">Open</button>
               <button type="button" aria-label="Dismiss" onClick={() => setJustInstalled(null)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8A8884] transition-colors hover:bg-black/[0.05]"><X className="h-3.5 w-3.5" /></button>
