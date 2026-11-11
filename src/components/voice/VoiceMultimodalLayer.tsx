@@ -283,6 +283,29 @@ export function VoiceMultimodalLayer({ call }: { call: VoiceCallHostCall }) {
 
   const activeTask = call.activeTask && call.activeTask.status !== "complete" ? call.activeTask : null;
   useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (choosing) {
+        event.preventDefault();
+        setChoosing(false);
+        setPendingQuestion("");
+        return;
+      }
+      if (pendingControl) {
+        event.preventDefault();
+        setPendingControl("");
+        return;
+      }
+      if (activeTask && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+        event.preventDefault();
+        call.stopTask();
+        void getElectronDesktop()?.voice?.stopControl?.().catch(() => undefined);
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [choosing, pendingControl, activeTask?.id, call.stopTask]);
+  useEffect(() => {
     if (!activeTask || activeTask.kind !== "browser") {
       setTaskImage(null);
       return;
