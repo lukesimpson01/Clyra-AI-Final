@@ -105,25 +105,38 @@ export function parseSwiftBuildSeconds(output: string): number | undefined {
  * Swift Testing: "Test run with 84 tests in 12 suites passed after 0.042 seconds."
  */
 export function parseSwiftTests(output: string): SwiftTestSummary | undefined {
+  const testing = /Test run with (\d+) tests?(?: in \d+ suites?)? (passed|failed) after ([\d.]+) seconds/g;
+  let lastTesting: RegExpExecArray | null = null;
+  for (let m = testing.exec(output); m; m = testing.exec(output)) lastTesting = m;
+  const swiftSummary: SwiftTestSummary | undefined = lastTesting
+    ? {
+        framework: "swift-testing",
+        total: Number(lastTesting[1]),
+        failed: lastTesting[2] === "failed" ? Number(lastTesting[1]) : 0,
+        passed: lastTesting[2] === "failed" ? 0 : Number(lastTesting[1]),
+        durationSeconds: Number(lastTesting[3]),
+      }
+    : undefined;
+
   const xctest = /Executed (\d+) tests?, with (\d+) failures? \(\d+ unexpected\) in [\d.]+ \([\d.]+\) seconds/g;
   let lastXCTest: RegExpExecArray | null = null;
   for (let m = xctest.exec(output); m; m = xctest.exec(output)) lastXCTest = m;
-  if (lastXCTest) {
-    const total = Number(lastXCTest[1]);
-    const failed = Number(lastXCTest[2]);
-    const seconds = /Executed \d+ tests?.* in ([\d.]+) \(/.exec(lastXCTest[0]);
-    return { framework: "xctest", total, failed, passed: total - failed, durationSeconds: seconds ? Number(seconds[1]) : 0 };
-  }
+  const xctestSummary: SwiftTestSummary | undefined = lastXCTest
+    ? {
+        framework: "xctest",
+        total: Number(lastXCTest[1]),
+        failed: Number(lastXCTest[2]),
+        passed: Number(lastXCTest[1]) - Number(lastXCTest[2]),
+        durationSeconds: Number(/Executed \d+ tests?.* in ([\d.]+) \(/.exec(lastXCTest[0])?.[1] || 0),
+      }
+    : undefined;
 
-  const testing = /Test run with (\d+) tests? (?:in \d+ suites? )?(passed|failed) after ([\d.]+) seconds/g;
-  let lastTesting: RegExpExecArray | null = null;
-  for (let m = testing.exec(output); m; m = testing.exec(output)) lastTesting = m;
-  if (lastTesting) {
-    const total = Number(lastTesting[1]);
-    const failed = lastTesting[2] === "failed" ? total : 0;
-    return { framework: "swift-testing", total, failed, passed: total - failed, durationSeconds: Number(lastTesting[3]) };
-  }
-  return undefined;
+  // Swift 6 can print an XCTest 0-tests line followed by real Swift Testing
+  // results. Do not report zero merely because XCTest's compatibility runner
+  // emitted its summary first.
+  return swiftSummary && (swiftSummary.total > 0 || !xctestSummary || xctestSummary.total === 0)
+    ? swiftSummary
+    : xctestSummary || swiftSummary;
 }
 
 function tailOf(output: string) {
