@@ -71,7 +71,7 @@ const fetcher = (async (input: string | URL | Request) => {
     : url.includes("/search/repositories?") ? { items: [goodRepo] } : goodRepo;
   return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
 }) as typeof fetch;
-assert.equal((await searchResearchImages("Sydney Opera House", { fetcher })).length, 1);
+assert.equal((await searchResearchImages("Sydney Opera House", { fetcher })).length, 2, "Distinct Openverse and Wikimedia Commons images are both returned");
 assert.equal((await searchGitHubRepositories("openai", { fetcher })).length, 1);
 assert.ok(!requests.some((url) => /sort=best-match/.test(url)), "GitHub best-match ranking is the default");
 const inspected = await inspectGitHubRepository("openai/openai-cookbook", { fetcher });
