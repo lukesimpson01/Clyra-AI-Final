@@ -146,7 +146,7 @@ async function consumeBrowserEvents(
   }
   const resultUrl = String(data.state?.url || "");
   const evidence = Array.isArray(data.evidence) ? data.evidence : [];
-  if (!evidence.length && steps === 0) throw new Error("Browser reported success without any test actions or evidence.");
+  if (steps === 0) throw new Error("Browser reported success without any test actions. Live controls were not exercised.");
   return {
     url: resultUrl,
     testedSteps: steps,
@@ -190,6 +190,18 @@ export async function verifyLiveVibeProject(input: {
         throw new Error(body?.error?.message || "Browser control unavailable (" + response.status + ").");
       }
       const result = await consumeBrowserEvents(response, browserAbort.signal, onEvent);
+      onEvent({ phase: "verifying", message: "Checking uncaught JavaScript errors in the real browser tab" });
+      const diagnostic = await jsonRequest<{
+        errors: Array<{ kind: string; message: string }>;
+      }>("/api/openbrowser/diagnostics?tabId=" + encodeURIComponent(openedTab), {
+        signal: browserAbort.signal,
+      });
+      const runtimeErrors = (diagnostic.errors || []).filter(error =>
+        error.kind === "pageerror" || error.kind === "console");
+      if (runtimeErrors.length) {
+        throw new Error("Live preview threw JavaScript errors: " +
+          runtimeErrors.slice(0, 5).map(error => error.message).join("; ").slice(0, 2000));
+      }
       // Require an actual local-page result: success on an unrelated browser tab is not verification.
       if (!result.url || new URL(result.url).origin !== new URL(previewUrl).origin) {
         throw new Error("Browser did not finish testing on the generated app's local origin.");
