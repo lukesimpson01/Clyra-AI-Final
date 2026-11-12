@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { planCursorMotion, isPointerAction } from "../electron/ai-cursor-motion.mjs";
 
 const scenarios = [
@@ -37,3 +38,26 @@ for (const type of ["read_page", "extract", "wait", "navigate"]) {
   assert.equal(isPointerAction(type), false, type + " must not fake pointer movement");
 }
 console.log("AI cursor motion tests passed across 5 paths × 3 speeds, reduced motion, coordinates and action filtering.");
+
+const code = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+const nativeBrowser = code("../electron/browser-manager.mjs");
+const desktop = code("../electron/desktop-control.mjs");
+const fallback = code("../lib/openbrowser/browser-runtime.ts");
+const voice = code("../src/voice/VoiceActivitySurface.tsx");
+const glyph = code("../src/components/agent/AgentCursorGlyph.tsx");
+const chat = code("../src/components/chat/ChatBrowserRun.tsx");
+const vibe = code("../src/components/vibe-coder/preview/AgentCursor.tsx");
+assert.match(nativeBrowser, /Input\.dispatchMouseEvent", \{ type: "mouseMoved"/, "Browser cursor must follow a real CDP move");
+assert.match(nativeBrowser, /Observe again before clicking|Observe the page again/, "Browser target must be revalidated");
+assert.match(nativeBrowser, /cursorsByTab/, "Never leak one tab's pointer into another");
+assert.match(desktop, /screen\.getCursorScreenPoint\(\)/, "Desktop overlay must track the physical OS mouse");
+assert.match(desktop, /OS cursor did not reach/, "Click must not execute on an unverified desktop location");
+assert.match(desktop, /native-pointer-darwin/, "Packaged macOS must include a native pointer backend");
+assert.match(fallback, /actualCursorForAction/, "Playwright previews must report real pointer events");
+assert.doesNotMatch(fallback, /const previous = pointerPositions\.get\(activePage\) \|\| \{/, "No invented Playwright pointer origin");
+assert.match(voice, /useVoiceBrowserActivity/, "Voice must consume verified browser activity");
+assert.match(glyph, /fill="#FFFFFF"/, "Arrow must have a clean white interior");
+assert.match(glyph, /stroke="#1E6FFF"/, "Arrow must retain a restrained blue outline");
+assert.match(chat, /AgentCursorGlyph/, "Chat must use the shared arrow");
+assert.match(vibe, /AgentCursorGlyph/, "Vibe must use the shared arrow");
+console.log("Cursor source contracts verified across Chromium, OS, Voice, Chat, Vibe, and Playwright.");
