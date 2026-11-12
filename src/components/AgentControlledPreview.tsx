@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, Expand, MousePointer2, Pause, Play, RotateCcw, Square, X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { AgentCursorGlyph } from "./agent/AgentCursorGlyph";
 import {
   createAgentTask,
   persistAgentTask,
@@ -36,6 +37,8 @@ function setNativeValue(field: HTMLTextAreaElement, value: string) {
 
 export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAgent; messageId: string }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const pointerSequenceRef = useRef(0);
+  const [agentPointer, setAgentPointer] = useState<{ x: number; y: number; kind: "click" | "type"; id: number } | null>(null);
   const runnerRef = useRef(false);
   const cancelledRef = useRef(false);
   const taskStorageKey = useMemo(() => taskKey(messageId, agent.id), [agent.id, messageId]);
@@ -55,6 +58,7 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
     const restored = readAgentTask(taskStorageKey) || createAgentTask(taskStorageKey, agent.id, agent.instruction || agent.label);
     cancelledRef.current = false;
     setTask(restored);
+    setAgentPointer(null);
   }, [agent.id, agent.instruction, agent.label, taskStorageKey]);
 
   useEffect(() => {
@@ -83,10 +87,29 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
     return { frame, document: frame.contentDocument, window: frame.contentWindow };
   }, []);
 
-  const moveTo = useCallback(async (_target: HTMLElement, _label: string, clicking = false) => {
-    // The agent operates the same-origin preview directly; timing preserves a
-    // readable handoff without drawing a decorative cursor over the workspace.
-    await wait(clicking ? 120 : 170);
+  const verifiedPoint = useCallback((target: HTMLElement) => {
+    const { frame, document } = getFrameDocument();
+    if (!target.isConnected || target.ownerDocument !== document) {
+      throw new Error("The agent target is no longer attached to the live workspace.");
+    }
+    const rect = target.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    if (rect.width < 1 || rect.height < 1 || x < 0 || y < 0 || x >= viewportWidth || y >= viewportHeight) {
+      throw new Error("The target is not visible within the workspace.");
+    }
+    const hit = document.elementFromPoint(x, y);
+    if (hit !== target && !target.contains(hit)) {
+      throw new Error("The intended control is covered. Refresh the workspace before clicking.");
+    }
+    // The point is measured in the SAME iframe pixels where focus/click runs.
+    // Overlay visual feedback is reported only after the actual DOM action.
+    return { x: frame.offsetLeft + x, y: frame.offsetTop + y };
+  }, [getFrameDocument]);
+
+  const markAgentAction = useCallback((point: { x: number; y: number }, kind: "click" | "type") => {
+    setAgentPointer({ ...point, kind, id: ++pointerSequenceRef.current });
   }, []);
 
   const ensureRunnable = useCallback((current: AgentControllerTask) => {
@@ -98,9 +121,11 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
     const { document } = getFrameDocument();
     const input = document.querySelector<HTMLTextAreaElement>("[data-agent-id='vibe-request-input']");
     if (!input) throw new Error("Vibe's request field was not available.");
-    input.scrollIntoView({ block: "center", behavior: "smooth" });
-    await moveTo(input, "Project request", true);
+    input.scrollIntoView({ block: "center", behavior: "instant" });
+    const inputPoint = verifiedPoint(input);
     input.focus();
+    if (document.activeElement !== input) throw new Error("The project request field could not receive focus.");
+    markAgentAction(inputPoint, "type");
     const prompt = agent.instruction?.trim() || "Build the requested project.";
     let value = "";
     for (const unit of Array.from(prompt)) {
@@ -110,18 +135,19 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
       await wait(unit === " " ? 10 : 15);
     }
     return record(current, { type: "type_text", target: "Vibe project request", expected: "The project request is entered", actual: prompt, verified: input.value === prompt }, "acting", "Entered the project request");
-  }, [agent.instruction, ensureRunnable, getFrameDocument, moveTo, record]);
+  }, [agent.instruction, ensureRunnable, getFrameDocument, markAgentAction, record, verifiedPoint]);
 
   const click = useCallback(async (current: AgentControllerTask, selector: string, targetName: string, expected: string) => {
     const { document } = getFrameDocument();
     const target = document.querySelector<HTMLElement>(selector);
     if (!target) throw new Error(`${targetName} was not available.`);
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
-    await moveTo(target, targetName, true);
+    target.scrollIntoView({ block: "center", behavior: "instant" });
+    const point = verifiedPoint(target);
     target.click();
+    markAgentAction(point, "click");
     await wait(180);
     return record(current, { type: "click", target: targetName, expected, actual: "Clicked", verified: true }, "waiting", `Waiting for ${targetName.toLowerCase()}`);
-  }, [getFrameDocument, moveTo, record]);
+  }, [getFrameDocument, markAgentAction, record, verifiedPoint]);
 
   const waitFor = useCallback(async (current: AgentControllerTask, selector: string, label: string, timeout = 30000) => {
     const started = Date.now();
@@ -197,6 +223,7 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
   const source = `${origin}/?embedTool=${encodeURIComponent(agent.id)}&agentPreview=1`;
   const manual = task.state === "user_controlling";
   const running = !TERMINAL_STATES.has(task.state) && task.state !== "paused_by_user" && !manual;
+  const showPointer = agentPointer && running && agent.id === "vibe";
 
   return (
     <motion.article
@@ -214,7 +241,32 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
       </AnimatePresence>
       <div className="relative h-[min(58vh,500px)] min-h-[320px] overflow-hidden rounded-[18px] bg-slate-50">
         {!iframeReady ? <div className="agent-soft-shimmer absolute inset-0 z-10" /> : null}
-        <iframe ref={iframeRef} title={`${agent.label} live workspace`} src={source} onLoad={() => setIframeReady(true)} className={cn("h-full w-full border-0 bg-white", manual ? "pointer-events-auto" : "pointer-events-none")} />
+        <iframe ref={iframeRef} title={`${agent.label} live workspace`} src={source} onLoad={() => { setIframeReady(true); setAgentPointer(null); }} className={cn("h-full w-full border-0 bg-white", manual ? "pointer-events-auto" : "pointer-events-none")} />
+        {/* Same-origin DOM actions are not OS mouse events. This marker only
+            appears at the verified focus/click coordinate AFTER the real
+            iframe action; it never invents a mouse travel path. */}
+        <AnimatePresence>
+          {showPointer ? (
+            <motion.div
+              key={agentPointer.id}
+              aria-hidden="true"
+              className="pointer-events-none absolute z-20"
+              style={{ left: agentPointer.x, top: agentPointer.y }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+            >
+              <AgentCursorGlyph pressed={agentPointer.kind === "click"} />
+              {agentPointer.kind === "click" ? <motion.span
+                className="pointer-events-none absolute -left-4 -top-4 h-8 w-8 rounded-full border-[1.5px] border-[#1E6FFF]/55"
+                initial={{ scale: 0.35, opacity: 0.75 }}
+                animate={{ scale: 1.5, opacity: 0 }}
+                transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              /> : null}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
         <div className="agent-preview-status"><span className={cn("h-1.5 w-1.5 rounded-full", task.state === "completed" ? "bg-emerald-500" : task.state === "failed" ? "bg-amber-500" : "bg-blue-500")} />{task.currentAction || agent.action || agent.label}</div>
         <AnimatePresence>
           {(isHovered || expanded || fullScreen) ? <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} className="agent-preview-controls">
