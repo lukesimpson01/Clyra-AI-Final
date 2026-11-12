@@ -146,6 +146,7 @@ import {
   getManagedBrowserFrame,
   getManagedBrowserAgentSession,
   getManagedBrowserObservation,
+  getManagedBrowserDiagnostics,
   getManagedBrowserState,
   navigateManagedBrowser,
   removeManagedBrowserBookmark,
@@ -3315,6 +3316,14 @@ async function startServer() {
         error: { message: error instanceof Error ? error.message : "Browser frame unavailable" },
       });
     }
+  });
+
+  // Only the requested test tab's real JavaScript failures count against a
+  // Vibe Coder acceptance test; unrelated user browser tabs are excluded.
+  app.get("/api/openbrowser/diagnostics", (req, res) => {
+    const tabId = String(req.query.tabId || "").slice(0, 120);
+    if (!tabId) return res.status(400).json({ ok: false, error: { message: "Test tab ID required" } });
+    return res.json({ ok: true, errors: getManagedBrowserDiagnostics(tabId) });
   });
 
   app.post("/api/openbrowser/navigate", async (req, res) => {
