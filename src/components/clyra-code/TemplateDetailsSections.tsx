@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, CircleAlert, ExternalLink, Image as ImageIcon, KeyRound, Monitor, Server, Star, X } from "lucide-react";
 import type { TemplateManifest } from "./api";
 import { sampleTemplateRating, sampleTemplateReviews } from "./templateReviewSamples";
+import { discoverOfficialScreenshots } from "./templateSourceScreenshots";
 
 /**
  * Detail-page additions shared by every entry in the Clyra Code source catalogue.
@@ -105,7 +106,20 @@ export function TemplateRatingGlance({ entry }: { entry: TemplateManifest }) {
 /** Screenshot lightbox: only genuine manifest captures, with provenance and full keyboard controls. */
 export function TemplateScreenshotGallery({ entry }: { entry: TemplateManifest }) {
   const [active, setActive] = useState<number | null>(null);
-  const screenshots = entry.sourceScreenshots.filter((shot) => Boolean(shot.url && shot.alt && shot.provenance));
+  const [discovered, setDiscovered] = useState<Awaited<ReturnType<typeof discoverOfficialScreenshots>>>([]);
+  const [failed, setFailed] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setDiscovered([]);
+    setFailed([]);
+    void discoverOfficialScreenshots(entry.repositoryUrl).then((images) => {
+      if (!cancelled) setDiscovered(images);
+    });
+    return () => { cancelled = true; };
+  }, [entry.repositoryUrl]);
+  const screenshots = [...entry.sourceScreenshots, ...discovered]
+    .filter((shot) => Boolean(shot.url && shot.alt && shot.provenance) && !failed.includes(shot.url))
+    .filter((shot, index, all) => all.findIndex((other) => other.url === shot.url) === index);
   useEffect(() => { setActive(null); }, [entry.id]);
   useEffect(() => {
     if (active === null) return;
@@ -131,19 +145,19 @@ export function TemplateScreenshotGallery({ entry }: { entry: TemplateManifest }
               <figure key={shot.url + i} className="w-[min(590px,89%)] shrink-0 snap-start">
                 <button type="button" onClick={() => setActive(i)} aria-label={"Enlarge screenshot " + (i + 1) + ": " + shot.alt}
                   className="group block w-full overflow-hidden rounded-[14px] bg-[#F5F5F7] outline-none ring-1 ring-inset ring-black/[0.07] focus-visible:ring-2 focus-visible:ring-[#007AFF]">
-                  <img src={shot.url} alt={shot.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="aspect-[16/10] w-full object-contain transition-transform duration-300 group-hover:scale-[1.01]" />
+                  <img src={shot.url} alt={shot.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="aspect-[16/10] w-full object-contain transition-transform duration-300 group-hover:scale-[1.01]" onError={() => setFailed((current) => current.includes(shot.url) ? current : [...current, shot.url])} />
                 </button>
                 <figcaption className="mt-2 truncate text-[11.5px] text-[#86868B]" title={shot.provenance}>{shot.alt}</figcaption>
               </figure>
             ))}
           </div>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">Upstream README previews are attributed to their source projects. They are not screenshots of a running Clyra installation.</p>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">These are actual images referenced by the upstream project’s README, not screenshots of a running Clyra installation. Some repositories may provide fewer than three suitable UI images.</p>
         </>
       ) : (
         <div className="mt-3 flex min-h-[166px] flex-col items-center justify-center rounded-[14px] border border-dashed border-black/[0.11] bg-[#FAFAFB] px-5 text-center">
           <ImageIcon className="h-6 w-6 text-[#B1B1B8]" strokeWidth={1.6} aria-hidden="true" />
           <p className="mt-3 text-[14px] font-medium text-[#424245]">No source previews available</p>
-          <p className="mt-1 max-w-[420px] text-[12px] leading-[1.55] text-[#86868B]">The catalogue has no suitable official source preview for this app. Open the source repository or verify and run a local checkout to inspect its real interface.</p>
+          <p className="mt-1 max-w-[420px] text-[12px] leading-[1.55] text-[#86868B]">No genuine interface screenshots were found in the available upstream README. Open the source repository or run a local checkout to capture the app’s actual interface.</p>
           <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] font-medium text-[#007AFF] hover:underline">View source <ExternalLink className="h-3 w-3" /></a>
         </div>
       )}
