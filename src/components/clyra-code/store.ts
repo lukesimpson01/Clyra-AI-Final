@@ -855,6 +855,11 @@ export function useClyraCode() {
       }
 
       if (payload.type === "session.error") {
+        // A real coding-agent failure overrides any in-flight browser verdict.
+        verifyControllerRef.current?.abort();
+        verificationEpochRef.current += 1;
+        verifyingRef.current = false;
+        awaitingRepairRef.current = false;
         const error = properties.error as { data?: { message?: string }; message?: string } | undefined;
         const message = String(error?.data?.message || error?.message || "The coding session failed.");
         setState((prev) => ({
