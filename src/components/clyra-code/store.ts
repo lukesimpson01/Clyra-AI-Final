@@ -19,6 +19,8 @@ export type ActionKind =
   | "delete"
   | "search"
   | "research"
+  | "mcp"
+  | "component"
   | "list"
   | "command"
   | "build"
@@ -263,6 +265,12 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
   const file = firstString(input, "filePath", "filepath", "file_path", "path", "file", "target_file", "targetFile", "filename", "relativePath");
   const command = firstString(input, "command", "cmd", "script", "shell", "bash");
   const query = firstString(input, "pattern", "query", "search", "q", "text", "term");
+  if (/(?:^|_)(shadcn|21st|twentyfirst|twenty_first)(?:_|$)/.test(lower)) {
+    const provider = /shadcn/.test(lower) ? "shadcn/ui" : "21st.dev";
+    const item = firstString(input, "name", "component", "componentName", "slug", "identifier", "item", "query", "q", "search");
+    const operation = /(?:search|list|browse|inspiration|registry|lookup)/.test(lower) ? "Scanning" : /(?:get_component|view|fetch|read)/.test(lower) ? "Inspecting" : "Adding";
+    return { kind: operation === "Scanning" ? "mcp" : "component", target: provider + " · " + operation + (item ? " " + item : " components") };
+  }
   if (/^(bash|shell|command|execute|exec|run|terminal|shell_command)$/.test(lower)) {
     const cleaned = cleanCommand(command) || tool;
     return { kind: classifyCommand(cleaned), target: cleaned };

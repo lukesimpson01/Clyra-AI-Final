@@ -14,6 +14,8 @@ import { memo, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   Braces,
+  Blocks,
+  PackagePlus,
   CheckCircle2,
   Download,
   FileText,
@@ -44,6 +46,8 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
   delete: { active: "Deleting", done: "Deleted", failed: "Delete failed" },
   search: { active: "Searching", done: "Searched", failed: "Search failed" },
   research: { active: "Researching", done: "Researched", failed: "Research failed" },
+  mcp: { active: "Scanning MCP", done: "Scanned MCP", failed: "MCP scan failed" },
+  component: { active: "Resolving component", done: "Resolved component", failed: "Component action failed" },
   list: { active: "Exploring", done: "Explored", failed: "Explore failed" },
   command: { active: "Running", done: "Ran", failed: "Command failed" },
   build: { active: "Building", done: "Built", failed: "Build failed" },
@@ -63,6 +67,8 @@ const ICONS: Record<string, typeof FileText> = {
   delete: Trash2,
   search: Search,
   research: Globe,
+  mcp: Blocks,
+  component: PackagePlus,
   list: FolderTree,
   command: Terminal,
   build: Hammer,

@@ -9,6 +9,8 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpen,
+  Blocks,
+  PackagePlus,
   ChevronDown,
   Minus,
   X,
@@ -39,6 +41,8 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
   delete: { active: "Deleting", done: "Deleted", failed: "Delete failed" },
   search: { active: "Searching for", done: "Searched for", failed: "Search failed" },
   research: { active: "Searching the web for", done: "Searched the web for", failed: "Web search failed" },
+  mcp: { active: "Scanning MCP", done: "Scanned MCP", failed: "MCP scan failed" },
+  component: { active: "Inspecting component", done: "Used component", failed: "Component action failed" },
   list: { active: "Exploring", done: "Explored", failed: "Couldn’t explore" },
   command: { active: "Running", done: "Ran", failed: "Failed" },
   build: { active: "Building", done: "Built", failed: "Build failed" },
@@ -53,6 +57,7 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
 const ICONS: Record<string, typeof BookOpen> = {
   read: BookOpen, edit: Pencil, create: Pencil, delete: Trash2, search: Search, research: Globe, list: FolderTree,
   command: SquareTerminal, build: Hammer, check: ShieldCheck, test: Play, preview: Globe, fetch: Download, todo: ListChecks,
+  mcp: Blocks, component: PackagePlus,
   generic: Wrench,
 };
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
+import { Blocks, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "./api";
 import { shouldAskPlatform, useClyraCode, type AgentAction } from "./store";
@@ -18,6 +18,8 @@ import { ModeTabs, type WorkspaceMode } from "./ModeTabs";
 import { DesignPicker } from "./DesignPicker";
 import { OpenDesignPanel } from "./OpenDesignPanel";
 import { TemplateLibrary } from "./TemplateLibrary";
+import { ComponentLibraryPanel } from "./ComponentLibraryPanel";
+import type { ComponentCatalogItem } from "./api";
 import { WelcomeProjectPicker, formatRecentTime } from "./WelcomeProjectPicker";
 import { designDirective, type DesignSystemSummary, type DesignTemplateSummary } from "../../../lib/clyra-design/directive";
 
@@ -140,6 +142,7 @@ export default function ClyraCodeWorkspace({
   const [creating, setCreating] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [componentLibraryOpen, setComponentLibraryOpen] = useState(false);
   // True while a design project is being handed back to the Code workspace:
   // the design surface fades out before the switch, so the handoff reads as
   // one continuous motion instead of a hard cut.
@@ -608,6 +611,14 @@ export default function ClyraCodeWorkspace({
     }
   }, [undoLastCheckpoint]);
 
+  const referenceComponent = useCallback((item: ComponentCatalogItem) => {
+    setContexts((existing) => existing.some(context => context.id === "component:" + item.id) ? existing : [...existing, {
+      id: "component:" + item.id,
+      label: item.title,
+      detail: (item.source === "shadcn" ? "shadcn/ui" : "21st.dev") + " · " + item.registryId,
+    }]);
+  }, []);
+
   const submitPrompt = useCallback(
     async (
       text: string,
@@ -698,7 +709,11 @@ export default function ClyraCodeWorkspace({
               template: catalog.templates.find((template) => template.id === designTemplateId) ?? null,
             })
           : "";
-        void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + attachmentContext + text, command === "plan" ? "plan" : undefined, {
+        const componentReferences = mode === "code" ? contexts.filter(context => context.id.startsWith("component:")) : [];
+        const componentInstruction = componentReferences.length
+          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nLook up each exact item through its named MCP provider, check framework compatibility and dependencies, then install and adapt the actual component code. Never substitute a fake component or claim an installation without real tool evidence.\n\n"
+          : "";
+        void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + componentInstruction + attachmentContext + text, command === "plan" ? "plan" : undefined, {
           ...options,
           userText: options?.userText ?? trimmed,
           effort,
@@ -710,7 +725,7 @@ export default function ClyraCodeWorkspace({
         return false;
       }
     },
-    [activeProject, beginOptimisticPrompt, catalog, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
+    [activeProject, beginOptimisticPrompt, catalog, contexts, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
   );
 
   // Library Open selects the cloned project; usePreview manages its real dev
@@ -921,6 +936,14 @@ export default function ClyraCodeWorkspace({
           >
             <Play className="h-[12px] w-[12px]" fill="currentColor" strokeWidth={1.8} />
             <span className="hidden md:inline">Launch app</span>
+          </button>
+        ) : null}
+        {mode === "code" ? (
+          <button type="button" onClick={() => setComponentLibraryOpen(true)}
+            title="Browse components from shadcn and 21st.dev"
+            className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[#50535b] transition-colors hover:bg-[#f3f3f3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/30">
+            <Blocks className="h-[14px] w-[14px]" strokeWidth={1.65}/>
+            Components
           </button>
         ) : null}
         {mode === "code" ? (
@@ -1379,6 +1402,12 @@ export default function ClyraCodeWorkspace({
       </motion.div>
       </div>
 
+      <ComponentLibraryPanel
+        open={componentLibraryOpen && mode === "code"}
+        onClose={() => setComponentLibraryOpen(false)}
+        onReference={referenceComponent}
+        referencedIds={contexts.map(context => context.id)}
+      />
       <TemplateLibrary
         open={libraryOpen && mode === "code"}
         projectId={state.activeProjectId}
