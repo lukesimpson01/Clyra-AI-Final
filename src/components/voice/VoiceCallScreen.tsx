@@ -13,6 +13,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, u
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
 import { VoiceMediaSurface } from "./VoiceMediaSurface";
+import { AgentCursor } from "../vibe-coder/preview/AgentCursor";
 import "./voiceMotion.css";
 
 /* ------------------------------------------------------------------ */
@@ -690,6 +691,63 @@ function ResultContent({ content }: { content: unknown }) {
   );
 }
 
+
+/** Reflect ONLY timestamped, observed browser input in the voice-call preview. */
+function VoiceBrowserPreview({ preview, active }: { preview: string; active: boolean }) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [pointer, setPointer] = useState<{
+    x: number; y: number; kind?: string; at?: number;
+  } | null>(null);
+  const [viewport, setViewport] = useState({ width: 1440, height: 900 });
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+    const measure = () => setSize({ width: image.clientWidth, height: image.clientHeight });
+    const observer = new ResizeObserver(measure);
+    observer.observe(image);
+    measure();
+    return () => observer.disconnect();
+  }, [preview]);
+  useEffect(() => {
+    if (!active) { setPointer(null); return; }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/openbrowser/state", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { state?: {
+          cursor?: { x: number; y: number; kind?: string; at?: number };
+          viewport?: { width: number; height: number };
+        } };
+        if (!mounted || !data.state) return;
+        setPointer(data.state.cursor ?? null);
+        if (data.state.viewport) setViewport(data.state.viewport);
+      } catch { /* Do not animate a guessed position during reconnects. */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 400);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, [active]);
+  const fresh = pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y) &&
+    Date.now() - Number(pointer.at || 0) < 1500 &&
+    pointer.x >= 0 && pointer.y >= 0 &&
+    pointer.x <= viewport.width && pointer.y <= viewport.height;
+  return (
+    <div className="relative overflow-hidden">
+      <img ref={imageRef} src={preview} alt="Live task preview" className="clyra-voice-activity__preview" />
+      {active && fresh && pointer && size.width > 0 && size.height > 0 ? (
+        <AgentCursor
+          x={pointer.x * size.width / Math.max(1, viewport.width)}
+          y={pointer.y * size.height / Math.max(1, viewport.height)}
+          isClicking={pointer.kind === "click" || pointer.kind === "double_click" || pointer.kind === "right_click"}
+          isActive
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: {
   task: AgentTask;
   surface?: AgentSurface;
@@ -731,7 +789,7 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
         </button>
       </header>
       <div className="clyra-voice-activity__body">
-        {resolved.preview ? <img src={resolved.preview} alt="Live task preview" className="clyra-voice-activity__preview" /> : null}
+        {resolved.preview ? <VoiceBrowserPreview preview={resolved.preview} active={controlling && task.kind === "browser"} /> : null}
         {!resolved.preview && task.steps?.length ? (
           <ol className="clyra-voice-activity__steps">
             {task.steps.map((step) => <li key={step.id} data-status={step.status}><span aria-hidden /><p>{step.label}</p></li>)}
