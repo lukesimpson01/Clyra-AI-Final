@@ -760,7 +760,10 @@ export function getManagedBrowserDiagnostics(tabReference?: string) {
   const target = tabReference
     ? activePages().find(candidate => tabId(candidate) === tabReference || pageIds.get(candidate) === tabReference)
     : page;
-  return target ? [...(pageDiagnostics.get(target) ?? [])] : [];
+  return {
+    attached: Boolean(target && pageDiagnostics.has(target)),
+    errors: target ? [...(pageDiagnostics.get(target) ?? [])] : [],
+  };
 }
 
 async function wirePage(activePage: Page) {
