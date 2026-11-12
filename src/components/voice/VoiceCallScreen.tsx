@@ -13,6 +13,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, u
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
 import { VoiceMediaSurface } from "./VoiceMediaSurface";
+import "./voiceMotion.css";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -503,7 +504,11 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
   };
 
   return (
-    <div className="clyra-voice-controls" aria-label="Voice call controls">
+    <motion.div className="clyra-voice-controls" aria-label="Voice call controls"
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.99 }}
+      transition={{ duration: reduced ? 0.08 : 0.22, ease: E }}>
       <div className="clyra-voice-controls-v2">
         <div className="clyra-voice-side-control clyra-voice-side-control--mute" style={{ opacity: open ? 0 : 1, transform: open ? "translateX(14px) scale(.84)" : "none", pointerEvents: open ? "none" : "auto" }}>
           <button
@@ -608,7 +613,7 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
           ) : null}
         </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -628,7 +633,11 @@ function VoiceControlBar({ state, task, onPause, onResume, onTakeControl, onStop
   const paused = state === "paused";
   const takeover = state === "user_takeover";
   return (
-    <div className="clyra-voice-agent-bar" aria-label="Agent controls">
+    <motion.div className="clyra-voice-agent-bar" aria-label="Agent controls" data-mode={state}
+      initial={{ opacity: 0, y: 10, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 6, scale: 0.99 }}
+      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}>
       {task.canPause || takeover ? <button type="button" onClick={paused || takeover ? onResume : onPause}>
           {paused || takeover ? <Play size={16} /> : <Pause size={16} />}
           <span>{takeover ? "Resume Clyra" : paused ? "Resume" : "Pause"}</span>
@@ -639,7 +648,7 @@ function VoiceControlBar({ state, task, onPause, onResume, onTakeControl, onStop
         <button type="button" onClick={onChat}><MessageSquareText size={16} /><span>Chat</span></button>
         {task.canStop ? <button type="button" onClick={onStop} aria-label="Stop task"><Square size={14} fill="currentColor" /></button> : null}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -812,6 +821,23 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
       : "";
 
   const phase: "entering" | "live" | "ending" = call.state === "entering" ? "entering" : call.state === "ending" ? "ending" : "live";
+  const modeStatus = {
+    entering: "Connecting",
+    idle: "Idle",
+    ready: call.muted ? "Microphone off" : "Ready",
+    listening: "Listening",
+    transcribing: call.actionLabel === "Finishing your words" ? "Finishing" : "Transcribing",
+    thinking: "Thinking",
+    responding: "Speaking",
+    acting_browser: "Browsing",
+    acting_computer: "Using computer",
+    acting_clyra: "Working",
+    awaiting_approval: "Needs approval",
+    user_takeover: "Your control",
+    paused: "Paused",
+    error: "Attention needed",
+    ending: "Ending",
+  }[call.state];
 
   const flyRef = useRef<HTMLDivElement | null>(null);
   const flight = useAnimationControls();
@@ -866,9 +892,22 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
           className="clyra-voice-call"
           data-state={call.state}
           data-low-power={call.lowPowerMode || undefined}
+          data-media-mode={mediaMode || "none"}
+          data-agent-kind={call.activeTask?.kind || "none"}
           aria-label="Clyra voice call"
         >
           <motion.header className="clyra-voice-call__header" animate={headerGroup.animate} transition={headerGroup.transition}>
+            <div className="clyra-voice-mode-readout" role="status" aria-live="polite" aria-atomic="true">
+              <span className="clyra-voice-mode-readout__dot" aria-hidden="true" />
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span key={modeStatus}
+                  initial={{ opacity: 0, y: reduced ? 0 : 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: reduced ? 0 : -4 }}
+                  transition={{ duration: reduced ? 0.06 : 0.18, ease: EASE }}
+                >{modeStatus}</motion.span>
+              </AnimatePresence>
+            </div>
             <time aria-label={`Call duration ${duration}`}>{duration}</time>
             <div className="clyra-voice-call__media-actions" aria-label="Live media controls">
               <button type="button" aria-label={mediaMode === "camera" ? "Stop camera" : "Start camera"} aria-pressed={mediaMode === "camera"} data-active={mediaMode === "camera"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "camera" ? null : "camera")}><Camera size={17} strokeWidth={1.8} /><span>Camera</span></button>
@@ -920,7 +959,25 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
               ) : null}
             </AnimatePresence>
 
-            {mediaMode ? <VoiceMediaSurface key={mediaMode} mode={mediaMode} lowPower={call.lowPowerMode} onStop={() => onMediaModeChange?.(null)} onCaptureChange={call.registerMediaCapture} onAsk={() => void call.sendText("What can you see in this view?")} /> : null}
+            <AnimatePresence mode="wait" initial={false}>
+              {mediaMode ? (
+                <motion.div
+                  key={mediaMode}
+                  className="clyra-voice-media-stage"
+                  data-mode={mediaMode}
+                  initial={{ opacity: 0, y: reduced ? 0 : 16, scale: reduced ? 1 : 0.975 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: reduced ? 0 : -10, scale: reduced ? 1 : 0.985 }}
+                  transition={{ duration: reduced ? 0.06 : 0.29, ease: EASE }}
+                >
+                  <VoiceMediaSurface mode={mediaMode} lowPower={call.lowPowerMode}
+                    onStop={() => onMediaModeChange?.(null)}
+                    onCaptureChange={call.registerMediaCapture}
+                    onAsk={() => void call.sendText("What can you see in this view?")}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
             <AnimatePresence mode="popLayout">
               {call.activeTask ? (
                 <VoiceActivitySurface key={call.activeTask.id} task={call.activeTask} surface={call.activeSurface} controlling={activeState(call.state) && call.state !== "paused" && call.state !== "user_takeover"} onToggleExpanded={call.toggleSurfaceExpanded} />

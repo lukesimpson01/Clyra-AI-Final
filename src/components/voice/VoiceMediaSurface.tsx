@@ -109,6 +109,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   // Encode only one <=960px JPEG on an explicit request. The live stream
   // otherwise stays entirely on the user's machine.
   const captureFrame = useCallback((): VoiceMediaSnapshot | null => {
@@ -167,7 +168,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
       stream?.getTracks().forEach((track) => track.stop());
       if (video) { video.pause(); video.srcObject = null; }
     };
-  }, [mode]);
+  }, [mode, retry]);
 
   // Run MediaPipe only when the local X-ray mode is enabled. No processing
   // during screen share, background tabs, or after the component is closed.
@@ -258,7 +259,12 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
         <video ref={videoRef} autoPlay playsInline muted aria-label={mode === "camera" ? "Your camera" : "Your shared screen"} />
         {mode === "camera" && filterEnabled && ready ? <canvas ref={canvasRef} aria-hidden="true" /> : null}
         {!ready && !error ? <p className="clyra-voice-media__message">Waiting for {mode === "camera" ? "camera" : "screen"} permission…</p> : null}
-        {error ? <p className="clyra-voice-media__message" role="alert">{error}</p> : null}
+        {error ? (
+          <div className="clyra-voice-media__recovery" role="alert">
+            <p className="clyra-voice-media__message">{error}</p>
+            <button type="button" onClick={() => setRetry((n) => n + 1)}>Try again</button>
+          </div>
+        ) : null}
         {scanMessage && ready ? <p className="clyra-voice-media__scan-message"><Zap size={12} />{scanMessage}</p> : null}
       </div>
       <p className="clyra-voice-media__privacy">
