@@ -10,6 +10,7 @@ import { DisclosureRow } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
 import { AGENT_EASE, ROW_ENTER, SUBTLE_ENTER } from "./motion";
+import { describeCodeError } from "./codeErrorPresentation";
 
 /**
  * One reasoning phase, in the same row language as every tool call: the think
@@ -690,6 +691,20 @@ export function Conversation({
             ) : null}
           </AnimatePresence>
 
+          {state.runState === "failed" && state.error ? (() => {
+            const issue = describeCodeError(state.error);
+            return <motion.section key="run-error" {...SUBTLE_ENTER} role="alert" className="mt-4 border-l-2 border-[#B96D6D] pl-3 text-[12px]">
+              <p className="font-medium text-[#34363B]">{issue.title}</p>
+              <p className="mt-1 leading-[1.5] text-[#72757A]">{issue.detail} {issue.nextStep}</p>
+              <div className="mt-2 flex items-center gap-3">
+                <button type="button" onClick={onOpenTerminal} className="font-medium text-[#386BCB] hover:underline">View logs</button>
+                <details className="min-w-0">
+                  <summary className="cursor-pointer text-[11.5px] text-[#80838A]">Details</summary>
+                  <pre className="mt-2 max-h-[160px] max-w-[580px] overflow-auto whitespace-pre-wrap break-all text-[10.5px] text-[#767980]">{state.error}</pre>
+                </details>
+              </div>
+            </motion.section>;
+          })() : null}
           {/* Failure, cancellation and the elapsed time now live in the run header under the prompt. */}
           {showCompletion ? (
             <CompletionSummary

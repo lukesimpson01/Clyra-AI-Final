@@ -44,6 +44,7 @@ import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
 import { PreviewBuilding } from "./PreviewBuilding";
 import { liveStepLabel } from "./CodexActivity";
+import { describeCodeError } from "./codeErrorPresentation";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
@@ -209,7 +210,7 @@ function BrowserView({
   const historyIndex = currentTab.index;
   const [address, setAddress] = useState("");
   const [frameLoaded, setFrameLoaded] = useState(false);
-  const [frameError, setFrameError] = useState<string | null>(null);
+
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   // Viewport sizing (device presets + free responsive width) and zoom.
@@ -296,6 +297,7 @@ function BrowserView({
     (session?.status === "build_failed" ||
       session?.status === "server_crashed" ||
       session?.status === "runtime_error");
+  const previewError = describeCodeError(session?.lastError?.message || session?.status || "Preview failed");
 
   useEffect(() => {
     if (failed && session?.lastError?.message) onPreviewError?.(session.lastError.message);
@@ -308,7 +310,7 @@ function BrowserView({
      mounted, which reads as "the agent built nothing". */
   // Keep the existing animated building screen until the actual project frame
   // has loaded, not just until the dev server reports its port is ready.
-  useEffect(() => { setFrameLoaded(false); setFrameError(null); }, [projectId, frameVersion, activePreviewTabId, navigatedSrc]);
+  useEffect(() => { setFrameLoaded(false); }, [projectId, frameVersion, activePreviewTabId, navigatedSrc]);
   const waitingForFirstFrame = ready && !isElectronRuntime() && !frameLoaded;
   const previewLoading = !failed && !navigatedSrc && Boolean(projectId) &&
     (starting || (agentRunning && !ready) || waitingForFirstFrame || !session);
@@ -596,13 +598,15 @@ function BrowserView({
               ) : null}
             </div>
           ) : failed ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
-              <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
-              {session?.lastError?.message ? (
-                <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[#8A8A8A]">
-                  {session.lastError.message}
-                </p>
-              ) : null}
+            <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9] px-6 text-center" role="alert">
+              <XCircle className="mb-1 h-6 w-6 text-[#B45454]" strokeWidth={1.5} />
+              <p className="text-[14px] font-medium text-[#25272B]">{previewError.title}</p>
+              <p className="max-w-[390px] text-[12px] leading-[1.55] text-[#75777D]">{previewError.detail}</p>
+              <p className="max-w-[390px] text-[11.5px] leading-[1.5] text-[#85878C]">{previewError.nextStep}</p>
+              {session?.lastError?.message ? <details className="max-w-[440px] text-left">
+                <summary className="cursor-pointer text-[11px] text-[#6A6D72] hover:underline">Technical details</summary>
+                <pre className="cc-scroll mt-2 max-h-[120px] overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-black/[0.035] p-2 text-[10.5px] text-[#62656B]">{session.lastError.message}</pre>
+              </details> : null}
               <div className="mt-1 flex items-center gap-1.5">
                 <button
                   type="button"

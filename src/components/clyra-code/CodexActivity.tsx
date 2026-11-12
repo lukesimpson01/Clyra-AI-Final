@@ -30,6 +30,7 @@ import type { AgentAction } from "./store";
 import { InlineDiffCard, TerminalCard } from "./harness";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { AGENT_EASE } from "./motion";
+import { describeCodeError } from "./codeErrorPresentation";
 
 const VERBS: Record<string, { active: string; done: string; failed: string }> = {
   read: { active: "Reading", done: "Read", failed: "Couldn’t read" },
@@ -179,6 +180,7 @@ export const ActivityRow = memo(function ActivityRow({
   }, [isFile, action.patch, action.before, action.after, action.contentAfter]);
   const output = [action.output?.trim(), action.error?.trim()].filter(Boolean).join("\n");
   const hasBody = (isFile && diffLines.length > 0) || isTerminal || Boolean(output);
+  const issue = failed ? describeCodeError(output || action.target) : null;
 
   return (
     <motion.div
@@ -216,6 +218,7 @@ export const ActivityRow = memo(function ActivityRow({
         </span>
         {isFile && !failed ? <Stats additions={action.kind === "delete" ? undefined : action.additions} deletions={action.kind === "create" ? undefined : action.deletions} /> : null}
         {isFile && !seen && !running && !failed ? <span className="cxa-unseen" aria-label="New change" /> : null}
+        {issue ? <span className="cxa-outcome" title={issue.nextStep}>{issue.title}</span> : null}
         {isTerminal && !running && action.endedAt ? (
           <span className="cxa-outcome">
             {(() => { const code = exitCodeFrom(output); return code !== null ? `exit ${code} · ` : ""; })()}{formatDuration(action.endedAt - action.startedAt)}
@@ -241,6 +244,7 @@ export const ActivityRow = memo(function ActivityRow({
               ) : (
                 <pre className="cxa-output">{output}</pre>
               )}
+              {issue ? <div className="mt-2 border-l-2 border-[#B96D6D] pl-3 text-[11.5px] leading-[1.55] text-[#76787D]"><span className="font-medium text-[#44464C]">{issue.title}.</span> {issue.nextStep}</div> : null}
               {failed && (onRetry || onOpenTerminal) ? (
                 <div className="cxa-actions">
                   {onRetry ? <button type="button" className="cxa-pill" onClick={() => onRetry(action)}>Ask Clyra to fix</button> : null}
