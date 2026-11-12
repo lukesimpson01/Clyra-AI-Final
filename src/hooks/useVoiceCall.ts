@@ -266,7 +266,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
             const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
               dispatch({ type: "RESPONSE_FINISHED" });
               touchActivity();
-            }, onNativeSpeechEvent);
+            }, onNativeSpeechEvent));
             player.interrupt();
             player.append(result.text);
             player.complete();
@@ -394,7 +394,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
       dispatch({ type: "RESPONSE_FINISHED" });
       touchActivity();
-    }, onNativeSpeechEvent);
+    }, onNativeSpeechEvent));
     player.interrupt();
     pendingAssistantTextRef.current = text;
     dispatch({ type: "TOKEN", text });
@@ -534,7 +534,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const speaker = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
       dispatch({ type: "RESPONSE_FINISHED" });
       touchActivity();
-    }, onNativeSpeechEvent);
+    }, onNativeSpeechEvent));
     speaker.interrupt();
     let gotToken = false;
     let captionBuffer = "";
