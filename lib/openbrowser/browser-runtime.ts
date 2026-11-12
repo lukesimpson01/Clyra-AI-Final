@@ -398,7 +398,7 @@ async function getElectronObservation(tabId?: string) {
 // Native BrowserManager does not implement these advanced input operations.
 // Use Playwright on the SAME visible Electron tab, never a separate browser.
 const PLAYWRIGHT_NATIVE_ACTIONS = new Set([
-  "hover", "drag", "download", "wait", "scroll_to", "find_text",
+  "drag", "download", "wait", "scroll_to", "find_text",
 ]);
 async function runElectronAction(action: BrowserAction, observation: StructuredObservation, source: "agent" | "user", tabId?: string) {
   // A control inside an iframe has an accessible role/name, but no element in
@@ -413,6 +413,15 @@ async function runElectronAction(action: BrowserAction, observation: StructuredO
     if (!targetId) throw new Error("No browser tab is available for the requested action.");
     const active = await waitForElectronPage(targetId, 3_000);
     await executeAction(active, action, observation, source);
+    // Only show coordinates after Playwright dispatched real mouse input.
+    const confirmed = source === "agent" ? pointerPositions.get(active) : undefined;
+    if (confirmed && ["click", "click_at", "double_click", "right_click", "hover", "drag", "type", "check", "uncheck"].includes(action.type)) {
+      const kind = action.type === "type" ? "type"
+        : action.type === "hover" ? "hover"
+        : action.type === "double_click" ? "double_click"
+        : action.type === "right_click" ? "right_click" : "click";
+      await setElectronCursor({ ...confirmed, kind, label: action.type.replaceAll("_", " ") }, targetId);
+    }
     const [after, state] = await Promise.all([
       getElectronObservation(targetId),
       electronBridgeRequest<{ ok: true; state: ManagedBrowserState }>("/state"),
@@ -1311,12 +1320,13 @@ async function moveAgentPointer(activePage: Page, coordinates?: { x: number; y: 
     x: Math.max(0, Math.min(viewport.width, coordinates.x)),
     y: Math.max(0, Math.min(viewport.height, coordinates.y)),
   };
-  const previous = pointerPositions.get(activePage) || { x: viewport.width * 0.72, y: viewport.height * 0.72 };
-  const distance = Math.hypot(next.x - previous.x, next.y - previous.y);
-  const steps = Math.max(4, Math.min(22, Math.round(distance / 54)));
+  const previous = pointerPositions.get(activePage);
+  // Never invent an initial mouse position in an unseen browser.
+  const distance = previous ? Math.hypot(next.x - previous.x, next.y - previous.y) : 0;
+  const steps = previous ? Math.max(2, Math.min(22, Math.round(distance / 54))) : 1;
   await activePage.mouse.move(next.x, next.y, { steps });
   pointerPositions.set(activePage, next);
-  await activePage.waitForTimeout(Math.max(28, Math.min(90, distance / 10)));
+  await activePage.waitForTimeout(Math.max(12, Math.min(48, distance / 18)));
 }
 
 async function progressiveScroll(activePage: Page, x: number, y: number, source: "agent" | "user") {
@@ -2267,7 +2277,7 @@ export function actOnManagedBrowser(action: BrowserAction) {
       validateBrowserAction(action, before, "user");
       const result = await runElectronAction(action, before, "user");
       const verification = await verifyAction(action, before, result.observation);
-      const cursor = cursorForAction(action, before);
+      const cursor = result.state?.cursor || undefined;
       if (cursor) lastCursorEvent = { ...cursor, id: ++cursorEventSeq };
       return { state: result.state, verification, cursor };
     });
@@ -2607,11 +2617,12 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
         actionRepeats.set(repeatSignature(candidate), (actionRepeats.get(repeatSignature(candidate)) || 0) + 1);
         try {
           const action = validateBrowserAction(candidate, before, "agent");
-          const cursor = cursorForAction(action, before);
-          await setElectronCursor(cursor, workingTabId);
+          // A predicted target is never sent as an AI cursor event.
+          await setElectronCursor(undefined, workingTabId);
           agentStatus = "executing";
-          emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
+          emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || `Running ${action.type}`, step, action, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
           const result = await serializeOperation(() => runElectronAction(action, before, "agent", workingTabId));
+          const cursor = result.state?.cursor || undefined;
           // Multi-tab tasks must follow an explicit tab lifecycle operation.
           // Previously every subsequent observation stayed pinned to the
           // original tab, so opening a result in a new tab stranded the agent.
