@@ -119,6 +119,13 @@ export class DesktopControlService {
     if (process.platform !== "darwin") throw new Error("CoreGraphics input requires macOS.");
     if (!this.macPointerPromise) {
       this.macPointerPromise = (async () => {
+        // Packaged apps ship an executable in app.asar.unpacked; end users do
+        // not need Xcode, a network download or an on-device compiler.
+        if (app.isPackaged) {
+          const shipped = path.join(process.resourcesPath, "app.asar.unpacked", "electron", "native-pointer-darwin");
+          await fs.access(shipped);
+          return shipped;
+        }
         const source = await fs.readFile(new URL("./native-pointer.swift", import.meta.url), "utf8");
         const folder = path.join(app.getPath("userData"), "native-input");
         const hash = crypto.createHash("sha256").update(source).digest("hex").slice(0, 14);
