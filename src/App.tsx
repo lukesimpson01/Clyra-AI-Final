@@ -8093,6 +8093,17 @@ Please analyze the code you just wrote and fix this error.`;
             setMessages((current) => current.map((message) => message.id === aiMsgId ? { ...message, content: "**Connect Google to continue**\n\nI opened a secure Google sign-in window. Once you’ve approved access, return to Clyra and send this request again.", isThinking:false, isStreaming:false, thinkingMode:"google" } : message));
             return;
           }
+          if (googleTool === "gmail" && result.needsInput && /\b(?:send|draft|compose|write|reply|message|email)\b/i.test(userText)) {
+            window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true, instruction: userText } }));
+            setMessages((current) => current.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: "Opened **Clyra Mail** to prepare an editable email draft. I’ll search your connected inbox when relevant and format the message for you. **Nothing is sent until you review the final recipient, message, attachments, and confirm sending.**",
+              isThinking: false, isStreaming: false, thinkingMode: "google",
+              googleAction: "Preparing email draft",
+              googleDetail: "Reviewing context, drafting the message, and waiting for your approval",
+            } : message));
+            return;
+          }
           setMessages((current) => current.map((message) => message.id === aiMsgId ? { ...message, content: result.text, isThinking:false, isStreaming:false, thinkingMode:"google", googleAction:result.action || googleAction, googleDetail:result.detail || googleDetail, ...(result.gmailResults ? { gmailResults:result.gmailResults as GmailResultsPayload } : {}), ...(result.workspaceResult ? { workspaceResult:result.workspaceResult as WorkspaceResult } : {}) } : message));
           return;
         }
