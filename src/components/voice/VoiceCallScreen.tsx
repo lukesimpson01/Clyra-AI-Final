@@ -11,7 +11,7 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
-import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square } from "lucide-react";
+import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
 import { VoiceMediaSurface } from "./VoiceMediaSurface";
 
 /* ------------------------------------------------------------------ */
@@ -860,6 +860,12 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
             <div className="clyra-voice-call__media-actions" aria-label="Live media controls">
               <button type="button" aria-label={mediaMode === "camera" ? "Stop camera" : "Start camera"} aria-pressed={mediaMode === "camera"} data-active={mediaMode === "camera"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "camera" ? null : "camera")}><Camera size={17} strokeWidth={1.8} /><span>Camera</span></button>
               <button type="button" aria-label={mediaMode === "screen" ? "Stop screen sharing" : "Start screen sharing"} aria-pressed={mediaMode === "screen"} data-active={mediaMode === "screen"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "screen" ? null : "screen")}><Monitor size={17} strokeWidth={1.8} /><span>Screen</span></button>
+              {(call.requiresApproval || (call.activeTask && activeState(call.state) && !call.composerOpen)) ? (
+                <>
+                  <button type="button" aria-label={call.muted ? "Unmute microphone" : "Mute microphone"} aria-pressed={call.muted} title={call.muted ? "Unmute microphone" : "Mute microphone"} data-active={call.muted} disabled={call.state === "ending"} onClick={call.toggleMute}><MicIcon muted={call.muted} /></button>
+                  <button type="button" aria-label="End call" title="End call" disabled={call.state === "ending"} onClick={() => void call.endCall()}><PhoneOff size={17} strokeWidth={1.8} /></button>
+                </>
+              ) : null}
             </div>
           </motion.header>
 
