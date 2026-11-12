@@ -3323,7 +3323,7 @@ async function startServer() {
   app.get("/api/openbrowser/diagnostics", (req, res) => {
     const tabId = String(req.query.tabId || "").slice(0, 120);
     if (!tabId) return res.status(400).json({ ok: false, error: { message: "Test tab ID required" } });
-    return res.json({ ok: true, errors: getManagedBrowserDiagnostics(tabId) });
+    return res.json({ ok: true, ...getManagedBrowserDiagnostics(tabId) });
   });
 
   app.post("/api/openbrowser/navigate", async (req, res) => {
