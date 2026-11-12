@@ -496,9 +496,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       acknowledge("Opening your connected inbox. I can still hear you.");
       return true;
     }
-    if (/\b(?:compose|write|draft|new)\b[\s\S]{0,60}\b(?:email|message)\b|\b(?:email|message)\b[\s\S]{0,50}\b(?:compose|write|draft)\b/i.test(clean) && /\b(?:email|gmail|inbox|mail)\b/i.test(clean)) {
-      window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true } }));
-      acknowledge("I opened a new email draft. Please review the recipient, subject and message before sending.");
+    const emailComposition = /\b(?:compose|write|draft|send|reply|new|prepare)\b[\s\S]{0,110}\b(?:email|gmail|mail)\b|\b(?:email|gmail|mail)\b[\s\S]{0,110}\b(?:compose|write|draft|send|reply|prepare)\b/i.test(clean);
+    const websiteDeliveryMission = /\b(?:build|code|publish|deploy|create (?:a|the) (?:website|site)|vibe coder)\b/i.test(clean);
+    if (emailComposition && !websiteDeliveryMission) {
+      window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true, instruction: clean } }));
+      acknowledge("I’m preparing an editable email. You’ll review the recipient, content and attachments before anything is sent.");
       return true;
     }
     const google = detectGoogleService(clean);
