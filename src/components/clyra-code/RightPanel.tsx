@@ -203,6 +203,7 @@ function BrowserView({
   const [history, setHistory] = useState<string[]>([]);
   const [address, setAddress] = useState("");
   const [navigatedSrc, setNavigatedSrc] = useState<string | null>(null);
+  const [frameLoaded, setFrameLoaded] = useState(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   // Viewport sizing (device presets + free responsive width) and zoom.
@@ -299,6 +300,13 @@ function BrowserView({
      edge of agentRunning is the one signal this component can always see —
      without it the preview keeps showing whatever existed when it last
      mounted, which reads as "the agent built nothing". */
+  // Keep the existing animated building screen until the actual project frame
+  // has loaded, not just until the dev server reports its port is ready.
+  useEffect(() => { setFrameLoaded(false); }, [projectId, frameVersion]);
+  const waitingForFirstFrame = ready && !isElectronRuntime() && !frameLoaded;
+  const previewLoading = !failed && !navigatedSrc && Boolean(projectId) &&
+    (starting || (agentRunning && !ready) || waitingForFirstFrame || !session);
+
   const wasAgentRunning = useRef(agentRunning);
   useEffect(() => {
     if (wasAgentRunning.current && !agentRunning) {
@@ -498,7 +506,7 @@ function BrowserView({
 
       <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-[#F7F7F6]">
         <div className="cc-scroll absolute inset-0 overflow-auto">
-          {(ready || navigatedSrc) && !agentRunning ? (
+          {(ready || navigatedSrc) ? (
             <div
               className={cn("relative", effectiveWidth ? "mx-auto" : "h-full w-full")}
               style={{
@@ -530,6 +538,7 @@ function BrowserView({
                   onLoad={(event) => {
                     const win = event.currentTarget.contentWindow;
                     onFrameReady(win);
+                    setFrameLoaded(true);
                     if (!navigatedSrc) win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
                   }}
                 />
@@ -587,7 +596,7 @@ function BrowserView({
         </div>
 
         <AnimatePresence>
-          {(starting || agentRunning) && !failed ? (
+          {previewLoading ? (
             <motion.div
               key="preview-loading"
               initial={{ opacity: 0 }}
