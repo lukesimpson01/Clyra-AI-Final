@@ -1,4 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import { AgentCursorGlyph } from "../components/agent/AgentCursorGlyph";
 import { ExternalLink, FileText, Globe2, Mail, Maximize2, Minimize2 } from "lucide-react";
 import type { AgentSurface, AgentTask } from "./state/voiceSession";
 
@@ -42,8 +44,75 @@ function ResultContent({ content }: { content: unknown }) {
   );
 }
 
+type ConfirmedBrowserCursor = { id: number; at?: number; x: number; y: number; kind: string };
+type BrowserSnapshot = { cursor?: ConfirmedBrowserCursor | null; viewport?: { width: number; height: number }; surfaceVisible?: boolean };
+
+/** Live browser pixels and pointer events from the SAME browser service as
+ * Chat and Vibe. No guessed target paths or screenshots painted as actions. */
+function useVoiceBrowserActivity(enabled: boolean, taskId: string) {
+  const [frame, setFrame] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<ConfirmedBrowserCursor | null>(null);
+  const [viewport, setViewport] = useState({ width: 1280, height: 720 });
+  const [embeddedCursor, setEmbeddedCursor] = useState(false);
+  const imageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setCursor(null);
+      setFrame(null);
+      if (imageRef.current) URL.revokeObjectURL(imageRef.current);
+      imageRef.current = null;
+      return;
+    }
+    let running = true;
+    let timer: number | null = null;
+    const controller = new AbortController();
+    const update = async () => {
+      try {
+        const stateResponse = await fetch("/api/openbrowser/state", { cache: "no-store", signal: controller.signal });
+        if (!stateResponse.ok) throw new Error("Browser state is unavailable.");
+        const payload = await stateResponse.json() as { ok?: boolean; state?: BrowserSnapshot };
+        if (!running || !payload.ok || !payload.state) return;
+        const state = payload.state;
+        const w = Number(state.viewport?.width);
+        const h = Number(state.viewport?.height);
+        if (w > 0 && h > 0) setViewport({ width: w, height: h });
+        setEmbeddedCursor(Boolean(state.surfaceVisible));
+        const event = state.cursor;
+        const fresh = event && Number.isFinite(event.x) && Number.isFinite(event.y)
+          && event.at && Date.now() - event.at < 3_000;
+        setCursor(fresh ? event : null);
+        const imageResponse = await fetch("/api/openbrowser/frame?fresh=1", { cache: "no-store", signal: controller.signal });
+        if (!running || !imageResponse.ok) return;
+        const blob = await imageResponse.blob();
+        if (!running) return;
+        const next = URL.createObjectURL(blob);
+        const previous = imageRef.current;
+        imageRef.current = next;
+        setFrame(next);
+        if (previous) URL.revokeObjectURL(previous);
+      } catch {
+        // Preserve the last genuine frame; never synthesize page content.
+      }
+    };
+    const tick = async () => {
+      await update();
+      if (running) timer = window.setTimeout(() => { void tick(); }, 850);
+    };
+    void tick();
+    return () => {
+      running = false;
+      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+      if (imageRef.current) URL.revokeObjectURL(imageRef.current);
+      imageRef.current = null;
+    };
+  }, [enabled, taskId]);
+  return { frame, cursor, viewport, embeddedCursor };
+}
+
 export function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: Props) {
   const reduced = useReducedMotion();
+  const browser = useVoiceBrowserActivity(controlling && task.kind === "browser" && task.status === "running", task.id);
   const resolved: AgentSurface = surface || {
     id: task.id,
     kind: task.kind === "browser" ? "browser" : "app",
@@ -67,7 +136,32 @@ export function VoiceActivitySurface({ task, surface, controlling, onToggleExpan
         </button>
       </header>
       <div className="clyra-voice-activity__body">
-        {resolved.preview ? <img src={resolved.preview} alt="Live task preview" className="clyra-voice-activity__preview" /> : null}
+        {task.kind === "browser" && (browser.frame || resolved.preview) ? (
+          <div
+            className="clyra-voice-activity__browser-frame"
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: Math.round(280 * (browser.viewport.width / browser.viewport.height)),
+              aspectRatio: `${browser.viewport.width} / ${browser.viewport.height}`,
+              overflow: "hidden",
+              margin: "0 auto",
+              borderRadius: 10,
+            }}
+          >
+            <img src={browser.frame || resolved.preview} alt="Actual browser activity" className="clyra-voice-activity__preview" style={{ width: "100%", height: "100%", objectFit: "fill", display: "block" }} />
+            {browser.cursor && !browser.embeddedCursor && (
+              <div aria-hidden style={{
+                position: "absolute",
+                left: `${(browser.cursor.x / browser.viewport.width) * 100}%`,
+                top: `${(browser.cursor.y / browser.viewport.height) * 100}%`,
+                pointerEvents: "none",
+              }}>
+                <AgentCursorGlyph pressed={["click", "double_click", "right_click"].includes(browser.cursor.kind)} />
+              </div>
+            )}
+          </div>
+        ) : resolved.preview ? <img src={resolved.preview} alt="Task preview" className="clyra-voice-activity__preview" /> : null}
         {!resolved.preview && task.steps?.length ? (
           <ol className="clyra-voice-activity__steps">
             {task.steps.map((step) => <li key={step.id} data-status={step.status}><span aria-hidden /><p>{step.label}</p></li>)}
