@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { dialog, Menu, session, WebContentsView } from "electron";
 import { agentChromeScript } from "./agent-chrome-script.mjs";
+import { planCursorMotion, isPointerAction } from "./ai-cursor-motion.mjs";
 
 const HOME_URL = "https://www.google.com/";
 const MAX_TABS = 16;
@@ -252,6 +253,9 @@ export class ChromiumBrowserManager {
     this.lastFrameVersion = -1;
     this.saveTimer = null;
     this.agent = { status: "idle", paused: false, manualControl: false };
+    this.cursor = null;
+    this.cursorSequence = 0;
+    this.agentCursorPoint = null;
     // The in-page status pill reports clicks through a console token. A fresh
     // random token per app session keeps it from colliding with page logs.
     this.agentChromeToken = `__clyra_agent_control_${crypto.randomBytes(9).toString("hex")}`;
@@ -850,7 +854,7 @@ export class ChromiumBrowserManager {
       : target?.elementId
         ? elements.find((element) => element.id === target.elementId)
         : target && elements.find((element) => (!target.role || element.role === target.role) && (!target.name || element.name.toLowerCase().includes(String(target.name).toLowerCase())) && (!target.label || element.label.toLowerCase().includes(String(target.label).toLowerCase())) && (!target.placeholder || element.placeholder.toLowerCase().includes(String(target.placeholder).toLowerCase())) && (!target.text || element.text.toLowerCase().includes(String(target.text).toLowerCase())) && (!target.testId || element.testId === target.testId));
-    const point = resolved?.center || (typeof target === "object" ? target.coordinates : null);
+    let point = resolved?.center || (typeof target === "object" ? target.coordinates : null);
     const withDebugger = async (operation) => {
       const attachedHere = !contents.debugger.isAttached();
       if (attachedHere) contents.debugger.attach("1.3");
@@ -860,12 +864,63 @@ export class ChromiumBrowserManager {
         if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach();
       }
     };
+    // Re-resolve immediately before clicking; an observation may be stale.
+    if (isPointerAction(action?.type) && resolved?.id) {
+      const selector = JSON.stringify('[data-clyra-browser-id="' + resolved.id + '"]');
+      const live = await contents.executeJavaScript(`(() => {
+        const node = document.querySelector(${selector});
+        if (!node || !node.isConnected) return null;
+        const r = node.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        if (r.width < 2 || r.height < 2 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+        const hit = document.elementFromPoint(x, y);
+        if (hit !== node && !node.contains(hit) && !hit?.contains(node)) return null;
+        return { x, y };
+      })()`, true);
+      if (!live) throw new Error("The target moved or is covered. Observe the page again.");
+      point = live;
+    }
+    if (action?.type === "click_at") {
+      const x = Number(action.x), y = Number(action.y);
+      const viewport = await contents.executeJavaScript("({ width: innerWidth, height: innerHeight })", true);
+      if (![x, y].every(Number.isFinite) || x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) {
+        throw new Error("Click coordinates are outside the live browser viewport.");
+      }
+      point = { x: Math.round(x), y: Math.round(y) };
+    }
+    if (action?.type === "scroll" && !point && tabIsVisible) {
+      point = await contents.executeJavaScript("({ x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) })", true);
+    }
+    // Every animation frame dispatches an actual Chromium mouseMoved event
+    // BEFORE the visual marker is advanced to its confirmed coordinates.
+    const movePointer = async (destination) => {
+      if (!tabIsVisible || !destination) return;
+      const motion = planCursorMotion(this.agentCursorPoint || destination, destination, {
+        speed: this.settings.aiCursorSpeed, reducedMotion: this.settings.reducedMotion,
+      });
+      await withDebugger(async (send) => {
+        const started = Date.now();
+        for (const [index, frame] of motion.frames.entries()) {
+          if (this.agent.manualControl || this.agent.paused || this.destroyed) throw new Error("Browser control was interrupted.");
+          await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: frame.x, y: frame.y });
+          this.agentCursorPoint = { x: frame.x, y: frame.y };
+          if (this.settings.showAiCursor) {
+            await this.setCursor({ x: frame.x, y: frame.y, kind: "move", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+          }
+          const next = motion.frames[index + 1];
+          if (next) await new Promise((resolve) => setTimeout(resolve, Math.max(0, next.atMs - (Date.now() - started))));
+        }
+      });
+    };
+    if (isPointerAction(action?.type) && point) await movePointer(point);
+
     const click = async (clickCount = 1, button = "left") => {
       if (!point) throw new Error("The requested target is no longer visible.");
       // A hidden native view has no compositor target for dispatchMouseEvent.
       // Use the actual page node in that same WebContents until the user opens
       // Browser again; visible browser actions always retain CDP coordinates.
       if (!tabIsVisible && resolved) {
+        if (button !== "left") throw new Error("Right-click requires a visible browser compositor.");
         await contents.executeJavaScript(`document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)})?.click()`, true);
         return;
       }
@@ -874,6 +929,7 @@ export class ChromiumBrowserManager {
         await send("Input.dispatchMouseEvent", { type: "mousePressed", ...params });
         await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...params });
       });
+      if (tabIsVisible && this.settings.showAiCursor) await this.setCursor({ ...point, kind: clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
     };
     const focus = async () => {
       if (!resolved) return;
@@ -904,11 +960,7 @@ export class ChromiumBrowserManager {
       case "double_click": await click(2); break;
       case "right_click": await click(1, "right"); break;
       case "hover": break;
-      case "click_at": await withDebugger(async (send) => {
-        const params = { x: Math.round(action.x), y: Math.round(action.y), button: "left", clickCount: 1 };
-        await send("Input.dispatchMouseEvent", { type: "mousePressed", ...params });
-        await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...params });
-      }); break;
+      case "click_at": await click(); break;
       case "type": {
         await focus();
         if (!tabIsVisible && resolved) {
@@ -997,6 +1049,12 @@ export class ChromiumBrowserManager {
   }
 
   async setCursor(cursor, tabId = this.activeTabId) {
+    if (!cursor) {
+      this.cursor = null;
+      this.agentCursorPoint = null;
+    } else if ([cursor.x, cursor.y].every(Number.isFinite)) {
+      this.cursor = { id: ++this.cursorSequence, x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
+    }
     // Keep the human's visible tab undisturbed while an agent continues in a
     // different tab. The cursor becomes visible automatically when that tab
     // is brought back to the foreground on the next agent event.
@@ -1053,7 +1111,7 @@ export class ChromiumBrowserManager {
         if (!text.parentNode) label.append(text);
         label.style.display = data.showLabel ? "block" : "none";
       }
-      root.style.transition = data.reducedMotion ? "none" : "transform 280ms cubic-bezier(.16,1,.3,1), opacity 120ms ease";
+      root.style.transition = "none"; // Input and artwork update in lockstep.
       root.style.transform = "translate3d(" + (data.x - 13) + "px," + (data.y - 13) + "px,0)";
       root.style.opacity = "1";
       const core = root.querySelector('[data-part="core"]');
@@ -1194,6 +1252,9 @@ export class ChromiumBrowserManager {
 
   setAgentState(agent) {
     this.agent = { ...this.agent, ...(agent || {}) };
+    if (this.agent.manualControl || this.agent.paused || ["idle", "completed", "failed", "cancelled", "paused", "waiting_for_user"].includes(this.agent.status)) {
+      void this.setCursor(null).catch(() => {});
+    }
     void this.syncAgentChrome();
     this.emitState();
     return this.agent;
@@ -1268,6 +1329,7 @@ export class ChromiumBrowserManager {
         }
       }),
       activeTabId: this.activeTabId,
+      cursor: this.cursor,
       canGoBack: Boolean(readableContents?.navigationHistory.canGoBack()),
       canGoForward: Boolean(readableContents?.navigationHistory.canGoForward()),
       secure: url.startsWith("https://"),
@@ -1439,6 +1501,8 @@ export class ChromiumBrowserManager {
     }
     this.tabs.clear();
     this.activeTabId = null;
+    this.cursor = null;
+    this.agentCursorPoint = null;
   }
 }
 
