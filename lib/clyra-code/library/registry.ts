@@ -208,7 +208,7 @@ function upstreamReadmePreviews(id: string, repositoryUrl: string): SourceScreen
     alt,
     // Upstream documentation does not state the original capture date.
     capturedAt: "",
-    provenance: "Official upstream project documentation (" + repositoryUrl + "); source image selected as of 2026-11-12. Not a screenshot of a running Clyra template.",
+    provenance: "Upstream project README or official documentation (" + repositoryUrl + "); source image selected as of 2026-11-12. Not a screenshot of a running Clyra template.",
   }));
 }
 

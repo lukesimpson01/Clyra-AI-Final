@@ -147,11 +147,11 @@ export function sampleTemplateReviews(entry: TemplateManifest): SampleTemplateRe
     entry.name + " concept",
     "What to check before using " + entry.name,
     entry.category + " possibilities",
-    "The main workflow",
-    "Technical foundations",
-    "First-run experience",
-    "Real-world setup",
-    "Building on the source",
+    entry.name + " main workflow",
+    entry.name + " technical foundations",
+    entry.name + " first-run experience",
+    entry.name + " real-world setup",
+    "Building on " + entry.name,
   ];
   return specific.map((body, i) => ({
     id: entry.id + "-sample-" + (i + 1),
