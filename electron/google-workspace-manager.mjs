@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { buildGmailMime } from "./mail-mime.mjs";
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
@@ -479,7 +480,25 @@ export class GoogleWorkspaceManager {
     const finish = (label, detail, text) => ({ ok:true, action:label, detail, text });
     this.emitAgentProgress(runId, { service:service === "contacts" || service === "youtube" ? "clyra" : service, state:"running", label:`Using Google ${service === "youtube" ? "YouTube" : service[0].toUpperCase()+service.slice(1)}`, detail:"Completing the requested Workspace action securely." });
     if (service === "drive") {
-      if (action === "search") { const terms=String(args.query || "").replace(/[^\p{L}\p{N}._-]+/gu," ").trim().split(/\s+/).filter((term)=>term.length>1).slice(0,6); const filter=terms.length ? terms.map((term)=>`fullText contains '${term.replace(/'/g,"\\'")}'`).join(" and ") : "trashed = false"; const q=encodeURIComponent(`(${filter}) and trashed = false`); const found=await this.google(`/drive/v3/files?q=${q}&pageSize=20&fields=files(id,name,mimeType,modifiedTime,webViewLink)`, {}, "drive-search"); const rows=(found.files||[]).map((file)=>`- ${file.name || "Untitled file"} — ${file.mimeType || "file"}${file.webViewLink ? ` (${markdownWorkspaceLink("Open", file.webViewLink)})` : ""}`); return finish("Drive search complete", `Found ${rows.length} file(s).`, rows.length ? `### Google Drive results\n\n${rows.join("\n")}` : "No matching Google Drive files were found."); }
+      if (action === "search") { const terms=String(args.query || "").replace(/[^\p{L}\p{N}._-]+/gu," ").trim().split(/\s+/).filter((term)=>term.length>1).slice(0,6); const filter=terms.length ? terms.map((term)=>`fullText contains '${term.replace(/'/g,"\\'")}'`).join(" and ") : "trashed = false"; const q=encodeURIComponent(`(${filter}) and trashed = false`); const found=await this.google(`/drive/v3/files?q=${q}&pageSize=20&fields=files(id,name,mimeType,modifiedTime,webViewLink)`, {}, "drive-search"); const rows=(found.files||[]).map((file)=>`- ${file.name || "Untitled file"} — ${file.mimeType || "file"}${file.webViewLink ? ` (${markdownWorkspaceLink("Open", file.webViewLink)})` : ""}`); return { ...finish("Drive search complete", `Found ${rows.length} file(s).`, rows.length ? `### Google Drive results\n\n${rows.join("\n")}` : "No matching Google Drive files were found."), driveFiles:(found.files || []).map(({id,name,mimeType,webViewLink})=>({id,name,mimeType,webViewLink})) }; }
+      if (action === "attachment") {
+        if (!this.validId(args.fileId)) throw new Error("A valid Drive file ID is required.");
+        const file=await this.google("/drive/v3/files/"+encodeURIComponent(args.fileId)+"?fields=id,name,mimeType,size",{},"drive-attachment-metadata");
+        const googleDoc=String(file.mimeType||"").startsWith("application/vnd.google-apps.");
+        const format=String(args.format||"application/pdf");
+        if(googleDoc && !["application/pdf","application/vnd.openxmlformats-officedocument.wordprocessingml.document"].includes(format)) throw new Error("Only PDF or DOCX export is supported.");
+        if(Number(file.size||0)>9_000_000) throw new Error("Drive attachment exceeds 9 MB.");
+        const url=googleDoc ? "https://www.googleapis.com/drive/v3/files/"+encodeURIComponent(args.fileId)+"/export?mimeType="+encodeURIComponent(format)
+          : "https://www.googleapis.com/drive/v3/files/"+encodeURIComponent(args.fileId)+"?alt=media";
+        const response=await fetch(url,{headers:{Authorization:"Bearer "+await this.accessToken()}});
+        if(!response.ok) throw safeFailure("drive-attachment-download",response.status,"download_failed");
+        const bytes=Buffer.from(await response.arrayBuffer());
+        if(bytes.length>9_000_000) throw new Error("Exported attachment exceeds 9 MB.");
+        const name=safeHeaderValue(file.name||"Document",180);
+        const suffix=format==="application/pdf"?".pdf":".docx";
+        const filename=googleDoc?name.replace(/\.(?:pdf|docx)$/i,"")+suffix:name;
+        return { ok:true, text:"Drive attachment prepared.",attachment:{filename,mimeType:googleDoc?format:file.mimeType||"application/octet-stream",base64:bytes.toString("base64"),size:bytes.length} };
+      }
       if (!this.validId(args.fileId)) throw new Error("A valid Drive file ID is required.");
       if (action === "rename") { await this.google(`/drive/v3/files/${args.fileId}`, {method:"PATCH",body:JSON.stringify({name:String(args.name||"").slice(0,200)})}, "drive-rename"); return finish("Drive file renamed", "The file name was updated.", "Done — the Drive file was renamed."); }
       if (action === "move") { const parents=String(args.parentId||""); if (!this.validId(parents)) throw new Error("A valid destination folder ID is required."); const file=await this.google(`/drive/v3/files/${args.fileId}?fields=parents`, {}, "drive-move-read"); await this.google(`/drive/v3/files/${args.fileId}?addParents=${encodeURIComponent(parents)}&removeParents=${encodeURIComponent((file.parents||[]).join(","))}`, {method:"PATCH"}, "drive-move"); return finish("Drive file moved", "The file was moved to the selected folder.", "Done — the Drive file was moved."); }
@@ -487,6 +506,35 @@ export class GoogleWorkspaceManager {
       if (action === "delete") { const blocked=this.requireConfirmation("deleting this Drive file",confirmed); if(blocked)return blocked; await this.google(`/drive/v3/files/${args.fileId}`, {method:"DELETE"}, "drive-delete"); return finish("Drive file deleted", "The file was removed from Drive.", "Done — the Drive file was deleted."); }
     }
     if (service === "gmail") {
+      if (action === "compose") {
+        const send=String(args.mode||"draft")==="send";
+        const blocked=send?this.requireConfirmation("sending this reviewed email",confirmed):null;
+        if(blocked) return blocked;
+        let threadId="",inReplyTo="";
+        const replyId=String(args.replyToMessageId||"");
+        if(replyId) {
+          if(!this.validId(replyId)) throw new Error("Invalid reply message.");
+          const message=await this.google("/gmail/v1/users/me/messages/"+encodeURIComponent(replyId)+"?format=full",{},"gmail-compose-reply");
+          inReplyTo=safeHeaderValue(gmailHeaderMap(message.payload?.headers)["message-id"]||"",500);
+          threadId=String(message.threadId||"");
+        }
+        const built=buildGmailMime({to:args.to,cc:args.cc,bcc:args.bcc,subject:args.subject,text:args.text,html:args.html,attachments:args.attachments,inReplyTo});
+        const endpoint=send?"/gmail/v1/users/me/messages/send":"/gmail/v1/users/me/drafts";
+        const message={raw:built.raw,...(threadId?{threadId}:{})};
+        const saved=await this.google(endpoint,{method:"POST",body:JSON.stringify(send?message:{message})},send?"gmail-compose-send":"gmail-compose-draft");
+        return {ok:true,action:send?"Email sent":"Draft saved",text:send?"Message sent after your confirmation.":"Draft saved in Gmail.",detail:"Recipients, formatting and "+built.attachmentCount+" attachment(s) processed by Gmail.",gmailMutation:{messageId:String(send?saved.id||"":saved.message?.id||""),draftId:String(send?"":saved.id||""),threadId:String(saved.threadId||threadId)}};
+      }
+      if (action === "attachment") {
+        if(!this.validId(args.messageId)) throw new Error("A valid Gmail message ID is required.");
+        const message=await this.google("/gmail/v1/users/me/messages/"+encodeURIComponent(args.messageId)+"?format=full",{},"gmail-attachment-context");
+        const found=mimeParts(message.payload).attachments.find(item=>item.id===String(args.attachmentId||""));
+        if(!found) throw new Error("Attachment not found on that message.");
+        if(Number(found.size||0)>9_000_000) throw new Error("Attachment exceeds 9 MB.");
+        const payload=await this.google("/gmail/v1/users/me/messages/"+encodeURIComponent(args.messageId)+"/attachments/"+encodeURIComponent(found.id),{},"gmail-attachment-download");
+        const bytes=Buffer.from(String(payload.data||""),"base64url");
+        if(bytes.length>9_000_000) throw new Error("Attachment exceeds 9 MB.");
+        return {ok:true,text:"Attachment ready.",attachment:{filename:found.filename,mimeType:found.mimeType,base64:bytes.toString("base64"),size:bytes.length}};
+      }
       if (action === "search") {
         const results=await this.searchGmailMessages({ query:String(args.query || "").slice(0, 320), limit:Number(args.limit || 6), runId, stage:"gmail-search" });
         return { ...finish("Gmail search complete", `Loaded ${results.emails.length} matching message${results.emails.length === 1 ? "" : "s"}.`, results.emails.length ? `Found ${results.emails.length} matching email${results.emails.length === 1 ? "" : "s"}.` : "No matching Gmail messages were found."), gmailResults:results };
