@@ -1132,3 +1132,13 @@ button.dsh-leading { cursor: pointer; }
 .cxr-step { min-width: 0; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #86868b; font-size: 12px; }
 .cxr[data-phase="running"] .cxr-label { color: #303236; font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { .cc-composer::before, .cc-composer::after { animation: none; opacity: .18; background-position: center; } }
+
+
+/* Each fake preview transforms its existing blocks into a new screen rather
+   than blanking the page and replaying the same initial construction. */
+.cc-pb-block {
+  transition: left .85s cubic-bezier(.22,1,.36,1), top .85s cubic-bezier(.22,1,.36,1),
+    width .85s cubic-bezier(.22,1,.36,1), height .85s cubic-bezier(.22,1,.36,1),
+    opacity .42s cubic-bezier(.22,1,.36,1), transform .42s cubic-bezier(.22,1,.36,1);
+}
+@media (prefers-reduced-motion: reduce) { .cc-pb-block { transition: none; } }
