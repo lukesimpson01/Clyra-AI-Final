@@ -50,4 +50,57 @@ session = voiceSessionReducer(session, { type: "CLOSED" });
 assert.equal(session.active, false);
 assert.equal(session.state, "idle");
 
-console.log("voice-unit-tests: 23 assertions passed");
+
+import { VoiceSpeechPlayer } from "../src/lib/voiceSpeechPlayer";
+
+// Exercise the real native speech queue without audio hardware or an API key.
+class MockUtterance {
+  text: string;
+  voice: SpeechSynthesisVoice | null = null;
+  rate = 1;
+  pitch = 1;
+  onend: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(text: string) { this.text = text; }
+}
+const spoken: MockUtterance[] = [];
+const mockSynth = {
+  paused: false,
+  cancel: () => { spoken.length = 0; },
+  getVoices: () => [],
+  speak: (utterance: MockUtterance) => { spoken.push(utterance); },
+  resume: () => undefined,
+};
+Object.assign(globalThis, {
+  window: { speechSynthesis: mockSynth },
+  SpeechSynthesisUtterance: MockUtterance,
+});
+let drained = 0;
+const player = new VoiceSpeechPlayer(() => { drained += 1; });
+assert.equal(player.available, true);
+player.append("Hello there. This second sentence should follow naturally.");
+player.complete();
+assert.equal(spoken.length, 1, "first complete sentence plays before the whole reply drains");
+assert.equal(spoken[0]?.text, "Hello there.");
+spoken[0]?.onend?.();
+assert.equal(spoken.length, 2, "queued continuation plays in order");
+assert.equal(spoken[1]?.text, "This second sentence should follow naturally.");
+spoken[1]?.onend?.();
+assert.equal(drained, 1, "a completed spoken reply notifies the call exactly once");
+player.append("This is the response I am going to interrupt.");
+player.complete();
+const cancelledUtterance = spoken[2];
+assert.ok(cancelledUtterance, "the interrupted utterance starts");
+player.interrupt();
+cancelledUtterance?.onend?.();
+assert.equal(drained, 1, "a cancelled reply cannot finalize a newer turn");
+player.append("A corrected response.");
+player.complete();
+const corrected = spoken[0];
+assert.equal(corrected?.text, "A corrected response.");
+corrected?.onend?.();
+assert.equal(drained, 2, "new playback recovers after an interruption");
+
+console.log("voice-unit-tests: interruptible native speech queue passed");
+
+console.log("voice-unit-tests: reducer assertions passed");
