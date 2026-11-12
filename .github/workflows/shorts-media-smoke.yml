@@ -41,8 +41,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      - name: Check out only the Shorts OpenFilm submodule
+        run: git submodule update --init apps/shorts/openfilm
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
