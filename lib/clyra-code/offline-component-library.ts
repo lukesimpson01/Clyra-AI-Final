@@ -223,15 +223,38 @@ export async function installLocalComponent(projectId: string, source: LocalSour
   if (!await exists(nativePath(project, licensePath)) && await exists(licenseSource)) {
     files.set(licensePath, await fs.readFile(licenseSource, "utf8"));
   }
+  // Agent Elements uses local CSS tokens. Copy the real upstream stylesheet and
+  // import it once into a recognised project CSS entrypoint, never a remote URL.
+  let stylesheetPatch: { file: string; before: string; after: string } | null = null;
+  let stylesheetNeedsImport = false;
+  if (source === "21st") {
+    const agentStyle = path.join(REPO, "external", "21st-agent-elements", "lib", "agent-ui", "agent-ui.css");
+    const styleRelative = baseDir + "components/agent-elements/agent-ui.css";
+    if (await exists(agentStyle)) files.set(styleRelative, await fs.readFile(agentStyle, "utf8"));
+    const candidates = ["src/index.css", "src/globals.css", "app/globals.css", "styles/globals.css", "index.css", "globals.css"];
+    const cssEntry = (await Promise.all(candidates.map(async file => await exists(nativePath(project, file)) ? file : null)))
+      .find((entry): entry is string => Boolean(entry));
+    if (cssEntry && await exists(agentStyle)) {
+      const destination = nativePath(project, cssEntry);
+      const before = await fs.readFile(destination, "utf8");
+      const relative = path.posix.relative(path.posix.dirname(cssEntry), styleRelative);
+      const importPath = relative.startsWith(".") ? relative : "./" + relative;
+      const declaration = '@import "' + importPath + '";';
+      if (!before.includes(declaration)) stylesheetPatch = { file: destination, before, after: declaration + "\n" + before };
+    } else if (await exists(agentStyle)) stylesheetNeedsImport = true;
+  }
   const newDependencies = [...required].filter(dep => !(dep in depRecord));
-  // Reject collisions up-front: never replace existing user-authored files.
-  for (const relative of files.keys()) {
+  // Identical shared registry dependencies are already installed and may be reused.
+  // Different user-authored files are never silently overwritten.
+  for (const [relative, content] of files) {
     const destination = nativePath(project, relative);
-    if (!destination.startsWith(project + path.sep) || await exists(destination)) {
-      throw new Error("File already exists or is unsafe: " + relative + ". No files were changed.");
+    if (!destination.startsWith(project + path.sep)) throw new Error("Unsafe component file path.");
+    if (await exists(destination)) {
+      if (await fs.readFile(destination, "utf8") === content) files.delete(relative);
+      else throw new Error("A different file already exists at " + relative + ". No files were changed.");
     }
   }
-  // Roll back files from this install if a later write fails.
+  // Roll back only newly created component files if a later write fails.
   const written: string[] = [];
   try {
     for (const [relative, content] of files) {
@@ -240,14 +263,17 @@ export async function installLocalComponent(projectId: string, source: LocalSour
       await fs.writeFile(destination, content, { encoding: "utf8", flag: "wx" });
       written.push(destination);
     }
+    if (stylesheetPatch) await fs.writeFile(stylesheetPatch.file, stylesheetPatch.after, "utf8");
   } catch (error) {
     await Promise.all(written.map(file => fs.unlink(file).catch(() => undefined)));
+    if (stylesheetPatch) await fs.writeFile(stylesheetPatch.file, stylesheetPatch.before, "utf8").catch(() => undefined);
     throw error;
   }
   return { ok: true, installed: [...seen], files: [...files.keys()],
     dependenciesToInstall: newDependencies,
-    note: newDependencies.length ? "Source installed. Install the listed npm dependencies before building." :
-      "Local component source installed. Run your project's validation and preview." };
+    note: (newDependencies.length ? "Source installed. Install the listed npm dependencies before building." :
+      "Local component source installed. Run your project's validation and preview.") +
+      (stylesheetNeedsImport ? " Import components/agent-elements/agent-ui.css into your main CSS file." : "") };
 }
 
 /** Remove only Clyra's previously injected remote component MCP settings. */
