@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
-const BASE = (process.env.CLYRA_URL || "http://127.0.0.1:3000").replace(/\\/$/, "");
+const BASE = (process.env.CLYRA_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const missionId = "voice-ui-smoke-mission";
 let starts = 0;
 const revisions = [];
@@ -105,7 +105,9 @@ try {
     return route.continue();
   });
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => !!document.querySelector("main") || !!document.getElementById("root"));
+  // Wait for the actual React chat composer rather than the static root node:
+  // the host's custom-event listener is only attached after React mounts.
+  await page.locator('button[aria-label="Start voice call"]').first().waitFor({ timeout: 15_000 });
   // The event is also what the real chat/command palette uses.
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("clyra:voice-call", { detail: { action: "start" } })));
   await page.locator(".clyra-voice-call").waitFor({ timeout: 15_000 });
