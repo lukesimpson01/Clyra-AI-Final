@@ -70,6 +70,8 @@ export type BrowserCursorEvent = {
   y: number;
   kind: "move" | "click" | "double_click" | "right_click" | "hover" | "type" | "scroll";
   label: string;
+  /** Unix ms when the actual input was observed; prevents stale preview pointers. */
+  at?: number;
 };
 
 export interface InteractiveElement {
@@ -177,6 +179,7 @@ export interface ManagedBrowserState {
    * responses — so every consumer's AI-cursor overlay reflects real,
    * externally-driven actions too, not only its own self-issued ones. */
   cursor?: (BrowserCursorEvent & { id: number }) | null;
+  surfaceVisible?: boolean;
 }
 
 export type StructuredObservation = {
@@ -422,7 +425,7 @@ async function runElectronAction(action: BrowserAction, observation: StructuredO
         : action.type === "hover" ? "hover"
         : action.type === "double_click" ? "double_click"
         : action.type === "right_click" ? "right_click" : "click";
-      await setElectronCursor({ ...confirmed, kind, label: action.type.replaceAll("_", " ") }, targetId);
+      await setElectronCursor({ ...confirmed, kind, label: action.type.replaceAll("_", " "), at: Date.now() }, targetId);
     }
     const [after, state] = await Promise.all([
       getElectronObservation(targetId),
@@ -1277,7 +1280,7 @@ function actualCursorForAction(action: BrowserAction, activePage: Page): Browser
   if (!point || !["click", "click_at", "double_click", "right_click", "hover", "type", "scroll", "drag", "check", "uncheck"].includes(action.type)) return undefined;
   const kind: BrowserCursorEvent["kind"] = action.type === "type" ? "type" : action.type === "hover" ? "hover" : action.type === "scroll" ? "scroll"
     : action.type === "right_click" ? "right_click" : action.type === "double_click" ? "double_click" : "click";
-  return { ...point, kind, label: action.type.replaceAll("_", " ") };
+  return { ...point, kind, label: action.type.replaceAll("_", " "), at: Date.now() };
 }
 
 function cursorForAction(action: BrowserAction, observation: StructuredObservation): BrowserCursorEvent | undefined {
