@@ -117,8 +117,14 @@ export class VoicePcmCapturer {
         const ratio = context.sampleRate / this.targetRate;
         const length = Math.floor(input.length / ratio);
         const resampled = new Float32Array(length);
+        // Box-filter downsampling prevents high-frequency aliasing from
+        // distorting quiet consonants at 48 kHz -> 16 kHz. O(n), no DSP library.
         for (let i = 0; i < length; i += 1) {
-          resampled[i] = input[Math.floor(i * ratio)] ?? 0;
+          const from = Math.floor(i * ratio);
+          const to = Math.min(input.length, Math.max(from + 1, Math.floor((i + 1) * ratio)));
+          let total = 0;
+          for (let j = from; j < to; j += 1) total += input[j] ?? 0;
+          resampled[i] = total / (to - from);
         }
         samples = resampled;
       }

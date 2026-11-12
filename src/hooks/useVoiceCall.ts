@@ -111,7 +111,7 @@ function missionResult(mission: MissionRecord) {
 const VOICE_REPLY_STYLE = "You are Clyra in a real-time spoken conversation. Respond naturally and directly in one to three short sentences. Your words are spoken aloud as they stream. Do not use markdown, lists, code blocks or emoji. Remember and incorporate the full conversation; acknowledge corrections without restarting work. If asked for something complex, briefly explain what you are doing.";
 const TURN_SILENCE_MS = 590;
 const MIN_SPEECH_MS = 260;
-const PARTIAL_EVERY_MS = 760;
+const PARTIAL_EVERY_MS = 620;
 const PRE_ROLL_CHUNKS = 12;
 export function useVoiceCall(options: UseVoiceCallOptions) {
   const optionsRef = useRef(options);
@@ -127,6 +127,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const bargeInsRef = useRef(0);
   const activeRunRef = useRef<ActiveRun | null>(null);
   const pendingApprovalRef = useRef<PendingApproval | null>(null);
+  const lastAgentPromptRef = useRef("");
   const taskAbortRef = useRef<AbortController | null>(null);
   const lastSideEffectRef = useRef({ text: "", at: 0 });
   const endSequenceRef = useRef(0);
@@ -238,6 +239,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   }, [updateMission]);
 
   const startMission = useCallback(async (text: string) => {
+    lastAgentPromptRef.current = text;
     const routeResponse = await fetch("/api/agent/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -325,11 +327,15 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const resumeTask = useCallback(async () => {
     const active = activeRunRef.current;
     if (!active || active.kind !== "mission") return;
+    const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ background: true }) });
+    const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+    if (!response.ok || !payload?.mission) {
+      dispatch({ type: "ERROR", error: { code: "VOICE_RESUME_FAILED", message: payload?.error || "Clyra couldn't resume that task.", retryable: true } });
+      return;
+    }
     dispatch({ type: "RESUME_AGENT" });
-    const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!payload?.mission) return;
     updateMission(payload.mission);
+    taskAbortRef.current?.abort();
     const controller = new AbortController();
     taskAbortRef.current = controller;
     void pollMission(active.id, controller.signal).catch(() => undefined);
@@ -347,21 +353,82 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     dispatch({ type: "TOOL_FINISHED", result: { stopped: true }, responseText: "Stopped. I kept the work that had already completed." });
   }, [cancelActiveRun]);
 
+  /** Speak short task receipts immediately, without an extra model round-trip. */
+  const acknowledge = useCallback((text: string) => {
+    const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+      dispatch({ type: "RESPONSE_FINISHED" });
+      touchActivity();
+    }));
+    player.interrupt();
+    pendingAssistantTextRef.current = text;
+    dispatch({ type: "TOKEN", text });
+    commitTurn();
+    player.append(text);
+    player.complete();
+  }, [commitTurn, touchActivity]);
+
   /** Routes a spoken/typed request to Clyra's agent tools. Returns true when
    * an agent task owns the turn, so the plain conversational reply is skipped. */
   const runSideEffect = useCallback(async (text: string): Promise<boolean> => {
     const clean = text.trim();
     if (!clean) return false;
+    const active = activeRunRef.current;
     const duplicate = lastSideEffectRef.current.text === clean && Date.now() - lastSideEffectRef.current.at < 4_000;
-    if (duplicate) return false;
+    if (duplicate) return Boolean(active);
     lastSideEffectRef.current = { text: clean, at: Date.now() };
-    if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && activeRunRef.current) { await stopTask(); return true; }
-    if (/\b(?:let me do|i(?:’|'| a)m taking over|give me control)\b/i.test(clean) && activeRunRef.current) { await takeControl(); return true; }
-    if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && activeRunRef.current) { await resumeTask(); return true; }
+    if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && active) {
+      await stopTask();
+      acknowledge("Stopped that task.");
+      return true;
+    }
+    if (/^(?:pause|hold on|wait)[.!]?$/i.test(clean) && active?.kind === "mission") {
+      await pauseTask();
+      acknowledge("Paused. I'm listening.");
+      return true;
+    }
+    if (/\b(?:let me do|i(?:’|'| a)m taking over|give me control)\b/i.test(clean) && active) {
+      await takeControl();
+      acknowledge("You have control.");
+      return true;
+    }
+    if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && active?.kind === "mission") {
+      await resumeTask();
+      acknowledge("Continuing from where I left off.");
+      return true;
+    }
+    if (active?.kind === "mission") {
+      // A direct question can be answered conversationally without altering
+      // the running work; a correction updates that SAME mission and checkpoint.
+      if (/^(?:what|why|when|where|how|who|is it|are you|can you|could you|tell me|explain)\b/i.test(clean) && /\?$/.test(clean)) return false;
+      taskAbortRef.current?.abort();
+      const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: clean }),
+      });
+      const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+      if (!response.ok || !payload?.mission) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_REVISION_FAILED", message: payload?.error || "I couldn't update that task safely.", retryable: true } });
+        acknowledge("I couldn't update the running task safely. Please try that instruction again.");
+        return true;
+      }
+      updateMission(payload.mission);
+      dispatch({ type: "RESUME_AGENT" });
+      const controller = new AbortController();
+      taskAbortRef.current = controller;
+      void pollMission(active.id, controller.signal).catch(() => undefined);
+      acknowledge("Got it. I've added that to the same task.");
+      return true;
+    }
     const google = detectGoogleService(clean);
-    if (google && await executeGoogle(google, clean)) return true;
-    return startMission(clean);
-  }, [executeGoogle, resumeTask, startMission, stopTask, takeControl]);
+    if (google && await executeGoogle(google, clean)) {
+      acknowledge("I've handled that Google Workspace request.");
+      return true;
+    }
+    const launched = await startMission(clean);
+    if (launched) acknowledge("I'm on it.");
+    return launched;
+  }, [acknowledge, executeGoogle, pauseTask, pollMission, resumeTask, startMission, stopTask, takeControl, updateMission]);
 
   /** Token streaming and interruptible speech share the same turn lifecycle. */
   const streamReply = useCallback(async (userText: string) => {
@@ -444,7 +511,15 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     e.turnBusy = true;
     try {
       if (await runSideEffect(clean)) { e.turnBusy = false; return; }
-    } catch { /* fall through to a normal reply */ }
+    } catch (error) {
+      // A failed tool request is not a reason to hallucinate success through
+      // the conversational model. Keep the user text for a safe retry.
+      if (activeRunRef.current) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_ACTION_FAILED", message: error instanceof Error ? error.message : "The active task needs attention.", retryable: true } });
+        e.turnBusy = false;
+        return;
+      }
+    }
     await streamReply(clean);
   }, [commitTurn, runSideEffect, streamReply, touchActivity]);
 
@@ -469,12 +544,17 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const now = performance.now();
     // Throttle the live mic meter so the face gets real audio energy without
     // driving a React render for every audio callback.
-    if (now - e.lastLevelDispatch >= 90) {
+    if (now - e.lastLevelDispatch >= (sessionRef.current.lowPowerMode ? 150 : 90)) {
       e.lastLevelDispatch = now;
       dispatch({ type: "SET_LEVEL", source: "mic", level: sessionRef.current.muted ? 0 : Math.min(1, Math.max(0, level)) });
     }
     if (!e.ready || sessionRef.current.muted || sessionRef.current.state === "ending") return;
-    const loud = level >= VOICE_SPEECH_LEVEL;
+    // Soft spoken words must wake VAD too; the native speaker's echo is
+    // suppressed more conservatively while output audio is playing.
+    const threshold = speechRef.current?.speaking
+      ? Math.max(0.1, VOICE_SPEECH_LEVEL * 2)
+      : Math.min(VOICE_SPEECH_LEVEL, 0.03);
+    const loud = level >= threshold;
     if (loud) {
       e.loudFrames += 1;
       e.lastSpeechAt = now;
@@ -514,7 +594,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
     const partial = sessionRef.current.partialTranscript.trim();
     const unfinished = /(?:,|\b(?:and|but|because|if|so|to|with|about|for))$/i.test(partial);
-    const silence = unfinished ? 850 : partial.length > 0 && partial.split(/\s+/).length <= 3 ? 460 : TURN_SILENCE_MS;
+    const silence = unfinished ? 980 : partial.length > 0 && partial.split(/\s+/).length <= 3 ? 460 : TURN_SILENCE_MS;
     if (e.speaking && !loud && now - e.lastSpeechAt >= silence && now - e.speechStartedAt >= MIN_SPEECH_MS) endUtterance();
   }, [commitTurn, endUtterance, touchActivity]);
 
@@ -539,6 +619,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     bargeInsRef.current = 0;
     const e = engine.current;
     e.speaking = false; e.ready = false; e.finalPending = false; e.turnBusy = false; e.preRoll = []; e.loudFrames = 0;
+    lastAgentPromptRef.current = "";
     try {
       const desktop = getElectronDesktop();
       const permissions = await desktop?.dictation?.ensurePermissions?.().catch(() => null);
@@ -656,10 +737,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (approval.kind === "google") { await executeGoogle(approval.service, approval.prompt, true); return; }
     dispatch({ type: "RESUME_AGENT" });
     const response = await fetch(`/api/agent/missions/${encodeURIComponent(approval.id)}/resume`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvedStepIds: [approval.stepId] }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvedStepIds: [approval.stepId], background: true }),
     });
-    const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!payload?.mission) return;
+    const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+    if (!response.ok || !payload?.mission) {
+      dispatch({ type: "ERROR", error: { code: "VOICE_APPROVAL_FAILED", message: payload?.error || "I couldn't resume that approved task.", retryable: true } });
+      return;
+    }
     updateMission(payload.mission);
     const controller = new AbortController();
     taskAbortRef.current = controller;

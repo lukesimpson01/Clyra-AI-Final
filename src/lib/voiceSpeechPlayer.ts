@@ -30,12 +30,14 @@ export class VoiceSpeechPlayer {
   append(text: string) {
     if (!text) return;
     this.pending += text;
-    // Start speaking before the full answer has arrived, but avoid
-    // one-word utterances (which sound robotic and cause choppy pauses).
+    // Sentence-first chunks sound natural; after about twelve words we start
+    // anyway so a long first sentence cannot delay audible speech.
     while (this.pending.length) {
       const sentence = this.pending.match(/^[\s\S]*?[.!?](?=\s|$)/);
-      const limit = this.pending.length >= 110 ? this.pending.lastIndexOf(" ", 105) : -1;
-      const count = sentence?.[0]?.length || (limit >= 65 ? limit + 1 : 0);
+      const limit = this.pending.length >= 82 ? this.pending.lastIndexOf(" ", 78) : -1;
+      const count = sentence?.[0]?.length && sentence[0].length <= 115
+        ? sentence[0].length
+        : limit >= 45 ? limit + 1 : 0;
       if (!count) break;
       const chunk = this.pending.slice(0, count).trim();
       this.pending = this.pending.slice(count);
@@ -81,6 +83,11 @@ export class VoiceSpeechPlayer {
     };
     utterance.onend = done;
     utterance.onerror = done;
-    try { this.synth!.speak(utterance); } catch { done(); }
+    try {
+      // Some desktop speech backends remain paused after a previous utterance
+      // was cancelled; resume on the same user-authorised voice session.
+      if (this.synth!.paused) this.synth!.resume();
+      this.synth!.speak(utterance);
+    } catch { done(); }
   }
 }

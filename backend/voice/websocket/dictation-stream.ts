@@ -84,9 +84,9 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
       if (active.busy || active.partialBusy || !active.chunks.length) { ack(); return; }
       const snapshot = Buffer.concat(active.chunks);
       // Keep partials cheap and bounded: the most recent ~12s is enough context.
-      const maxBytes = config.sampleRate * 2 * 12;
+      const maxBytes = config.sampleRate * 2 * 8;
       const pcm = snapshot.length > maxBytes ? snapshot.subarray(snapshot.length - maxBytes) : snapshot;
-      if (pcm.length < config.sampleRate * 2 * 0.8) { ack(); return; }
+      if (pcm.length < config.sampleRate * 2 * 0.55) { ack(); return; }
       active.partialBusy = true;
       try {
         const result = await transcribePcm(pcm, config.sampleRate, {});
@@ -118,7 +118,9 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
       try {
         console.log(`[dictation] transcribing ${(pcm.length / 2 / config.sampleRate).toFixed(1)}s of audio`);
         const result = await transcribePcm(pcm, config.sampleRate, {
-          profile: typeof message.profile === "string" ? message.profile : undefined,
+          // Prefer accurate local base when installed, fall back to the
+          // resource-adaptive/installed model without an extra cloud request.
+          profile: typeof message.profile === "string" ? message.profile : "base",
         });
         console.log(`[dictation] ${result.engine} ${result.elapsedMs}ms -> ${JSON.stringify(result.text.slice(0, 80))}`);
         const text = result.text;
