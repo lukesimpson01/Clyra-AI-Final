@@ -129,7 +129,9 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
             <i /><i /><i />
             <span className="clyra-browserrun__url">{host || "Opening the browser…"}</span>
           </div>
-          <div className="clyra-browserrun__view">
+          <div className="clyra-browserrun__view" style={run.viewport?.width && run.viewport?.height
+            ? { aspectRatio: `${run.viewport.width} / ${run.viewport.height}` }
+            : undefined}>
             {toolName
               ? <div className="clyra-browserrun__tool"><AppWindow aria-hidden /><strong>{toolName}</strong><span>{live ? (lastAction?.label ?? "Getting started") : run.status === "completed" ? "Done" : "Stopped"}</span></div>
               : frame ? <img src={frame} alt={host ? `The browser on ${host}` : "The browser"} draggable={false} /> : <div className="clyra-browserrun__wait">Starting the browser…</div>}
@@ -149,7 +151,7 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
               >
                 <span className="clyra-pointer__halo" />
                 <AgentCursorGlyph pressed={run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click"} />
-                {run.cursor.kind === "click" || run.cursor.kind === "double_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
+                {run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
               </motion.div>
             ) : null}
           </div>
