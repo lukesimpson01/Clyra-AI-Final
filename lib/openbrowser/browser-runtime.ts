@@ -412,9 +412,11 @@ async function runElectronAction(action: BrowserAction, observation: StructuredO
     const targetId = tabId || electronActiveTabId;
     if (!targetId) throw new Error("No browser tab is available for the requested action.");
     const active = await waitForElectronPage(targetId, 3_000);
+    const pointerBefore = pointerPositions.get(active);
     await executeAction(active, action, observation, source);
-    // Only show coordinates after Playwright dispatched real mouse input.
-    const confirmed = source === "agent" ? pointerPositions.get(active) : undefined;
+    // Only show a cursor when THIS operation dispatched mouse input.
+    const pointerAfter = pointerPositions.get(active);
+    const confirmed = source === "agent" && pointerAfter !== pointerBefore ? pointerAfter : undefined;
     if (confirmed && ["click", "click_at", "double_click", "right_click", "hover", "drag", "type", "check", "uncheck"].includes(action.type)) {
       const kind = action.type === "type" ? "type"
         : action.type === "hover" ? "hover"
@@ -1270,6 +1272,14 @@ function actionLabel(action: BrowserAction, element?: InteractiveElement) {
   return name ? `${verb} ${name.slice(0, 48)}` : action.type.replace(/_/g, " ");
 }
 
+function actualCursorForAction(action: BrowserAction, activePage: Page): BrowserCursorEvent | undefined {
+  const point = pointerPositions.get(activePage);
+  if (!point || !["click", "click_at", "double_click", "right_click", "hover", "type", "scroll", "drag", "check", "uncheck"].includes(action.type)) return undefined;
+  const kind: BrowserCursorEvent["kind"] = action.type === "type" ? "type" : action.type === "hover" ? "hover" : action.type === "scroll" ? "scroll"
+    : action.type === "right_click" ? "right_click" : action.type === "double_click" ? "double_click" : "click";
+  return { ...point, kind, label: action.type.replaceAll("_", " ") };
+}
+
 function cursorForAction(action: BrowserAction, observation: StructuredObservation): BrowserCursorEvent | undefined {
   if (action.type === "click_at") return { x: action.x, y: action.y, kind: "click", label: "Clicking page" };
   if (action.type === "scroll") return { x: observation.viewport.width - 30, y: observation.viewport.height / 2, kind: "scroll", label: `Scrolling ${action.direction || "down"}` };
@@ -1528,7 +1538,16 @@ async function executeAction(activePage: Page, action: BrowserAction, observatio
     case "focus": if (target.locator) await target.locator.focus(); break;
     case "scroll_to": if (target.locator) await target.locator.scrollIntoViewIfNeeded(); break;
     case "inspect_element": case "read_page": case "extract": break;
-    case "click_at": await activePage.mouse.click(Math.max(0, Math.min(observation.viewport.width, action.x)), Math.max(0, Math.min(observation.viewport.height, action.y))); break;
+    case "click_at": {
+      if (![action.x, action.y].every(Number.isFinite) || action.x < 0 || action.y < 0
+        || action.x >= observation.viewport.width || action.y >= observation.viewport.height) {
+        throw new Error("Click coordinates are outside the current viewport.");
+      }
+      await activePage.mouse.move(action.x, action.y, { steps: 1 });
+      pointerPositions.set(activePage, { x: action.x, y: action.y });
+      await activePage.mouse.click(action.x, action.y);
+      break;
+    }
     case "type": {
       if (target.locator) {
         if (source === "agent") {
@@ -1589,6 +1608,12 @@ async function executeAction(activePage: Page, action: BrowserAction, observatio
       }
       if (!sourceTarget.locator || !destinationTarget.locator) throw new Error("Both drag targets must be visible elements");
       await sourceTarget.locator.dragTo(destinationTarget.locator);
+      // The Playwright drag ended at the destination's real bounding box.
+      const destinationBounds = await destinationTarget.locator.boundingBox().catch(() => null);
+      if (destinationBounds) pointerPositions.set(activePage, {
+        x: Math.round(destinationBounds.x + destinationBounds.width / 2),
+        y: Math.round(destinationBounds.y + destinationBounds.height / 2),
+      });
       break;
     }
     case "scroll": {
@@ -1694,6 +1719,18 @@ async function executeAction(activePage: Page, action: BrowserAction, observatio
       await Promise.all([activePage.waitForEvent("download", { timeout: 10_000 }), target.locator.click()]);
       break;
     case "ask_user": case "done": break;
+  }
+  if (source === "agent" && target.locator
+    && ["click", "double_click", "right_click", "hover", "type", "check", "uncheck"].includes(action.type)) {
+    // Playwright's locator dispatched the action. Read its actual current
+    // position after auto-scroll; don't trust a stale observation centre.
+    const rect = await target.locator.boundingBox().catch(() => null);
+    if (rect && rect.width >= 1 && rect.height >= 1) {
+      pointerPositions.set(activePage, {
+        x: Math.round(rect.x + rect.width / 2),
+        y: Math.round(rect.y + rect.height / 2),
+      });
+    }
   }
   await settle(page && !page.isClosed() ? page : activePage);
   await updateLastTabs();
@@ -2290,11 +2327,8 @@ export function actOnManagedBrowser(action: BrowserAction) {
     const current = page && !page.isClosed() ? page : activePage;
     const after = await inspectPage(current);
     const verification = await verifyAction(action, before, after);
-    const cursor = cursorForAction(action, before);
-    // Set before captureState() so its returned state carries the same
-    // cursor this response does — the two must agree for any consumer that
-    // only sees one of them (a direct actor reads the response; every other
-    // open browser surface picks the same event up from its next state poll).
+    const cursor = actualCursorForAction(action, current);
+    // Browser action completed before this coordinate was emitted.
     if (cursor) lastCursorEvent = { ...cursor, id: ++cursorEventSeq };
     return { state: await captureState(current), verification, cursor };
   });
@@ -2970,9 +3004,8 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
         actionRepeats.set(repeatSignature(candidate), (actionRepeats.get(repeatSignature(candidate)) || 0) + 1);
         try {
           const action = validateBrowserAction(candidate, before, "agent");
-          const cursor = cursorForAction(action, before);
           agentStatus = "executing";
-          emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || finalMessage || `Running ${action.type}`, step, action, cursor, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
+          emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || finalMessage || `Running ${action.type}`, step, action, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
           // Only searches use the visible Google flow. A navigate action
           // MUST open the exact requested URL, without a detour via results.
           if (action.type === "search" && !taskExplicitlyTargetsLocalPage(task)) {
@@ -2981,6 +3014,8 @@ export async function runManagedBrowserAgent(task: string, apiKey: string, optio
             await serializeOperation(() => executeAction(activePage, action, before, "agent"));
           }
           activePage = await serializeOperation(async () => page && !page.isClosed() ? page : await ensurePage());
+          const cursor = actualCursorForAction(action, activePage);
+          if (cursor) lastCursorEvent = { ...cursor, id: ++cursorEventSeq };
           const after = await serializeOperation(() => inspectPage(activePage));
           if (/^https?:\/\//i.test(after.page.url)) {
             visitedUrls.add(after.page.url);
