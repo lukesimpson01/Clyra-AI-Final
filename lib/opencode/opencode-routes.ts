@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
 import { codingBackend, codingBackendModelStatus, codingBackendVersion, codingRuntimeManager } from "../coding-backend";
 import { getVibeUsageAnalytics, type UsageRange } from "../vibe-agent-v3/usage-analytics";
+import { ensureComponentMcpConfig } from "../clyra-code/component-library";
 import { publicRuntimeDiagnostic, publicRuntimeEvent, publicRuntimeMessages } from "./public-runtime-view";
 
 const execFileAsync = promisify(execFile);
@@ -97,6 +98,7 @@ export function registerOpenCodeRoutes(app: Application) {
       const root = projectPath(projectId);
       await fs.mkdir(root, { recursive: true });
       await ensureProjectGitRepo(root).catch(() => undefined);
+      await ensureComponentMcpConfig(root);
       // Seed adaptive web and desktop development guidance when missing.
       try {
         await fs.access(path.join(root, "AGENTS.md"));

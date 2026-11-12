@@ -107,6 +107,7 @@ import { TaskGroupPlanner } from "./lib/vibe-coder/harness/task-group-planner";
 import { FileSpecPlanner } from "./lib/vibe-coder/harness/file-spec-planner";
 import { registerClineRoutes } from "./lib/cline/cline-routes";
 import { registerOpenCodeRoutes } from "./lib/opencode/opencode-routes";
+import { registerComponentLibraryRoutes } from "./lib/clyra-code/component-library";
 import { registerClyraCodePlatformRoutes } from "./lib/clyra-code/routes";
 import { registerVoiceRoutes, attachDictationWebSocket } from "./backend/voice";
 import { registerLocalSpeechRoutes } from "./backend/speech";
@@ -2181,6 +2182,7 @@ async function startServer() {
 
   registerClineRoutes(app);
   registerOpenCodeRoutes(app);
+  registerComponentLibraryRoutes(app);
   registerClyraCodePlatformRoutes(app);
 
   // Clyra Code's source library is separate from the agent loop.  Listing and
