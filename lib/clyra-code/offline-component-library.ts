@@ -180,6 +180,7 @@ export async function installLocalComponent(projectId: string, source: LocalSour
   const depRecord = { ...((manifest.dependencies ?? {}) as Record<string, string>),
     ...((manifest.devDependencies ?? {}) as Record<string, string>) };
   if (!("react" in depRecord)) throw new Error("Components require a React project.");
+  const baseDir = await exists(path.join(project, "src")) ? "src/" : "";
   const queue: Array<{ source: LocalSource; name: string }> = [{ source, name }];
   const seen = new Set<string>();
   const files = new Map<string, string>();
@@ -194,33 +195,54 @@ export async function installLocalComponent(projectId: string, source: LocalSour
     component.registryDependencies.forEach(dep => queue.push({ source: next.source, name: dep }));
     for (const file of component.files) {
       const translated = next.source === "shadcn" ? translateShadcn(file.content) : translate21st(file.content);
-      files.set(file.path, translated);
-      importedPackages(translated).forEach(dep => required.add(dep));
+      const targetPath = baseDir + file.path;
+      const portable = translated.replace(/(["'])@\/(components\/(?:ui|agent-elements)\/[a-zA-Z0-9_/-]+|lib\/utils)\1/g,
+        (_all, quote: string, target: string) => {
+          const relative = path.posix.relative(path.posix.dirname(targetPath), baseDir + target);
+          return quote + (relative.startsWith(".") ? relative : "./" + relative) + quote;
+        });
+      files.set(targetPath, portable);
+      importedPackages(portable).forEach(dep => required.add(dep));
     }
   }
   if ([...files.values()].reduce((sum, value) => sum + Buffer.byteLength(value), 0) > MAX_TOTAL_BYTES) {
     throw new Error("Component source exceeds the maximum install size.");
   }
-  // Source installs are strictly additive. Never overwrite a user's existing code.
+  const utilsRelative = baseDir + "lib/utils.ts";
+  const hasCnHelper = [...files.values()].some(code => /from ["'](?:\.\.\/)+lib\/utils["']/.test(code));
+  if (hasCnHelper && !await exists(nativePath(project, utilsRelative))) {
+    files.set(utilsRelative, 'import { clsx, type ClassValue } from "clsx";\nimport { twMerge } from "tailwind-merge";\nexport function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }\n');
+    required.add("clsx"); required.add("tailwind-merge");
+  }
+  // Preserve source attribution when copying files under MIT.
+  const licenseSource = source === "shadcn"
+    ? path.join(REPO, "external", "shadcn-ui", "LICENSE.md")
+    : path.join(REPO, "external", "21st-agent-elements", "LICENSE");
+  const licensePath = baseDir + (source === "shadcn"
+    ? "components/ui/LICENSE.shadcn.md" : "components/agent-elements/LICENSE.21st.txt");
+  if (!await exists(nativePath(project, licensePath)) && await exists(licenseSource)) {
+    files.set(licensePath, await fs.readFile(licenseSource, "utf8"));
+  }
+  const newDependencies = [...required].filter(dep => !(dep in depRecord));
+  // Reject collisions up-front: never replace existing user-authored files.
   for (const relative of files.keys()) {
     const destination = nativePath(project, relative);
     if (!destination.startsWith(project + path.sep) || await exists(destination)) {
       throw new Error("File already exists or is unsafe: " + relative + ". No files were changed.");
     }
   }
-  const hasCnHelper = [...files.values()].some(code => code.includes('from "@/lib/utils"'));
-  const utilsPath = path.join(project, "lib", "utils.ts");
-  if (hasCnHelper && !await exists(utilsPath)) {
-    files.set("lib/utils.ts", 'import { clsx, type ClassValue } from "clsx";\nimport { twMerge } from "tailwind-merge";\nexport function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }\n');
-    required.add("clsx"); required.add("tailwind-merge");
-  }
-  const newDependencies = [...required].filter(dep => !(dep in depRecord));
-  // Keep manifest stable: no unreviewed network installs and no silently guessed versions.
-  for (const [relative, content] of files) {
-    const destination = nativePath(project, relative);
-    if (!destination.startsWith(project + path.sep)) throw new Error("Unsafe path.");
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, content, { encoding: "utf8", flag: "wx" });
+  // Roll back files from this install if a later write fails.
+  const written: string[] = [];
+  try {
+    for (const [relative, content] of files) {
+      const destination = nativePath(project, relative);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, content, { encoding: "utf8", flag: "wx" });
+      written.push(destination);
+    }
+  } catch (error) {
+    await Promise.all(written.map(file => fs.unlink(file).catch(() => undefined)));
+    throw error;
   }
   return { ok: true, installed: [...seen], files: [...files.keys()],
     dependenciesToInstall: newDependencies,
