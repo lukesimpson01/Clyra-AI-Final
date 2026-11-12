@@ -130,6 +130,10 @@ jobs:
           done
           tail -150 /tmp/clyra-ci-app.log
           exit 1
+      - name: Current voice call React and agent revision integration
+        run: npm run test:voice-call-e2e
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
       - name: Browser API and agent fixture tests
         run: npm run test:browser
         env:
@@ -147,10 +151,6 @@ jobs:
         env:
           CLYRA_URL: http://127.0.0.1:3000
           CLYRA_VISUAL_ARTIFACTS: qa-artifacts/browser-visual
-      - name: Current voice call React and agent revision integration
-        run: npm run test:voice-call-e2e
-        env:
-          CLYRA_URL: http://127.0.0.1:3000
       - name: Real browser UI tests
         run: npx playwright test -c playwright.clyra-code.config.ts
         env:
