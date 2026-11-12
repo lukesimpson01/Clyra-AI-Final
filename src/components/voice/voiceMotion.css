@@ -97,3 +97,10 @@
   .clyra-voice-call .clyra-voice-mode-readout__dot,
   .clyra-voice-call .clyra-voice-media__recovery button { transition: none; }
 }
+
+/* A full-screen task must sit ABOVE the call header; otherwise the header
+ * intercepts its exit control. The normal header remains reachable again on
+ * exiting. This is a real pointer-order fix, not a test-only workaround. */
+.clyra-voice-call .clyra-voice-activity--expanded {
+  z-index: 40;
+}

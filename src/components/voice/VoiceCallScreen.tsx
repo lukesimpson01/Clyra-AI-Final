@@ -702,6 +702,17 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
     title: task.kind === "browser" ? "Web research" : "Clyra task",
     subtitle: task.detail,
   };
+  useEffect(() => {
+    if (!resolved.expanded) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onToggleExpanded();
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [resolved.expanded, onToggleExpanded]);
   return (
     <motion.section
       layout
