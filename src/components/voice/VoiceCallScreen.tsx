@@ -860,8 +860,10 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
             <motion.div
               ref={flyRef}
               className="clyra-voice-call__fly"
+              layout="position"
               animate={flight}
               initial={{ opacity: 0 }}
+              transition={{ layout: { duration: reduced ? 0.01 : 0.42, ease: EASE } }}
               style={{ willChange: "transform" }}
             >
             <motion.div
