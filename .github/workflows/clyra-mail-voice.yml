@@ -1,0 +1,71 @@
+name: Clyra Mail and Voice integration verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/components/mail/**"
+      - "electron/mail-mime.mjs"
+      - "electron/google-workspace-manager.mjs"
+      - "src/App.tsx"
+      - "src/hooks/useVoiceCall.ts"
+      - "tools/clyra-mail-live-smoke.mjs"
+      - "tools/mail-mime-tests.mjs"
+      - ".github/workflows/clyra-mail-voice.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep runs even if another part of Clyra is being committed concurrently.
+jobs:
+  mail-voice:
+    name: Mail, Voice, Chromium and typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Typecheck
+        run: npm run lint
+      - name: Gmail MIME and attachments contract
+        run: npm run test:mail
+      - name: Voice speech detection contracts
+        run: npm run test:voice
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Start local Clyra
+        run: |
+          npm run dev:source > /tmp/clyra-mail-app.log 2>&1 &
+          for n in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -150 /tmp/clyra-mail-app.log
+          exit 1
+      - name: Mail inbox, composer, preview and approval test
+        run: npm run test:mail-e2e
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Voice call, camera, screen and agent test
+        run: npm run test:voice-call-e2e
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Upload real UI screenshots and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-mail-and-voice-qa
+          if-no-files-found: warn
+          path: |
+            qa-screenshots/mail/
+            qa-screenshots/voice-call/
+            /tmp/clyra-mail-app.log
