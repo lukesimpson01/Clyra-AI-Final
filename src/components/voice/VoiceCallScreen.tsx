@@ -394,7 +394,7 @@ ClyraFace.displayName = "ClyraFace";
 /* VoicePresence (inlined from src/voice/VoicePresence.tsx)            */
 /* ------------------------------------------------------------------ */
 
-function VoicePresence({ state, muted, resting = false, typing = false, compact = false, lowPower = false }: {
+function VoicePresence({ state, micLevel, muted, resting = false, typing = false, compact = false, lowPower = false }: {
   state: VoiceCallState;
   micLevel: number;
   botLevel: number;
@@ -404,9 +404,17 @@ function VoicePresence({ state, muted, resting = false, typing = false, compact 
   compact?: boolean;
   lowPower?: boolean;
 }) {
+  // Only real microphone energy affects the audio ring. The responding pose
+  // remains state-driven until an actual playback meter is available.
+  const isListening = state === "listening" || state === "transcribing";
+  const energy = !muted && isListening ? Math.min(1, Math.max(0, micLevel)) : 0;
   return (
     <div
       className={`clyra-voice-presence${compact ? " clyra-voice-presence--compact" : ""}`}
+      style={{
+        "--voice-energy-opacity": String(energy * 0.55),
+        "--voice-energy-scale": String(1.04 + energy * 0.075),
+      } as React.CSSProperties}
       data-state={state}
       data-low-power={lowPower || undefined}
       role="img"

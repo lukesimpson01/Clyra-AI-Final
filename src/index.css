@@ -11735,3 +11735,23 @@ body,
   .clyra-voice-call__media-actions button,
   .clyra-voice-media__actions button { transition: none; }
 }
+
+
+/* Voice presence energy: direct readout of the existing microphone RMS
+   meter. No fake oscillator or extra animation loop. */
+.clyra-voice-presence { position: relative; }
+.clyra-voice-presence::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: 50%;
+  border: 2px solid rgba(30, 111, 255, .65);
+  pointer-events: none;
+  opacity: var(--voice-energy-opacity, 0);
+  transform: scale(var(--voice-energy-scale, 1.04));
+  transition: opacity 105ms linear, transform 125ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-voice-presence::after { transition: none; }
+}
