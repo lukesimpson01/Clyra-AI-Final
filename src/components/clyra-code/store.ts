@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type FileDiff, type OpenCodeMessage, type OpenCodePart, type VibeProject } from "./api";
 import { publishActivity, dismissActivity } from "../../lib/clyraHome";
 import { isInternalPrompt } from "../../../lib/vibe-agent-v3/internal-prompt";
+import { verifyLiveVibeProject, type LiveVerificationEvent } from "../../lib/vibe-coder/live-browser-verification";
 
 export type ActionKind =
   | "read"
@@ -101,6 +102,14 @@ export type ClyraCodeState = {
   sessionId: string | null;
   sessionTitle: string;
   runState: RunState;
+  /** The real managed browser is inspecting the generated app; not an animated mock. */
+  verification?: {
+    status: "starting" | "testing" | "repairing" | "passed" | "failed";
+    message: string;
+    attempt: number;
+    cursor?: { x: number; y: number; kind?: string; at?: number };
+    viewport?: { width: number; height: number };
+  };
   runStartedAt: number | null;
   runEndedAt: number | null;
   log: LogEntry[];
@@ -361,6 +370,16 @@ export function useClyraCode() {
   /** A message already shown in the transcript whose run has not started yet. */
   const pendingPromptRef = useRef<LogEntry | null>(null);
   const runStateRef = useRef<RunState>("idle");
+  const lastImplementationRequestRef = useRef("");
+  const verifyControllerRef = useRef<AbortController | null>(null);
+  const verifyingRef = useRef(false);
+  const awaitingRepairRef = useRef(false);
+  const repairCountRef = useRef(0);
+  const verificationActionCountRef = useRef(0);
+  const lastVerificationPhaseRef = useRef("");
+  const verificationEpochRef = useRef(0);
+  const stateSnapshotRef = useRef(state);
+  stateSnapshotRef.current = state;
   const diffTimerRef = useRef<number | null>(null);
   const projectsRef = useRef<VibeProject[]>(readProjectsCache());
   const autoNamingProjectsRef = useRef(new Set<string>());
@@ -368,6 +387,8 @@ export function useClyraCode() {
   useEffect(() => {
     runStateRef.current = state.runState;
   }, [state.runState]);
+
+  useEffect(() => () => verifyControllerRef.current?.abort(), []);
 
   // Tell the home screen what Vibe Coder is doing, so a finished task shows up there.
   useEffect(() => {
@@ -421,6 +442,166 @@ export function useClyraCode() {
         .catch(() => undefined);
     }, 400);
   }, []);
+
+  /**
+   * OpenCode going idle is NOT a successful build. Test the actual local page
+   * with the shared Chat/Voice browser, then repair and retest if it fails.
+   * Keep the run open throughout and only publish success on a passing verdict.
+   */
+  const verifyAfterIdle = useCallback(() => {
+    if (verifyingRef.current || awaitingRepairRef.current) return;
+    const projectId = activeProjectRef.current;
+    const sessionId = activeSessionRef.current;
+    const request = lastImplementationRequestRef.current;
+    if (!projectId || !sessionId || !request) return;
+    const snapshot = stateSnapshotRef.current;
+    const wroteCode = snapshot.diffs.length > 0 ||
+      Object.values(snapshot.actions).some(action => /^(edit|create|delete|build|check|test)$/.test(action.kind));
+    const implementationIntent = /\b(build|create|make|develop|fix|change|update|implement|add|remove|design|refactor|clone|test|repair|generate|improve|polish|code|website|app|function|feature)\b/i.test(request);
+    if (!wroteCode && !implementationIntent) {
+      setState(prev => ({
+        ...prev,
+        runState: "complete",
+        runEndedAt: Date.now(),
+        actions: finalizeActions(prev.actions, "success"),
+      }));
+      return;
+    }
+
+    const epoch = ++verificationEpochRef.current;
+    const controller = new AbortController();
+    verifyControllerRef.current?.abort();
+    verifyControllerRef.current = controller;
+    verifyingRef.current = true;
+    const attempt = repairCountRef.current + 1;
+    let displayed = 0;
+    let lastActionId = "";
+    lastVerificationPhaseRef.current = "";
+    setState(prev => ({
+      ...prev, runState: "running", runEndedAt: null,
+      verification: { status: "starting", message: "Preparing live browser checks", attempt },
+      log: prev.log.map(entry => entry.type === "reasoning" && !entry.endedAt
+        ? { ...entry, endedAt: Date.now() } : entry),
+    }));
+
+    const recordAction = (kind: "preview" | "test", title: string, status: ActionStatus, detail = "") => {
+      const now = Date.now();
+      const id = "vibe-verify:" + epoch + ":" + (++verificationActionCountRef.current);
+      setState(prev => {
+        if (epoch !== verificationEpochRef.current) return prev;
+        const actions = { ...prev.actions };
+        if (lastActionId && actions[lastActionId]?.status === "active") {
+          actions[lastActionId] = { ...actions[lastActionId], status: "success", endedAt: now };
+        }
+        actions[id] = {
+          id, kind, tool: "live_browser_verification", target: title.slice(0, 200),
+          output: detail.slice(0, 1800), status, startedAt: now,
+          ...(status === "active" ? {} : { endedAt: now }),
+        };
+        return {
+          ...prev, actions,
+          log: [...prev.log, { type: "action" as const, id: "entry-" + id, actionId: id, ts: now }],
+        };
+      });
+      lastActionId = id;
+    };
+
+    const onEvent = (event: LiveVerificationEvent) => {
+      if (epoch !== verificationEpochRef.current || controller.signal.aborted) return;
+      const status = event.phase === "starting" || event.phase === "opening" ? "starting" : "testing";
+      setState(prev => ({
+        ...prev,
+        verification: {
+          status, message: event.message, attempt,
+          cursor: event.cursor
+            ? { ...event.cursor, at: event.cursor.at ?? Date.now() }
+            : prev.verification?.cursor,
+          viewport: event.viewport ?? prev.verification?.viewport,
+        },
+      }));
+      const meaningful = Boolean(event.action) || lastVerificationPhaseRef.current !== event.phase;
+      if (meaningful && displayed < 45) {
+        displayed += 1;
+        const title = event.action
+          ? event.action.type?.replaceAll("_", " ") + " · " + event.message
+          : event.message;
+        recordAction(status === "starting" ? "preview" : "test", title, "active",
+          event.evaluation?.reason || "");
+      }
+      lastVerificationPhaseRef.current = event.phase;
+    };
+
+    void (async () => {
+      try {
+        const result = await verifyLiveVibeProject({
+          projectId, request, signal: controller.signal, onEvent,
+        });
+        if (controller.signal.aborted || epoch !== verificationEpochRef.current) return;
+        recordAction("test", "Verified live application · " + result.testedSteps + " browser actions", "success",
+          result.summary);
+        const checked = result.evidence.flatMap(item => item.checks ?? []).slice(0, 5);
+        setState(prev => ({
+          ...prev,
+          verification: { status: "passed", message: "Live browser tests passed", attempt },
+          runState: "complete", runEndedAt: Date.now(), error: null,
+          actions: finalizeActions(prev.actions, "success"),
+          log: [...prev.log, {
+            type: "assistant" as const,
+            id: "vibe-verified-" + epoch,
+            ts: Date.now(),
+            text: "Live browser verification passed (" + result.testedSteps + " real actions)." +
+              (checked.length ? "\n\nVerified: " + checked.join("; ") : "") +
+              "\n\n" + result.summary.slice(0, 750),
+          }],
+        }));
+        refreshDiff(projectId, sessionId);
+      } catch (error) {
+        if (controller.signal.aborted || epoch !== verificationEpochRef.current) return;
+        const problem = error instanceof Error ? error.message : String(error);
+        recordAction("test", "Live browser verification failed", "error", problem);
+        const environmental = /API key|unavailable|permission|not supported|cancelled|150-second limit|Browser control|environment/i.test(problem);
+        if (!environmental && repairCountRef.current < 2) {
+          repairCountRef.current += 1;
+          const nextAttempt = repairCountRef.current + 1;
+          awaitingRepairRef.current = true;
+          setState(prev => ({
+            ...prev, runState: "running",
+            verification: { status: "repairing", attempt: nextAttempt, message: "Repairing the observed failure" },
+          }));
+          recordAction("test", "Repairing failed browser checks · attempt " + nextAttempt, "active", problem);
+          try {
+            // A repair is a continuation of this same OpenCode session, not a new user prompt.
+            await api.sendPrompt(projectId, sessionId, [
+              "AUTOMATIC POST-BUILD VERIFICATION FAILED. This is not a new user request.",
+              "Original user request: " + request.slice(0, 6000),
+              "Observed failure: " + problem.slice(0, 3000),
+              "Inspect your actual changed files and runtime diagnostics. Fix the underlying issue rather than bypassing the test.",
+              "After repairs, rerun relevant local checks. The application will be browser-tested again automatically when your session goes idle.",
+              "Do not claim the product works without evidence, do not fabricate tests, and keep other working functionality unchanged.",
+            ].join("\n"), undefined, "high");
+          } catch (repairError) {
+            awaitingRepairRef.current = false;
+            setState(prev => ({
+              ...prev, runState: "failed", runEndedAt: Date.now(),
+              verification: { status: "failed", message: problem, attempt: nextAttempt },
+              error: "Verification failed and the repair agent could not start: " +
+                (repairError instanceof Error ? repairError.message : String(repairError)),
+            }));
+          }
+        } else {
+          setState(prev => ({
+            ...prev,
+            verification: { status: "failed", message: problem, attempt },
+            runState: "failed", runEndedAt: Date.now(),
+            error: "The generated project was NOT verified as working. " + problem,
+          }));
+        }
+      } finally {
+        if (verifyControllerRef.current === controller) verifyControllerRef.current = null;
+        verifyingRef.current = false;
+      }
+    })();
+  }, [refreshDiff]);
 
   /** Normalize one ClyraAgentEvent envelope from the harness SSE stream. */
   const handleEvent = useCallback(
@@ -686,18 +867,10 @@ export function useClyraCode() {
       }
 
       if (payload.type === "session.idle") {
-        setState((prev) => {
-          if (prev.runState !== "running" && prev.runState !== "starting") return prev;
-          return {
-            ...prev,
-            runState: "complete",
-            runEndedAt: ts,
-            actions: finalizeActions(prev.actions, "success"),
-            log: prev.log.map((entry) =>
-              entry.type === "reasoning" && !entry.endedAt ? { ...entry, endedAt: ts } : entry,
-            ),
-          };
-        });
+        // Never show "complete" merely because the model stopped responding.
+        if (runStateRef.current === "running" || runStateRef.current === "starting") {
+          verifyAfterIdle();
+        }
         if (activeProjectRef.current && activeSessionRef.current) {
           refreshDiff(activeProjectRef.current, activeSessionRef.current);
         }
@@ -707,6 +880,7 @@ export function useClyraCode() {
       if (payload.type === "session.status") {
         const status = properties.status as { type?: string } | undefined;
         if (status?.type === "busy") {
+          awaitingRepairRef.current = false;
           setState((prev) =>
             prev.runState === "running" && prev.runStartedAt
               ? prev
@@ -720,7 +894,7 @@ export function useClyraCode() {
         }
       }
     },
-    [refreshDiff],
+    [refreshDiff, verifyAfterIdle],
   );
 
   const openStream = useCallback(
@@ -767,6 +941,12 @@ export function useClyraCode() {
   const selectProject = useCallback(
     (projectId: string | null) => {
       closeStream();
+      verifyControllerRef.current?.abort();
+      verificationEpochRef.current += 1;
+      verifyingRef.current = false;
+      awaitingRepairRef.current = false;
+      repairCountRef.current = 0;
+      lastImplementationRequestRef.current = "";
       activeSessionRef.current = null;
       activeProjectRef.current = projectId;
       // A prompt that was sent before its project existed must survive the
@@ -831,6 +1011,12 @@ export function useClyraCode() {
         if (options?.optimistic) failOptimisticPrompt("Clyra could not open a project for this task.");
         return false;
       }
+      verifyControllerRef.current?.abort();
+      verificationEpochRef.current += 1;
+      verifyingRef.current = false;
+      awaitingRepairRef.current = false;
+      repairCountRef.current = 0;
+      lastImplementationRequestRef.current = options?.userText || prompt;
       let autoName: string | null = null;
       const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
       if (options?.optimistic) {
@@ -912,6 +1098,10 @@ export function useClyraCode() {
   );
 
   const cancelRun = useCallback(async () => {
+    verifyControllerRef.current?.abort();
+    verificationEpochRef.current += 1;
+    verifyingRef.current = false;
+    awaitingRepairRef.current = false;
     const projectId = activeProjectRef.current;
     const sessionId = activeSessionRef.current;
     setState((prev) => ({
