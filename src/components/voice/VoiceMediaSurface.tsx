@@ -105,7 +105,8 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
   const onStopRef = useRef(onStop);
   onStopRef.current = onStop;
   const [ready, setReady] = useState(false);
-  const [filterEnabled, setFilterEnabled] = useState(true);
+  // Camera preview must start instantly; the optional pose model only loads on demand.
+  const [filterEnabled, setFilterEnabled] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
   const [error, setError] = useState("");
   // Encode only one <=960px JPEG on an explicit request. The live stream
@@ -152,6 +153,11 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
         await video.play();
         if (!cancelled) setReady(true);
       } catch (cause) {
+        // Playback can fail *after* permission succeeded. Release every track
+        // rather than leaving a lit camera indicator behind an error surface.
+        stream?.getTracks().forEach((track) => track.stop());
+        stream = null;
+        if (video) { video.pause(); video.srcObject = null; }
         if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to open the camera.");
       }
     };
@@ -173,7 +179,9 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
     }
     let cancelled = false;
     let frame = 0;
+    let timer: number | undefined;
     let sending = false;
+    let completedFirstFrame = false;
     let lastFrame = 0;
     let engine: PoseEngine | null = null;
     setScanMessage("Loading 3D pose tracking…");
@@ -198,11 +206,18 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
           canvas.height = video.videoHeight;
         }
         renderPose(canvas, result);
-        setScanMessage((previous) => previous ? "" : previous);
+        if (!completedFirstFrame) {
+          completedFirstFrame = true;
+          setScanMessage("");
+        }
       });
       const tick = (now: number) => {
         if (cancelled) return;
-        frame = window.requestAnimationFrame(tick);
+        // Do not run an empty RAF callback 60 times per second while only
+        // inferring 6-11 pose frames/sec; hidden windows run even less often.
+        timer = window.setTimeout(() => {
+          if (!cancelled) frame = window.requestAnimationFrame(tick);
+        }, document.hidden ? 350 : lowPower ? 140 : 70);
         if (document.hidden || sending || video.readyState < 2 || now - lastFrame < (lowPower ? 170 : 90)) return;
         lastFrame = now;
         sending = true;
@@ -218,6 +233,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
       void engine?.close();
       const canvas = canvasRef.current;
       canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
