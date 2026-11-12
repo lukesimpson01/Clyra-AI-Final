@@ -69,6 +69,7 @@
     "test:clyra": "npm run test:tools && npm run test:automations && npm run test:care && npm run test:agent-controller && npm run test:computer-agent && npm run test:browser && npm run test:browser-complex && npm run test:research && npm run test:notes && npm run test:vibe-runtime && npm run test:vibe-agent-v3",
     "clyra:test-agent-system": "npm run test:clyra",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
+    "test:ai-cursor": "node tools/ai-cursor-unit-tests.mjs",
     "test:computer": "npm run test:computer-agent",
     "test:vibe-runtime": "tsx tools/vibe-runtime-unit-tests.ts",
     "test:vibe-task-controller": "tsx tools/vibe-task-controller-unit-tests.ts",
