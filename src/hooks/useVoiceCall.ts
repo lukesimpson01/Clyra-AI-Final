@@ -29,7 +29,7 @@ export type UseVoiceCallOptions = {
   onTurn?: (turn: { userText: string; assistantText: string }) => void;
 };
 
-type MissionStep = { id?: string; description?: string; status?: string };
+type MissionStep = { id?: string; description?: string; status?: string; toolId?: string };
 type MissionRecord = {
   id: string;
   state: string;
@@ -211,7 +211,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   const pollMission = useCallback(async (missionId: string, signal: AbortSignal) => {
     for (let attempt = 0; attempt < 900 && !signal.aborted; attempt += 1) {
-      await delay(850);
+      await delay(650);
       if (signal.aborted) return;
       const response = await fetch(`/api/agent/missions/${encodeURIComponent(missionId)}`, { signal });
       const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
@@ -255,13 +255,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   }, [touchActivity, updateMission]);
 
   const startMission = useCallback(async (text: string) => {
-    const routeResponse = await fetch("/api/agent/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: text }),
-    });
-    const routePayload = await routeResponse.json().catch(() => null) as { decision?: { kind?: string; category?: string } } | null;
-    if (!routeResponse.ok || !routePayload?.decision || routePayload.decision.kind === "DIRECT_RESPONSE") return false;
+    // The mission endpoint already plans and categorizes the request. Avoid
+    // a sequential /route round-trip before every spoken action.
     const taskId = `voice-${crypto.randomUUID?.() || Date.now()}`;
     const response = await fetch("/api/agent/missions/start", {
       method: "POST",
@@ -269,9 +264,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       body: JSON.stringify({ missionId: taskId, projectId: optionsRef.current.conversationId || undefined, prompt: text, background: true }),
     });
     const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!response.ok || !payload?.mission?.id) return false;
+    if (response.status === 422) return false; // Conversational question, no supported action
+    if (!response.ok) throw new Error("Clyra couldn't start this action.");
+    if (!payload?.mission?.id) throw new Error("The agent returned no active task.");
     const mission = payload.mission;
-    const isBrowser = routePayload.decision.category === "browser";
+    const isBrowser = Boolean(mission.plan?.steps?.some((step) => step.toolId?.startsWith("browser.")));
     activeRunRef.current = { kind: "mission", id: mission.id };
     taskAbortRef.current?.abort();
     const controller = new AbortController();
@@ -414,7 +411,10 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (active?.kind === "mission") {
       // A direct question can be answered conversationally without altering
       // the running work; a correction updates that SAME mission and checkpoint.
-      if (/^(?:what|why|when|where|how|who|is it|are you|can you|could you|tell me|explain)\b/i.test(clean) && /\?$/.test(clean)) return false;
+      const clearlyChangesTask = /\b(?:also|instead|change|add|remove|exclude|include|focus|make sure|switch|replace|prioriti[sz]e|don't|do not|budget|rather|actually|adjust|update)\b/i.test(clean);
+      const conversationalAside = /^(?:hi|hello|hey|thanks|thank you|nice|cool|okay|ok)[.!]?$/i.test(clean)
+        || (/\?$/.test(clean) && !clearlyChangesTask);
+      if (conversationalAside) return false;
       taskAbortRef.current?.abort();
       const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/revise`, {
         method: "POST",
@@ -451,10 +451,25 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     replyAbortRef.current?.abort();
     replyAbortRef.current = controller;
     const o = optionsRef.current;
-    const history = turnsRef.current.slice(-12).map((turn) => ({ role: turn.role, content: turn.content }));
+    // Preserve the user's opening goal plus their recent corrections. We
+    // bound the text to avoid excessive context-cost on long open calls.
+    const conversation = [...o.chatHistory.slice(-8), ...turnsRef.current];
+    const opening = conversation.findIndex((turn) => turn.role === "user");
+    const indices = new Set<number>();
+    if (opening >= 0) indices.add(opening);
+    for (let index = Math.max(0, conversation.length - 44); index < conversation.length; index += 1) indices.add(index);
+    let budget = 12_000;
+    const history = [...indices].sort((a, b) => b - a)
+      .map((index) => ({ index, turn: conversation[index]! }))
+      .filter(({ turn }) => {
+        if (!budget) return false;
+        budget -= Math.min(budget, turn.content.length);
+        return true;
+      })
+      .sort((a, b) => a.index - b.index)
+      .map(({ turn }) => ({ role: turn.role, content: turn.content.slice(0, 2_000) }));
     const messages = [
       { role: "system", content: `${o.systemPrompt}\n\n${VOICE_REPLY_STYLE}` },
-      ...o.chatHistory.slice(-6).map((turn) => ({ role: turn.role, content: turn.content })),
       ...history,
       { role: "user", content: userText },
     ];

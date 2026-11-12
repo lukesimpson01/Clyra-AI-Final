@@ -48,11 +48,11 @@ const parakeetUsesGpu = () => process.platform === "darwin" && process.arch === 
 /**
  * Warm Parakeet worker. Loading the model costs ~1s, so a long-lived process
  * (examples/parakeet-cli/parakeet-daemon.cpp) keeps it in memory: a short
- * utterance then decodes in ~0.4s instead of ~2-3s. It is started when
- * dictation begins (so loading overlaps with speaking) and unloaded after
- * IDLE_UNLOAD_MS without use to give the ~640MB back.
+ * utterance then decodes without paying model-load time. It starts when
+ * dictation begins (overlapping speech) and is released after a short idle
+ * window so a low-memory desktop can reclaim RAM promptly.
  */
-const IDLE_UNLOAD_MS = 20 * 60_000;
+const IDLE_UNLOAD_MS = 2 * 60_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 
 class ParakeetDaemon {
