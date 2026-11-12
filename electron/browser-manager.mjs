@@ -916,6 +916,26 @@ export class ChromiumBrowserManager {
 
     const click = async (clickCount = 1, button = "left") => {
       if (!point) throw new Error("The requested target is no longer visible.");
+      if (resolved?.id && tabIsVisible) {
+        // Hover may open a menu or shift layout while our mouse is traveling.
+        // Never press the old coordinate if the hit target moved or changed.
+        const selector = JSON.stringify('[data-clyra-browser-id="' + resolved.id + '"]');
+        const live = await contents.executeJavaScript(`(() => {
+          const node = document.querySelector(${selector});
+          if (!node || !node.isConnected) return null;
+          const r = node.getBoundingClientRect();
+          const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+          if (!r.width || !r.height || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+          const hit = document.elementFromPoint(x, y);
+          if (hit !== node && !node.contains(hit) && !hit?.contains(node)) return null;
+          return { x, y };
+        })()`, true);
+        if (!live) throw new Error("The target is no longer under the cursor. Observe again before clicking.");
+        if (Math.hypot(live.x - point.x, live.y - point.y) > 3) {
+          await movePointer(live);
+          point = live;
+        }
+      }
       // A hidden native view has no compositor target for dispatchMouseEvent.
       // Use the actual page node in that same WebContents until the user opens
       // Browser again; visible browser actions always retain CDP coordinates.
