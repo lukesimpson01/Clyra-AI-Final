@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
+import { AgentCursorGlyph } from "../../agent/AgentCursorGlyph";
 
 /** Vibe preview pointer: same tailless 16px Clyra blue control point. */
 export function AgentCursor({ x, y, isClicking, isActive }: {
@@ -15,10 +16,11 @@ export function AgentCursor({ x, y, isClicking, isActive }: {
       style={{ left: 0, top: 0 }}
     >
       <motion.div
-        className="absolute -left-2 -top-2 h-4 w-4 rounded-full border-2 border-white bg-[#1E6FFF] shadow-[0_2px_9px_rgba(30,111,255,0.32)]"
-        animate={{ scale: isClicking ? .77 : 1 }}
-        transition={{ duration: .12 }}
-      />
+        className="absolute left-0 top-0"
+        animate={{ scale: isClicking ? .89 : 1 }}
+        transition={{ duration: .12, ease: [0.2, 0.8, 0.2, 1] }}
+        style={{ transformOrigin: "4px 3px" }}
+      ><AgentCursorGlyph pressed={isClicking} /></motion.div>
       <AnimatePresence>
         {isClicking && <motion.div
           key="click"
