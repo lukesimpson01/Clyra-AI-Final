@@ -638,14 +638,14 @@ function VoiceControlBar({ state, task, onPause, onResume, onTakeControl, onStop
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.99 }}
       transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}>
-      {task.canPause || takeover ? <button type="button" onClick={paused || takeover ? onResume : onPause}>
+      {task.canPause || takeover ? <button type="button" aria-label={takeover ? "Resume Clyra" : paused ? "Resume" : "Pause"} onClick={paused || takeover ? onResume : onPause}>
           {paused || takeover ? <Play size={16} /> : <Pause size={16} />}
           <span>{takeover ? "Resume Clyra" : paused ? "Resume" : "Pause"}</span>
         </button> : <span aria-hidden />}
       <p>{takeover ? "You’re controlling" : paused ? "Paused" : task.label}</p>
       <div>
-        {task.canTakeControl && !takeover ? <button type="button" onClick={onTakeControl}><Hand size={16} /><span>Take Control</span></button> : null}
-        <button type="button" onClick={onChat}><MessageSquareText size={16} /><span>Chat</span></button>
+        {task.canTakeControl && !takeover ? <button type="button" aria-label="Take Control" onClick={onTakeControl}><Hand size={16} /><span>Take Control</span></button> : null}
+        <button type="button" aria-label="Chat" onClick={onChat}><MessageSquareText size={16} /><span>Chat</span></button>
         {task.canStop ? <button type="button" onClick={onStop} aria-label="Stop task"><Square size={14} fill="currentColor" /></button> : null}
       </div>
     </motion.div>

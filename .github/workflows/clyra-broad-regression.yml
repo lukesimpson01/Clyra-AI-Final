@@ -166,3 +166,4 @@ jobs:
             /tmp/clyra-code-playwright/
             qa-artifacts/browser-complex/
             qa-screenshots/clyra-code-template-store/
+            qa-screenshots/voice-call/
