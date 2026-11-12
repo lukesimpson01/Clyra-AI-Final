@@ -1283,16 +1283,6 @@ function actualCursorForAction(action: BrowserAction, activePage: Page): Browser
   return { ...point, kind, label: action.type.replaceAll("_", " "), at: Date.now() };
 }
 
-function cursorForAction(action: BrowserAction, observation: StructuredObservation): BrowserCursorEvent | undefined {
-  if (action.type === "click_at") return { x: action.x, y: action.y, kind: "click", label: "Clicking page" };
-  if (action.type === "scroll") return { x: observation.viewport.width - 30, y: observation.viewport.height / 2, kind: "scroll", label: `Scrolling ${action.direction || "down"}` };
-  if (!("target" in action) || action.target == null) return undefined;
-  const element = targetFromAction(action.target, observation);
-  if (!element) return undefined;
-  const kind = action.type === "double_click" ? "double_click" : action.type === "right_click" ? "right_click" : action.type === "hover" ? "hover" : action.type === "type" ? "type" : "click";
-  return { ...element.center, kind, label: actionLabel(action, element) };
-}
-
 function isHighImpactTarget(action: BrowserAction, observation: StructuredObservation) {
   if (!("target" in action) || action.target == null) return false;
   const element = targetFromAction(action.target, observation);
@@ -1425,19 +1415,21 @@ async function runAgentGoogleSearch(
   await searchField.waitFor({ state: "visible", timeout: 8_000 });
   const fieldBox = await searchField.boundingBox();
   const fieldCursor = fieldBox
-    ? { x: fieldBox.x + Math.min(26, fieldBox.width / 2), y: fieldBox.y + fieldBox.height / 2, kind: "type" as const, label: "Typing in Google search" }
+    ? { x: fieldBox.x + fieldBox.width / 2, y: fieldBox.y + fieldBox.height / 2, kind: "type" as const, label: "Typing in Google search" }
     : undefined;
-  emit({ phase: "executing", message: "Opening Google search", step, action: { type: "focus", target: { css: 'textarea[name="q"], input[name="q"]' } }, cursor: fieldCursor });
+  emit({ phase: "executing", message: "Opening Google search", step, action: { type: "focus", target: { css: 'textarea[name="q"], input[name="q"]' } } });
   await moveAgentPointer(activePage, fieldCursor);
   await searchField.click();
+  if (fieldCursor) emit({ phase: "verifying", message: "Search field focused", step, cursor: { ...fieldCursor, kind: "click", at: Date.now() } });
   await searchField.press("ControlOrMeta+A");
   await searchField.press("Backspace");
-  emit({ phase: "executing", message: `Typing ${query}`, step, action: { type: "type", target: { css: 'textarea[name="q"], input[name="q"]' }, text: query }, cursor: fieldCursor });
+  emit({ phase: "executing", message: `Typing ${query}`, step, action: { type: "type", target: { css: 'textarea[name="q"], input[name="q"]' }, text: query } });
   // Fast enough to feel intentional, slow enough that the visible native
   // Chromium surface and cursor remain legible as Clyra works.
   await searchField.pressSequentially(query, { delay: Math.max(18, Math.min(32, 29 - Math.floor(query.length / 22))) });
+  if (fieldCursor) emit({ phase: "verifying", message: "Typed search query", step, cursor: { ...fieldCursor, kind: "type", at: Date.now() } });
   await activePage.waitForTimeout(180);
-  emit({ phase: "executing", message: "Searching Google", step, action: { type: "press", key: "Enter" }, cursor: fieldCursor });
+  emit({ phase: "executing", message: "Searching Google", step, action: { type: "press", key: "Enter" } });
   await searchField.press("Enter");
   await activePage.waitForTimeout(700);
   await activePage.waitForLoadState("domcontentloaded").catch(() => undefined);
@@ -1484,9 +1476,9 @@ async function runAgentGoogleSearch(
     const result = activePage.locator("a").nth(matchingIndex);
     const resultBox = await result.boundingBox();
     const resultCursor = resultBox
-      ? { x: resultBox.x + Math.min(42, resultBox.width / 2), y: resultBox.y + resultBox.height / 2, kind: "click" as const, label: `Opening ${expectedHost}` }
+      ? { x: resultBox.x + resultBox.width / 2, y: resultBox.y + resultBox.height / 2, kind: "click" as const, label: `Opening ${expectedHost}` }
       : undefined;
-    emit({ phase: "executing", message: `Opening ${expectedHost} from Google`, step, action: { type: "click", target: { css: "a" } }, cursor: resultCursor });
+    emit({ phase: "executing", message: `Opening ${expectedHost} from Google`, step, action: { type: "click", target: { css: "a" } } });
     await moveAgentPointer(activePage, resultCursor);
     await activePage.waitForTimeout(120);
     await result.click({ timeout: 8_000 });
