@@ -44,6 +44,7 @@ import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
 import { PreviewBuilding } from "./PreviewBuilding";
 import { liveStepLabel } from "./CodexActivity";
+import { shouldShowWorkspaceFile } from "./workspaceFileVisibility";
 import { describeCodeError } from "./codeErrorPresentation";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
@@ -862,15 +863,6 @@ function buildFileTree(files: WorkspaceFile[]) {
   return root;
 }
 
-function shouldShowWorkspaceFile(path: string) {
-  // Hide Clyra/OpenCode instruction and private runtime files from the
-  // user-facing Files explorer. Keep them on disk for the agent harness.
-  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");
-  const segments = normalized.split("/");
-  if (segments.some((segment) => [".git", ".agent", ".agents", ".clyra", ".opencode", "node_modules"].includes(segment))) return false;
-  if (segments.some((segment) => /^(?:AGENTS|CLAUDE|SOUL|SYSTEM_PROMPT)\.md$/i.test(segment))) return false;
-  return true;
-}
 
 function FilesView({ projectId, diffs }: { projectId: string | null; diffs: FileDiff[] }) {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);

@@ -6,6 +6,8 @@ import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "..
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
 import { displayNameFor, htmlTitleOf } from "../lib/clyra-code/projects/display-name";
 import { sampleTemplateReviews, sampleTemplateRating } from "../src/components/clyra-code/templateReviewSamples";
+import { describeCodeError } from "../src/components/clyra-code/codeErrorPresentation";
+import { shouldShowWorkspaceFile } from "../src/components/clyra-code/workspaceFileVisibility";
 
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) {
@@ -13,6 +15,35 @@ async function test(name: string, run: () => void | Promise<void>) {
   passed += 1;
   console.log(`PASS  ${name}`);
 }
+
+await test("the file explorer never exposes internal agent instructions", () => {
+  for (const hidden of ["AGENTS.md", ".agent/AGENTS.md", ".agent/skills/anything.md", ".clyra/runtime.json", ".opencode/config.json", "src/CLAUDE.md", "node_modules/react/index.js", "folder\\AGENTS.md", "docs/SOUL.md"]) {
+    assert.equal(shouldShowWorkspaceFile(hidden), false, hidden);
+  }
+  for (const visible of ["src/App.tsx", "README.md", "src/components/Welcome.tsx", "public/index.html", "package.json"]) {
+    assert.equal(shouldShowWorkspaceFile(visible), true, visible);
+  }
+});
+
+await test("coding errors are categorized from actual diagnostics rather than a generic error", () => {
+  const cases = [
+    ["401 unauthorized API key", "auth"],
+    ["429 rate limit exceeded", "rate-limit"],
+    ["connect ECONNREFUSED 127.0.0.1", "network"],
+    ["npm ERR missing package", "dependencies"],
+    ["src/App.tsx(8): error TS2322", "typescript"],
+    ["EACCES permission denied", "permission"],
+    ["EADDRINUSE: address already in use", "port"],
+    ["ENOENT no such file or directory", "missing"],
+    ["Build failed: Unexpected token", "build"],
+    ["An unexpected operation failed", "runtime"],
+  ] as const;
+  for (const [message, kind] of cases) {
+    const issue = describeCodeError(message);
+    assert.equal(issue.kind, kind, message);
+    assert.ok(issue.title.length > 4 && issue.nextStep.length > 12);
+  }
+});
 
 await test("the curated source library is a real 50+ inventory with stable identities", () => {
   assert.ok(TEMPLATE_LIBRARY.length >= 50);
