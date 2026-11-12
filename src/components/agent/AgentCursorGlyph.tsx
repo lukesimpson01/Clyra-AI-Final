@@ -22,7 +22,18 @@ export function AgentCursorGlyph({
       height="38"
       focusable="false"
       className={`clyra-ai-cursor-glyph${pressed ? " is-pressed" : ""}${guide ? " is-guide" : ""} ${className}`}
-      style={style}
+      style={{
+        position: "absolute",
+        left: -4,
+        top: -3,
+        width: 34,
+        height: 38,
+        overflow: "visible",
+        pointerEvents: "none",
+        transformOrigin: "4px 3px",
+        filter: "drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18))",
+        ...style,
+      }}
     >
       <path d={AI_CURSOR_PATH} fill="#1E6FFF" stroke="#1E6FFF" strokeWidth="5.4" strokeLinejoin="round" />
       <path d={AI_CURSOR_PATH} fill="#FFFFFF" stroke="#252A35" strokeWidth="2.45" strokeLinejoin="round" />
