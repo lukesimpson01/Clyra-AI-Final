@@ -43,6 +43,7 @@ import { isElectronRuntime } from "../../lib/electron-runtime";
 import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
 import { PreviewBuilding } from "./PreviewBuilding";
+import { LiveVerificationSurface } from "./LiveVerificationSurface";
 import { liveStepLabel } from "./CodexActivity";
 import { shouldShowWorkspaceFile } from "./workspaceFileVisibility";
 import { describeCodeError } from "./codeErrorPresentation";
@@ -175,6 +176,7 @@ function BrowserView({
   onAddContext,
   agentRunning = false,
   buildStep,
+  verification,
   projectId,
   inspectMode,
   onToggleInspect,
@@ -190,6 +192,7 @@ function BrowserView({
   onOpenTerminal?: () => void;
   onAddContext: (context: ComposerContext) => void;
   agentRunning?: boolean;
+  verification?: ClyraCodeState["verification"];
   /** What the agent is doing right now ("Editing App.tsx"), shown under the building animation. */
   buildStep?: string | null;
   projectId: string | null;
@@ -313,8 +316,12 @@ function BrowserView({
   // has loaded, not just until the dev server reports its port is ready.
   useEffect(() => { setFrameLoaded(false); }, [projectId, frameVersion, activePreviewTabId, navigatedSrc]);
   const waitingForFirstFrame = ready && !isElectronRuntime() && !frameLoaded;
-  const previewLoading = !failed && !navigatedSrc && Boolean(projectId) &&
-    (starting || (agentRunning && !ready) || waitingForFirstFrame || !session);
+  // Keep the building loop running for the entire implementation + repair run.
+  // An intermediate dev-server failure is not a final preview error while the
+  // code agent is still capable of fixing it.
+  const previewLoading = !navigatedSrc && Boolean(projectId) &&
+    (agentRunning || starting || waitingForFirstFrame || !session) &&
+    (!failed || agentRunning);
 
   const wasAgentRunning = useRef(agentRunning);
   useEffect(() => {
@@ -650,8 +657,13 @@ function BrowserView({
               transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0 z-10"
             >
-              <PreviewBuilding phase={starting ? "starting" : "building"} step={buildStep} />
+              <PreviewBuilding phase={starting ? "starting" : "building"} step={verification?.message ?? buildStep} />
             </motion.div>
+          ) : null}
+        </AnimatePresence>
+        <AnimatePresence>
+          {verification?.status === "testing" && !navigatedSrc ? (
+            <LiveVerificationSurface key="live-browser-verification" verification={verification} />
           ) : null}
         </AnimatePresence>
       </div>
@@ -1349,6 +1361,7 @@ export function RightPanel({
           onAddContext={onAddContext}
           agentRunning={agentRunning}
           buildStep={buildStep}
+          verification={state.verification}
           projectId={state.activeProjectId}
           inspectMode={inspectMode}
           onToggleInspect={() => setInspectMode((mode) => !mode)}
