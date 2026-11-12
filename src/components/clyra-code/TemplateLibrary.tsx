@@ -598,13 +598,14 @@ export function TemplateLibrary({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, open, justInstalled]);
 
+  // Reset only on a genuine navigation, not when a project refresh or a
+  // template review triggers a rerender. Avoid touching an exiting page's ref.
   useEffect(() => {
     if (!open) return;
-    const reset = () => contentRef.current?.scrollTo({ top: 0 });
-    reset();
-    const frame = window.requestAnimationFrame(reset);
-    const settle = window.setTimeout(reset, 80);
-    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(settle); };
+    const frame = window.requestAnimationFrame(() => {
+      contentRef.current?.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [open, selected?.id, view, category]);
 
   const choose = (entry: TemplateManifest) => {
@@ -726,7 +727,7 @@ export function TemplateLibrary({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: reduce ? 0 : 0.3, ease: EASE }}
-      className="absolute inset-0 z-[90] flex overflow-hidden bg-white"
+      className="absolute inset-0 z-[90] flex min-h-0 overflow-hidden bg-white"
       role="dialog"
       aria-modal="true"
       aria-label="Clyra Library"
@@ -761,7 +762,7 @@ export function TemplateLibrary({
         </nav>
       </aside>
 
-      <main className="relative flex min-w-0 flex-1 flex-col bg-white">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
         <header className="absolute inset-x-0 top-0 z-20 flex h-[52px] items-center gap-2 bg-white/80 px-3 backdrop-blur-xl [mask-image:linear-gradient(to_bottom,black_75%,transparent)] md:px-5">
           <AnimatePresence initial={false}>
             {canGoBack ? (
@@ -778,7 +779,7 @@ export function TemplateLibrary({
 
         <AnimatePresence mode="wait" initial={false}>
           {selected ? (
-            <motion.div key={`detail-${selected.id}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[68px] md:px-10">
+            <motion.div key={`detail-${selected.id}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[68px] md:px-10">
               <div className="mx-auto max-w-[940px]">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
                   <AppIcon entry={selected} size={128} lifted />
@@ -796,6 +797,16 @@ export function TemplateLibrary({
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#F0F0F5] text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
+                    {phases[selected.id] ? <div role="status" aria-live="polite" aria-label="Preparing Git source checkout" className="mt-4 max-w-[360px]">
+                      <div className="flex items-center justify-between gap-3 text-[12px] text-[#55565F]">
+                        <span className="font-medium">Preparing</span>
+                        <span className="text-[#86868B]">{phases[selected.id] === "verifying" ? "Checking Git source" : phases[selected.id] === "downloading" ? "Cloning repository" : "Finishing checkout"}</span>
+                      </div>
+                      <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-[#E8E8ED]">
+                        <motion.div className="h-full w-[36%] rounded-full bg-[#007AFF]" initial={{ x: "-105%" }} animate={{ x: "290%" }} transition={{ duration: 1.35, repeat: Infinity, ease: "easeInOut" }} />
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-[#86868B]">Downloading the actual Git source. Progress is indeterminate until Git finishes.</p>
+                    </div> : null}
                     {install.error(selected.id) ? <p role="alert" className="mt-2 text-[12px] text-[#C0392B]">{install.error(selected.id)}</p> : null}
                   </div>
                 </div>
@@ -887,7 +898,7 @@ export function TemplateLibrary({
               </div>
             </motion.div>
           ) : view === "installed" ? (
-            <motion.div key="installed" ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
+            <motion.div key="installed" ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
               <div className="mx-auto max-w-[1120px]">
                 <h2 className="text-[34px] font-bold tracking-[-0.04em] text-[#1D1D1F]">Installed</h2>
                 <p className="mt-1 text-[14px] text-[#86868B]">Apps you’ve downloaded. Open one to run it live in Clyra Code and start changing it.</p>
@@ -906,7 +917,7 @@ export function TemplateLibrary({
               </div>
             </motion.div>
           ) : (
-            <motion.div key={`list-${category || "home"}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
+            <motion.div key={`list-${category || "home"}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
               <div className="mx-auto max-w-[1180px]">
                 <div className="mb-5">
                   <h2 className="text-[34px] font-bold tracking-[-0.04em] text-[#1D1D1F]">{pageTitle}</h2>
@@ -968,6 +979,16 @@ export function TemplateLibrary({
           )}
         </AnimatePresence>
 
+        {/* Show source checkout activity even when Get was tapped on a catalogue card. */}
+        <AnimatePresence>
+          {!selected && Object.values(phases).some(Boolean) ? (
+            <motion.div key="library-clone-progress" role="status" aria-live="polite" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+              className="absolute bottom-5 left-1/2 z-30 w-[min(420px,calc(100%-32px))] -translate-x-1/2 rounded-[14px] border border-black/[0.06] bg-white p-3.5 shadow-[0_12px_36px_rgba(0,0,0,0.12)]">
+              <div className="flex items-center justify-between text-[12.5px]"><span className="font-medium text-[#1D1D1F]">Preparing</span><span className="text-[#86868B]">Git source checkout</span></div>
+              <div className="mt-2.5 h-[3px] overflow-hidden rounded-full bg-[#E8E8ED]"><motion.div className="h-full w-[35%] rounded-full bg-[#007AFF]" initial={{ x: "-105%" }} animate={{ x: "290%" }} transition={{ duration: 1.35, repeat: Infinity, ease: "easeInOut" }} /></div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
         {/* After a download the button already reads Open; this quiet toast offers the same jump without blocking browsing. */}
         <AnimatePresence>
           {justInstalled ? (

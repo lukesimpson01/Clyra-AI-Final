@@ -194,11 +194,33 @@ export async function cloneTemplateCheckout(
       maxBuffer: 256 * 1024,
       windowsHide: true,
     });
-    await execFileAsync("git", ["-C", temporary, "checkout", "--detach", verification.commit], {
-      timeout: 30_000,
-      maxBuffer: 128 * 1024,
-      windowsHide: true,
+    // The verified commit can move out of a one-commit shallow clone when
+    // upstream advances between verification and checkout. Fetch the exact
+    // revision before retrying, and fail rather than silently using HEAD.
+    try {
+      await execFileAsync("git", ["-C", temporary, "checkout", "--detach", verification.commit], {
+        timeout: 30_000, maxBuffer: 128 * 1024, windowsHide: true,
+      });
+    } catch {
+      try {
+        await execFileAsync("git", ["-C", temporary, "fetch", "--depth", "1", "origin", verification.commit], {
+          timeout: 120_000, maxBuffer: 128 * 1024, windowsHide: true,
+        });
+      } catch {
+        await execFileAsync("git", ["-C", temporary, "fetch", "--unshallow", "origin"], {
+          timeout: 180_000, maxBuffer: 128 * 1024, windowsHide: true,
+        });
+      }
+      await execFileAsync("git", ["-C", temporary, "checkout", "--detach", verification.commit], {
+        timeout: 30_000, maxBuffer: 128 * 1024, windowsHide: true,
+      });
+    }
+    const { stdout: checkedOutRevision } = await execFileAsync("git", ["-C", temporary, "rev-parse", "HEAD"], {
+      timeout: 10_000, windowsHide: true,
     });
+    if (checkedOutRevision.trim() !== verification.commit.trim()) {
+      throw new TemplateLibraryError("Git checkout did not match the verified revision.");
+    }
     const origin = {
       schemaVersion: 1,
       templateId: manifest.id,

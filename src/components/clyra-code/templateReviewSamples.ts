@@ -125,19 +125,35 @@ function hash(id: string): number {
   return value;
 }
 
-/** Every template receives three distinct example review passages and a 4–5 star sample distribution. */
+/** Every template receives eight varied, explicitly illustrative review passages. */
 export function sampleTemplateReviews(entry: TemplateManifest): SampleTemplateReview[] {
   const passages = CUSTOM[entry.id] ?? defaultBodies(entry);
   const seed = hash(entry.id);
   const countFours = seed % 4 === 1 ? 2 : 1;
-  const ratings: Array<4 | 5> = [5, 5, 5];
-  for (let i = 0; i < countFours; i++) ratings[(seed + i) % 3] = 4;
+  const focus = clean(entry.description);
+  const stack = entry.stack.slice(0, 2).join(" and ") || "upstream source";
+  const category = entry.category.toLowerCase();
+  const competitor = entry.alternativeTo.slice(0, 2).join(" / ") || category;
+  const specific = [
+    ...passages,
+    entry.name + " is most interesting for its " + focus.charAt(0).toLowerCase() + focus.slice(1) + " direction. I'd start by checking the primary user journey before customizing the UI.",
+    "The " + stack + " foundation matters for this " + category + " project. Inspect its actual scripts, supported platforms and setup guide before expecting a one-click launch.",
+    "Compared with " + competitor + ", " + entry.name + " has a distinctive upstream scope. I'd test the welcome screen, navigation and first meaningful action rather than judge it from a logo alone.",
+    "The useful way to assess " + entry.name + " is to open the source project, follow a core " + category + " task and note what needs keys, external services or a native build.",
+    "For a custom product based on " + entry.name + ", I'd retain the practical workflow, review the license and dependencies, and adapt the design only after the original behaviour is verified.",
+  ];
+  const ratings: Array<4 | 5> = specific.map((_, i) => (i + seed) % (countFours + 3) === 0 ? 4 : 5);
   const titles = [
     entry.name + " concept",
     "What to check before using " + entry.name,
     entry.category + " possibilities",
+    "The main workflow",
+    "Technical foundations",
+    "First-run experience",
+    "Real-world setup",
+    "Building on the source",
   ];
-  return passages.map((body, i) => ({
+  return specific.map((body, i) => ({
     id: entry.id + "-sample-" + (i + 1),
     title: titles[i],
     body,
