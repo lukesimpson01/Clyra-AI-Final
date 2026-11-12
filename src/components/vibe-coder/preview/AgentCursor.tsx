@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { AgentCursorGlyph } from "../../agent/AgentCursorGlyph";
 
-/** Vibe preview pointer: same tailless 16px Clyra blue control point. */
+/** Vibe preview pointer: shared high-resolution arrow, anchored to the actual preview coordinates. */
 export function AgentCursor({ x, y, isClicking, isActive }: {
   x: number; y: number; isClicking: boolean; isActive: boolean;
 }) {
