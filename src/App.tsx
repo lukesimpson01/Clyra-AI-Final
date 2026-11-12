@@ -8087,6 +8087,16 @@ Please analyze the code you just wrote and fix this error.`;
         if (googleTool) {
           const desktop = getElectronDesktop();
           if (!desktop?.google) return;
+          if (googleTool === "gmail" && /^(?:open|show|switch to|go to)\s+(?:my\s+)?(?:clyra\s+)?(?:gmail|mail|inbox|emails?)(?:\s+app)?[.!]?$/i.test(userText.trim())) {
+            window.dispatchEvent(new CustomEvent("clyra:mail:open"));
+            setMessages((current) => current.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: "Opened **Clyra Mail**, connected to your existing Gmail account.",
+              isThinking: false, isStreaming: false, thinkingMode: "google",
+              googleAction: "Opened Mail workspace", googleDetail: "Showing your connected inbox",
+            } : message));
+            return;
+          }
           const result = await desktop.google.execute({ tool: googleTool, prompt: userText, runId: googleRunId });
           if (result.needsAuth) {
             void desktop.google.signIn();
