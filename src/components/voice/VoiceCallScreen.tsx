@@ -751,6 +751,9 @@ function primaryLine(call: VoiceCallScreenCall): { kind: "muted" | "listening" |
   if (call.muted && (call.state === "ready" || call.state === "listening" || call.state === "transcribing")) {
     return { kind: "muted", text: "Microphone off" };
   }
+  if (call.state === "transcribing" && call.actionLabel === "Finishing your words") {
+    return { kind: "aux", text: "Finishing your words…" };
+  }
   if (call.state === "listening" || call.state === "transcribing") {
     return { kind: "listening", text: "Listening" };
   }

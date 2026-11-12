@@ -5,6 +5,7 @@ import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
 import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
 import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
 import { VoiceActivityGate } from "../lib/voiceActivityGate";
+import { shouldEndVoiceUtterance } from "../lib/voiceEndpoint";
 import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
 import { asksToInspectSharedView } from "../lib/voiceVisualIntent";
 import {
@@ -113,8 +114,6 @@ function missionResult(mission: MissionRecord) {
 
 /** Compact sentence-first spoken replies so speech can begin while tokens stream. */
 const VOICE_REPLY_STYLE = "You are Clyra in a real-time spoken conversation. Respond naturally and directly in one to three short sentences. Your words are spoken aloud as they stream. Do not use markdown, lists, code blocks or emoji. Remember and incorporate the full conversation; acknowledge corrections without restarting work. If asked for something complex, briefly explain what you are doing.";
-const TURN_SILENCE_MS = 590;
-const MIN_SPEECH_MS = 260;
 const PARTIAL_EVERY_MS = 620;
 const PRE_ROLL_CHUNKS = 12;
 export function useVoiceCall(options: UseVoiceCallOptions) {
@@ -634,9 +633,9 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     e.finalPending = true;
     e.turnBusy = true;
-    // "Thinking" starts the instant you stop talking; the transcript lands
-    // ~0.5s later and fills the subtitle.
-    dispatch({ type: "THINK_STARTED" });
+    // The microphone is silent, but the final transcript has not arrived.
+    // Show that distinct state rather than falsely claiming model reasoning.
+    dispatch({ type: "VOICE_STOPPED" });
     socket.send(JSON.stringify({
       type: "flush",
       sessionId: sessionIdRef.current,
@@ -697,10 +696,10 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     } else {
       e.loudFrames = 0;
     }
-    const partial = sessionRef.current.partialTranscript.trim();
-    const unfinished = /(?:,|\b(?:and|but|because|if|so|to|with|about|for))$/i.test(partial);
-    const silence = unfinished ? 980 : partial.length > 0 && partial.split(/\s+/).length <= 3 ? 460 : TURN_SILENCE_MS;
-    if (e.speaking && !loud && now - e.lastSpeechAt >= silence && now - e.speechStartedAt >= MIN_SPEECH_MS) endUtterance();
+    if (e.speaking && shouldEndVoiceUtterance({
+      now, speechStartedAt: e.speechStartedAt, lastSpeechAt: e.lastSpeechAt,
+      partialTranscript: sessionRef.current.partialTranscript, loud,
+    })) endUtterance();
   }, [commitTurn, endUtterance, touchActivity]);
 
   const onMicChunk = useCallback((data: string, seq: number) => {

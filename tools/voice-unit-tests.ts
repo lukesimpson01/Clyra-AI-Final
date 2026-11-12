@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
 import { VoiceActivityGate } from "../src/lib/voiceActivityGate";
+import { voiceEndpointSilenceMs, shouldEndVoiceUtterance } from "../src/lib/voiceEndpoint";
 import { shouldInterruptVoiceReply } from "../src/lib/voiceTurnDetection";
 import { TranscriptStabilizer } from "../src/speech/transcriptStabilizer";
 import { asksToInspectSharedView } from "../src/lib/voiceVisualIntent";
@@ -28,6 +29,9 @@ assert.equal(session.state, "ready");
 session = voiceSessionReducer(session, { type: "STT_PARTIAL", text: "find my" });
 assert.equal(session.state, "transcribing");
 assert.equal(session.partialTranscript, "find my");
+session = voiceSessionReducer(session, { type: "VOICE_STOPPED" });
+assert.equal(session.state, "transcribing");
+assert.equal(session.actionLabel, "Finishing your words");
 session = voiceSessionReducer(session, { type: "STT_FINAL", text: "find my document" });
 assert.equal(session.state, "thinking");
 assert.equal(session.committedTranscript, "find my document");
@@ -194,3 +198,26 @@ speakingUtterance?.onboundary?.({ name: "word" });
 speakingUtterance?.onend?.();
 assert.deepEqual(playbackEvents, ["start", "word", "stop", "drained"]);
 console.log("voice-unit-tests: native speech events passed");
+
+// The voice endpoint is driven by genuine silence. A hesitation after
+// "because" must not be cut like a completed question.
+assert.equal(voiceEndpointSilenceMs("Wait, because", 900), 1_300);
+assert.equal(voiceEndpointSilenceMs("Can you hear me?", 1_500), 630);
+assert.equal(voiceEndpointSilenceMs("uh", 400), 1_300);
+assert.equal(voiceEndpointSilenceMs("", 420), 1_050);
+assert.equal(voiceEndpointSilenceMs("", 1_400), 930);
+const endpoint = (silent: number, transcript: string, loud = false) => shouldEndVoiceUtterance({
+  now: 2_000 + silent, speechStartedAt: 500, lastSpeechAt: 2_000,
+  partialTranscript: transcript, loud,
+});
+assert.equal(endpoint(400, "Can you hear me?"), false, "brief pause does not end speech");
+assert.equal(endpoint(660, "Can you hear me?"), true, "complete sentence finalises promptly");
+assert.equal(endpoint(950, "Actually, because"), false, "mid-sentence thinking pause is preserved");
+assert.equal(endpoint(1_350, "Actually, because"), true, "genuine long silence completes the turn");
+assert.equal(endpoint(1_000, "", false), true, "unknown quiet speech eventually finalises");
+assert.equal(endpoint(1_500, "Can you hear me?", true), false, "speech cannot end while audio remains active");
+assert.equal(shouldEndVoiceUtterance({
+  now: 400, speechStartedAt: 300, lastSpeechAt: 390,
+  partialTranscript: "hi", loud: false,
+}), false, "short noises do not become utterances");
+console.log("voice-unit-tests: adaptive speech endpoint and finish state passed");

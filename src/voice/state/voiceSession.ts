@@ -98,6 +98,7 @@ export type VoiceEvent =
   | { type: "SET_SESSION_ID"; sessionId: string }
   | { type: "MIC_READY" }
   | { type: "VOICE_STARTED" }
+  | { type: "VOICE_STOPPED" }
   | { type: "STT_PARTIAL"; text: string }
   | { type: "STT_FINAL"; text: string }
   | { type: "THINK_STARTED" }
@@ -183,6 +184,8 @@ export function voiceSessionReducer(state: VoiceSessionState, event: VoiceEvent)
       return { ...state, state: "listening", resting: false, partialTranscript: "", committedTranscript: "", responseText: "", error: undefined };
     case "STT_PARTIAL":
       return { ...state, state: event.text.trim() ? "transcribing" : "listening", partialTranscript: event.text };
+    case "VOICE_STOPPED":
+      return { ...state, state: "transcribing", actionLabel: "Finishing your words", micLevel: 0 };
     case "STT_FINAL":
       return { ...state, state: "thinking", partialTranscript: "", committedTranscript: event.text, responseText: "", actionLabel: undefined };
     case "THINK_STARTED":
