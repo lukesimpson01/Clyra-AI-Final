@@ -31,7 +31,7 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
     }
     if (requestUrl === "/api/openbrowser/assist") {
       if (scenario === "no-key") return json({ ok: false, error: { message: "Browser intelligence needs a DeepSeek API key." } }, 503);
-      const pieces = scenario === "empty" ? [] : [{
+      const pieces: Array<Record<string, any>> = scenario === "empty" ? [] : [{
         type: "progress", phase: "executing", message: "Clicked the actual control",
         action: { type: "click" }, cursor: { x: 42, y: 27, kind: "click", at: Date.now() },
         state: { viewport: { width: 1440, height: 900 } },
