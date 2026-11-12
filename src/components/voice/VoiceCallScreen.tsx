@@ -115,6 +115,7 @@ export type VoiceCallScreenProps = {
   onOpenSettings?: () => void;
   mediaMode?: "camera" | "screen" | null;
   onMediaModeChange?: (mode: "camera" | "screen" | null) => void;
+  screenRequest?: Promise<MediaStream> | null;
 };
 
 /* ------------------------------------------------------------------ */
@@ -806,7 +807,7 @@ function ApprovalPanel({ approval, onConfirm, onCancel }: { approval: ApprovalRe
   );
 }
 
-export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: VoiceCallScreenProps) {
+export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, screenRequest }: VoiceCallScreenProps) {
   const reduced = useReducedMotion();
   const duration = useMemo(() => time(call.elapsedSeconds), [call.elapsedSeconds]);
   const hasActivity = Boolean(call.activeTask) || Boolean(mediaMode);
@@ -981,7 +982,7 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
                   exit={{ opacity: 0, y: reduced ? 0 : -10, scale: reduced ? 1 : 0.985 }}
                   transition={{ duration: reduced ? 0.06 : 0.29, ease: EASE }}
                 >
-                  <VoiceMediaSurface mode={mediaMode} lowPower={call.lowPowerMode}
+                  <VoiceMediaSurface mode={mediaMode} lowPower={call.lowPowerMode} screenRequest={screenRequest}
                     onStop={() => onMediaModeChange?.(null)}
                     onCaptureChange={call.registerMediaCapture}
                     onAsk={() => void call.sendText("What can you see in this view?")}

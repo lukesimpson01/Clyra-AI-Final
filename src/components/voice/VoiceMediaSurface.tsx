@@ -97,9 +97,10 @@ type Props = {
   onStop: () => void;
   onCaptureChange?: (capture: (() => VoiceMediaSnapshot | null) | null) => void;
   onAsk?: () => void;
+  screenRequest?: Promise<MediaStream> | null;
 };
 
-export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onAsk }: Props) {
+export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onAsk, screenRequest }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onStopRef = useRef(onStop);
@@ -110,6 +111,22 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
   const [scanMessage, setScanMessage] = useState("");
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const retryScreenRequestRef = useRef<Promise<MediaStream> | null>(null);
+  const retryCapture = () => {
+    // Retry also begins with an actual user click so screen permission works.
+    if (mode === "screen") {
+      try {
+        retryScreenRequestRef.current = navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 15, max: 20 } }, audio: false,
+        });
+        void retryScreenRequestRef.current.catch(() => undefined);
+      } catch (cause) {
+        retryScreenRequestRef.current = Promise.reject(cause);
+        void retryScreenRequestRef.current.catch(() => undefined);
+      }
+    }
+    setRetry((n) => n + 1);
+  };
   // Encode only one <=960px JPEG on an explicit request. The live stream
   // otherwise stays entirely on the user's machine.
   const captureFrame = useCallback((): VoiceMediaSnapshot | null => {
@@ -143,7 +160,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
         if (!navigator.mediaDevices) throw new Error("Media capture is unavailable in this window.");
         const capture = mode === "camera"
           ? await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }, audio: false })
-          : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 20 } }, audio: false });
+          : await (retry > 0 ? retryScreenRequestRef.current : screenRequest) ?? (() => { throw new Error("Please select your screen using the Screen button."); })();
         if (cancelled) { capture.getTracks().forEach((track) => track.stop()); return; }
         stream = capture;
         capture.getVideoTracks().forEach((track) => {
@@ -168,7 +185,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
       stream?.getTracks().forEach((track) => track.stop());
       if (video) { video.pause(); video.srcObject = null; }
     };
-  }, [mode, retry]);
+  }, [mode, retry, screenRequest]);
 
   // Run MediaPipe only when the local X-ray mode is enabled. No processing
   // during screen share, background tabs, or after the component is closed.
@@ -262,7 +279,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onA
         {error ? (
           <div className="clyra-voice-media__recovery" role="alert">
             <p className="clyra-voice-media__message">{error}</p>
-            <button type="button" onClick={() => setRetry((n) => n + 1)}>Try again</button>
+            <button type="button" onClick={retryCapture}>Try again</button>
           </div>
         ) : null}
         {scanMessage && ready ? <p className="clyra-voice-media__scan-message"><Zap size={12} />{scanMessage}</p> : null}

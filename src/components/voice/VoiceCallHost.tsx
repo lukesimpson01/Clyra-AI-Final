@@ -16,7 +16,34 @@ export type VoiceCallHostProps = Omit<VoiceCallScreenProps, "call" | "mediaMode"
 export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
   const callRef = useRef(call);
   const [mediaMode, setMediaMode] = useState<"camera" | "screen" | null>(null);
+  const [screenRequest, setScreenRequest] = useState<Promise<MediaStream> | null>(null);
+  const mediaGenerationRef = useRef(0);
   callRef.current = call;
+  const changeMediaMode = (mode: "camera" | "screen" | null) => {
+    const generation = ++mediaGenerationRef.current;
+    if (mode === "screen") {
+      // getDisplayMedia REQUIRES transient user activation. Call it directly
+      // inside the screen button's click handler, never in a delayed effect.
+      let request: Promise<MediaStream>;
+      try {
+        request = navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 15, max: 20 } },
+          audio: false,
+        });
+      } catch (error) {
+        request = Promise.reject(error);
+      }
+      // A canceled picker might resolve after the user has changed modes.
+      // Such an orphan stream must never remain running.
+      void request.then((stream) => {
+        if (generation !== mediaGenerationRef.current) stream.getTracks().forEach((track) => track.stop());
+      }).catch(() => undefined);
+      setScreenRequest(request);
+    } else {
+      setScreenRequest(null);
+    }
+    setMediaMode(mode);
+  };
 
   useEffect(() => {
     const onTrigger = (event: Event) => {
@@ -40,7 +67,11 @@ export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
   }, []);
 
   useEffect(() => {
-    if (!call.active || call.state === "ending") setMediaMode(null);
+    if (!call.active || call.state === "ending") {
+      ++mediaGenerationRef.current;
+      setScreenRequest(null);
+      setMediaMode(null);
+    }
   }, [call.active, call.state]);
 
   if (!call.active) return null;
@@ -51,7 +82,8 @@ export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
         {...screenProps}
         call={call}
         mediaMode={mediaMode}
-        onMediaModeChange={setMediaMode}
+        onMediaModeChange={changeMediaMode}
+        screenRequest={screenRequest}
       />
     </div>
   );

@@ -41,7 +41,10 @@ try {
       const capture = media.getUserMedia.bind(media);
       Object.defineProperty(media, "getDisplayMedia", {
         configurable: true,
-        value: () => capture({ video: true, audio: false }),
+        value: () => {
+          window.__clyraScreenActivation = navigator.userActivation?.isActive === true;
+          return capture({ video: true, audio: false });
+        },
       });
     }
     const NativeWebSocket = window.WebSocket;
@@ -159,6 +162,7 @@ try {
   await page.screenshot({ path: "qa-screenshots/voice-call/camera.png" });
 
   await call.getByRole("button", { name: "Start screen sharing" }).click();
+  assert.equal(await page.evaluate(() => window.__clyraScreenActivation), true, "screen share permission is requested from user activation");
   await stage.locator('[aria-label="Screen share preview"]').waitFor({ timeout: 12_000 });
   await page.waitForFunction(() => {
     const video = document.querySelector(".clyra-voice-media-stage video");
