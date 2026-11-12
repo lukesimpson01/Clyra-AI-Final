@@ -51,7 +51,7 @@ jobs:
           - group: code-notes-and-creator
             tasks: >-
               test:clipper test:clipper-publishing test:clipper-brand-kits test:face-tracking
-              test:template-library test:clyra-code-platform test:clyra-code-library
+              test:component-mcp test:template-library test:clyra-code-platform test:clyra-code-library
               test:clyra-code-brief test:vibe-runtime test:vibe-task-controller
               test:vibe-skills test:vibe-agent-v3 test:study-brain test:notes
           - group: voice-and-desktop-contracts

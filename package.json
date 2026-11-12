@@ -93,7 +93,9 @@
     "test:chat-rich": "tsx tools/chat-rich-results-unit-tests.ts",
     "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts",
     "test:mail": "node tools/mail-mime-tests.mjs",
-    "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs"
+    "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs",
+    "test:component-mcp": "tsx tools/component-mcp-unit-tests.ts",
+    "setup:component-sources": "git submodule update --init --depth 1 external/shadcn-ui external/21st-mcp"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
