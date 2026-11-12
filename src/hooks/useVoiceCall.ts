@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getElectronDesktop } from "../lib/electron-runtime";
 import { VoicePcmCapturer } from "../lib/voicePcmCapture";
+import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
 import { VOICE_SPEECH_LEVEL } from "../lib/voiceTurnDetection";
 import {
   createVoiceSessionState,
@@ -106,11 +107,11 @@ function missionResult(mission: MissionRecord) {
 }
 
 
-/** Spoken-reply style: this is read as subtitles, not heard, so keep it tight. */
-const VOICE_REPLY_STYLE = "You are in a live voice conversation and your reply appears as on-screen subtitles. Answer in one to three short, natural sentences. No markdown, lists, headings, code blocks or emoji. If the user asks for something long, give the key point and offer to continue.";
-const TURN_SILENCE_MS = 820;
-const MIN_SPEECH_MS = 320;
-const PARTIAL_EVERY_MS = 1100;
+/** Compact sentence-first spoken replies so speech can begin while tokens stream. */
+const VOICE_REPLY_STYLE = "You are Clyra in a real-time spoken conversation. Respond naturally and directly in one to three short sentences. Your words are spoken aloud as they stream. Do not use markdown, lists, code blocks or emoji. Remember and incorporate the full conversation; acknowledge corrections without restarting work. If asked for something complex, briefly explain what you are doing.";
+const TURN_SILENCE_MS = 590;
+const MIN_SPEECH_MS = 260;
+const PARTIAL_EVERY_MS = 760;
 const PRE_ROLL_CHUNKS = 12;
 export function useVoiceCall(options: UseVoiceCallOptions) {
   const optionsRef = useRef(options);
@@ -134,6 +135,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const socketRef = useRef<WebSocket | null>(null);
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const replyAbortRef = useRef<AbortController | null>(null);
+  const speechRef = useRef<VoiceSpeechPlayer | null>(null);
   const engine = useRef({
     speaking: false,
     loudFrames: 0,
@@ -169,11 +171,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const commitTurn = useCallback(() => {
     const userText = pendingUserTextRef.current.trim();
     const assistantText = pendingAssistantTextRef.current.trim();
-    if (userText && assistantText) {
-      const next = [...turnsRef.current, { role: "user" as const, content: userText }, { role: "assistant" as const, content: assistantText }];
+    if (userText || assistantText) {
+      const next: VoiceTurn[] = [...turnsRef.current];
+      if (userText) next.push({ role: "user", content: userText });
+      if (assistantText) next.push({ role: "assistant", content: assistantText });
       turnsRef.current = next;
       dispatch({ type: "SET_TURNS", turns: next });
-      optionsRef.current.onTurn?.({ userText, assistantText });
+      if (userText && assistantText) optionsRef.current.onTurn?.({ userText, assistantText });
     }
     pendingUserTextRef.current = "";
     pendingAssistantTextRef.current = "";
@@ -190,6 +194,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     e.preRoll = [];
     replyAbortRef.current?.abort();
     replyAbortRef.current = null;
+    speechRef.current?.interrupt();
     captureRef.current?.stop();
     captureRef.current = null;
     const socket = socketRef.current;
@@ -358,7 +363,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     return startMission(clean);
   }, [executeGoogle, resumeTask, startMission, stopTask, takeControl]);
 
-  /** Streams the conversational answer straight into the subtitle (no TTS). */
+  /** Token streaming and interruptible speech share the same turn lifecycle. */
   const streamReply = useCallback(async (userText: string) => {
     const controller = new AbortController();
     replyAbortRef.current?.abort();
@@ -372,6 +377,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       { role: "user", content: userText },
     ];
     pendingAssistantTextRef.current = "";
+    const speaker = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+      dispatch({ type: "RESPONSE_FINISHED" });
+      touchActivity();
+    }));
+    speaker.interrupt();
     let gotToken = false;
     try {
       const response = await fetch("/api/deepseek/chat", {
@@ -399,10 +409,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           if (line === "data: [DONE]") continue;
           try {
             const delta = JSON.parse(line.slice(6))?.choices?.[0]?.delta?.content as string | undefined;
-            if (delta) {
+            if (delta && !controller.signal.aborted) {
               gotToken = true;
               pendingAssistantTextRef.current += delta;
               dispatch({ type: "TOKEN", text: delta });
+              speaker.append(delta);
             }
           } catch { /* partial SSE frame */ }
         }
@@ -410,14 +421,14 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       if (controller.signal.aborted) return;
       if (!gotToken) throw new Error("Clyra didn’t get a reply. Try again.");
       commitTurn();
-      dispatch({ type: "RESPONSE_FINISHED" });
-      touchActivity();
+      speaker.complete();
     } catch (error) {
       if (controller.signal.aborted) return;
+      speaker.interrupt();
       dispatch({ type: "ERROR", error: { code: "VOICE_REPLY_FAILED", message: error instanceof Error ? error.message : "Clyra couldn’t answer that.", retryable: true } });
     } finally {
       if (replyAbortRef.current === controller) replyAbortRef.current = null;
-      engine.current.turnBusy = false;
+      if (replyAbortRef.current === null) engine.current.turnBusy = false;
     }
   }, [commitTurn, touchActivity]);
 
@@ -426,6 +437,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const clean = text.trim();
     const e = engine.current;
     if (!clean) { e.turnBusy = false; dispatch({ type: "MIC_READY" }); touchActivity(); return; }
+    commitTurn();
     pendingUserTextRef.current = clean;
     pendingAssistantTextRef.current = "";
     dispatch({ type: "STT_FINAL", text: clean });
@@ -434,7 +446,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       if (await runSideEffect(clean)) { e.turnBusy = false; return; }
     } catch { /* fall through to a normal reply */ }
     await streamReply(clean);
-  }, [runSideEffect, streamReply, touchActivity]);
+  }, [commitTurn, runSideEffect, streamReply, touchActivity]);
 
   const endUtterance = useCallback(() => {
     const e = engine.current;
@@ -472,9 +484,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         if (state === "responding" || state === "thinking") {
           bargeInsRef.current += 1;
           replyAbortRef.current?.abort();
+          speechRef.current?.interrupt();
+          commitTurn();
           e.turnBusy = false;
         }
-        if (state === "acting_browser" || state === "acting_computer" || state === "acting_clyra" || state === "paused" || state === "awaiting_approval" || state === "user_takeover") return;
+        // Keep the mic live while tools run, an approval is open, or the
+        // user has taken over. The next utterance can refine that same task.
         e.speaking = true;
         e.speechStartedAt = now;
         touchActivity();
@@ -497,8 +512,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     } else {
       e.loudFrames = 0;
     }
-    if (e.speaking && !loud && now - e.lastSpeechAt >= TURN_SILENCE_MS && now - e.speechStartedAt >= MIN_SPEECH_MS) endUtterance();
-  }, [endUtterance, touchActivity]);
+    const partial = sessionRef.current.partialTranscript.trim();
+    const unfinished = /(?:,|\b(?:and|but|because|if|so|to|with|about|for))$/i.test(partial);
+    const silence = unfinished ? 850 : partial.length > 0 && partial.split(/\s+/).length <= 3 ? 460 : TURN_SILENCE_MS;
+    if (e.speaking && !loud && now - e.lastSpeechAt >= silence && now - e.speechStartedAt >= MIN_SPEECH_MS) endUtterance();
+  }, [commitTurn, endUtterance, touchActivity]);
 
   const onMicChunk = useCallback((data: string, seq: number) => {
     const e = engine.current;
@@ -507,7 +525,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       socket.send(JSON.stringify({ type: "audio", sessionId: sessionIdRef.current, codec: "pcm16", data, seq }));
       return;
     }
-    // Pre-roll: the ~0.5s before speech was detected, so the first word is never clipped.
+    // Pre-roll preserves the opening phonemes even with a soft-spoken start.
     e.preRoll.push({ data, seq });
     if (e.preRoll.length > PRE_ROLL_CHUNKS) e.preRoll.shift();
   }, []);
@@ -626,6 +644,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
     touchActivity();
     replyAbortRef.current?.abort();
+    speechRef.current?.interrupt();
     await handleUserText(clean);
   }, [handleUserText, touchActivity]);
 
