@@ -51,12 +51,9 @@ jobs:
           node-version: '22'
           cache: pnpm
           cache-dependency-path: apps/shorts/openfilm/pnpm-lock.yaml
-      - name: Install advanced-editor workspace and refresh media-decoder lock
+      - name: Install advanced-editor workspace from committed lockfile
         working-directory: apps/shorts/openfilm
-        run: pnpm install --no-frozen-lockfile
-      - name: Display lockfile dependency delta
-        working-directory: apps/shorts/openfilm
-        run: git diff -- pnpm-lock.yaml
+        run: pnpm install --frozen-lockfile
       - name: Typecheck advanced-editor server and UI
         working-directory: apps/shorts/openfilm
         run: pnpm --filter openfilm typecheck
