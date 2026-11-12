@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { motion } from "motion/react";
+import { AgentCursorGlyph } from "../agent/AgentCursorGlyph";
 import "./assistant/agent-actions.css";
 
 /** A tailless pointer bound to confirmed AI control coordinates. */
@@ -14,7 +15,7 @@ export function AgentPointer({ x, y, kind, id }: { x: number; y: number; kind?: 
       aria-hidden
     >
       <span className="clyra-pointer__halo" />
-      <span key={`core-${id}`} className={`clyra-pointer__core${press ? " is-press" : ""}`} />
+      <AgentCursorGlyph pressed={press} />
       {press ? <span key={`wave-${id}`} className="clyra-pointer__wave" aria-hidden>
         <i className="clyra-pointer__flash" />
         {[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as CSSProperties} />)}
