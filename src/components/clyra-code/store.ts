@@ -376,6 +376,7 @@ export function useClyraCode() {
   const awaitingRepairRef = useRef(false);
   const repairCountRef = useRef(0);
   const verificationActionCountRef = useRef(0);
+  const actionBaselineRef = useRef(0);
   const lastVerificationPhaseRef = useRef("");
   const verificationEpochRef = useRef(0);
   const stateSnapshotRef = useRef(state);
@@ -455,8 +456,8 @@ export function useClyraCode() {
     const request = lastImplementationRequestRef.current;
     if (!projectId || !sessionId || !request) return;
     const snapshot = stateSnapshotRef.current;
-    const wroteCode = snapshot.diffs.length > 0 ||
-      Object.values(snapshot.actions).some(action => /^(edit|create|delete|build|check|test)$/.test(action.kind));
+    const wroteCode = Object.values(snapshot.actions).slice(actionBaselineRef.current)
+      .some(action => /^(edit|create|delete|build|check|test)$/.test(action.kind));
     const implementationIntent = /\b(build|create|make|develop|fix|change|update|implement|add|remove|design|refactor|clone|test|repair|generate|improve|polish|code|website|app|function|feature)\b/i.test(request);
     if (!wroteCode && !implementationIntent) {
       setState(prev => ({
@@ -559,7 +560,7 @@ export function useClyraCode() {
         if (controller.signal.aborted || epoch !== verificationEpochRef.current) return;
         const problem = error instanceof Error ? error.message : String(error);
         recordAction("test", "Live browser verification failed", "error", problem);
-        const environmental = /API key|unavailable|permission|not supported|cancelled|150-second limit|Browser control|environment/i.test(problem);
+        const environmental = /API key|unavailable|permission|not supported|cancelled|150-second limit|Browser control|browser tab|open tabs|Failed to fetch|NetworkError|not connected|event stream|authentication/i.test(problem);
         if (!environmental && repairCountRef.current < 2) {
           repairCountRef.current += 1;
           const nextAttempt = repairCountRef.current + 1;
@@ -983,10 +984,12 @@ export function useClyraCode() {
       return {
         ...prev,
         runState: "starting",
+        verification: undefined,
         runStartedAt: followUp ? prev.runStartedAt ?? now : now,
         runEndedAt: null,
         error: null,
         restored: false,
+        verification: undefined,
         log: [...prev.log, userEntry],
       };
     });
@@ -1017,6 +1020,8 @@ export function useClyraCode() {
       awaitingRepairRef.current = false;
       repairCountRef.current = 0;
       lastImplementationRequestRef.current = options?.userText || prompt;
+      actionBaselineRef.current = Object.keys(stateSnapshotRef.current.actions).length;
+      setState(prev => ({ ...prev, verification: undefined }));
       let autoName: string | null = null;
       const followUp = Boolean(activeSessionRef.current) && runStateRef.current !== "idle";
       if (options?.optimistic) {
