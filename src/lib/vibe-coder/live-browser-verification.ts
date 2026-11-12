@@ -192,10 +192,12 @@ export async function verifyLiveVibeProject(input: {
       const result = await consumeBrowserEvents(response, browserAbort.signal, onEvent);
       onEvent({ phase: "verifying", message: "Checking uncaught JavaScript errors in the real browser tab" });
       const diagnostic = await jsonRequest<{
+        attached: boolean;
         errors: Array<{ kind: string; message: string }>;
       }>("/api/openbrowser/diagnostics?tabId=" + encodeURIComponent(openedTab), {
         signal: browserAbort.signal,
       });
+      if (!diagnostic.attached) throw new Error("Browser diagnostics unavailable: the real test tab could not be instrumented.");
       const runtimeErrors = (diagnostic.errors || []).filter(error =>
         error.kind === "pageerror" || error.kind === "console");
       if (runtimeErrors.length) {
