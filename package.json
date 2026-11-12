@@ -95,8 +95,8 @@
     "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts",
     "test:mail": "node tools/mail-mime-tests.mjs",
     "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs",
-    "test:component-mcp": "tsx tools/component-mcp-unit-tests.ts",
-    "setup:component-sources": "git submodule update --init --depth 1 external/shadcn-ui external/21st-mcp"
+    "test:component-library": "tsx tools/component-library-unit-tests.ts",
+    "setup:component-sources": "git submodule update --init --depth 1 external/shadcn-ui external/21st-agent-elements"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",

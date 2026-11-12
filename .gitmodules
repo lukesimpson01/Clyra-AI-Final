@@ -12,8 +12,8 @@
 	url = https://github.com/shadcn-ui/ui.git
 	branch = main
 	shallow = true
-[submodule "external/21st-mcp"]
-	path = external/21st-mcp
-	url = https://github.com/21st-dev/magic-mcp.git
+[submodule "external/21st-agent-elements"]
+	path = external/21st-agent-elements
+	url = https://github.com/21st-dev/agent-elements.git
 	branch = main
 	shallow = true

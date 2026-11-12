@@ -711,7 +711,7 @@ export default function ClyraCodeWorkspace({
           : "";
         const componentReferences = mode === "code" ? contexts.filter(context => context.id.startsWith("component:")) : [];
         const componentInstruction = componentReferences.length
-          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nLook up each exact item through its named MCP provider, check framework compatibility and dependencies, then install and adapt the actual component code. Never substitute a fake component or claim an installation without real tool evidence.\n\n"
+          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nUse the locally bundled official component sources in external/shadcn-ui and external/21st-agent-elements, or source files already installed into this project via the Clyra Component Library. Do not use remote MCP tools or paid component APIs. Verify framework and dependency compatibility, then reuse the actual checked-in source rather than inventing a substitute. Never claim source was installed without checking project files.\n\n"
           : "";
         void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + componentInstruction + attachmentContext + text, command === "plan" ? "plan" : undefined, {
           ...options,
@@ -1407,6 +1407,7 @@ export default function ClyraCodeWorkspace({
         onClose={() => setComponentLibraryOpen(false)}
         onReference={referenceComponent}
         referencedIds={contexts.map(context => context.id)}
+        projectId={activeProject?.id ?? null}
       />
       <TemplateLibrary
         open={libraryOpen && mode === "code"}

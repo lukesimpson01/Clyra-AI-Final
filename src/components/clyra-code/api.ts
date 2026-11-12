@@ -23,6 +23,25 @@ export type ComponentCatalogItem = {
   previewUrl?: string;
   docsUrl?: string;
   registryId: string;
+  origin?: string;
+  offline?: boolean;
+};
+
+export type ComponentDetails = {
+  item: ComponentCatalogItem;
+  files: Array<{ path: string; content: string }>;
+  dependencies: string[];
+  registryDependencies: string[];
+  requirements: string[];
+  license: string;
+};
+
+export type ComponentInstallResult = {
+  ok: boolean;
+  installed: string[];
+  files: string[];
+  dependenciesToInstall: string[];
+  note: string;
 };
 
 export type VibeProject = {
@@ -158,6 +177,12 @@ export const api = {
     if (filters.source) query.set("source", filters.source);
     return json<{ items: ComponentCatalogItem[]; errors: Array<{ source: string; message: string }> }>("/api/clyra-code/components?" + query.toString());
   },
+  componentDetails: (source: "shadcn" | "21st", name: string) =>
+    json<ComponentDetails>("/api/clyra-code/components/" + enc(source) + "/" + enc(name)),
+  installComponent: (projectId: string, source: "shadcn" | "21st", name: string) =>
+    json<ComponentInstallResult>("/api/clyra-code/components/install", {
+      method: "POST", body: JSON.stringify({ projectId, source, name }),
+    }),
   listProjects: () =>
     json<{ projects: VibeProject[] }>("/api/vibe/projects").then((r) => r.projects ?? []),
 
