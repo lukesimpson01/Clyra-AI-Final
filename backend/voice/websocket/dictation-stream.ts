@@ -120,7 +120,10 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
         const result = await transcribePcm(pcm, config.sampleRate, {
           // Prefer accurate local base when installed, fall back to the
           // resource-adaptive/installed model without an extra cloud request.
-          profile: typeof message.profile === "string" ? message.profile : "base",
+          profile: message.profile === "tiny" || message.profile === "base" || message.profile === "small" ? message.profile : "base",
+          prompt: Array.isArray(message.dictionary)
+            ? message.dictionary.filter((value): value is string => typeof value === "string" && value.length <= 80).slice(0, 40)
+            : [],
         });
         console.log(`[dictation] ${result.engine} ${result.elapsedMs}ms -> ${JSON.stringify(result.text.slice(0, 80))}`);
         const text = result.text;

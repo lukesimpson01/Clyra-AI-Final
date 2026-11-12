@@ -264,9 +264,16 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
     let blinkStartedAt = -Infinity;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    let lastPaint = 0;
     const render = (now: number) => {
       if (disposed) return;
       raf = requestAnimationFrame(render);
+      // Hidden windows and low-power calls should not spend full-frame CPU on
+      // decorative SVG eye motion. Foreground calls retain full frame cadence.
+      if (document.hidden) { last = now; return; }
+      const frameInterval = inputRef.current.lowPower ? 42 : reducedMotion ? 85 : 0;
+      if (now - lastPaint < frameInterval) return;
+      lastPaint = now;
       const dt = Math.min(48, Math.max(8, now - last));
       last = now;
 

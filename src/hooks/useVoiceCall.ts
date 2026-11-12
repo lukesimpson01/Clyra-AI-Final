@@ -2,6 +2,8 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getElectronDesktop } from "../lib/electron-runtime";
 import { VoicePcmCapturer } from "../lib/voicePcmCapture";
 import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
+import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
+import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
 import { VOICE_SPEECH_LEVEL } from "../lib/voiceTurnDetection";
 import {
   createVoiceSessionState,
@@ -127,7 +129,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const bargeInsRef = useRef(0);
   const activeRunRef = useRef<ActiveRun | null>(null);
   const pendingApprovalRef = useRef<PendingApproval | null>(null);
-  const lastAgentPromptRef = useRef("");
+  const transcriptRef = useRef(new TranscriptStabilizer());
   const taskAbortRef = useRef<AbortController | null>(null);
   const lastSideEffectRef = useRef({ text: "", at: 0 });
   const endSequenceRef = useRef(0);
@@ -230,16 +232,29 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       if (TERMINAL_MISSION_STATES.has(mission.state)) {
         activeRunRef.current = null;
         const result = missionResult(mission);
-        if (mission.state === "COMPLETED") dispatch({ type: "TOOL_FINISHED", result, responseText: result.text });
-        else dispatch({ type: "ERROR", error: { code: "VOICE_TASK_FAILED", message: result.text, retryable: mission.state === "FAILED" } });
+        if (mission.state === "COMPLETED") {
+          dispatch({ type: "TOOL_FINISHED", result, responseText: result.text });
+          const next = [...turnsRef.current, { role: "assistant" as const, content: result.text }];
+          turnsRef.current = next;
+          dispatch({ type: "SET_TURNS", turns: next });
+          // Don't talk over a new utterance or a different conversational answer.
+          if (!engine.current.speaking && !engine.current.finalPending && !replyAbortRef.current) {
+            const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+              dispatch({ type: "RESPONSE_FINISHED" });
+              touchActivity();
+            }));
+            player.interrupt();
+            player.append(result.text);
+            player.complete();
+          }
+        } else dispatch({ type: "ERROR", error: { code: "VOICE_TASK_FAILED", message: result.text, retryable: mission.state === "FAILED" } });
         return;
       }
       if (PAUSED_MISSION_STATES.has(mission.state)) return;
     }
-  }, [updateMission]);
+  }, [touchActivity, updateMission]);
 
   const startMission = useCallback(async (text: string) => {
-    lastAgentPromptRef.current = text;
     const routeResponse = await fetch("/api/agent/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -536,7 +551,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     // "Thinking" starts the instant you stop talking; the transcript lands
     // ~0.5s later and fills the subtitle.
     dispatch({ type: "THINK_STARTED" });
-    socket.send(JSON.stringify({ type: "flush", sessionId: sessionIdRef.current }));
+    socket.send(JSON.stringify({
+      type: "flush",
+      sessionId: sessionIdRef.current,
+      dictionary: personalDictionary().slice(0, 40),
+      profile: sessionRef.current.lowPowerMode ? "tiny" : "base",
+    }));
   }, []);
 
   const onMicLevel = useCallback((level: number) => {
@@ -558,7 +578,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (loud) {
       e.loudFrames += 1;
       e.lastSpeechAt = now;
-      if (!e.speaking && e.loudFrames >= 2 && !e.finalPending) {
+      if (!e.speaking && e.loudFrames >= (speechRef.current?.speaking ? 3 : 2) && !e.finalPending) {
         // Barge-in: speaking over a reply interrupts it immediately.
         const state = sessionRef.current.state;
         if (state === "responding" || state === "thinking") {
@@ -571,6 +591,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         // Keep the mic live while tools run, an approval is open, or the
         // user has taken over. The next utterance can refine that same task.
         e.speaking = true;
+        transcriptRef.current.reset();
         e.speechStartedAt = now;
         touchActivity();
         dispatch({ type: "VOICE_STARTED" });
@@ -619,7 +640,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     bargeInsRef.current = 0;
     const e = engine.current;
     e.speaking = false; e.ready = false; e.finalPending = false; e.turnBusy = false; e.preRoll = []; e.loudFrames = 0;
-    lastAgentPromptRef.current = "";
+    transcriptRef.current.reset();
     try {
       const desktop = getElectronDesktop();
       const permissions = await desktop?.dictation?.ensurePermissions?.().catch(() => null);
@@ -651,10 +672,14 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         } else if (message.type === "partial_done") {
           engine.current.partialInFlight = false;
         } else if (message.type === "transcript_partial") {
-          if (engine.current.speaking) dispatch({ type: "STT_PARTIAL", text: String(message.text || "") });
+          if (engine.current.speaking) {
+            const stable = transcriptRef.current.update(String(message.text || ""));
+            dispatch({ type: "STT_PARTIAL", text: stable });
+          }
         } else if (message.type === "dictation_final") {
           engine.current.finalPending = false;
-          void handleUserText(String(message.text || ""));
+          const finalText = applyDictionary(transcriptRef.current.finalize(String(message.text || "")));
+          void handleUserText(finalText);
         } else if (message.type === "error") {
           engine.current.finalPending = false;
           engine.current.turnBusy = false;
