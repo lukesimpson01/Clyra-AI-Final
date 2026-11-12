@@ -18,8 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check media dependencies
-        run: ffmpeg -version && ffprobe -version
+      - name: Install and verify system FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg && ffmpeg -version && ffprobe -version
       - name: Install Shorts dependencies
         run: npm ci --prefix apps/shorts/app --no-audit --no-fund
       - name: Run every free media processor smoke test
@@ -28,3 +28,10 @@ jobs:
         run: node --test apps/shorts/app/tests/media-process.test.mjs
       - name: Build Shorts UI
         run: npm --prefix apps/shorts/app run build
+      - name: Run 3D plane, surface, camera and face-identity regression tests
+        run: |
+          node --test \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/face-native.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/spatial-refine.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/spatial-geometry.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/surface-stability.test.mjs
