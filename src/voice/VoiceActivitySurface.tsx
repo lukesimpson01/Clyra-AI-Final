@@ -78,9 +78,9 @@ function useVoiceBrowserActivity(enabled: boolean, taskId: string) {
         if (w > 0 && h > 0) setViewport({ width: w, height: h });
         setEmbeddedCursor(Boolean(state.surfaceVisible));
         const event = state.cursor;
-        const fresh = event && Number.isFinite(event.x) && Number.isFinite(event.y)
-          && event.at && Date.now() - event.at < 3_000;
-        setCursor(fresh ? event : null);
+        const fresh = Boolean(event && Number.isFinite(event.x) && Number.isFinite(event.y)
+          && typeof event.at === "number" && Date.now() - event.at < 3_000);
+        setCursor(fresh && event ? event : null);
         const imageResponse = await fetch("/api/openbrowser/frame?fresh=1", { cache: "no-store", signal: controller.signal });
         if (!running || !imageResponse.ok) return;
         const blob = await imageResponse.blob();
