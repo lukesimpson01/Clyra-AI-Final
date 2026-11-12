@@ -143,12 +143,12 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
                   left: `${Math.min(100, Math.max(0, (run.cursor.x / (run.viewport?.width || 1440)) * 100))}%`,
                   top: `${Math.min(100, Math.max(0, (run.cursor.y / (run.viewport?.height || 900)) * 100))}%`,
                 }}
-                transition={{ type: "spring", stiffness: 240, damping: 28, mass: 0.6 }}
+                transition={{ type: "spring", stiffness: 430, damping: 38, mass: 0.38, restDelta: 0.1 }}
                 aria-hidden
               >
                 <span className="clyra-pointer__halo" />
-                <svg className={`clyra-pointer__arrow${run.cursor.kind === "click" || run.cursor.kind === "double_click" ? " is-press" : ""}`} key={`a${run.cursor.id}`} viewBox="0 0 24 24"><path d="M5 3v17l4.7-4.7 3 6.4 3-1.5-3.1-6.2 6.8-.7L5 3z" /></svg>
-                {run.cursor.kind === "click" || run.cursor.kind === "double_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1, 2, 3, 4].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
+                <span className={`clyra-pointer__core${run.cursor.kind === "click" || run.cursor.kind === "double_click" ? " is-press" : ""}`} key={`a${run.cursor.id}`} />
+                {run.cursor.kind === "click" || run.cursor.kind === "double_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
               </motion.div>
             ) : null}
           </div>
