@@ -6,6 +6,7 @@ import { runWebSearchResearch } from "../research/research-handlers";
 import { createClyraToolRegistry, routeObjective } from "./catalog";
 import { MissionRuntime, validateJson, type Json, type MissionPlan, type MissionRecord, type ToolResult } from "./core";
 import { MissionStore } from "./mission-store";
+import { replanVoiceMission } from "./mission-revision";
 import { filesList, filesRead, filesWrite, filesMove, filesDelete, pathExists } from "./fs-tools";
 import { terminalRun, gitStatus, gitDiff, gitCommit } from "./terminal-tools";
 import { getManagedBrowserObservation, navigateManagedBrowser, actOnManagedBrowser, type BrowserAction } from "../openbrowser/browser-runtime";
@@ -215,29 +216,7 @@ export class ServerMissionService {
     if (objective.length > 8_000) throw new Error("This mission has reached its instruction limit. Finish it and start a follow-up.");
     const planned = this.plan(objective);
     if (!planned) throw new Error("The available tools cannot safely replan this instruction.");
-    const preserved = new Set<string>();
-    const steps = planned.steps.map((step) => {
-      const previous = saved.plan.steps.find((candidate) => candidate.id === step.id);
-      const same = previous?.toolId === step.toolId
-        && JSON.stringify(previous.args) === JSON.stringify(step.args)
-        && JSON.stringify(previous.dependsOn) === JSON.stringify(step.dependsOn);
-      if (same && previous?.status === "completed" && previous.verification?.status === "verified"
-        && step.dependsOn.every((id) => preserved.has(id))) {
-        preserved.add(step.id);
-        return structuredClone(previous);
-      }
-      return step;
-    });
-    const revised: MissionRecord = {
-      ...structuredClone(saved),
-      state: "PAUSED",
-      plan: { objective, steps },
-      outputs: Object.fromEntries(Object.entries(saved.outputs).filter(([id]) => preserved.has(id))),
-      approval: undefined,
-      error: undefined,
-      updatedAt: Date.now(),
-      traces: [...saved.traces, { at: Date.now(), state: "PAUSED", event: `Voice correction accepted: ${addition.slice(0, 200)}` }],
-    };
+    const revised = replanVoiceMission(saved, planned, addition);
     this.store.save(revised);
     return this.resumeBackground({ missionId });
   }

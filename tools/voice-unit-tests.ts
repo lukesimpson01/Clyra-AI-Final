@@ -52,6 +52,8 @@ assert.equal(session.state, "idle");
 
 
 import { VoiceSpeechPlayer } from "../src/lib/voiceSpeechPlayer";
+import { replanVoiceMission } from "../lib/clyra-agent/mission-revision";
+import type { MissionRecord, MissionPlan } from "../lib/clyra-agent/core";
 
 // Exercise the real native speech queue without audio hardware or an API key.
 class MockUtterance {
@@ -102,5 +104,40 @@ corrected?.onend?.();
 assert.equal(drained, 2, "new playback recovers after an interruption");
 
 console.log("voice-unit-tests: interruptible native speech queue passed");
+
+
+const originalPlan: MissionPlan = {
+  objective: "Research competitors, then create a note",
+  steps: [
+    { id: "research", description: "Find sources", toolId: "browser.search", args: { query: "competitors" }, dependsOn: [], status: "completed", verification: { status: "verified" } },
+    { id: "note", description: "Write note", toolId: "notes.create", args: { title: "Plan" }, dependsOn: ["research"], status: "pending" },
+  ],
+};
+const originalRecord: MissionRecord = {
+  id: "voice-mission-test", state: "PAUSED", plan: originalPlan,
+  outputs: { research: { ok: true, data: { urls: ["https://example.org"] } } },
+  traces: [], startedAt: Date.now(), updatedAt: Date.now(),
+  approval: { stepId: "note", toolId: "notes.create", requestedAt: Date.now() },
+};
+const unchanged = replanVoiceMission(originalRecord, {
+  objective: "Research competitors, then create a note. Add TikTok as a focus",
+  steps: structuredClone(originalPlan.steps),
+}, "Add TikTok as a focus");
+assert.equal(unchanged.plan.steps[0]?.status, "completed");
+assert.ok(unchanged.outputs.research, "previous verified source evidence is retained");
+assert.equal(unchanged.approval, undefined, "stale write approvals are never reused");
+assert.equal(unchanged.plan.objective.includes("TikTok"), true);
+const changed = replanVoiceMission(originalRecord, {
+  objective: "Research TikTok competitors instead",
+  steps: [
+    { id: "research", description: "Find updated sources", toolId: "browser.search", args: { query: "TikTok competitors" }, dependsOn: [], status: "pending" },
+    originalPlan.steps[1]!,
+  ],
+}, "Focus on TikTok");
+assert.equal(changed.plan.steps[0]?.status, "pending", "changed research query must re-execute");
+assert.equal(changed.outputs.research, undefined, "stale results must not pass verification");
+assert.equal(changed.plan.steps[1]?.status, "pending", "dependent writes cannot reuse outdated work");
+assert.equal(originalRecord.outputs.research?.ok, true, "the old durable checkpoint is not mutated");
+console.log("voice-unit-tests: verified mission-revision recovery passed");
 
 console.log("voice-unit-tests: reducer assertions passed");
