@@ -158,3 +158,19 @@
  .clyra-mail-review{padding:20px;}
 }
 @media(prefers-reduced-motion:reduce){.clyra-mail-modal *{animation:none!important;transition:none!important;}}
+
+/* Expanded tool history only on request; keep the inbox typography calm. */
+.clyra-mail-tool-activity { position: relative; min-width: 76px; margin-right: auto; }
+.clyra-mail-tool-activity > summary { cursor:pointer; color:#828690; font-size:12px; list-style:none; border-radius:10px; padding:7px 9px; }
+.clyra-mail-tool-activity > summary::-webkit-details-marker { display:none; }
+.clyra-mail-tool-activity > summary:hover { background:rgba(33,37,43,.055); }
+.clyra-mail-tool-activity[open] > ol {
+  position:absolute; z-index:90; left:0; bottom:calc(100% + 8px);
+  width:min(320px,calc(100vw - 28px)); max-height:240px; overflow-y:auto;
+  margin:0; padding:12px 12px 12px 31px;
+  background:#fff; color:#676b75;
+  border:1px solid #eeeeef; border-radius:14px;
+  box-shadow:0 14px 35px rgba(10,20,35,.12);
+  font-size:12px; line-height:1.75;
+}
+.clyra-mail-tool-activity li { padding-bottom:4px; overflow-wrap:anywhere; }
