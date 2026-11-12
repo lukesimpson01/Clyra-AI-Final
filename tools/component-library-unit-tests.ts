@@ -32,7 +32,7 @@ try {
   assert.equal(button.files[0].path, "components/ui/button.tsx");
   assert.ok(button.files[0].content.includes('from "cn"'));
   const messages = await readLocalComponent("21st", "message-list");
-  assert.equal(messages.files[0].path, "components/agent-elements/message-list.tsx");
+  assert.equal(messages.files[0].path, "components/agent-elements/components/message-list.tsx");
   assert.deepEqual(messages.dependencies, ["clsx"]);
 
   // Real project-local source installation: no HTTP requests, MCP or API keys.
@@ -54,7 +54,7 @@ try {
   assert.ok((await readFile(path.join(project, "src", "lib", "utils.ts"), "utf8")).includes("twMerge"));
   const installed21st = await installLocalComponent("sample", "21st", "message-list");
   assert.equal(installed21st.ok, true);
-  assert.ok(await readFile(path.join(project, "src", "components", "agent-elements", "message-list.tsx"), "utf8"));
+  assert.ok(await readFile(path.join(project, "src", "components", "agent-elements", "components", "message-list.tsx"), "utf8"));
   assert.ok((await readFile(path.join(project, "src", "index.css"), "utf8"))
     .includes('@import "./components/agent-elements/agent-ui.css";'));
   const repeat = await installLocalComponent("sample", "21st", "message-list");

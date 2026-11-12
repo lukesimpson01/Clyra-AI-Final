@@ -148,7 +148,7 @@ function local21stFilePath(sourcePath: string): string {
   const cleaned = sourcePath.replaceAll("\\", "/");
   const prefix = "registry/agent-elements/";
   if (!cleaned.startsWith(prefix)) throw new Error("Unsupported registry file path.");
-  const relative = cleaned.slice(prefix.length).replace(/^components\//, "");
+  const relative = cleaned.slice(prefix.length);
   if (!relative || relative.split("/").some(segment => !segment || segment === "." || segment === "..")
       || !/^[a-zA-Z0-9_./-]+$/.test(relative)) throw new Error("Invalid registry path.");
   return "components/agent-elements/" + relative;
