@@ -412,7 +412,7 @@ ClyraFace.displayName = "ClyraFace";
 /* VoicePresence (inlined from src/voice/VoicePresence.tsx)            */
 /* ------------------------------------------------------------------ */
 
-function VoicePresence({ state, micLevel, muted, resting = false, typing = false, compact = false, lowPower = false }: {
+function VoicePresence({ state, micLevel, botLevel, muted, resting = false, typing = false, compact = false, lowPower = false }: {
   state: VoiceCallState;
   micLevel: number;
   botLevel: number;
@@ -422,10 +422,9 @@ function VoicePresence({ state, micLevel, muted, resting = false, typing = false
   compact?: boolean;
   lowPower?: boolean;
 }) {
-  // Only real microphone energy affects the audio ring. The responding pose
-  // remains state-driven until an actual playback meter is available.
+  // RMS drives the microphone ring; native synthesis events drive spoken pulses.
   const isListening = state === "listening" || state === "transcribing";
-  const energy = !muted && isListening ? Math.min(1, Math.max(0, micLevel)) : 0;
+  const energy = isListening ? (muted ? 0 : micLevel) : botLevel * 0.68;
   return (
     <div
       className={`clyra-voice-presence${compact ? " clyra-voice-presence--compact" : ""}`}
@@ -903,7 +902,7 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
             <AnimatePresence initial={false}>
               {liveSubtitle ? (
                 <motion.p
-                  key={liveSubtitle}
+                  key="live-caption"
                   data-testid="voice-live-subtitle"
                   className="clyra-voice-live-subtitle"
                   initial={reduced ? { opacity: 0 } : { opacity: 0, y: -4, filter: "blur(3px)" }}

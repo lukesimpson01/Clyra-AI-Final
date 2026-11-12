@@ -12,9 +12,11 @@ export class VoiceSpeechPlayer {
   private generation = 0;
   private voice: SpeechSynthesisVoice | null = null;
   private onDrained: () => void;
-  constructor(onDrained: () => void) {
+  private onSpeechEvent: ((event: "start" | "word" | "stop") => void) | null;
+  constructor(onDrained: () => void, onSpeechEvent?: (event: "start" | "word" | "stop") => void) {
     this.synth = typeof window === "undefined" || !("speechSynthesis" in window) ? null : window.speechSynthesis;
     this.onDrained = onDrained;
+    this.onSpeechEvent = onSpeechEvent || null;
   }
   get available() { return Boolean(this.synth && typeof SpeechSynthesisUtterance !== "undefined"); }
   get speaking() { return this.current; }
@@ -25,6 +27,7 @@ export class VoiceSpeechPlayer {
     this.queue = [];
     this.current = false;
     this.finished = false;
+    this.onSpeechEvent?.("stop");
     try { this.synth?.cancel(); } catch { /* speech backend already stopped */ }
   }
   append(text: string) {
@@ -65,7 +68,7 @@ export class VoiceSpeechPlayer {
     if (this.current) return;
     const next = this.queue.shift();
     if (!next) {
-      if (this.finished) { this.finished = false; this.onDrained(); }
+      if (this.finished) { this.finished = false; this.onSpeechEvent?.("stop"); this.onDrained(); }
       return;
     }
     if (!this.available) { this.pump(); return; }
@@ -81,6 +84,8 @@ export class VoiceSpeechPlayer {
       this.current = false;
       this.pump();
     };
+    utterance.onstart = () => { if (generation === this.generation) this.onSpeechEvent?.("start"); };
+    utterance.onboundary = (event) => { if (generation === this.generation && event.name === "word") this.onSpeechEvent?.("word"); };
     utterance.onend = done;
     utterance.onerror = done;
     try {

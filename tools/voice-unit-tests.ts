@@ -67,6 +67,8 @@ class MockUtterance {
   pitch = 1;
   onend: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onstart: (() => void) | null = null;
+  onboundary: ((event: { name: string }) => void) | null = null;
   constructor(text: string) { this.text = text; }
 }
 const spoken: MockUtterance[] = [];
@@ -181,3 +183,14 @@ assert.equal(asksToInspectSharedView("What is this?"), true);
 assert.equal(asksToInspectSharedView("Research competitors then create a report"), false);
 assert.equal(asksToInspectSharedView("Actually include Instagram in the plan"), false);
 console.log("voice-unit-tests: explicit shared-frame intent passed");
+
+const playbackEvents: string[] = [];
+const speakingPlayer = new VoiceSpeechPlayer(() => playbackEvents.push("drained"), (event) => playbackEvents.push(event));
+speakingPlayer.append("Testing real speech.");
+speakingPlayer.complete();
+const speakingUtterance = spoken[spoken.length - 1];
+speakingUtterance?.onstart?.();
+speakingUtterance?.onboundary?.({ name: "word" });
+speakingUtterance?.onend?.();
+assert.deepEqual(playbackEvents, ["start", "word", "stop", "drained"]);
+console.log("voice-unit-tests: native speech events passed");

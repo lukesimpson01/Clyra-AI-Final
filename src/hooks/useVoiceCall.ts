@@ -143,6 +143,18 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const replyAbortRef = useRef<AbortController | null>(null);
   const speechRef = useRef<VoiceSpeechPlayer | null>(null);
+  const playbackTimerRef = useRef<number | null>(null);
+  const onNativeSpeechEvent = useCallback((event: "start" | "word" | "stop") => {
+    if (playbackTimerRef.current !== null) window.clearTimeout(playbackTimerRef.current);
+    playbackTimerRef.current = null;
+    if (event === "stop") { dispatch({ type: "SET_LEVEL", source: "bot", level: 0 }); return; }
+    // Native voice boundaries, not a simulated waveform or costly audio FFT.
+    dispatch({ type: "SET_LEVEL", source: "bot", level: event === "word" ? 0.82 : 0.54 });
+    playbackTimerRef.current = window.setTimeout(() => {
+      playbackTimerRef.current = null;
+      dispatch({ type: "SET_LEVEL", source: "bot", level: 0.17 });
+    }, 140);
+  }, []);
   const mediaCaptureRef = useRef<(() => { mode: "camera" | "screen"; image: string } | null) | null>(null);
   const registerMediaCapture = useCallback((capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => {
     mediaCaptureRef.current = capture;
@@ -207,6 +219,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     replyAbortRef.current?.abort();
     replyAbortRef.current = null;
     speechRef.current?.interrupt();
+    if (playbackTimerRef.current !== null) window.clearTimeout(playbackTimerRef.current);
+    playbackTimerRef.current = null;
     mediaCaptureRef.current = null;
     captureRef.current?.stop();
     captureRef.current = null;
@@ -252,7 +266,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
             const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
               dispatch({ type: "RESPONSE_FINISHED" });
               touchActivity();
-            }));
+            }, onNativeSpeechEvent);
             player.interrupt();
             player.append(result.text);
             player.complete();
@@ -262,7 +276,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       }
       if (PAUSED_MISSION_STATES.has(mission.state)) return;
     }
-  }, [touchActivity, updateMission]);
+  }, [onNativeSpeechEvent, touchActivity, updateMission]);
 
   const startMission = useCallback(async (text: string) => {
     // The mission endpoint already plans and categorizes the request. Avoid
@@ -380,14 +394,14 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
       dispatch({ type: "RESPONSE_FINISHED" });
       touchActivity();
-    }));
+    }, onNativeSpeechEvent);
     player.interrupt();
     pendingAssistantTextRef.current = text;
     dispatch({ type: "TOKEN", text });
     commitTurn();
     player.append(text);
     player.complete();
-  }, [commitTurn, touchActivity]);
+  }, [commitTurn, onNativeSpeechEvent, touchActivity]);
 
   /** Routes a spoken/typed request to Clyra's agent tools. Returns true when
    * an agent task owns the turn, so the plain conversational reply is skipped. */
@@ -520,9 +534,18 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const speaker = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
       dispatch({ type: "RESPONSE_FINISHED" });
       touchActivity();
-    }));
+    }, onNativeSpeechEvent);
     speaker.interrupt();
     let gotToken = false;
+    let captionBuffer = "";
+    let captionFrame: number | null = null;
+    const flushCaption = () => {
+      captionFrame = null;
+      if (captionBuffer && !controller.signal.aborted) {
+        dispatch({ type: "TOKEN", text: captionBuffer });
+        captionBuffer = "";
+      }
+    };
     try {
       const response = await fetch("/api/deepseek/chat", {
         method: "POST",
@@ -552,7 +575,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
             if (delta && !controller.signal.aborted) {
               gotToken = true;
               pendingAssistantTextRef.current += delta;
-              dispatch({ type: "TOKEN", text: delta });
+              captionBuffer += delta;
+              if (captionFrame === null) captionFrame = window.requestAnimationFrame(flushCaption);
               speaker.append(delta);
             }
           } catch { /* partial SSE frame */ }
@@ -560,6 +584,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       }
       if (controller.signal.aborted) return;
       if (!gotToken) throw new Error("Clyra didn’t get a reply. Try again.");
+      if (captionFrame !== null) window.cancelAnimationFrame(captionFrame);
+      flushCaption();
       commitTurn();
       speaker.complete();
     } catch (error) {
@@ -567,10 +593,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       speaker.interrupt();
       dispatch({ type: "ERROR", error: { code: "VOICE_REPLY_FAILED", message: error instanceof Error ? error.message : "Clyra couldn’t answer that.", retryable: true } });
     } finally {
+      if (captionFrame !== null) window.cancelAnimationFrame(captionFrame);
       if (replyAbortRef.current === controller) replyAbortRef.current = null;
       if (replyAbortRef.current === null) engine.current.turnBusy = false;
     }
-  }, [commitTurn, touchActivity]);
+  }, [commitTurn, onNativeSpeechEvent, touchActivity]);
 
   /** One full turn once the words are known: agent tools first, else a reply. */
   const handleUserText = useCallback(async (text: string) => {
