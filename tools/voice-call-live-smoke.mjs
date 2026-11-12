@@ -118,8 +118,8 @@ try {
   await call.locator(".clyra-voice-composer-v2__send").click();
   await call.locator(".clyra-voice-agent-bar").getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 12_000 });
   assert.equal(starts, 1, "first turn starts one mission");
-  await call.locator(".clyra-voice-call__header").getByRole("button", { name: "Mute microphone" }).click();
-  await call.locator(".clyra-voice-call__header").getByRole("button", { name: "Unmute microphone" }).click();
+  await call.getByRole("button", { name: "Mute microphone" }).first().click();
+  await call.getByRole("button", { name: "Unmute microphone" }).first().click();
   await call.locator(".clyra-voice-agent-bar").getByRole("button", { name: "Chat", exact: true }).click();
   await call.locator(".clyra-voice-composer-v2__input").fill("Actually focus on TikTok and Instagram, and keep the budget under $500");
   const revisedRequest = page.waitForResponse((response) => response.url().includes("/revise") && response.request().method() === "POST", { timeout: 12_000 });
@@ -128,7 +128,7 @@ try {
   assert.equal(starts, 1, "correction modifies existing mission instead of starting a second");
   assert.equal(revisions.length, 1, "correction is sent to mission revision route");
   assert.match(revisions[0], /TikTok and Instagram/);
-  await call.locator(".clyra-voice-call__header").getByRole("button", { name: "End call" }).click();
+  await call.getByRole("button", { name: "End call" }).first().click();
   await page.locator(".clyra-voice-call").waitFor({ state: "detached", timeout: 10_000 });
   console.log("voice-call-live-smoke: React call controls, same-mission correction and clean ending passed");
 } finally {
