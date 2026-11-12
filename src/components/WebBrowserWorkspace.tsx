@@ -1558,22 +1558,11 @@ export default function WebBrowserWorkspace({ initialTaskDraft = "", initialUrl 
     };
   }, [messages.length, isAgentBusy, runItems.length, settings.reducedMotion, planDisclosureOpen, completedStepsOpen]);
 
-  useEffect(() => {
-    if (!desktopChromium) return;
-    const desktop = getElectronDesktop();
-    if (!desktop) return;
-    if (!cursor || !isAgentBusy || !settings.showAiCursor || browserState?.agent.manualControl) {
-      void desktop.browser.setCursor(null);
-      return;
-    }
-    void desktop.browser.setCursor({
-      ...cursor,
-      label: cursorIntent,
-      showLabel: settings.showAiActionLabels,
-      reducedMotion: settings.reducedMotion,
-    });
-    return () => { void desktop.browser.setCursor(null); };
-  }, [browserState?.agent.manualControl, cursor, cursorIntent, desktopChromium, isAgentBusy, settings.reducedMotion, settings.showAiActionLabels, settings.showAiCursor]);
+  // The native Chromium controller owns its AI pointer and emits the real
+  // CDP mouse coordinates. Replaying React preview coordinates into it here
+  // used to race actual clicks, clear the marker during actions, and turn
+  // screenshots into pretend movement. Keep only the native input source.
+  // The React cursor continues to render over non-native captured previews.
   const activeTab = useMemo(
     () => browserState?.tabs.find((tab) => tab.active),
     [browserState?.tabs],
