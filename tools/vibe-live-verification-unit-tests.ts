@@ -25,7 +25,7 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
       } });
     }
     if (requestUrl.startsWith("/api/openbrowser/diagnostics?")) {
-      return json({ ok: true, errors: scenario === "runtime-error"
+      return json({ ok: true, attached: true, errors: scenario === "runtime-error"
         ? [{ kind: "pageerror", message: "TypeError: Cannot read properties of undefined" }]
         : [] });
     }
