@@ -91,7 +91,9 @@
     "test:clyra-code-brief": "tsx tools/clyra-code-brief-unit-tests.ts",
     "test:chat-intent": "tsx tools/chat-intent-unit-tests.ts",
     "test:chat-rich": "tsx tools/chat-rich-results-unit-tests.ts",
-    "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts"
+    "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts",
+    "test:mail": "node tools/mail-mime-tests.mjs",
+    "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",

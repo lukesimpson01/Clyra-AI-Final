@@ -130,8 +130,12 @@ jobs:
           done
           tail -150 /tmp/clyra-ci-app.log
           exit 1
+      - name: Secure Gmail MIME and attachment contract tests
+        run: npm run test:mail
       - name: Current voice call React and agent revision integration
         run: npm run test:voice-call-e2e
+      - name: Mail inbox, composer and Gmail workflow integration
+        run: npm run test:mail-e2e
         env:
           CLYRA_URL: http://127.0.0.1:3000
       - name: Browser API and agent fixture tests
@@ -167,3 +171,4 @@ jobs:
             qa-artifacts/browser-complex/
             qa-screenshots/clyra-code-template-store/
             qa-screenshots/voice-call/
+            qa-screenshots/mail/
