@@ -151,7 +151,7 @@ export function TemplateScreenshotGallery({ entry }: { entry: TemplateManifest }
               </figure>
             ))}
           </div>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">These are actual images referenced by the upstream project’s README, not screenshots of a running Clyra installation. Some repositories may provide fewer than three suitable UI images.</p>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[#86868B]">These are real screenshots from official upstream documentation or its README, not screenshots of a running Clyra installation. Some repositories may provide fewer than three suitable UI images.</p>
         </>
       ) : (
         <div className="mt-3 flex min-h-[166px] flex-col items-center justify-center rounded-[14px] border border-dashed border-black/[0.11] bg-[#FAFAFB] px-5 text-center">

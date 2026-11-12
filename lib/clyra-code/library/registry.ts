@@ -162,6 +162,14 @@ const seeds: readonly Seed[] = [
  * Leave entries empty where a suitable demonstrable preview is unavailable.
  */
 const UPSTREAM_README_PREVIEWS: Readonly<Record<string, ReadonlyArray<readonly [string, string]>>> = {
+  openhands: [
+    ["https://www.openhands.dev/assets/agent-canvas/01-home-conversations.png", "OpenHands Agent Canvas welcome screen with New Chat and main composer"],
+    ["https://www.openhands.dev/assets/agent-canvas/02-conversation-chat.png", "OpenHands conversation workspace with the chat composer and agent activity"],
+    ["https://www.openhands.dev/assets/agent-canvas/06-automations-list.png", "OpenHands automations dashboard"],
+    ["https://www.openhands.dev/assets/agent-canvas/07-automation-detail.png", "OpenHands automation detail and activity"],
+    ["https://www.openhands.dev/assets/agent-canvas/08-skills.png", "OpenHands Skills browser and catalogue"],
+    ["https://www.openhands.dev/assets/agent-canvas/09-mcp.png", "OpenHands MCP connections and integrations"],
+  ],
   excalidraw: [
     ["https://excalidraw.nyc3.cdn.digitaloceanspaces.com/github%2Fproduct_showcase.png", "Excalidraw product canvas showcase from its upstream README"],
   ],
@@ -200,7 +208,7 @@ function upstreamReadmePreviews(id: string, repositoryUrl: string): SourceScreen
     alt,
     // Upstream documentation does not state the original capture date.
     capturedAt: "",
-    provenance: "Upstream project README (" + repositoryUrl + "); image cited as of 2026-11-12. Not a screenshot of a running Clyra template.",
+    provenance: "Official upstream project documentation (" + repositoryUrl + "); source image selected as of 2026-11-12. Not a screenshot of a running Clyra template.",
   }));
 }
 
