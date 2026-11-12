@@ -298,6 +298,8 @@ export function Composer({
         </motion.div>
       ) : null}
       <motion.div
+        data-running={running ? "" : undefined}
+        data-welcome={welcome ? "" : undefined}
         className={cn("cc-composer relative mx-auto overflow-visible rounded-[20px] border border-black/[0.08] bg-white", welcome ? "max-w-[620px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14]" : "max-w-[680px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14] focus-within:shadow-[0_0_0_3px_rgba(30,111,255,0.07),0_12px_28px_-16px_rgba(20,24,32,0.16)]")}
       >
         <AnimatePresence initial={false}>

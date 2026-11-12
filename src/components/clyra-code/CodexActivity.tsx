@@ -11,7 +11,6 @@ import {
   BookOpen,
   ChevronDown,
   Minus,
-  Square,
   X,
   Download,
   FolderTree,
@@ -402,7 +401,6 @@ export function RunHeader({
   since,
   until,
   summary,
-  onStop,
 }: {
   phase: "running" | "complete" | "failed" | "cancelled";
   label: string;
@@ -413,7 +411,7 @@ export function RunHeader({
 }) {
   const reduced = useReducedMotion();
   const live = phase === "running";
-  const title = live ? label : phase === "complete" ? "Completed" : phase === "failed" ? "Needs attention" : "Stopped";
+  const title = live ? "Working" : phase === "complete" ? "Completed" : phase === "failed" ? "Needs attention" : "Stopped";
   return (
     <div className="cxr" data-phase={phase} role="status" aria-live="polite">
       <div className="cxr-top">
@@ -437,15 +435,9 @@ export function RunHeader({
             <ElapsedClock since={since} until={live ? null : until} />
           </>
         ) : null}
+        {live ? <span className="cxr-step" aria-label="Current agent activity">{label === "Working" ? "Thinking" : label}</span> : null}
         {!live && summary ? <span className="cxr-summary">{summary}</span> : null}
-        {live && onStop ? (
-          <button type="button" className="cxr-stop" onClick={onStop} title="Stop">
-            <Square strokeWidth={0} fill="currentColor" aria-hidden />
-            Stop
-          </button>
-        ) : null}
       </div>
-      <div className="cxr-line" aria-hidden><span className="cxr-sheen" /></div>
     </div>
   );
 }

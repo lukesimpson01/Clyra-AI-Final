@@ -80,8 +80,8 @@ function Stars({ rating, size = 15 }: { rating: number; size?: number }) {
 export function TemplateSampleInlineRating({ entry }: { entry: TemplateManifest }) {
   const score = sampleTemplateRating(entry);
   return (
-    <span className="mt-0.5 inline-flex max-w-full items-center gap-1 text-[10.5px] text-[#86868B]" title="Illustrative sample reviews, not real user ratings">
-      <Stars rating={score.average} size={10} />
+    <span className="mt-1 inline-flex max-w-full items-center gap-1.5 text-[12px] text-[#65656B]" title="Illustrative sample reviews, not real user ratings">
+      <Stars rating={score.average} size={12} />
       <span className="tabular-nums">{score.average.toFixed(1)}</span>
       <span>sample</span>
     </span>

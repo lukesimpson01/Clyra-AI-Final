@@ -682,7 +682,11 @@ export function Conversation({
                 <motion.div key="thinking" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -2 }} transition={{ duration: 0.22, ease: AGENT_EASE }} className="mt-2">
                   <ThinkingEvent entry={openThought} />
                 </motion.div>
-              ) : null
+              ) : (
+                <motion.div key="thinking-idle" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -2 }} transition={{ duration: 0.22, ease: AGENT_EASE }} className="mt-2 px-0.5 text-[12.5px] text-[#737373]" role="status" aria-label="Agent is thinking">
+                  <ThinkingLabel />
+                </motion.div>
+              )
             ) : null}
           </AnimatePresence>
 
