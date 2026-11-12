@@ -1,131 +1,51 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { VoiceCallScreenCall, VoiceCallScreenProps } from "./VoiceCallScreen";
+import { useEffect, useRef, useState } from "react";
+import { VoiceCallScreen, type VoiceCallScreenCall, type VoiceCallScreenProps } from "./VoiceCallScreen";
 import { VOICE_CALL_TRIGGER_EVENT, type VoiceCallTriggerDetail } from "./voiceCallTrigger";
 
-/** The session controller adds lifecycle actions to the pasted UI's view contract. */
-export type VoiceCallHostCall = VoiceCallScreenCall & {
-  startCall: () => void | Promise<void>;
-};
-
-export type VoiceCallHostProps = Omit<VoiceCallScreenProps, "call"> & {
+/** The controller remains the single owner of the microphone, speech and agent session. */
+export type VoiceCallHostCall = VoiceCallScreenCall & { startCall: () => void | Promise<void> };
+export type VoiceCallHostProps = Omit<VoiceCallScreenProps, "call" | "mediaMode" | "onMediaModeChange"> & {
   call: VoiceCallHostCall;
 };
 
-const PASTED_VOICE_CALL_UI = "/voice-call-ui.html";
-const VOICE_CALL_BACKGROUND_STYLE_ID = "clyra-voice-call-background";
-
 /**
- * A deliberately thin lifecycle bridge around public/voice-call-ui.html.
- *
- * That file is the user's complete, paste-ready UI and animation source. This
- * component never edits the pasted source. It only supplies the lifecycle
- * bridge, a white host surface matching chat, and the session controls.
+ * Use the existing live React call surface instead of the disconnected
+ * iframe mockup. The latter could handle End/Mute clicks but could not
+ * receive the real listening/thinking/agent/transcript state at all.
  */
-export function VoiceCallHost({ call }: VoiceCallHostProps) {
+export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
   const callRef = useRef(call);
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const unbindFrameRef = useRef<(() => void) | null>(null);
-  const [presented, setPresented] = useState(false);
+  const [mediaMode, setMediaMode] = useState<"camera" | "screen" | null>(null);
   callRef.current = call;
 
   useEffect(() => {
-    if (!call.active) {
-      setPresented(false);
-      return;
-    }
-
-    const frame = requestAnimationFrame(() => setPresented(true));
-    return () => cancelAnimationFrame(frame);
-  }, [call.active]);
-
-  useEffect(() => {
-    const handleTrigger = (event: Event) => {
+    const onTrigger = (event: Event) => {
       const detail = (event as CustomEvent<VoiceCallTriggerDetail>).detail;
       const action = detail?.action || "start";
       const controller = callRef.current;
-
-      if (action === "end") {
+      if (action === "end" || (action === "toggle" && controller.active)) {
         void controller.endCall();
-        return;
-      }
-      if (action === "toggle" && controller.active) {
-        void controller.endCall();
-        return;
-      }
-      void controller.startCall();
-    };
-
-    window.addEventListener(VOICE_CALL_TRIGGER_EVENT, handleTrigger);
-    return () => window.removeEventListener(VOICE_CALL_TRIGGER_EVENT, handleTrigger);
-  }, []);
-
-  const bindPastedUi = useCallback(() => {
-    unbindFrameRef.current?.();
-    const document = frameRef.current?.contentDocument;
-    if (!document) return;
-
-    // The supplied file stays byte-for-byte intact. This runtime-only rule
-    // makes its canvas use the same white surface as the surrounding chats.
-    let backgroundStyle = document.getElementById(VOICE_CALL_BACKGROUND_STYLE_ID) as HTMLStyleElement | null;
-    if (!backgroundStyle) {
-      backgroundStyle = document.createElement("style");
-      backgroundStyle.id = VOICE_CALL_BACKGROUND_STYLE_ID;
-      document.head.append(backgroundStyle);
-    }
-    backgroundStyle.textContent = `
-      html, body, #__bundler_thumbnail { background: #ffffff !important; }
-      x-dc > div[style*="background:radial-gradient"] { background: #ffffff !important; }
-    `;
-
-    const onControlClick = (event: MouseEvent) => {
-      // Capture the value before the untouched pasted page runs its own button
-      // handler. Programmatic End clicks below are animation-only and must not
-      // issue a second session request.
-      if (!event.isTrusted) return;
-      const button = (event.target as Element | null)?.closest("button");
-      const label = button?.getAttribute("aria-label");
-      const controller = callRef.current;
-
-      if (label === "End") {
-        void controller.endCall();
-      } else if (label === "Mute microphone" || label === "Unmute microphone") {
-        controller.toggleMute();
-      } else if (label === "Send") {
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="Message Clyra"]');
-        const text = input?.value.trim();
-        if (text) void controller.sendText(text);
+      } else if (!controller.active) {
+        void controller.startCall();
       }
     };
-
-    document.addEventListener("click", onControlClick, true);
-    unbindFrameRef.current = () => document.removeEventListener("click", onControlClick, true);
+    window.addEventListener(VOICE_CALL_TRIGGER_EVENT, onTrigger);
+    return () => window.removeEventListener(VOICE_CALL_TRIGGER_EVENT, onTrigger);
   }, []);
-
-  useEffect(() => () => unbindFrameRef.current?.(), []);
 
   useEffect(() => {
-    if (call.state !== "ending") return;
-    // Ask the pasted page to run its existing End handler. Its own animation
-    // fades at 420ms and completes at 720ms; the voice controller unmounts the
-    // frame after that same finish window.
-    frameRef.current?.contentDocument?.querySelector<HTMLButtonElement>('button[aria-label="End"]')?.click();
-  }, [call.state]);
+    if (!call.active || call.state === "ending") setMediaMode(null);
+  }, [call.active, call.state]);
 
   if (!call.active) return null;
 
   return (
-    <div
-      className="clyra-voice-call-host"
-      data-presented={presented}
-      data-ending={call.state === "ending"}
-      aria-hidden={call.state === "ending" ? true : undefined}
-    >
-      <iframe
-        ref={frameRef}
-        className="clyra-voice-call-host__frame"
-        src={PASTED_VOICE_CALL_UI}
-        title="Clyra voice call"
-        onLoad={bindPastedUi}
+    <div className="clyra-voice-call-host" data-presented="true" data-ending={call.state === "ending"}>
+      <VoiceCallScreen
+        {...screenProps}
+        call={call}
+        mediaMode={mediaMode}
+        onMediaModeChange={setMediaMode}
       />
     </div>
   );

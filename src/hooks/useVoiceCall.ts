@@ -455,6 +455,12 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const onMicLevel = useCallback((level: number) => {
     const e = engine.current;
     const now = performance.now();
+    // Throttle the live mic meter so the face gets real audio energy without
+    // driving a React render for every audio callback.
+    if (now - e.lastLevelDispatch >= 90) {
+      e.lastLevelDispatch = now;
+      dispatch({ type: "SET_LEVEL", source: "mic", level: sessionRef.current.muted ? 0 : Math.min(1, Math.max(0, level)) });
+    }
     if (!e.ready || sessionRef.current.muted || sessionRef.current.state === "ending") return;
     const loud = level >= VOICE_SPEECH_LEVEL;
     if (loud) {

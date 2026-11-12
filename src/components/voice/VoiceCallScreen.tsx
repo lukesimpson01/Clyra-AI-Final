@@ -11,7 +11,8 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
-import { ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square } from "lucide-react";
+import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square } from "lucide-react";
+import { VoiceMediaSurface } from "./VoiceMediaSurface";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -110,6 +111,8 @@ export type VoiceCallScreenProps = {
   testMode: boolean;
   avatarColor?: string;
   onOpenSettings?: () => void;
+  mediaMode?: "camera" | "screen" | null;
+  onMediaModeChange?: (mode: "camera" | "screen" | null) => void;
 };
 
 /* ------------------------------------------------------------------ */
@@ -755,10 +758,10 @@ function ApprovalPanel({ approval, onConfirm, onCancel }: { approval: ApprovalRe
   );
 }
 
-export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
+export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: VoiceCallScreenProps) {
   const reduced = useReducedMotion();
   const duration = useMemo(() => time(call.elapsedSeconds), [call.elapsedSeconds]);
-  const hasActivity = Boolean(call.activeTask && call.activeSurface);
+  const hasActivity = Boolean(call.activeTask) || Boolean(mediaMode);
   const response = call.error || call.responseText;
   const [lastTypeAt, setLastTypeAt] = useState(0);
   const [now, setNow] = useState(0);
@@ -839,6 +842,10 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
         >
           <motion.header className="clyra-voice-call__header" animate={headerGroup.animate} transition={headerGroup.transition}>
             <time aria-label={`Call duration ${duration}`}>{duration}</time>
+            <div className="clyra-voice-call__media-actions" aria-label="Live media controls">
+              <button type="button" aria-label={mediaMode === "camera" ? "Stop camera" : "Start camera"} aria-pressed={mediaMode === "camera"} data-active={mediaMode === "camera"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "camera" ? null : "camera")}><Camera size={17} strokeWidth={1.8} /><span>Camera</span></button>
+              <button type="button" aria-label={mediaMode === "screen" ? "Stop screen sharing" : "Start screen sharing"} aria-pressed={mediaMode === "screen"} data-active={mediaMode === "screen"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "screen" ? null : "screen")}><Monitor size={17} strokeWidth={1.8} /><span>Screen</span></button>
+            </div>
           </motion.header>
 
           <main className={`clyra-voice-call__main${hasActivity ? " clyra-voice-call__main--activity" : ""}`}>
@@ -877,8 +884,9 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
               ) : null}
             </AnimatePresence>
 
+            {mediaMode ? <VoiceMediaSurface key={mediaMode} mode={mediaMode} lowPower={call.lowPowerMode} onStop={() => onMediaModeChange?.(null)} /> : null}
             <AnimatePresence mode="popLayout">
-              {hasActivity && call.activeTask ? (
+              {call.activeTask ? (
                 <VoiceActivitySurface key={call.activeTask.id} task={call.activeTask} surface={call.activeSurface} controlling={activeState(call.state) && call.state !== "paused" && call.state !== "user_takeover"} onToggleExpanded={call.toggleSurfaceExpanded} />
               ) : (
                 <motion.div className="clyra-voice-call__copy" aria-live="polite" animate={headerGroup.animate} transition={headerGroup.transition}>
