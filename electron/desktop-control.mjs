@@ -422,17 +422,45 @@ for ($i=1; $i -le $count; $i++) {
   }
 }
 
-const AI_PRESENCE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-  *{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none;user-select:none;-webkit-user-select:none}
-  #edge{position:fixed;inset:0;opacity:0;transition:opacity 120ms ease;background:linear-gradient(90deg,rgba(47,129,255,.34),transparent 7%,transparent 93%,rgba(47,129,255,.34)),linear-gradient(0deg,rgba(47,129,255,.20),transparent 8%,transparent 92%,rgba(47,129,255,.20));box-shadow:inset 0 0 32px rgba(62,141,255,.28)}
-  #cursor{position:fixed;left:0;top:0;width:17px;height:17px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid #fff;background:#1e6fff;box-shadow:0 0 0 2px rgba(30,111,255,.18),0 3px 11px rgba(20,79,176,.28);opacity:0;transition:left 0ms cubic-bezier(.65,0,.35,1),top 0ms cubic-bezier(.65,0,.35,1),opacity 100ms ease}
-  #cursor.guide{background:radial-gradient(circle at 36% 30%,#fff 0 8%,#c6e7ff 10% 22%,#50a4ff 45%,#2678dd 100%)}
-  #pulse{position:fixed;left:0;top:0;width:42px;height:42px;border:2px solid rgba(93,173,255,.86);border-radius:50%;transform:translate(-50%,-50%) scale(.35);opacity:0}
-  #pulse.click{animation:ripple 430ms ease-out}@keyframes ripple{0%{opacity:.92;transform:translate(-50%,-50%) scale(.35)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.25)}}
-  #label{position:fixed;left:0;top:0;transform:translate(16px,14px);padding:5px 8px;border-radius:7px;background:rgba(8,30,72,.86);color:#fff;font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.01em;white-space:nowrap;opacity:0;transition:opacity 100ms ease}
-  body.active #cursor,body.active #label{opacity:1}body.controlling #edge{opacity:1}
-</style></head><body><div id="edge"></div><div id="pulse"></div><div id="cursor"></div><div id="label"></div><script>
-  const cursor=document.getElementById('cursor'), pulse=document.getElementById('pulse'), label=document.getElementById('label');
-  window.__setAIPresence=(value)=>{const on=Boolean(value);document.body.classList.toggle('active',on);if(!on)return;const x=Math.round(value.x||0),y=Math.round(value.y||0);cursor.style.transitionDuration=(value.durationMs||0)+'ms,'+(value.durationMs||0)+'ms,100ms';cursor.style.left=pulse.style.left=label.style.left=x+'px';cursor.style.top=pulse.style.top=label.style.top=y+'px';cursor.classList.toggle('guide',Boolean(value.guide));document.body.classList.toggle('controlling',!value.guide&&!value.paused);label.textContent=value.label||'Clyra';pulse.classList.remove('click');if(value.kind==='click'){void pulse.offsetWidth;pulse.classList.add('click')}};
-  window.__openCluelySetAICursor=window.__setAIPresence;
+const AI_PRESENCE_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;background:transparent;overflow:hidden;pointer-events:none;user-select:none;-webkit-user-select:none}
+  #cursor{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;will-change:left,top;transition:opacity 100ms ease}
+  #arrow{position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;transform-origin:4px 3px;filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18))}
+  #pulse{position:fixed;left:0;top:0;width:32px;height:32px;border:2px solid rgba(30,111,255,.6);border-radius:50%;transform:translate(-50%,-50%) scale(.2);opacity:0;pointer-events:none}
+  #pulse.is-click{animation:impact 390ms cubic-bezier(.16,1,.3,1)}
+  @keyframes impact{0%{opacity:.82;transform:translate(-50%,-50%) scale(.2)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.45)}}
+  @keyframes press{0%,100%{transform:scale(1)}35%{transform:scale(.88) translate(1px,1px)}}
+  #arrow.is-press{animation:press 250ms cubic-bezier(.22,1,.36,1)}
+  #label{position:fixed;left:0;top:0;opacity:0;padding:6px 9px;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);color:#252a35;box-shadow:0 4px 14px rgba(20,32,52,.13);font:500 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+  body.active #cursor{opacity:1}body.active #label{opacity:1}
+  @media(prefers-reduced-motion:reduce){#pulse.is-click,#arrow.is-press{animation:none}}
+</style></head><body>
+<div id="cursor"><svg id="arrow" viewBox="0 0 34 38" aria-hidden="true"><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#1e6fff" stroke="#1e6fff" stroke-width="5.4" stroke-linejoin="round"/><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#fff" stroke="#252a35" stroke-width="2.45" stroke-linejoin="round"/></svg></div>
+<div id="pulse"></div><div id="label"></div>
+<script>
+const cursor=document.getElementById("cursor"), arrow=document.getElementById("arrow");
+const pulse=document.getElementById("pulse"), label=document.getElementById("label");
+let prior=null;
+window.__setAIPresence=(value)=>{
+  const active=!!value;
+  document.body.classList.toggle("active", active);
+  if(!active){prior=null;return;}
+  const x=Math.round(value.x), y=Math.round(value.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return;
+  cursor.style.left=x+"px";cursor.style.top=y+"px";
+  pulse.style.left=x+"px";pulse.style.top=y+"px";
+  label.style.left=(x+23)+"px";label.style.top=(y+27)+"px";
+  label.textContent=String(value.label||"Clyra");
+  label.style.display=value.showLabel===false?"none":"block";
+  const click=value.kind==="click"||value.kind==="double_click"||value.kind==="right_click";
+  if(click){
+    pulse.classList.remove("is-click");arrow.classList.remove("is-press");
+    void pulse.offsetWidth;
+    pulse.classList.add("is-click");arrow.classList.add("is-press");
+  }else if(prior==="click") arrow.classList.remove("is-press");
+  prior=click?"click":"move";
+};
+window.__openCluelySetAICursor=window.__setAIPresence;
 </script></body></html>`;
