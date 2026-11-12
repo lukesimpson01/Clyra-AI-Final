@@ -1128,7 +1128,12 @@ export class ChromiumBrowserManager {
     } else if ([cursor.x, cursor.y].every(Number.isFinite)) {
       const event = { id: ++this.cursorSequence, at: Date.now(), x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
       if (tabId) this.cursorsByTab.set(tabId, event);
-      if (!tabId || tabId === this.activeTabId) this.cursor = event;
+      if (!tabId || tabId === this.activeTabId) {
+        this.cursor = event;
+        // The Playwright fallback also supplies this method, but only after
+        // real mouse dispatch. Keep the next native CDP path continuous.
+        this.agentCursorPoint = { x: event.x, y: event.y };
+      }
     }
     // Keep the human's visible tab undisturbed while an agent continues in a
     // different tab. The cursor becomes visible automatically when that tab
