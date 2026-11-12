@@ -718,3 +718,17 @@
   .clyra-pointer__core.is-press { animation:none!important; }
   .clyra-pointer__halo { animation:none!important; opacity:.65; }
 }
+
+/* AI pointer matches the native desktop and Chromium cursor; its SVG tip is
+   fixed at input coordinate 0,0, so clicks do not visually drift. */
+.clyra-ai-cursor-glyph {
+  position:absolute;left:-4px;top:-3px;width:34px;height:38px;
+  overflow:visible;pointer-events:none;transform-origin:4px 3px;
+  filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18));
+}
+.clyra-ai-cursor-glyph.is-pressed {animation:clyra-ai-press .26s cubic-bezier(.22,1,.36,1) both}
+@keyframes clyra-ai-press {
+  0%,100%{transform:scale(1)}
+  32%{transform:scale(.87) translate(1px,1px)}
+}
+@media(prefers-reduced-motion:reduce){.clyra-ai-cursor-glyph.is-pressed{animation:none!important}}
