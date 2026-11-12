@@ -1,54 +1,34 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { MousePointer2 } from "lucide-react";
 
-export function AgentCursor({
-  x,
-  y,
-  isClicking,
-  isActive,
-}: {
-  x: number;
-  y: number;
-  isClicking: boolean;
-  isActive: boolean;
+/** Vibe preview pointer: same tailless 16px Clyra blue control point. */
+export function AgentCursor({ x, y, isClicking, isActive }: {
+  x: number; y: number; isClicking: boolean; isActive: boolean;
 }) {
-  return (
-    <AnimatePresence>
-      {isActive && (
-        <motion.div
-          className="pointer-events-none absolute z-50 drop-shadow-lg"
-          initial={{ opacity: 0, x, y }}
-          animate={{ opacity: 1, x, y }}
+  return <AnimatePresence>
+    {isActive && <motion.div
+      aria-hidden
+      className="pointer-events-none absolute z-50"
+      initial={{ opacity: 0, x, y }}
+      animate={{ opacity: 1, x, y }}
+      exit={{ opacity: 0 }}
+      transition={{ x: { type: "spring", stiffness: 430, damping: 38, mass: .38 }, y: { type: "spring", stiffness: 430, damping: 38, mass: .38 }, opacity: { duration: .12 } }}
+      style={{ left: 0, top: 0 }}
+    >
+      <motion.div
+        className="absolute -left-2 -top-2 h-4 w-4 rounded-full border-2 border-white bg-[#1E6FFF] shadow-[0_2px_9px_rgba(30,111,255,0.32)]"
+        animate={{ scale: isClicking ? .77 : 1 }}
+        transition={{ duration: .12 }}
+      />
+      <AnimatePresence>
+        {isClicking && <motion.div
+          key="click"
+          className="absolute -left-4 -top-4 h-8 w-8 rounded-full border-2 border-blue-400"
+          initial={{ opacity: .7, scale: .45 }}
+          animate={{ opacity: 0, scale: 1.65 }}
           exit={{ opacity: 0 }}
-          transition={{
-            x: { type: "spring", stiffness: 100, damping: 20, mass: 0.5 },
-            y: { type: "spring", stiffness: 100, damping: 20, mass: 0.5 },
-            opacity: { duration: 0.2 },
-          }}
-          style={{ left: 0, top: 0 }}
-        >
-          <motion.div
-            animate={{ scale: isClicking ? 0.8 : 1 }}
-            transition={{ duration: 0.1 }}
-            className="text-blue-500 drop-shadow-md"
-          >
-            <MousePointer2 className="h-6 w-6 fill-blue-500" />
-          </motion.div>
-          
-          {/* Click Ripple */}
-          <AnimatePresence>
-            {isClicking && (
-              <motion.div
-                initial={{ scale: 0.5, opacity: 0.8 }}
-                animate={{ scale: 2.5, opacity: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.4, ease: "easeOut" }}
-                className="absolute -left-2 -top-2 h-8 w-8 rounded-full border-2 border-blue-400 bg-blue-400/20"
-              />
-            )}
-          </AnimatePresence>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
+          transition={{ duration: .42, ease: "easeOut" }}
+        />}
+      </AnimatePresence>
+    </motion.div>}
+  </AnimatePresence>;
 }
