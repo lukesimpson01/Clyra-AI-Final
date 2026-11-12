@@ -98,7 +98,7 @@ export function TemplateRatingGlance({ entry }: { entry: TemplateManifest }) {
       <span>{sample.average.toFixed(1)} · Sample average, not customer ratings</span>
       {review ? <span>· Your rating: {review.rating}/5</span> : null}
       <span aria-hidden="true" className="h-3 w-px bg-black/10" />
-      <span>{entry.sourceScreenshots.length} {entry.sourceScreenshots.length === 1 ? "source preview" : "source previews"}</span>
+      <span>Official source gallery</span>
     </div>
   );
 }

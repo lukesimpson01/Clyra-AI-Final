@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
 import { TemplateRatingGlance, TemplateSampleInlineRating, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
+import { discoverOfficialScreenshots } from "./templateSourceScreenshots";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
 
@@ -167,11 +168,34 @@ function IconWash({ entry, opacity = 0.5 }: { entry: TemplateManifest; opacity?:
  * app's own icon on a colour wash — crisp at any size, never a cropped social-preview image.
  */
 function SourceVisual({ entry, className = "", iconSize = 64 }: { entry: TemplateManifest; className?: string; iconSize?: number }) {
-  const sourceCapture = entry.sourceScreenshots[0];
+  const root = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [discovered, setDiscovered] = useState<Awaited<ReturnType<typeof discoverOfficialScreenshots>>>([]);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const observer = new IntersectionObserver((changes) => {
+      if (changes.some((change) => change.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "220px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [entry.id]);
+  useEffect(() => {
+    if (!visible || entry.sourceScreenshots.length) return;
+    let alive = true;
+    void discoverOfficialScreenshots(entry.repositoryUrl).then((shots) => {
+      if (alive) setDiscovered(shots);
+    });
+    return () => { alive = false; };
+  }, [entry.repositoryUrl, entry.sourceScreenshots.length, visible]);
+  const sourceCapture = entry.sourceScreenshots[0] ?? discovered[0];
   if (sourceCapture && state !== "failed") {
     return (
-      <div className={cn("relative isolate overflow-hidden bg-[#F5F5F7]", className)}>
+      <div ref={root} className={cn("relative isolate overflow-hidden bg-[#F5F5F7]", className)}>
         <img src={sourceCapture.url} alt={sourceCapture.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onLoad={() => setState("ready")} onError={() => setState("failed")}
           className={cn("absolute inset-0 h-full w-full object-cover transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.025]", state === "ready" ? "opacity-100" : "opacity-0")} />
         {state === "loading" ? <div className="cc-lib-shimmer absolute inset-0" aria-hidden /> : null}
@@ -179,7 +203,7 @@ function SourceVisual({ entry, className = "", iconSize = 64 }: { entry: Templat
     );
   }
   return (
-    <div className={cn("relative isolate overflow-hidden", className)} aria-hidden style={{ background: coverBackground(entry) }}>
+    <div ref={root} className={cn("relative isolate overflow-hidden", className)} aria-hidden style={{ background: coverBackground(entry) }}>
       <IconWash entry={entry} opacity={0.42} />
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
         <span className="transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-0.5 group-hover:scale-[1.045]"><AppIcon entry={entry} size={iconSize} lifted /></span>
