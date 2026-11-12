@@ -1,0 +1,63 @@
+name: Clyra AI cursor — cross-platform contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "electron/ai-cursor-motion.mjs"
+      - "electron/browser-manager.mjs"
+      - "electron/desktop-control.mjs"
+      - "electron/native-pointer.swift"
+      - "electron/preload.cjs"
+      - "lib/openbrowser/browser-runtime.ts"
+      - "src/components/agent/**"
+      - "src/components/chat/AgentPointer.tsx"
+      - "src/components/chat/ChatBrowserRun.tsx"
+      - "src/components/vibe-coder/preview/AgentCursor.tsx"
+      - "src/voice/VoiceActivitySurface.tsx"
+      - "tools/ai-cursor-unit-tests.mjs"
+      - "tools/windows-pointer-abi-tests.mjs"
+      - "tools/prepare-macos-pointer.mjs"
+      - ".github/workflows/clyra-cursor-cross-platform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clyra-cursor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pointer-contract:
+    name: Cursor contracts / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check native process JavaScript modules
+        run: |
+          node --check electron/ai-cursor-motion.mjs
+          node --check electron/browser-manager.mjs
+          node --check electron/desktop-control.mjs
+      - name: Test cursor motion and real-event contract
+        run: node tools/ai-cursor-unit-tests.mjs
+      - name: Verify Windows native input declarations
+        if: runner.os == 'Windows'
+        run: node tools/windows-pointer-abi-tests.mjs
+      - name: Verify macOS CoreGraphics pointer compiles
+        if: runner.os == 'macOS'
+        run: node tools/prepare-macos-pointer.mjs
+      - name: Ensure prepared macOS input helper is executable
+        if: runner.os == 'macOS'
+        run: test -x electron/native-pointer-darwin
