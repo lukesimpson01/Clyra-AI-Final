@@ -713,34 +713,10 @@ export default function ClyraCodeWorkspace({
     [activeProject, beginOptimisticPrompt, catalog, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
   );
 
-  // "Open in Clyra Code" from the Library: select the installed project, bring up
-  // the live preview (usePreview starts the dev server for the active project),
-  // then send one setup prompt once that project is actually active so the
-  // message can never land in a different project.
-  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
-  // Library hand-off: the shell fades out (same pure fade as first entering
-  // Vibe Coder), the project lands with the sidebar and preview open, then the
-  // shell fades back in while the dev server's build animation runs.
+  // Library Open selects the cloned project; usePreview manages its real dev
+  // server. No AI prompt or generated edits are involved in source opening.
   const [handoffFading, setHandoffFading] = useState(false);
-  // The installed app's thread gets a quiet welcome prompt once setup is done.
-  const [libraryWelcome, setLibraryWelcome] = useState<{ name: string; sessionId: string | null } | null>(null);
-  useEffect(() => {
-    if (!libraryWelcome || libraryWelcome.sessionId || !state.sessionId || !running) return;
-    setLibraryWelcome((current) => (current && !current.sessionId ? { ...current, sessionId: state.sessionId } : current));
-  }, [libraryWelcome, running, state.sessionId]);
-  useEffect(() => {
-    if (!autoStart || state.activeProjectId !== autoStart.projectId || running) return;
-    const { name, repositoryUrl } = autoStart;
-    setAutoStart(null);
-    setRightPanelOpen(true);
-    setRightTab("browser");
-    void submitPrompt(
-      `I just installed ${name} (source: ${repositoryUrl}) into this project from the Clyra Library. Set it up to run: read its README and package files, install dependencies, start the dev server and confirm the live preview loads, fixing any setup problems you hit. When it is running, give me a two-line summary of what the app does, then ask what I would like to change, and offer to publish it when I am happy.`,
-      [],
-      undefined,
-      { userText: `Set up and run ${name}` },
-    );
-  }, [autoStart, running, state.activeProjectId, submitPrompt]);
+  const [libraryWelcome, setLibraryWelcome] = useState<{ name: string; projectId: string } | null>(null);
 
   // The welcome composer sends with the chosen app type. The brief clears only
   // after a send succeeds, so a rejected send keeps the user's choice.
@@ -1295,14 +1271,13 @@ export default function ClyraCodeWorkspace({
                 transition={{ duration: reducedMotion ? 0 : 0.26, ease: [0.22, 1, 0.36, 1] }}
                 className="flex min-h-0 flex-1 flex-col"
               >
-                {/* A library app's thread keeps a quiet welcome prompt at the top:
-                    the setup run finishes, then the user is invited to change it. */}
-                {libraryWelcome && state.sessionId === libraryWelcome.sessionId && state.log.length > 0 ? (
+                {/* Library projects launch the existing checkout, without a setup agent run. */}
+                {libraryWelcome && state.activeProjectId === libraryWelcome.projectId ? (
                   <div className="mx-auto mt-3 flex w-full max-w-[760px] items-center gap-3 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                     <span className="cc-squircle flex h-8 w-8 shrink-0 items-center justify-center bg-[#3977F6]/[0.09] text-[#3977F6]"><LibraryBig className="h-4 w-4" strokeWidth={1.7} /></span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} {running ? "is being set up" : "is ready"}</span>
-                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">From the Clyra Library — what would you like to change or improve?</span>
+                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} · {preview.session?.status === "ready" || preview.session?.status === "running" ? "Preview ready" : "Source cloned"}</span>
+                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">From the Clyra Library. Preview starts directly from the cloned source; changes are optional.</span>
                     </span>
                   </div>
                 ) : null}
@@ -1412,7 +1387,8 @@ export default function ClyraCodeWorkspace({
           setLibraryOpen(false);
           void loadProjects().then(() => selectProject(projectId));
         }}
-        existingProjectIds={state.projects.map((project) => project.id)}
+        existingProjects={state.projects}
+        onInstalled={() => { void loadProjects(); }}
         onOpenInstalled={(projectId, entry) => {
           setLibraryOpen(false);
           setHandoffFading(true);
@@ -1422,8 +1398,7 @@ export default function ClyraCodeWorkspace({
             try { localStorage.setItem(SIDEBAR_KEY, "0"); } catch { /* storage unavailable */ }
             setRightPanelOpen(true);
             setRightTab("browser");
-            setLibraryWelcome({ name: entry.name, sessionId: null });
-            setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+            setLibraryWelcome({ name: entry.name, projectId });
             await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 0 : 240));
             setHandoffFading(false);
           });

@@ -474,7 +474,8 @@ export function TemplateLibrary({
   onImported,
   onAskClyra,
   onOpenInstalled,
-  existingProjectIds,
+  onInstalled,
+  existingProjects,
 }: {
   open: boolean;
   projectId: string | null;
@@ -483,8 +484,10 @@ export function TemplateLibrary({
   onAskClyra: (entry: TemplateManifest) => void;
   /** Open an installed app in Clyra Code: select it, start the dev server, and start the setup chat. */
   onOpenInstalled?: (projectId: string, entry: TemplateManifest) => void;
-  /** Projects that still exist, used to drop installs whose project was deleted. */
-  existingProjectIds?: string[];
+  /** Refresh projects after a Git checkout completes. */
+  onInstalled?: (projectId: string) => void;
+  /** Persisted project metadata allows recovering installs on a different browser. */
+  existingProjects?: Array<{ id: string; name: string; prompt?: string }>;
 }) {
   const reduce = useReducedMotion();
   useNativeOcclusion(open);
@@ -515,12 +518,23 @@ export function TemplateLibrary({
   const filtering = Boolean(query.trim() || category);
   const isHome = view === "discover" && !filtering;
 
-  // Drop installs whose project no longer exists, so "Open" never leads nowhere.
+  // Project checkouts, not browser localStorage, are the source of truth.
+  // Retain a fresh download until the async project-list refresh completes.
   const liveInstalled = useMemo(() => {
-    if (!existingProjectIds || !existingProjectIds.length) return installedMap;
-    const alive = new Set(existingProjectIds);
-    return Object.fromEntries(Object.entries(installedMap).filter(([, record]) => alive.has(record.projectId)));
-  }, [installedMap, existingProjectIds]);
+    const alive = new Set((existingProjects ?? []).map((project) => project.id));
+    const recovered: Record<string, InstallRecord> = {};
+    for (const entry of catalogue) {
+      const project = existingProjects?.find((candidate) =>
+        candidate.prompt?.includes(`source checkout from ${entry.repositoryUrl} at `) &&
+        candidate.name.startsWith(entry.name),
+      );
+      if (project) recovered[entry.id] = { projectId: project.id, at: 0 };
+    }
+    for (const [id, record] of Object.entries(installedMap)) {
+      if (!existingProjects || alive.has(record.projectId) || Date.now() - record.at < 60_000) recovered[id] = record;
+    }
+    return recovered;
+  }, [catalogue, installedMap, existingProjects]);
 
   const spotlight = useMemo(() => {
     const picked: TemplateManifest[] = [];
@@ -601,7 +615,7 @@ export function TemplateLibrary({
   };
 
   /** One-tap install: verify the pinned revision, then download the source into its own project. */
-  const get = useCallback(async (entry: TemplateManifest) => {
+  const get = useCallback(async (entry: TemplateManifest, newProject = false) => {
     if (phases[entry.id]) return;
     setInstallErrors((current) => { const next = { ...current }; delete next[entry.id]; return next; });
     setPhases((current) => ({ ...current, [entry.id]: "verifying" }));
@@ -612,18 +626,22 @@ export function TemplateLibrary({
       // Let the ring close before the button turns back into a pill that reads Open.
       setPhases((current) => ({ ...current, [entry.id]: "finishing" }));
       await new Promise((resolve) => window.setTimeout(resolve, 520));
-      setInstalledMap((current) => {
-        const next = { ...current, [entry.id]: { projectId: result.project.id, at: Date.now() } };
-        writeInstalled(next);
-        return next;
-      });
-      setJustInstalled(entry);
+      if (!newProject) {
+        setInstalledMap((current) => {
+          const next = { ...current, [entry.id]: { projectId: result.project.id, at: Date.now() } };
+          writeInstalled(next);
+          return next;
+        });
+        setJustInstalled(entry);
+      }
+      onInstalled?.(result.project.id);
+      if (newProject) onOpenInstalled?.(result.project.id, entry);
     } catch (reason) {
       setInstallErrors((current) => ({ ...current, [entry.id]: reason instanceof Error ? reason.message : "The download failed." }));
     } finally {
       setPhases((current) => { const next = { ...current }; delete next[entry.id]; return next; });
     }
-  }, [phases]);
+  }, [phases, onInstalled, onOpenInstalled]);
 
   useEffect(() => {
     if (!justInstalled) return;
@@ -632,11 +650,11 @@ export function TemplateLibrary({
   }, [justInstalled]);
 
   const openInstalled = useCallback((entry: TemplateManifest) => {
-    const record = installedMap[entry.id];
+    const record = liveInstalled[entry.id];
     if (!record) return;
     setJustInstalled(null);
     onOpenInstalled?.(record.projectId, entry);
-  }, [installedMap, onOpenInstalled]);
+  }, [liveInstalled, onOpenInstalled]);
 
   const install: InstallApi = {
     phase: (id) => phases[id],
@@ -676,7 +694,7 @@ export function TemplateLibrary({
 
   const copyClone = async () => {
     if (!selected) return;
-    await navigator.clipboard?.writeText(`git clone ${selected.repositoryUrl}.git`).catch(() => undefined);
+    await navigator.clipboard?.writeText(`git clone ${selected.repositoryUrl.endsWith(".git") ? selected.repositoryUrl : `${selected.repositoryUrl}.git`}`).catch(() => undefined);
   };
 
   const goHome = () => { setView("discover"); setCategory(""); setQuery(""); setSelected(null); };
@@ -769,6 +787,7 @@ export function TemplateLibrary({
                     <TemplateRatingGlance entry={selected} />
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
+                      {install.installed(selected.id) ? <button type="button" disabled={Boolean(phases[selected.id])} onClick={() => void get(selected, true)} className="inline-flex h-[32px] items-center rounded-full bg-[#F0F0F5] px-3.5 text-[12.5px] font-medium text-[#007AFF] transition-colors hover:bg-[#E5E5EA] disabled:opacity-45">Open in a new project</button> : null}
                       {install.installed(selected.id) ? <button type="button"
                         onClick={() => document.getElementById("template-ratings-" + selected.id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })}
                         className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[#F0F0F5] px-3.5 text-[13px] font-semibold text-[#007AFF] transition-colors hover:bg-[#E5E5EA]"
