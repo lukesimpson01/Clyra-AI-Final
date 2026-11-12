@@ -4,7 +4,7 @@ import { verifyLiveVibeProject } from "../src/lib/vibe-coder/live-browser-verifi
 (globalThis as any).window = globalThis;
 
 const TEST_PREVIEW_URL = "http://127.0.0.1:39401/";
-type Scenario = "pass" | "failed" | "empty" | "off-origin" | "no-key" | "preview-failed";
+type Scenario = "pass" | "failed" | "empty" | "off-origin" | "no-key" | "preview-failed" | "runtime-error";
 
 function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }>) {
   return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -23,6 +23,11 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
         activeTabId: input.action.type === "open_tab" ? "verification-tab" : "previous-user-tab",
         url: TEST_PREVIEW_URL,
       } });
+    }
+    if (requestUrl.startsWith("/api/openbrowser/diagnostics?")) {
+      return json({ ok: true, errors: scenario === "runtime-error"
+        ? [{ kind: "pageerror", message: "TypeError: Cannot read properties of undefined" }]
+        : [] });
     }
     if (requestUrl === "/api/openbrowser/assist") {
       if (scenario === "no-key") return json({ ok: false, error: { message: "Browser intelligence needs a DeepSeek API key." } }, 503);
@@ -58,7 +63,7 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
 
 const previousFetch = globalThis.fetch;
 try {
-  for (const scenario of ["pass", "failed", "empty", "off-origin", "no-key", "preview-failed"] as const) {
+  for (const scenario of ["pass", "failed", "empty", "off-origin", "no-key", "preview-failed", "runtime-error"] as const) {
     const calls: Array<{ url: string; input?: any }> = [];
     (globalThis as any).fetch = fakeFetch(scenario, calls);
     const events: string[] = [];
@@ -78,7 +83,8 @@ try {
       const reason = scenario === "failed" ? /button did not change/ :
         scenario === "empty" ? /without any test actions/ :
         scenario === "off-origin" ? /local origin/ :
-        scenario === "no-key" ? /API key/ : /Cannot resolve module/;
+        scenario === "no-key" ? /API key/ :
+        scenario === "runtime-error" ? /TypeError/ : /Cannot resolve module/;
       await assert.rejects(run, reason);
     }
     assert.equal(calls.filter(call => call.url === "/api/openbrowser/action" &&
