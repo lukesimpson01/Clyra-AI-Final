@@ -10,7 +10,7 @@
     "dev:source": "node tools/sqlite-abi.mjs node && node tools/dev-source.mjs",
     "desktop:dev": "node tools/sqlite-abi.mjs electron && node tools/electron-dev.mjs",
     "desktop:build": "npm run desktop:prepare && electron-builder",
-    "desktop:prepare": "npm run build && node tools/build-electron-sidecar.mjs && node tools/seed-desktop-runtime-config.mjs",
+    "desktop:prepare": "npm run build && node tools/build-electron-sidecar.mjs && node tools/seed-desktop-runtime-config.mjs && node tools/prepare-macos-pointer.mjs",
     "desktop:prepare:win": "node tools/prepare-electron-target.mjs win32-x64",
     "desktop:prepare:win:arm64": "node tools/prepare-electron-target.mjs win32-arm64",
     "desktop:build:win": "npm run desktop:prepare:win && electron-builder --win --x64",
@@ -173,6 +173,7 @@
       "node_modules/node-gyp-build/**/*"
     ],
     "asarUnpack": [
+      "electron/native-pointer-darwin",
       "node_modules/uiohook-napi/**/*"
     ],
     "extraResources": [
