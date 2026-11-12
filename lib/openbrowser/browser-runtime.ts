@@ -2618,7 +2618,11 @@ async function runElectronBrowserAgent(task: string, apiKey: string, options: { 
         try {
           const action = validateBrowserAction(candidate, before, "agent");
           // A predicted target is never sent as an AI cursor event.
-          await setElectronCursor(undefined, workingTabId);
+          // Preserve the LAST real pointer coordinate between clicks so the
+          // next move glides from its actual previous position, not a jump.
+          if (["navigate", "search", "open_tab", "switch_tab", "close_tab"].includes(action.type)) {
+            await setElectronCursor(undefined, workingTabId);
+          }
           agentStatus = "executing";
           emit({ phase: "executing", kind: "action", message: decision.nextGoal || decision.reasoningSummary || `Running ${action.type}`, step, action, actionIndex: actionIndex + 1, actionCount: actions.length, completedCriteria: completedCriteria.size, totalCriteria: plan.successCriteria.length, facts: facts.length });
           const result = await serializeOperation(() => runElectronAction(action, before, "agent", workingTabId));
