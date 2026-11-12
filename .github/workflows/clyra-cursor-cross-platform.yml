@@ -11,6 +11,7 @@ on:
       - "electron/preload.cjs"
       - "lib/openbrowser/browser-runtime.ts"
       - "src/components/agent/**"
+      - "src/components/AgentControlledPreview.tsx"
       - "src/components/chat/AgentPointer.tsx"
       - "src/components/chat/ChatBrowserRun.tsx"
       - "src/components/vibe-coder/preview/AgentCursor.tsx"
