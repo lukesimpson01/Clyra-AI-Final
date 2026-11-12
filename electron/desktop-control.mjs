@@ -368,10 +368,10 @@ for ($i=1; $i -le $count; $i++) {
       await this.setCursor({ ...this.lastPoint, label: `Type: ${String(text || "").slice(0, 40)}`, kind: "point", guide: true });
       return { ok: true, skipped: "guide" };
     }
-    await this.setCursor({ ...this.lastPoint, label, kind: "type" });
-    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
     const value = String(text || "");
     if (!value) return { ok: true };
+    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "type" });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["type", "--clearmodifiers", "--delay", "12", "--", value], { timeout: 20_000 });
     } else if (process.platform === "darwin") {
@@ -389,8 +389,8 @@ for ($i=1; $i -le $count; $i++) {
       await this.setCursor({ ...this.lastPoint, label: `Press ${key}`, kind: "point", guide: true });
       return { ok: true, skipped: "guide" };
     }
-    await this.setCursor({ ...this.lastPoint, label, kind: "key" });
-    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
+    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "key" });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
     } else if (process.platform === "darwin") {
@@ -452,7 +452,7 @@ for ($i=1; $i -le $count; $i++) {
         case "key":
           return this.key(action.key, action.label || "Key");
         case "scroll": {
-          if (this.paused || this.guideOnly || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
+          if (this.paused || this.guideOnly || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
           // Positive deltaY means down, matching browser wheel semantics.
           const amount = Math.max(-20, Math.min(20, Number(action.deltaY ?? action.amount) || 0));
           if (!amount) return { ok: true, deltaY: 0 };
