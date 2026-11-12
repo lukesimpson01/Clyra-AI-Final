@@ -5,6 +5,7 @@ import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
 import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
 import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
 import { VoiceActivityGate } from "../lib/voiceActivityGate";
+import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -597,7 +598,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       if (!e.speaking && e.loudFrames >= (speechRef.current?.speaking ? 3 : 2) && !e.finalPending) {
         // Barge-in: speaking over a reply interrupts it immediately.
         const state = sessionRef.current.state;
-        if (state === "responding" || state === "thinking") {
+        if (shouldInterruptVoiceReply(state, Boolean(speechRef.current?.speaking))) {
           bargeInsRef.current += 1;
           replyAbortRef.current?.abort();
           speechRef.current?.interrupt();

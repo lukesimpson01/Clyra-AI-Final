@@ -8,3 +8,9 @@ export const VOICE_SILENCE_ARM_MS = 680;
 export function remainingVoiceSilenceMs(lastSpeechAt: number, now = performance.now()) {
   return Math.max(120, VOICE_SILENCE_ARM_MS - (now - lastSpeechAt));
 }
+
+/** Native speech acknowledgements can continue while an agent is acting.
+ * An interrupt must still cancel that audio even if the UI state says acting. */
+export function shouldInterruptVoiceReply(state: string, nativeSpeechPlaying: boolean) {
+  return nativeSpeechPlaying || state === "responding" || state === "thinking";
+}

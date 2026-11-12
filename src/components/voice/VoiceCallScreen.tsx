@@ -257,6 +257,7 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
 
   useEffect(() => {
     let raf = 0;
+    let timer: number | undefined;
     let disposed = false;
     let last = performance.now();
     const cur: EyeTarget = { ...MOODS.rest };
@@ -265,11 +266,19 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     let lastPaint = 0;
+    // Schedule low-power and hidden frames at their actual rate instead of
+    // running a 60-fps callback that throws most of its work away.
+    const schedule = () => {
+      if (disposed) return;
+      const interval = document.hidden ? 250 : inputRef.current.lowPower ? 34 : reducedMotion ? 78 : 0;
+      if (interval) timer = window.setTimeout(() => {
+        if (!disposed) raf = requestAnimationFrame(render);
+      }, interval);
+      else raf = requestAnimationFrame(render);
+    };
     const render = (now: number) => {
       if (disposed) return;
-      raf = requestAnimationFrame(render);
-      // Hidden windows and low-power calls should not spend full-frame CPU on
-      // decorative SVG eye motion. Foreground calls retain full frame cadence.
+      schedule();
       if (document.hidden) { last = now; return; }
       const frameInterval = inputRef.current.lowPower ? 42 : reducedMotion ? 85 : 0;
       if (now - lastPaint < frameInterval) return;
@@ -361,6 +370,7 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, []);
 

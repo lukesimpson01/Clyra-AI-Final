@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
 import { VoiceActivityGate } from "../src/lib/voiceActivityGate";
+import { shouldInterruptVoiceReply } from "../src/lib/voiceTurnDetection";
 import { createVoiceSessionState, voiceSessionReducer } from "../src/voice/state/voiceSession";
 
 // The old raw-WebSocket PCM/phrase-buffering protocol (voicePcmPacket.ts,
@@ -155,3 +156,9 @@ assert.equal(gate.test(0.22, false, true), true, "clear interruption over playba
 gate.reset();
 assert.equal(gate.test(Number.NaN), false, "invalid meter values are ignored");
 console.log("voice-unit-tests: adaptive speech gate passed");
+
+assert.equal(shouldInterruptVoiceReply("responding", false), true);
+assert.equal(shouldInterruptVoiceReply("thinking", false), true);
+assert.equal(shouldInterruptVoiceReply("acting_browser", true), true, "live task acknowledgement must be interruptible");
+assert.equal(shouldInterruptVoiceReply("acting_clyra", false), false, "do not cancel an agent that isn't speaking");
+console.log("voice-unit-tests: task speech interruption passed");
