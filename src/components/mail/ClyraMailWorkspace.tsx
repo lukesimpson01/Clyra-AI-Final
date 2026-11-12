@@ -195,6 +195,7 @@ export function ClyraMailHost() {
   const [selected,setSelected]=useState<GmailEmail|null>(null),[thread,setThread]=useState<GmailEmail[]>([]);
   const [review,setReview]=useState(false),[refresh,setRefresh]=useState(0),[filterMenu,setFilterMenu]=useState(false),[moreMenu,setMoreMenu]=useState(false);
   const [sending,setSending]=useState(false);
+  const sendLockRef=useRef(false);
   const mounted=useRef(true),requestId=useRef(0);const reduced=useReducedMotion();
   const [activity,setActivity]=useState<string[]>([]);
   useEffect(()=>{
@@ -321,13 +322,15 @@ export function ClyraMailHost() {
   const reply=()=>{if(!selected)return;const subject=/^re:/i.test(selected.subject)?selected.subject:"Re: "+selected.subject;startCompose({...blankDraft(),to:selected.replyTo||selected.senderEmail,subject,replyToMessageId:selected.id});};
   const forward=()=>{if(!selected)return;const body="\n\n---------- Forwarded message ----------\nFrom: "+selected.senderName+" <"+selected.senderEmail+">\nSubject: "+selected.subject+"\n\n"+selected.plainTextBody;startCompose({...blankDraft(),subject:/^fwd:/i.test(selected.subject)?selected.subject:"Fwd: "+selected.subject,text:body,html:"<p>"+body.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>")+"</p>"});};
   const send=async()=>{
-    if(sending)return;
+    // Synchronous ref lock prevents double sends even before React rerenders.
+    if(sendLockRef.current)return;
+    sendLockRef.current=true;
     setSending(true);setActivity(prev=>[...prev.slice(-5),"Sending reviewed email via Gmail"]);
     try{
       const result=await run("gmail","compose",{...draft,mode:"send"},true);
       if(result.ok){setReview(false);setView("list");setNotice("Email sent and accepted by Gmail.");setRefresh(v=>v+1);}
     }catch(cause){setError(cause instanceof Error?cause.message:"The email could not be sent.");setReview(false);}
-    finally{setSending(false);}
+    finally{sendLockRef.current=false;setSending(false);}
   };
   const reviewSend=()=>{
     if(!draft.to.trim()||!draft.subject.trim()||!(draft.text.trim()||draft.html.trim())){setNotice("Enter a recipient, subject and message before sending.");return;}
