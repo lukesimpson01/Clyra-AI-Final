@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
+import { VoiceActivityGate } from "../src/lib/voiceActivityGate";
 import { createVoiceSessionState, voiceSessionReducer } from "../src/voice/state/voiceSession";
 
 // The old raw-WebSocket PCM/phrase-buffering protocol (voicePcmPacket.ts,
@@ -141,3 +142,16 @@ assert.equal(originalRecord.outputs.research?.ok, true, "the old durable checkpo
 console.log("voice-unit-tests: verified mission-revision recovery passed");
 
 console.log("voice-unit-tests: reducer assertions passed");
+
+// Quiet/mumbled starts should register without treating room noise as speech.
+const gate = new VoiceActivityGate();
+assert.equal(gate.test(0.012), false, "idle room noise should stay quiet");
+assert.equal(gate.test(0.042), true, "soft voice opens the gate");
+gate.setSpeaking(true);
+assert.equal(gate.test(0.029), true, "hysteresis preserves a low-energy syllable");
+gate.setSpeaking(false);
+assert.equal(gate.test(0.045, false, true), false, "native voice playback must not interrupt itself");
+assert.equal(gate.test(0.22, false, true), true, "clear interruption over playback must be detected");
+gate.reset();
+assert.equal(gate.test(Number.NaN), false, "invalid meter values are ignored");
+console.log("voice-unit-tests: adaptive speech gate passed");

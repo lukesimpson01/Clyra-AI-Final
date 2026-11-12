@@ -20,6 +20,7 @@ type DictationSocket = {
   chunks: Buffer[];
   busy?: boolean;
   partialBusy?: boolean;
+  epoch: number;
 };
 
 const sockets = new Map<string, DictationSocket>();
@@ -48,7 +49,7 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
 
 function attachSocketHandlers(sessionId: string, ws: WebSocket) {
   const config = loadVoiceConfig();
-  const active: DictationSocket = { ws, sessionId, chunks: [] };
+  const active: DictationSocket = { ws, sessionId, chunks: [], epoch: 0 };
   // Load the model while the user is still talking, so stopping feels instant.
   void warmSpeechEngine();
   sockets.set(sessionId, active);
@@ -82,15 +83,25 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
       // this one is done; partials can then never queue ahead of a final decode.
       const ack = () => send(ws, { type: "partial_done", sessionId });
       if (active.busy || active.partialBusy || !active.chunks.length) { ack(); return; }
-      const snapshot = Buffer.concat(active.chunks);
-      // Keep partials cheap and bounded: the most recent ~12s is enough context.
+      // Limit copying and decoding to the recent audio, not the whole turn.
+      const generation = active.epoch;
       const maxBytes = config.sampleRate * 2 * 8;
-      const pcm = snapshot.length > maxBytes ? snapshot.subarray(snapshot.length - maxBytes) : snapshot;
+      const tail: Buffer[] = [];
+      let remaining = maxBytes;
+      for (let i = active.chunks.length - 1; i >= 0 && remaining > 0; i -= 1) {
+        const chunk = active.chunks[i]!;
+        const end = chunk.length > remaining ? chunk.subarray(chunk.length - remaining) : chunk;
+        tail.unshift(end);
+        remaining -= end.length;
+      }
+      const pcm = Buffer.concat(tail);
       if (pcm.length < config.sampleRate * 2 * 0.55) { ack(); return; }
       active.partialBusy = true;
       try {
         const result = await transcribePcm(pcm, config.sampleRate, {});
-        if (result.text && !active.busy) send(ws, { type: "transcript_partial", sessionId, text: result.text });
+        // A completed decode from the previous utterance must never replace
+        // captions belonging to a newer reset/flush cycle.
+        if (result.text && !active.busy && active.epoch === generation) send(ws, { type: "transcript_partial", sessionId, text: result.text });
       } catch {
         // Partials are best-effort; the final decode reports real errors.
       } finally {
@@ -101,6 +112,7 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
     }
 
     if (message.type === "reset") {
+      active.epoch += 1;
       active.chunks.length = 0;
       return;
     }
@@ -108,7 +120,11 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
     if (message.type === "flush") {
       // A second flush while one is decoding would spawn a duplicate decoder
       // process on the same audio.
-      if (active.busy) return;
+      if (active.busy) {
+        send(ws, { type: "error", sessionId, message: "Speech recognition is still finishing the previous utterance. Please try again." });
+        return;
+      }
+      active.epoch += 1;
       const pcm = Buffer.concat(active.chunks.splice(0));
       if (!pcm.length) {
         send(ws, { type: "dictation_final", sessionId, text: "" });

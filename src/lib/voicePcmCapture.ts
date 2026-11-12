@@ -53,6 +53,7 @@ export class VoicePcmCapturer {
   private muted = false;
   private ownsStream = true;
   private ownsContext = true;
+  private stopped = false;
   private onChunk: PcmChunkHandler;
   private onLevel: PcmLevelHandler | null;
   private targetRate: number;
@@ -76,6 +77,7 @@ export class VoicePcmCapturer {
   }
 
   async start(existingStream?: MediaStream | null, existingContext?: AudioContext | null) {
+    if (this.stopped) throw new Error("Audio capture was already stopped");
     if (existingStream && existingStream.active) {
       this.stream = existingStream;
       this.ownsStream = false;
@@ -91,6 +93,13 @@ export class VoicePcmCapturer {
       });
       this.ownsStream = true;
     }
+    // Permission prompts can resolve after the user has ended the call.
+    // Never keep that late microphone stream alive.
+    if (this.stopped) {
+      if (this.ownsStream) stopMediaStreamTracks(this.stream);
+      this.stream = null;
+      return;
+    }
     // Reuse the context created directly from the call-button gesture. A
     // second context created after WebSocket.onopen can remain suspended.
     this.ctx = existingContext && existingContext.state !== "closed"
@@ -98,9 +107,10 @@ export class VoicePcmCapturer {
       : new AudioContext();
     this.ownsContext = this.ctx !== existingContext;
     if (this.ctx.state === "suspended") await this.ctx.resume();
+    if (this.stopped) return;
     this.source = this.ctx.createMediaStreamSource(this.stream);
     // ~128ms @ 16k / ~42ms @ 48k — responsive meter + low capture latency.
-    const bufferSize = this.ctx.sampleRate >= 44100 ? 2048 : 2048;
+    const bufferSize = this.ctx.sampleRate >= 44100 ? 2048 : 1024;
     this.processor = this.ctx.createScriptProcessor(bufferSize, 1, 1);
     this.silentGain = this.ctx.createGain();
     this.silentGain.gain.value = 0;
@@ -147,6 +157,7 @@ export class VoicePcmCapturer {
   }
 
   stop() {
+    this.stopped = true;
     try {
       if (this.processor) this.processor.onaudioprocess = null;
       this.processor?.disconnect();

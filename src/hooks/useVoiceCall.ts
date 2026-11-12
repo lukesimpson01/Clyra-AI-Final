@@ -4,7 +4,7 @@ import { VoicePcmCapturer } from "../lib/voicePcmCapture";
 import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
 import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
 import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
-import { VOICE_SPEECH_LEVEL } from "../lib/voiceTurnDetection";
+import { VoiceActivityGate } from "../lib/voiceActivityGate";
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -133,6 +133,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const taskAbortRef = useRef<AbortController | null>(null);
   const lastSideEffectRef = useRef({ text: "", at: 0 });
   const endSequenceRef = useRef(0);
+  const startSequenceRef = useRef(0);
+  const voiceGateRef = useRef(new VoiceActivityGate());
   const restTimerRef = useRef<number | null>(null);
   // Local engine: Parakeet STT over the dictation socket + a streamed LLM reply.
   const socketRef = useRef<WebSocket | null>(null);
@@ -195,6 +197,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     e.turnBusy = false;
     e.finalPending = false;
     e.preRoll = [];
+    voiceGateRef.current.reset();
     replyAbortRef.current?.abort();
     replyAbortRef.current = null;
     speechRef.current?.interrupt();
@@ -557,6 +560,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const e = engine.current;
     if (!e.speaking) return;
     e.speaking = false;
+    voiceGateRef.current.setSpeaking(false);
     window.clearInterval(e.partialTimer);
     e.partialTimer = 0;
     const socket = socketRef.current;
@@ -586,10 +590,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (!e.ready || sessionRef.current.muted || sessionRef.current.state === "ending") return;
     // Soft spoken words must wake VAD too; the native speaker's echo is
     // suppressed more conservatively while output audio is playing.
-    const threshold = speechRef.current?.speaking
-      ? Math.max(0.1, VOICE_SPEECH_LEVEL * 2)
-      : Math.min(VOICE_SPEECH_LEVEL, 0.03);
-    const loud = level >= threshold;
+    const loud = voiceGateRef.current.test(level, e.speaking, Boolean(speechRef.current?.speaking));
     if (loud) {
       e.loudFrames += 1;
       e.lastSpeechAt = now;
@@ -606,6 +607,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         // Keep the mic live while tools run, an approval is open, or the
         // user has taken over. The next utterance can refine that same task.
         e.speaking = true;
+        voiceGateRef.current.setSpeaking(true);
         transcriptRef.current.reset();
         e.speechStartedAt = now;
         touchActivity();
@@ -656,6 +658,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const e = engine.current;
     e.speaking = false; e.ready = false; e.finalPending = false; e.turnBusy = false; e.preRoll = []; e.loudFrames = 0;
     transcriptRef.current.reset();
+    voiceGateRef.current.reset();
+    const startSequence = ++startSequenceRef.current;
     try {
       const desktop = getElectronDesktop();
       const permissions = await desktop?.dictation?.ensurePermissions?.().catch(() => null);
@@ -682,8 +686,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         if (socketRef.current !== socket) return;
         if (message.type === "pipeline_mode") {
           engine.current.ready = true;
-          dispatch({ type: "MIC_READY" });
-          touchActivity();
+          // Do not advertise a working microphone until capture actually starts.
+          if (captureRef.current?.mediaStream) {
+            dispatch({ type: "MIC_READY" });
+            touchActivity();
+          }
         } else if (message.type === "partial_done") {
           engine.current.partialInFlight = false;
         } else if (message.type === "transcript_partial") {
@@ -707,13 +714,22 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           if (sessionRef.current.active && sessionRef.current.state !== "ending") dispatch({ type: "ERROR", error: { code: "VOICE_DISCONNECTED", message: "I lost the speech connection. End the call and try again.", retryable: true } });
         }
       };
-      await opened;
-
       const capture = new VoicePcmCapturer(onMicChunk, 16_000, onMicLevel);
       captureRef.current = capture;
-      await capture.start();
+      // Microphone permission/capture and websocket opening overlap. A call
+      // cannot be ready until both sides are connected.
+      await Promise.all([opened, capture.start()]);
+      if (startSequence !== startSequenceRef.current) {
+        await teardownEngine();
+        return;
+      }
       capture.setMuted(sessionRef.current.muted);
+      if (engine.current.ready) {
+        dispatch({ type: "MIC_READY" });
+        touchActivity();
+      }
     } catch (error) {
+      if (startSequence !== startSequenceRef.current) return;
       await teardownEngine();
       dispatch({ type: "ERROR", error: { code: "VOICE_START_FAILED", message: error instanceof Error ? error.message : "Voice call failed to start.", retryable: true } });
     }
@@ -722,6 +738,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const endCall = useCallback(async () => {
     if (!sessionRef.current.active || sessionRef.current.state === "ending") return;
     const sequence = ++endSequenceRef.current;
+    ++startSequenceRef.current;
     clearRestTimer();
     dispatch({ type: "END" });
     commitTurn();
@@ -749,6 +766,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (muted && engine.current.speaking) {
       // Muting mid-sentence discards the partial utterance rather than sending it.
       engine.current.speaking = false;
+      voiceGateRef.current.setSpeaking(false);
       window.clearInterval(engine.current.partialTimer);
       engine.current.partialTimer = 0;
       dispatch({ type: "MIC_READY" });
