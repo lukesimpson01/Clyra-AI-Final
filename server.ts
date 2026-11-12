@@ -1984,7 +1984,7 @@ async function startServer() {
           : [],
       };
       const mission = req.body?.background === true
-        ? missionService.resumeBackground(input)
+        ? await missionService.resumeBackground(input)
         : await missionService.resume(input);
       if (!mission) {
         res.status(404).json({ ok: false, error: "Mission not found." });

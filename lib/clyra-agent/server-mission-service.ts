@@ -166,11 +166,30 @@ export class ServerMissionService {
   }
 
   /** Voice control uses this non-blocking form; existing synchronous resume stays compatible. */
-  resumeBackground(input: { missionId: string; approvedStepIds?: string[] }) {
+  async resumeBackground(input: { missionId: string; approvedStepIds?: string[] }) {
+    const active = this.active.get(input.missionId);
+    if (active) {
+      const snapshot = active.snapshot();
+      if (snapshot.state !== "PAUSED") return snapshot;
+      // A user can tap Resume immediately after Pause; don't claim to have
+      // resumed while the previous abortable adapter still owns this mission.
+      const job = this.jobs.get(input.missionId);
+      if (job) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            job,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(() => reject(new Error("The previous action is still pausing. Please try Resume again.")), 10_000);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+    }
     const saved = this.store.get(input.missionId);
     if (!saved) return null;
-    const active = this.active.get(input.missionId);
-    if (active) return active.snapshot();
     if (["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_USER"].includes(saved.state)) return saved;
     const approved = new Set(input.approvedStepIds || []);
     const approvalStep = saved.approval?.stepId;
