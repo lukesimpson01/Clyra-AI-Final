@@ -1,0 +1,30 @@
+name: Shorts media tools smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/shorts/app/**'
+      - 'apps/shorts/openfilm'
+      - '.github/workflows/shorts-media-smoke.yml'
+  workflow_dispatch:
+jobs:
+  media-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the pinned advanced editor
+        run: git submodule update --init apps/shorts/openfilm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check media dependencies
+        run: ffmpeg -version && ffprobe -version
+      - name: Install Shorts dependencies
+        run: npm ci --prefix apps/shorts/app --no-audit --no-fund
+      - name: Run every free media processor smoke test
+        env:
+          NODE_ENV: test
+        run: node --test apps/shorts/app/tests/media-process.test.mjs
+      - name: Build Shorts UI
+        run: npm --prefix apps/shorts/app run build

@@ -165,7 +165,7 @@ async function receiveFiles(req, directory, requireFile = true) {
 
 const formatSize = { '9:16': [720, 1280], '16:9': [1280, 720], '1:1': [1080, 1080], '4:5': [1080, 1350] };
 
-async function processMedia(fields, files, directory) {
+export async function processMedia(fields, files, directory) {
   const tool = fields.tool, input = files[0].path;
   const videoInput = files[0].mimeType.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(files[0].filename || '');
   const outputExt = tool === 'MP3 Converter' || tool === 'Audio Balancer' || tool === 'Volume Booster' && !videoInput ? 'mp3' : tool === 'Video to GIF' ? 'gif' : 'mp4';
@@ -174,7 +174,7 @@ async function processMedia(fields, files, directory) {
   const level = Math.max(25, Math.min(200, Number(fields.level) || 100));
   switch (tool) {
     case 'Audio Balancer': args.push('-i', input, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-vn', '-c:a', 'libmp3lame', '-q:a', '2', output); break;
-    case 'Video Compressor': args.push('-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', { small: '35', balanced: '30', high: '25' }[fields.quality] || '30', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output); break;
+    case 'Video Compressor': args.push('-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', { small: '32', balanced: '25', high: '20' }[fields.quality] || '25', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output); break;
     case 'MP3 Converter': args.push('-i', input, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', output); break;
     case 'Video Trimmer': {
       const start = Math.max(0, Number(fields.start) || 0), end = Number(fields.end);
