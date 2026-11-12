@@ -58,7 +58,7 @@ try{
   await page.setViewportSize({width:1440,height:900});
   await shell.getByRole("button",{name:"New message"}).click();
   await shell.getByRole("heading",{name:"New Email"}).waitFor();
-  await shell.getByRole("textbox",{name:"Recipient email address"}).fill("client@example.com");
+  await shell.getByPlaceholder("Recipient email address").fill("client@example.com");
   await shell.getByRole("textbox",{name:"Subject"}).fill("Here is your website proposal");
   await shell.getByRole("textbox",{name:"Email body"}).fill("Hello, here is the proposal for your review.");
   await shell.getByRole("button",{name:"Bold text"}).click();
