@@ -749,6 +749,20 @@ async function recordHistory(activePage: Page, query?: string) {
   scheduleProfileSave();
 }
 
+/**
+ * Keep bounded runtime diagnostics per real Chromium tab. Verification can
+ * attribute an uncaught exception to its OWN generated-app tab, rather than
+ * misreading errors from the user's unrelated browser tabs.
+ */
+const pageDiagnostics = new WeakMap<Page, Array<{ kind: "pageerror" | "console"; message: string; at: number }>>();
+
+export function getManagedBrowserDiagnostics(tabReference?: string) {
+  const target = tabReference
+    ? activePages().find(candidate => tabId(candidate) === tabReference || pageIds.get(candidate) === tabReference)
+    : page;
+  return target ? [...(pageDiagnostics.get(target) ?? [])] : [];
+}
+
 async function wirePage(activePage: Page) {
   await identifyElectronPage(activePage).catch(() => undefined);
   if (wiredPages.has(activePage)) return;
@@ -762,6 +776,18 @@ async function wirePage(activePage: Page) {
   void installNameHelper();
   tabId(activePage);
   pageZoom.set(activePage, 1);
+  const errors: Array<{ kind: "pageerror" | "console"; message: string; at: number }> = [];
+  pageDiagnostics.set(activePage, errors);
+  const remember = (kind: "pageerror" | "console", message: string) => {
+    errors.push({ kind, message: String(message).slice(0, 1200), at: Date.now() });
+    if (errors.length > 40) errors.splice(0, errors.length - 40);
+  };
+  activePage.on("pageerror", error => remember("pageerror", error.message));
+  activePage.on("console", message => {
+    if (message.type() === "error" && /\b(?:uncaught|typeerror|referenceerror|syntaxerror|rangeerror|unhandled|failed to load module)\b/i.test(message.text())) {
+      remember("console", message.text());
+    }
+  });
   activePage.setDefaultTimeout(10_000);
   activePage.setDefaultNavigationTimeout(30_000);
   activePage.on("load", () => {
