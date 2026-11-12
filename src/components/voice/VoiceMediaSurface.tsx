@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ScanLine, X, Zap } from "lucide-react";
 
 export type VoiceMediaMode = "camera" | "screen";
+export type VoiceMediaSnapshot = { mode: VoiceMediaMode; image: string };
 
 type Landmark = { x: number; y: number; z: number; visibility?: number };
 type PoseResult = { poseLandmarks?: Landmark[]; poseWorldLandmarks?: Landmark[] };
@@ -94,9 +95,11 @@ type Props = {
   mode: VoiceMediaMode;
   lowPower: boolean;
   onStop: () => void;
+  onCaptureChange?: (capture: (() => VoiceMediaSnapshot | null) | null) => void;
+  onAsk?: () => void;
 };
 
-export function VoiceMediaSurface({ mode, lowPower, onStop }: Props) {
+export function VoiceMediaSurface({ mode, lowPower, onStop, onCaptureChange, onAsk }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onStopRef = useRef(onStop);
@@ -105,6 +108,24 @@ export function VoiceMediaSurface({ mode, lowPower, onStop }: Props) {
   const [filterEnabled, setFilterEnabled] = useState(true);
   const [scanMessage, setScanMessage] = useState("");
   const [error, setError] = useState("");
+  // Encode only one <=960px JPEG on an explicit request. The live stream
+  // otherwise stays entirely on the user's machine.
+  const captureFrame = useCallback((): VoiceMediaSnapshot | null => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
+    const scale = Math.min(1, 960 / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return { mode, image: canvas.toDataURL("image/jpeg", 0.76) };
+  }, [mode]);
+  useEffect(() => {
+    onCaptureChange?.(captureFrame);
+    return () => onCaptureChange?.(null);
+  }, [captureFrame, onCaptureChange]);
 
   // Camera and capture are acquired only when requested and always released
   // when the mode changes, the call ends, or the track is stopped externally.
@@ -208,6 +229,7 @@ export function VoiceMediaSurface({ mode, lowPower, onStop }: Props) {
       <header className="clyra-voice-media__header">
         <span className="clyra-voice-media__title"><span className="clyra-voice-media__live" />{mode === "camera" ? "Camera" : "Screen share"}</span>
         <div className="clyra-voice-media__actions">
+          {onAsk ? <button type="button" disabled={!ready} aria-label="Ask Clyra about this view" onClick={onAsk}><Zap size={15} strokeWidth={1.8} /> Ask Clyra</button> : null}
           {mode === "camera" ? (
             <button type="button" data-active={filterEnabled} aria-pressed={filterEnabled} onClick={() => setFilterEnabled((previous) => !previous)}>
               <ScanLine size={15} strokeWidth={1.8} /> 3D pose
@@ -225,8 +247,8 @@ export function VoiceMediaSurface({ mode, lowPower, onStop }: Props) {
       </div>
       <p className="clyra-voice-media__privacy">
         {mode === "camera" && filterEnabled
-          ? "Local 3D pose estimate — not a medical scan. Video is not sent to the assistant."
-          : "Live local preview. Video is not sent to the assistant."}
+          ? "Local 3D pose estimate, not a medical scan. Video stays local; one frame is shared only if you ask Clyra to inspect it."
+          : "Video stays local; one frame is shared only if you ask Clyra to inspect it."}
       </p>
     </section>
   );

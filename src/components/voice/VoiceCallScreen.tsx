@@ -104,6 +104,7 @@ export type VoiceCallScreenCall = {
   confirmApproval: () => void;
   rejectApproval: () => void;
   toggleSurfaceExpanded: () => void;
+  registerMediaCapture?: (capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => void;
 };
 
 export type VoiceCallScreenProps = {
@@ -522,7 +523,7 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
         </div>
 
         <div className="clyra-voice-side-control clyra-voice-side-control--end" style={{ opacity: open ? 0 : 1, transform: open ? "scale(.84)" : "none", pointerEvents: open ? "none" : "auto" }}>
-          <button type="button" className="clyra-voice-round-btn clyra-voice-round-btn--end" aria-label="End" title="End call" onClick={onEnd} tabIndex={open ? -1 : 0}>
+          <button type="button" className="clyra-voice-round-btn clyra-voice-round-btn--end" aria-label="End call" title="End call" onClick={onEnd} tabIndex={open ? -1 : 0}>
             <svg data-ico="x" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6 6 18" />
               <path d="m6 6 12 12" />
@@ -917,7 +918,7 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange }: V
               ) : null}
             </AnimatePresence>
 
-            {mediaMode ? <VoiceMediaSurface key={mediaMode} mode={mediaMode} lowPower={call.lowPowerMode} onStop={() => onMediaModeChange?.(null)} /> : null}
+            {mediaMode ? <VoiceMediaSurface key={mediaMode} mode={mediaMode} lowPower={call.lowPowerMode} onStop={() => onMediaModeChange?.(null)} onCaptureChange={call.registerMediaCapture} onAsk={() => void call.sendText("What can you see in this view?")} /> : null}
             <AnimatePresence mode="popLayout">
               {call.activeTask ? (
                 <VoiceActivitySurface key={call.activeTask.id} task={call.activeTask} surface={call.activeSurface} controlling={activeState(call.state) && call.state !== "paused" && call.state !== "user_takeover"} onToggleExpanded={call.toggleSurfaceExpanded} />

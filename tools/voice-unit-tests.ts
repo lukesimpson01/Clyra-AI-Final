@@ -3,6 +3,7 @@ import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
 import { VoiceActivityGate } from "../src/lib/voiceActivityGate";
 import { shouldInterruptVoiceReply } from "../src/lib/voiceTurnDetection";
 import { TranscriptStabilizer } from "../src/speech/transcriptStabilizer";
+import { asksToInspectSharedView } from "../src/lib/voiceVisualIntent";
 import { createVoiceSessionState, voiceSessionReducer } from "../src/voice/state/voiceSession";
 
 // The old raw-WebSocket PCM/phrase-buffering protocol (voicePcmPacket.ts,
@@ -173,3 +174,10 @@ assert.equal(captions.update("Start a different question"), "Start a different q
 captions.reset();
 assert.equal(captions.update(""), "");
 console.log("voice-unit-tests: rolling transcript stabilizer passed");
+
+assert.equal(asksToInspectSharedView("What can you see?"), true);
+assert.equal(asksToInspectSharedView("Read the screen"), true);
+assert.equal(asksToInspectSharedView("What is this?"), true);
+assert.equal(asksToInspectSharedView("Research competitors then create a report"), false);
+assert.equal(asksToInspectSharedView("Actually include Instagram in the plan"), false);
+console.log("voice-unit-tests: explicit shared-frame intent passed");

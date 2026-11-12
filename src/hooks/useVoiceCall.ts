@@ -6,6 +6,7 @@ import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
 import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
 import { VoiceActivityGate } from "../lib/voiceActivityGate";
 import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
+import { asksToInspectSharedView } from "../lib/voiceVisualIntent";
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -142,6 +143,10 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const replyAbortRef = useRef<AbortController | null>(null);
   const speechRef = useRef<VoiceSpeechPlayer | null>(null);
+  const mediaCaptureRef = useRef<(() => { mode: "camera" | "screen"; image: string } | null) | null>(null);
+  const registerMediaCapture = useCallback((capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => {
+    mediaCaptureRef.current = capture;
+  }, []);
   const engine = useRef({
     speaking: false,
     loudFrames: 0,
@@ -202,6 +207,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     replyAbortRef.current?.abort();
     replyAbortRef.current = null;
     speechRef.current?.interrupt();
+    mediaCaptureRef.current = null;
     captureRef.current?.stop();
     captureRef.current = null;
     const socket = socketRef.current;
@@ -392,6 +398,39 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     const duplicate = lastSideEffectRef.current.text === clean && Date.now() - lastSideEffectRef.current.at < 4_000;
     if (duplicate) return Boolean(active);
     lastSideEffectRef.current = { text: clean, at: Date.now() };
+    // No passive camera uploads: inspect ONE compressed frame on an
+    // explicit spoken/typed visual question or user-initiated Inspect.
+    if (mediaCaptureRef.current && asksToInspectSharedView(clean)) {
+      const frame = mediaCaptureRef.current();
+      if (!frame) {
+        acknowledge("The camera or screen is not ready yet. Try again in a moment.");
+        return true;
+      }
+      const controller = new AbortController();
+      replyAbortRef.current?.abort();
+      replyAbortRef.current = controller;
+      try {
+        const response = await fetch("/api/companion/vision-frame", {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: frame.image,
+            question: "Inspect this user-shared " + frame.mode + " frame. Answer the user's spoken question briefly, using only visible evidence: " + clean,
+          }),
+        });
+        const payload = await response.json().catch(() => null) as { ok?: boolean; text?: string; summary?: string; error?: string } | null;
+        if (controller.signal.aborted) return true;
+        if (!response.ok || !payload?.ok || !(payload.text || payload.summary)) throw new Error(payload?.error || "The frame could not be examined.");
+        acknowledge(String(payload.text || payload.summary).slice(0, 1800));
+      } catch (error) {
+        if (controller.signal.aborted) return true;
+        acknowledge("I couldn't inspect the " + frame.mode + " image: " + (error instanceof Error ? error.message : "please try again."));
+      } finally {
+        if (replyAbortRef.current === controller) replyAbortRef.current = null;
+      }
+      return true;
+    }
     if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && active) {
       await stopTask();
       acknowledge("Stopped that task.");
@@ -873,5 +912,6 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     confirmApproval: () => void confirmApproval(),
     rejectApproval: () => void rejectApproval(),
     toggleSurfaceExpanded: () => dispatch({ type: "SET_SURFACE_EXPANDED", expanded: !sessionRef.current.activeSurface?.expanded }),
+    registerMediaCapture,
   };
 }
