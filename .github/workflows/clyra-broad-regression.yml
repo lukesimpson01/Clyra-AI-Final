@@ -58,7 +58,7 @@ jobs:
             tasks: >-
               test:voice test:speech-flow test:dictation-cleanup test:word-diff
               test:dictation-hotkey test:flow-native test:deepseek-vision
-              test:smart-camera test:computer-agent
+              test:smart-camera test:computer-agent test:ai-cursor
               test:windows-compat test:composer-dictation
     steps:
       - uses: actions/checkout@v4
