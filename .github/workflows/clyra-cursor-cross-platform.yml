@@ -24,9 +24,11 @@ on:
 permissions:
   contents: read
 
+# Unique commit groups let the macOS Swift build finish even while other
+# Clyra agents are committing unrelated changes to the same main branch.
 concurrency:
-  group: clyra-cursor-${{ github.ref }}
-  cancel-in-progress: true
+  group: clyra-cursor-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   pointer-contract:
