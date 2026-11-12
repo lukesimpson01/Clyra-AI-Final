@@ -102,6 +102,7 @@ export class DesktopControlService {
     this.lastPoint = { x: 0, y: 0 };
     this.macPointerPromise = null;
     this.hasMoved = false;
+    this.positionTrackingTimer = null;
   }
 
   async initialize() {
@@ -208,9 +209,40 @@ export class DesktopControlService {
       paused: this.paused,
       durationMs: Math.max(0, Math.min(450, Number(cursor.durationMs) || 0)),
     };
-    win.showInactive();
+    if (!win.isVisible()) win.showInactive();
     await win.webContents.executeJavaScript(`window.__setAIPresence(${JSON.stringify(payload)}); true`, true);
     return { ok: true };
+  }
+
+  /** Follow the REAL OS cursor rather than animating to an unconfirmed target.
+   * A single in-flight paint limits IPC work on lower-powered hardware. */
+  trackPhysicalPointer(label) {
+    if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+    let painting = false;
+    let stopped = false;
+    let last = null;
+    const sample = async (force = false) => {
+      if (stopped || painting || this.paused || this.manualControl) return;
+      const current = screen.getCursorScreenPoint();
+      if (!force && last && current.x === last.x && current.y === last.y) return;
+      last = current;
+      painting = true;
+      try { await this.setCursor({ ...current, label, kind: "move", durationMs: 0 }); }
+      finally { painting = false; }
+    };
+    void sample().catch(() => {});
+    this.positionTrackingTimer = setInterval(() => { void sample().catch(() => {}); }, 16);
+    return async () => {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      // Do not permit a late stale frame to paint over the landed point.
+      stopped = true;
+      while (painting) await wait(4);
+      if (!this.paused && !this.manualControl) {
+        const current = screen.getCursorScreenPoint();
+        await this.setCursor({ ...current, label, kind: "move", durationMs: 0 });
+      }
+    };
   }
 
   /**
@@ -235,13 +267,9 @@ export class DesktopControlService {
     if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl", point };
     if (process.platform === "darwin") await this.macPointerBinary();
     if (!this.xdotool && !["darwin", "win32"].includes(process.platform)) throw new Error("Native desktop mouse input is unavailable (xdotool required).");
-    const previous = this.hasMoved ? this.lastPoint : screen.getCursorScreenPoint();
+    const previous = screen.getCursorScreenPoint();
     const motion = planCursorMotion(previous, point);
-    if (!this.hasMoved) {
-      await this.setCursor({ ...previous, label, kind: "move", durationMs: 0 });
-      this.hasMoved = true;
-    }
-    await this.setCursor({ ...point, label, kind: "move", durationMs: motion.durationMs });
+    const stopTracking = this.trackPhysicalPointer(label);
     try {
       if (process.platform === "darwin") {
         await this.macInput("move", point.x, point.y, motion.durationMs);
@@ -252,7 +280,7 @@ export class DesktopControlService {
 $p = New-Object ClyraWindowsInput+POINT
 if (-not [ClyraWindowsInput]::GetCursorPos([ref]$p)) { throw 'GetCursorPos failed' }
 $fromX = $p.X; $fromY = $p.Y
-$toX = ${point.x}; $toY = ${point.y}; $duration = ${motion.durationMs}
+$toX = ${(typeof screen.dipToScreenPoint === "function" ? screen.dipToScreenPoint(point) : point).x}; $toY = ${(typeof screen.dipToScreenPoint === "function" ? screen.dipToScreenPoint(point) : point).y}; $duration = ${motion.durationMs}
 $count = [Math]::Max(1, [Math]::Min(26, [Math]::Ceiling($duration / 16.0)))
 for ($i=1; $i -le $count; $i++) {
   $t = $i / [double]$count
@@ -264,19 +292,29 @@ for ($i=1; $i -le $count; $i++) {
 }`;
         await runWindowsPowerShell(script, 10_000);
       } else {
-        const started = Date.now();
+        const chain = [];
         for (const [index, frame] of motion.frames.entries()) {
-          await execFileAsync(this.xdotool, ["mousemove", "--sync", String(frame.x), String(frame.y)], { timeout: 3_000 });
+          chain.push("mousemove", "--sync", String(frame.x), String(frame.y));
           const next = motion.frames[index + 1];
-          if (next) await wait(Math.max(0, next.atMs - (Date.now() - started)));
+          if (next) chain.push("sleep", String(Math.max(0.002, (next.atMs - frame.atMs) / 1000)));
         }
+        // One xdotool process prevents per-frame process spawn latency.
+        await execFileAsync(this.xdotool, chain, { timeout: 10_000 });
       }
     } catch (error) {
+      await stopTracking();
       await this.setCursor(null);
       throw error; // Never report a simulated move as a successful OS action.
     }
-    this.lastPoint = point;
-    return { ok: true, point, durationMs: motion.durationMs };
+    await stopTracking();
+    const actual = screen.getCursorScreenPoint();
+    if (Math.hypot(actual.x - point.x, actual.y - point.y) > 4) {
+      await this.setCursor(null);
+      throw new Error("The OS cursor did not reach the intended coordinate; click cancelled.");
+    }
+    this.hasMoved = true;
+    this.lastPoint = actual;
+    return { ok: true, point: actual, durationMs: motion.durationMs };
   }
 
   async click(x, y, button = "left", label = "Clicking") {
@@ -350,7 +388,11 @@ for ($i=1; $i -le $count; $i++) {
 
   setManualControl(enabled) {
     this.manualControl = Boolean(enabled);
-    if (this.manualControl) void this.setCursor(null);
+    if (this.manualControl) {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      void this.setCursor(null);
+    }
     return { ok: true, manualControl: this.manualControl };
   }
 
@@ -359,7 +401,11 @@ for ($i=1; $i -le $count; $i++) {
    * (no held mouse buttons); the next queued action is therefore fenced. */
   async setPaused(enabled) {
     this.paused = Boolean(enabled);
-    if (this.paused) await this.setCursor(null);
+    if (this.paused) {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      await this.setCursor(null);
+    }
     return { ok: true, paused: this.paused };
   }
 
@@ -413,6 +459,8 @@ for ($i=1; $i -le $count; $i++) {
   }
 
   destroy() {
+    if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+    this.positionTrackingTimer = null;
     try {
       if (this.cursorWindow && !this.cursorWindow.isDestroyed()) this.cursorWindow.destroy();
     } catch {
