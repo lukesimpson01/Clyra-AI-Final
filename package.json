@@ -96,6 +96,7 @@
     "test:mail": "node tools/mail-mime-tests.mjs",
     "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs",
     "test:component-library": "tsx tools/component-library-unit-tests.ts",
+    "test:component-mcp": "npm run test:component-library",
     "setup:component-sources": "git submodule update --init --depth 1 external/shadcn-ui external/21st-agent-elements"
   },
   "devDependencies": {
