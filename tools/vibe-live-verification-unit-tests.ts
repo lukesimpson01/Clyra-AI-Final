@@ -3,7 +3,7 @@ import { verifyLiveVibeProject } from "../src/lib/vibe-coder/live-browser-verifi
 
 (globalThis as any).window = globalThis;
 
-const URL = "http://127.0.0.1:39401/";
+const TEST_PREVIEW_URL = "http://127.0.0.1:39401/";
 type Scenario = "pass" | "failed" | "empty" | "off-origin" | "no-key" | "preview-failed";
 
 function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }>) {
@@ -16,12 +16,12 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
     if (requestUrl.endsWith("/api/vibe/preview/start")) {
       return json({ session: scenario === "preview-failed"
         ? { status: "build_failed", lastError: { message: "Cannot resolve module" } }
-        : { status: "ready", url: URL } });
+        : { status: "ready", url: TEST_PREVIEW_URL } });
     }
     if (requestUrl === "/api/openbrowser/action") {
       return json({ ok: true, state: {
         activeTabId: input.action.type === "open_tab" ? "verification-tab" : "previous-user-tab",
-        url: URL,
+        url: TEST_PREVIEW_URL,
       } });
     }
     if (requestUrl === "/api/openbrowser/assist") {
@@ -34,8 +34,8 @@ function fakeFetch(scenario: Scenario, calls: Array<{ url: string; input?: any }
       pieces.push({
         type: "complete", success: scenario !== "failed",
         content: scenario === "failed" ? "Submit button did not change the form state." : "Form worked.",
-        evidence: scenario === "empty" ? [] : [{ url: URL, checks: ["Form input changed after click"] }],
-        state: { url: scenario === "off-origin" ? "https://example.org/" : URL },
+        evidence: scenario === "empty" ? [] : [{ url: TEST_PREVIEW_URL, checks: ["Form input changed after click"] }],
+        state: { url: scenario === "off-origin" ? "https://example.org/" : TEST_PREVIEW_URL },
       });
       const encoder = new TextEncoder();
       const body = new ReadableStream<Uint8Array>({
