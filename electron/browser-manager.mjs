@@ -912,7 +912,7 @@ export class ChromiumBrowserManager {
         }
       });
     };
-    if (isPointerAction(action?.type) && point) await movePointer(point);
+    if ((isPointerAction(action?.type) || action?.type === "type") && point) await movePointer(point);
 
     const click = async (clickCount = 1, button = "left") => {
       if (!point) throw new Error("The requested target is no longer visible.");
@@ -921,7 +921,14 @@ export class ChromiumBrowserManager {
       // Browser again; visible browser actions always retain CDP coordinates.
       if (!tabIsVisible && resolved) {
         if (button !== "left") throw new Error("Right-click requires a visible browser compositor.");
-        await contents.executeJavaScript(`document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)})?.click()`, true);
+        const clicked = await contents.executeJavaScript(`(() => {
+          const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)});
+          if (!node || !node.isConnected) return false;
+          node.click();
+          return true;
+        })()`, true);
+        if (!clicked) throw new Error("The target disappeared before clicking.");
+        if (this.settings.showAiCursor) await this.setCursor({ ...point, kind: clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         return;
       }
       await withDebugger(async (send) => {
@@ -929,7 +936,7 @@ export class ChromiumBrowserManager {
         await send("Input.dispatchMouseEvent", { type: "mousePressed", ...params });
         await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...params });
       });
-      if (tabIsVisible && this.settings.showAiCursor) await this.setCursor({ ...point, kind: clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+      if (tabIsVisible && this.settings.showAiCursor) await this.setCursor({ ...point, kind: button === "right" ? "right_click" : clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
     };
     const focus = async () => {
       if (!resolved) return;
@@ -974,6 +981,7 @@ export class ChromiumBrowserManager {
             node.dispatchEvent(new Event("change", { bubbles: true }));
           })()`, true);
           if (action.submit) await contents.executeJavaScript(`document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)})?.form?.requestSubmit?.()`, true);
+          if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "type", label: "Typing", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
           break;
         }
         if (action.clearFirst !== false) {
@@ -985,13 +993,16 @@ export class ChromiumBrowserManager {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         }
         if (action.submit) await key("Enter");
+        if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "type", label: "Typing", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         break;
       }
       case "check":
       case "uncheck": {
         if (!resolved) throw new Error("The requested control is no longer visible.");
         const desired = action.type === "check";
-        await contents.executeJavaScript(`(() => { const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)}); if (node && node.checked !== ${desired}) node.click(); })()`, true);
+        const changed = await contents.executeJavaScript(`(() => { const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)}); if (!node) return false; if (node.checked !== ${desired}) node.click(); return true; })()`, true);
+        if (!changed) throw new Error("Checkbox disappeared before clicking.");
+        if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         break;
       }
       case "select_option": {
@@ -1032,7 +1043,35 @@ export class ChromiumBrowserManager {
       case "scroll_to_top": await contents.executeJavaScript("window.scrollTo({top:0,behavior:'smooth'})", true); break;
       case "scroll_to_bottom": await contents.executeJavaScript("window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})", true); break;
       case "scroll_to": await contents.executeJavaScript(`document.querySelector(${JSON.stringify(resolved ? `[data-clyra-browser-id="${resolved.id}"]` : "")})?.scrollIntoView({block:'center',behavior:'smooth'})`, true); break;
-      case "drag": case "wait": case "read_page": case "extract": case "inspect_element": case "find_text": case "ask_user": case "done": break;
+      case "drag": {
+        if (!point || !tabIsVisible) throw new Error("Dragging requires a visible target in the foreground browser.");
+        const endpoint = action.to || action.end || (Number.isFinite(Number(action.endX)) && Number.isFinite(Number(action.endY))
+          ? { x: Number(action.endX), y: Number(action.endY) } : null);
+        if (!endpoint || !Number.isFinite(Number(endpoint.x)) || !Number.isFinite(Number(endpoint.y))) throw new Error("Drag destination coordinates are missing.");
+        const dest = { x: Math.round(Number(endpoint.x)), y: Math.round(Number(endpoint.y)) };
+        const viewport = await contents.executeJavaScript("({ width: innerWidth, height: innerHeight })", true);
+        if (dest.x < 0 || dest.y < 0 || dest.x >= viewport.width || dest.y >= viewport.height) throw new Error("Drag destination is outside the page.");
+        await withDebugger(async (send) => {
+          await send("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+          const motion = planCursorMotion(point, dest, { speed: this.settings.aiCursorSpeed, reducedMotion: this.settings.reducedMotion });
+          try {
+            const started = Date.now();
+            for (const [index, frame] of motion.frames.entries()) {
+              if (this.agent.paused || this.agent.manualControl) throw new Error("Drag interrupted by user takeover.");
+              await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: frame.x, y: frame.y, button: "left", buttons: 1 });
+              this.agentCursorPoint = { x: frame.x, y: frame.y };
+              if (this.settings.showAiCursor) await this.setCursor({ ...frame, kind: "move", label: "Dragging", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+              const next = motion.frames[index + 1];
+              if (next) await new Promise((resolve) => setTimeout(resolve, Math.max(0, next.atMs - (Date.now() - started))));
+            }
+          } finally {
+            await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: dest.x, y: dest.y, button: "left", clickCount: 1 });
+          }
+        });
+        if (this.settings.showAiCursor) await this.setCursor({ ...dest, kind: "click", label: "Dropped", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+        break;
+      }
+      case "wait": case "read_page": case "extract": case "inspect_element": case "find_text": case "ask_user": case "done": break;
       default: break;
     }
     await new Promise((resolve) => setTimeout(resolve, action?.type === "navigate" || action?.type === "search" ? 350 : 90));
