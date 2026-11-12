@@ -101,6 +101,29 @@ try{
   await shell.getByRole("button",{name:"Refresh inbox"}).click();
   await shell.getByRole("button",{name:"Close mail"}).click();
   await shell.waitFor({state:"detached"});
+  // The same event is used by Chat and Voice. Verify the unified AI draft
+  // handoff reads Gmail for context, fills a real editor, and never sends.
+  await page.route("**/api/deepseek/chat", route => route.fulfill({
+    status:200, contentType:"application/json",
+    body:JSON.stringify({choices:[{message:{content:JSON.stringify({
+      subject:"Website proposal follow-up",
+      body:"Hello,\\n\\nI have prepared a proposal for your review.",
+    })}}]}),
+  }));
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent("clyra:mail:open",{
+    detail:{compose:true,instruction:"Draft an email to client@example.com replying about the proposal"}
+  })));
+  await shell.waitFor();
+  await shell.getByRole("heading",{name:"New Email"}).waitFor();
+  await page.waitForFunction(()=>{
+    const to=document.getElementById("clyra-mail-to");
+    const subject=document.getElementById("clyra-mail-subject");
+    return to?.value==="client@example.com" && subject?.value==="Website proposal follow-up";
+  },{timeout:12000});
+  assert.equal((await page.evaluate(()=>window.__mailCalls)).filter(x=>x.action==="compose"&&x.args.mode==="send").length,1,"AI planning never sends another email");
+  await page.screenshot({path:"qa-screenshots/mail/ai-draft.png"});
+  await shell.getByRole("button",{name:"Close mail"}).click();
+  await shell.waitFor({state:"detached"});
   assert.deepEqual(errors,[], "Mail workspace must have no uncaught browser errors");
   console.log("clyra-mail-live-smoke: inbox, responsive layouts, compose, Drive attachment, approval, reply and controls passed");
 }finally{await browser.close();}
