@@ -1112,7 +1112,7 @@ export class ChromiumBrowserManager {
       this.cursor = null;
       this.agentCursorPoint = null;
     } else if ([cursor.x, cursor.y].every(Number.isFinite)) {
-      this.cursor = { id: ++this.cursorSequence, x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
+      this.cursor = { id: ++this.cursorSequence, at: Date.now(), x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
     }
     // Keep the human's visible tab undisturbed while an agent continues in a
     // different tab. The cursor becomes visible automatically when that tab
@@ -1402,6 +1402,7 @@ export class ChromiumBrowserManager {
       }),
       activeTabId: this.activeTabId,
       cursor: this.cursor,
+      surfaceVisible: this.surface.visible,
       canGoBack: Boolean(readableContents?.navigationHistory.canGoBack()),
       canGoForward: Boolean(readableContents?.navigationHistory.canGoForward()),
       secure: url.startsWith("https://"),
