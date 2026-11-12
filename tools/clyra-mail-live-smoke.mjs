@@ -99,7 +99,7 @@ try{
   await shell.getByRole("button",{name:"Mail filters"}).click();
   await shell.getByRole("button",{name:"Unread",exact:true}).click();
   await shell.getByRole("button",{name:"Refresh inbox"}).click();
-  await shell.getByRole("button",{name:"Close mail"}).click();
+  await page.getByRole("button",{name:"Close mail"}).click();
   await shell.waitFor({state:"detached"});
   // The same event is used by Chat and Voice. Verify the unified AI draft
   // handoff reads Gmail for context, fills a real editor, and never sends.
@@ -122,7 +122,7 @@ try{
   },{timeout:12000});
   assert.equal((await page.evaluate(()=>window.__mailCalls)).filter(x=>x.action==="compose"&&x.args.mode==="send").length,1,"AI planning never sends another email");
   await page.screenshot({path:"qa-screenshots/mail/ai-draft.png"});
-  await shell.getByRole("button",{name:"Close mail"}).click();
+  await page.getByRole("button",{name:"Close mail"}).click();
   await shell.waitFor({state:"detached"});
   assert.deepEqual(errors,[], "Mail workspace must have no uncaught browser errors");
   console.log("clyra-mail-live-smoke: inbox, responsive layouts, compose, Drive attachment, approval, reply and controls passed");
