@@ -4,6 +4,7 @@ import {
   AppWindow, ArrowLeft, ArrowRight, Brain, CircleHelp, Clock, Download, Eye, Globe, Keyboard, MousePointerClick, Navigation, RefreshCw, Search, SquareArrowOutUpRight, Square, TextCursorInput, TriangleAlert,
 } from "lucide-react";
 import { motion } from "motion/react";
+import { AgentCursorGlyph } from "../agent/AgentCursorGlyph";
 import { ActivityDisclosure, ShimmerText } from "./assistant";
 import type { ActionIconKey, AgentStatus, RunItem } from "../../lib/browserRunFeed";
 
@@ -147,7 +148,7 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
                 aria-hidden
               >
                 <span className="clyra-pointer__halo" />
-                <span className={`clyra-pointer__core${run.cursor.kind === "click" || run.cursor.kind === "double_click" ? " is-press" : ""}`} key={`a${run.cursor.id}`} />
+                <AgentCursorGlyph pressed={run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click"} />
                 {run.cursor.kind === "click" || run.cursor.kind === "double_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
               </motion.div>
             ) : null}
