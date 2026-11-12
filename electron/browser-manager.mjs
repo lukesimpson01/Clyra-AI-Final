@@ -254,6 +254,7 @@ export class ChromiumBrowserManager {
     this.saveTimer = null;
     this.agent = { status: "idle", paused: false, manualControl: false };
     this.cursor = null;
+    this.cursorsByTab = new Map();
     this.cursorSequence = 0;
     this.agentCursorPoint = null;
     // The in-page status pill reports clicks through a console token. A fresh
@@ -592,13 +593,21 @@ export class ChromiumBrowserManager {
   activateTab(id, { persist = true } = {}) {
     const next = this.tabs.get(id);
     if (!next) throw new Error("That browser tab no longer exists.");
-    if (this.activeTabId && this.activeTabId !== id) this.cancelSnip(this.activeTabId);
+    if (this.activeTabId && this.activeTabId !== id) {
+      this.cancelSnip(this.activeTabId);
+      const previous = this.tabs.get(this.activeTabId)?.view?.webContents;
+      if (previous && !previous.isDestroyed()) {
+        void previous.executeJavaScript("document.getElementById('__clyra_native_agent_cursor__')?.remove(); true", true).catch(() => {});
+      }
+      this.agentCursorPoint = null;
+    }
     for (const [tabId, tab] of this.tabs) {
       const show = tabId === id && this.surface.visible;
       tab.view.setVisible(show);
       tab.view.webContents.setBackgroundThrottling(!show);
     }
     this.activeTabId = id;
+    this.cursor = this.cursorsByTab.get(id) || null;
     next.lastActiveAt = Date.now();
     if (this.surface.visible) {
       next.view.setBounds(this.surface.bounds);
@@ -625,6 +634,7 @@ export class ChromiumBrowserManager {
     this.window.contentView.removeChildView(tab.view);
     tab.view.webContents.close({ waitForBeforeUnload: false });
     this.tabs.delete(id);
+    this.cursorsByTab.delete(id);
     if (this.activeTabId === id) this.activateTab(ids[index - 1] || ids[index + 1], { persist: false });
     this.scheduleSave();
     this.emitState();
@@ -915,6 +925,7 @@ export class ChromiumBrowserManager {
     if ((isPointerAction(action?.type) || action?.type === "type") && point) await movePointer(point);
 
     const click = async (clickCount = 1, button = "left") => {
+      if (this.agent.paused || this.agent.manualControl) throw new Error("Control was taken over before the click.");
       if (!point) throw new Error("The requested target is no longer visible.");
       if (resolved?.id && tabIsVisible) {
         // Hover may open a menu or shift layout while our mouse is traveling.
@@ -1109,10 +1120,15 @@ export class ChromiumBrowserManager {
 
   async setCursor(cursor, tabId = this.activeTabId) {
     if (!cursor) {
-      this.cursor = null;
-      this.agentCursorPoint = null;
+      if (tabId) this.cursorsByTab.delete(tabId);
+      if (!tabId || tabId === this.activeTabId) {
+        this.cursor = null;
+        this.agentCursorPoint = null;
+      }
     } else if ([cursor.x, cursor.y].every(Number.isFinite)) {
-      this.cursor = { id: ++this.cursorSequence, at: Date.now(), x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
+      const event = { id: ++this.cursorSequence, at: Date.now(), x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
+      if (tabId) this.cursorsByTab.set(tabId, event);
+      if (!tabId || tabId === this.activeTabId) this.cursor = event;
     }
     // Keep the human's visible tab undisturbed while an agent continues in a
     // different tab. The cursor becomes visible automatically when that tab
@@ -1573,6 +1589,7 @@ export class ChromiumBrowserManager {
       }
     }
     this.tabs.clear();
+    this.cursorsByTab.clear();
     this.activeTabId = null;
     this.cursor = null;
     this.agentCursorPoint = null;
