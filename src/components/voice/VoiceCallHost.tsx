@@ -29,8 +29,14 @@ export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
         void controller.startCall();
       }
     };
+    // Readiness is independent of which workspace tab happens to be visible.
+    // It lets integration checks wait for the actual call listener, not a button.
+    document.documentElement.dataset.clyraVoiceController = "ready";
     window.addEventListener(VOICE_CALL_TRIGGER_EVENT, onTrigger);
-    return () => window.removeEventListener(VOICE_CALL_TRIGGER_EVENT, onTrigger);
+    return () => {
+      window.removeEventListener(VOICE_CALL_TRIGGER_EVENT, onTrigger);
+      delete document.documentElement.dataset.clyraVoiceController;
+    };
   }, []);
 
   useEffect(() => {

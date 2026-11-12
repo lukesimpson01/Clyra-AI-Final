@@ -105,9 +105,9 @@ try {
     return route.continue();
   });
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
-  // Wait for the actual React chat composer rather than the static root node:
-  // the host's custom-event listener is only attached after React mounts.
-  await page.locator('button[aria-label="Start voice call"]').first().waitFor({ timeout: 15_000 });
+  // Wait for the installed React voice controller itself. The chat composer
+  // may not be visible while the workspace opens on another app tab.
+  await page.waitForFunction(() => document.documentElement.dataset.clyraVoiceController === "ready", { timeout: 30_000 });
   // The event is also what the real chat/command palette uses.
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("clyra:voice-call", { detail: { action: "start" } })));
   await page.locator(".clyra-voice-call").waitFor({ timeout: 15_000 });
