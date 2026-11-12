@@ -6,50 +6,33 @@ import {
 } from "lucide-react";
 import { api, type ComponentCatalogItem, type ComponentDetails } from "./api";
 import { cn } from "../../lib/utils";
+import { ComponentPreview } from "./ComponentPreview";
 
 type SourceFilter = "all" | "shadcn" | "21st";
 type LocalStatus = { id: "shadcn" | "21st"; available: boolean; detail: string };
 const EASE = [0.22, 1, 0.36, 1] as const;
 const SOURCE_NAMES = { shadcn: "shadcn/ui", "21st": "21st · Agent Elements" };
 
+const CATEGORY_NAMES = [
+  "Inputs & Controls", "Overlays & Menus", "Navigation",
+  "Data & Feedback", "AI & Chat", "Agent Tools", "Layout & Content",
+] as const;
+function categoryOf(item: ComponentCatalogItem): string {
+  const name = item.name;
+  if (/button|input|form|field|textarea|select|checkbox|switch|radio|toggle|picker|otp|label/.test(name)) return "Inputs & Controls";
+  if (/dialog|drawer|sheet|popover|tooltip|menu|command|alert/.test(name)) return "Overlays & Menus";
+  if (/sidebar|tabs|breadcrumb|navigation|pagination|resizable|scroll-area/.test(name)) return "Navigation";
+  if (/chart|table|calendar|progress|slider|skeleton|spinner|badge|toast/.test(name)) return "Data & Feedback";
+  if (/agent-chat|message|markdown|shimmer|question|thinking|input-bar/.test(name)) return "AI & Chat";
+  if (item.source === "21st" && /tool|subagent/.test(name)) return "Agent Tools";
+  return "Layout & Content";
+}
+
 const GROUPS = [
   { label: "All components", id: "all" as const },
   { label: "shadcn/ui", id: "shadcn" as const },
   { label: "21st · Agent Elements", id: "21st" as const },
 ];
-
-function ComponentArt({ item, compact = false }: { item: ComponentCatalogItem; compact?: boolean }) {
-  // Editorial source artwork, not a claim to display a rendered upstream component.
-  const is21st = item.source === "21st";
-  return (
-    <div className={cn(
-      "relative isolate flex aspect-[16/10] items-center justify-center overflow-hidden rounded-[14px]",
-      is21st ? "bg-[#EAF1FC]" : "bg-[#F3F4F6]",
-    )}>
-      <div className="pointer-events-none absolute -right-10 -top-12 h-48 w-48 rounded-full bg-white/60 blur-3xl" />
-      <div className={cn(
-        "relative flex w-[76%] flex-col gap-2.5 rounded-[14px] border border-black/[0.035] bg-white px-4 shadow-[0_12px_35px_rgba(20,30,55,0.075)]",
-        compact ? "py-4" : "py-5",
-      )}>
-        <div className="flex items-center gap-2">
-          <span className="h-6 w-6 rounded-[7px] bg-[#3977F6]/[0.10] text-[#3977F6] flex items-center justify-center">
-            {is21st ? <Code2 className="h-3.5 w-3.5" strokeWidth={1.7}/> : <Blocks className="h-3.5 w-3.5" strokeWidth={1.7}/>}
-          </span>
-          <span className="min-w-0 truncate text-[11px] font-medium text-[#27292D]">{item.title}</span>
-        </div>
-        <div className="h-[5px] w-[88%] rounded-full bg-[#E9EBF0]" />
-        <div className="h-[5px] w-[62%] rounded-full bg-[#F0F1F4]" />
-        <div className="flex gap-1.5 pt-1">
-          <div className="h-5 w-[54px] rounded-[6px] bg-[#3977F6]/85"/>
-          <div className="h-5 w-[45px] rounded-[6px] bg-[#F1F2F4]"/>
-        </div>
-      </div>
-      <span className="absolute bottom-2 right-2 rounded-full bg-white/85 px-2 py-0.5 text-[9px] text-[#8A8C92]">
-        Source artwork
-      </span>
-    </div>
-  );
-}
 
 function GetButton({ label, loading, onClick, disabled = false }: {
   label: string; loading?: boolean; disabled?: boolean; onClick: () => void;
@@ -61,14 +44,15 @@ function GetButton({ label, loading, onClick, disabled = false }: {
   </motion.button>;
 }
 
-function SourceCard({ item, onOpen, onGet, busy, installed }: {
-  item: ComponentCatalogItem; onOpen: () => void; onGet: () => void; busy: boolean; installed: boolean;
+function SourceCard({ item, onOpen, onGet, onReference, busy, installed, referenced }: {
+  item: ComponentCatalogItem; onOpen: () => void; onGet: () => void;
+  onReference: () => void; busy: boolean; installed: boolean; referenced: boolean;
 }) {
   return <div className="group min-w-0">
     <button type="button" onClick={onOpen}
       className="block w-full rounded-[15px] text-left outline-none transition-transform duration-200 group-hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"
       aria-label={"View " + item.title + " source and details"}>
-      <ComponentArt item={item} compact/>
+      <ComponentPreview item={item} compact/>
     </button>
     <div className="mt-3 flex items-center gap-2.5 px-0.5">
       <span className="flex h-[37px] w-[37px] shrink-0 items-center justify-center rounded-[11px] bg-[#F2F4FA] text-[#3977F6]">
@@ -79,6 +63,13 @@ function SourceCard({ item, onOpen, onGet, busy, installed }: {
         <div className="truncate text-[11.5px] text-[#8A8C93]">{SOURCE_NAMES[item.source]}</div>
       </div>
       <GetButton label={installed ? "Added" : "Get"} loading={busy} disabled={installed} onClick={onGet}/>
+    </div>
+    <div className="mt-2 flex items-center justify-between gap-2 px-0.5">
+      <span className="min-w-0 truncate text-[10px] text-[#a0a2a8]">{categoryOf(item)}</span>
+      <button type="button" onClick={onReference} aria-label={"Reference " + item.title + " in chat"}
+        className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-[#3977F6] transition-colors hover:bg-[#3977F6]/[0.055]">
+        {referenced ? "✓ Referenced" : "+ Reference"}
+      </button>
     </div>
   </div>;
 }
@@ -94,6 +85,7 @@ export function ComponentLibraryPanel({
 }) {
   const reducedMotion = useReducedMotion();
   const [source, setSource] = useState<SourceFilter>("all");
+  const [category, setCategory] = useState("");
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<ComponentCatalogItem[]>([]);
   const [statuses, setStatuses] = useState<LocalStatus[]>([]);
@@ -143,11 +135,15 @@ export function ComponentLibraryPanel({
       .finally(() => { if (mounted) setDetailLoading(false); });
     return () => { mounted = false; };
   }, [active]);
+  const visibleItems = useMemo(
+    () => category ? items.filter(item => categoryOf(item) === category) : items,
+    [category, items],
+  );
   const grouped = useMemo(() => {
     const groups = new Map<string, ComponentCatalogItem[]>();
-    for (const item of items) groups.set(item.source, [...(groups.get(item.source) ?? []), item]);
+    for (const item of visibleItems) groups.set(item.source, [...(groups.get(item.source) ?? []), item]);
     return [...groups.entries()];
-  }, [items]);
+  }, [visibleItems]);
   const install = async (item: ComponentCatalogItem) => {
     setNotice(""); setError("");
     if (!projectId) { setError("Open or create a project before adding components."); return; }
@@ -169,27 +165,57 @@ export function ComponentLibraryPanel({
   const missing = statuses.filter(s => !s.available);
   return (
     <AnimatePresence>
-      {open ? <div className="fixed inset-0 z-[115] flex justify-end" role="presentation">
-        <motion.div className="absolute inset-0 bg-black/[0.16]" onClick={onClose}
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          transition={{ duration: reducedMotion ? 0 : 0.2 }}/>
+      {open ? <div className="fixed inset-0 z-[115] flex min-h-0 overflow-hidden bg-white" role="presentation">
         <motion.aside role="dialog" aria-modal="true" aria-label="Clyra component library"
-          initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: reducedMotion ? 0 : 0.4, ease: EASE }}
-          className="relative flex h-full w-full max-w-[780px] flex-col bg-white shadow-[-16px_0_60px_#00000018]">
+          className="relative flex h-full w-full min-w-0 flex-row bg-white">
+          <aside className="hidden min-h-0 w-[232px] shrink-0 flex-col border-r border-black/[0.07] bg-[#F6F6F8]/95 px-2.5 pb-4 pt-3.5 md:flex" aria-label="Component navigation">
+            <label className="relative mb-3 block px-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8E8E93]" />
+              <input value={query} onChange={event => { setQuery(event.target.value); setActive(null); }}
+                placeholder="Search" aria-label="Search component library"
+                className="h-[30px] w-full rounded-[8px] border-0 bg-black/[0.055] pl-8 pr-3 text-[13px] text-[#1D1D1F] outline-none placeholder:text-[#8E8E93] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20"/>
+            </label>
+            <nav className="cc-scroll min-h-0 flex-1 space-y-px overflow-y-auto pr-0.5" aria-label="Component categories">
+              {GROUPS.map(group => <button type="button" key={group.id}
+                onClick={() => { setSource(group.id); setCategory(""); setActive(null); }}
+                aria-current={source === group.id && !category ? "page" : undefined}
+                className={cn("flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors",
+                  source === group.id && !category ? "bg-black/[0.075] font-medium text-[#1D1D1F]" : "text-[#46484e] hover:bg-black/[0.04]")}>
+                {group.id === "21st" ? <Code2 className="h-4 w-4 shrink-0 text-[#007AFF]"/> : <Blocks className="h-4 w-4 shrink-0 text-[#007AFF]"/>}
+                <span className="truncate">{group.label}</span>
+              </button>)}
+              <p className="px-2 pb-1 pt-5 text-[11px] font-semibold text-[#8E8E93]">Categories</p>
+              {CATEGORY_NAMES.map(name => {
+                const count = items.filter(item => categoryOf(item) === name).length;
+                return <button type="button" key={name} onClick={() => { setCategory(category === name ? "" : name); setActive(null); }}
+                  className={cn("flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] transition-colors",
+                    category === name ? "bg-black/[0.075] font-medium text-[#1D1D1F]" : "text-[#555860] hover:bg-black/[0.04]")}>
+                  <Blocks className="h-3.5 w-3.5 shrink-0 text-[#007AFF]"/>
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                  <span className="text-[10px] tabular-nums text-[#9c9da4]">{count}</span>
+                </button>;
+              })}
+            </nav>
+            <p className="px-2 pt-3 text-[10.5px] leading-relaxed text-[#92949c]">
+              Official, locally checked-out source. No hosted MCP or component API.
+            </p>
+          </aside>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="flex h-[60px] shrink-0 items-center justify-between px-5 sm:px-8">
             <div className="flex items-center gap-3">
               {active ? <button onClick={() => setActive(null)} className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#777] hover:bg-[#F4F4F5]" aria-label="Back to components"><ArrowLeft className="h-4 w-4"/></button> : <Blocks className="h-[18px] w-[18px] text-[#3977F6]" strokeWidth={1.6}/>}
-              <span className="text-[14px] font-medium text-[#24262B]">{active ? "Component details" : "Components"}</span>
+              <span className="text-[14px] font-medium text-[#24262B]">{active ? "Component details" : category || "Components"}</span>
               {!active && <span className="text-[11px] text-[#999BA2]">Local library</span>}
             </div>
             <button onClick={onClose} aria-label="Close component library"
               className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#777] hover:bg-[#F4F4F5]"><X className="h-4 w-4"/></button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {active ? <div className="mx-auto max-w-[710px] px-5 pb-12 sm:px-8">
+            {active ? <div className="mx-auto max-w-[1100px] px-5 pb-12 sm:px-8">
               <div className="mt-3 grid gap-6 sm:grid-cols-[1.05fr_1fr]">
-                <ComponentArt item={active}/>
+                <ComponentPreview item={active}/>
                 <div className="flex flex-col justify-center">
                   <span className="text-[11px] font-medium text-[#8D8F95]">{SOURCE_NAMES[active.source]} · MIT</span>
                   <h2 className="mt-1.5 text-[27px] font-semibold tracking-[-0.03em] text-[#1D1D1F]">{active.title}</h2>
@@ -228,7 +254,7 @@ export function ComponentLibraryPanel({
                   Official documentation <ExternalLink className="h-3.5 w-3.5"/>
                 </a>
               </section> : null}
-            </div> : <div className="mx-auto max-w-[730px] px-5 pb-12 sm:px-8">
+            </div> : <div className="mx-auto max-w-[1100px] px-5 pb-12 sm:px-8">
               <div className="pt-4">
                 <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#3977F6]">The Clyra Library</div>
                 <h1 className="mt-1 text-[29px] font-semibold tracking-[-0.035em] text-[#1D1D1F]">Build with components.</h1>
@@ -237,20 +263,20 @@ export function ComponentLibraryPanel({
               <label className="mt-6 flex h-[42px] items-center gap-2.5 rounded-[11px] bg-[#F6F6F8] px-3.5 focus-within:ring-2 focus-within:ring-[#3977F6]/20">
                 <Search className="h-4 w-4 shrink-0 text-[#9A9CA4]"/>
                 <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search components"
-                  aria-label="Search components" className="min-w-0 flex-1 bg-transparent text-[13px] text-[#24262A] outline-none placeholder:text-[#A2A4AB]"/>
+                  aria-label="Search gallery components" className="min-w-0 flex-1 bg-transparent text-[13px] text-[#24262A] outline-none placeholder:text-[#A2A4AB]"/>
                 {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search"><X className="h-3.5 w-3.5 text-[#92949B]"/></button>}
               </label>
               <div className="mt-4 flex flex-wrap items-center gap-2">
-                {GROUPS.map(group => <button key={group.id} type="button" onClick={() => setSource(group.id)} aria-pressed={source === group.id}
+                {GROUPS.map(group => <button key={group.id} type="button" onClick={() => { setSource(group.id); setCategory(""); }} aria-pressed={source === group.id && !category}
                   className={cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", source === group.id
                     ? "bg-[#EAF1FF] font-medium text-[#3977F6]" : "text-[#777A82] hover:bg-[#F4F5F6]")}>{group.label}</button>)}
               </div>
               <div className="mt-6 flex items-center justify-between text-[11.5px] text-[#999BA1]">
-                <span role="status">{loading ? "Reading local sources…" : items.length + " components"}</span>
+                <span role="status">{loading ? "Reading local sources…" : visibleItems.length + " components"}</span>
                 <span className="inline-flex items-center gap-1"><Check className="h-3 w-3"/> Offline after setup</span>
               </div>
               {loading ? <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-3">{Array.from({length:6},(_,i)=><div key={i} className="aspect-[13/10] animate-pulse rounded-[14px] bg-[#F5F5F7]"/>)}</div> : null}
-              {!loading && !items.length ? <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 text-center text-[12px] text-[#8C8F96]">
+              {!loading && !visibleItems.length ? <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 text-center text-[12px] text-[#8C8F96]">
                 <Search className="h-5 w-5"/><span>No components found in the local sources.</span>
               </div> : null}
               {grouped.map(([group, components]) => <section key={group} className="mt-6 border-t border-black/[0.07] pt-5">
@@ -258,14 +284,16 @@ export function ComponentLibraryPanel({
                   <h2 className="text-[20px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">{SOURCE_NAMES[group as "shadcn" | "21st"]}</h2>
                   <span className="text-[11px] text-[#999BA1]">{components.length} components</span>
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 xl:grid-cols-4">
                   {components.map(item => <SourceCard key={item.id} item={item} onOpen={() => setActive(item)}
-                    onGet={() => void install(item)} busy={busy === item.id} installed={installed.has(item.id)}/>)}
+                    onGet={() => void install(item)} onReference={() => reference(item)}
+                    referenced={referencedIds.includes("component:" + item.id)}
+                    busy={busy === item.id} installed={installed.has(item.id)}/>)}
                 </div>
               </section>)}
               <p className="mt-9 text-[11px] leading-relaxed text-[#999BA1]">
                 shadcn/ui is bundled from shadcn-ui/ui. 21st is the public Agent Elements library, not the full hosted 21st.dev marketplace.
-                Source artwork is editorial; open a component to inspect its real code.
+                The visual examples are illustrative, not screenshots of rendered upstream code. Open a component to inspect its real local source.
               </p>
             </div>}
           </div>
@@ -274,6 +302,7 @@ export function ComponentLibraryPanel({
             {notice && <p className="flex items-start gap-2 text-[#407752]"><Check className="mt-[1px] h-3.5 w-3.5 shrink-0"/>{notice}</p>}
             {missing.length ? <p className="mt-1 text-[#777A80]">Set up local sources with <code className="text-[#50525A]">npm run setup:component-sources</code>. No API key required.</p> : null}
           </div> : null}
+          </div>
         </motion.aside>
       </div> : null}
     </AnimatePresence>
