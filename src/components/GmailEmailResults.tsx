@@ -253,7 +253,11 @@ function ReplyComposer({ email, onGenerate, onSave, onSend, onCancel }: { email:
     try {
       if (mode === "draft") setBody(await onGenerate(email));
       if (mode === "save") { await onSave(email, body); setNotice("Draft saved to Gmail."); }
-      if (mode === "send") { await onSend(email, body); setNotice("Reply sent."); }
+      if (mode === "send") {
+        const approved = window.confirm("Send this reply to " + (email.replyTo || email.senderEmail) + "?\nSubject: Re: " + email.subject + "\n\n" + body);
+        if (!approved) { setNotice("Reply not sent."); return; }
+        await onSend(email, body); setNotice("Reply sent.");
+      }
     } catch {
       setNotice(mode === "send" ? "Clyra could not send this reply. Nothing was sent." : "Clyra could not save this draft.");
     } finally {
@@ -449,6 +453,7 @@ export function GmailEmailResults({ results, refreshing = false, onRefresh, onSu
           <span className="min-w-0"><span className="block text-[15px] font-medium leading-5 text-[#1f1f1f]">Synced inbox</span><span className="mt-0.5 block text-[12px] leading-4 text-[#5f6368]">{labelForResults(results)}</span></span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { query: results.query } }))} className="inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-[12px] font-medium text-[#38404e] transition-colors hover:bg-[#f1f3f4]" aria-label="Open Clyra Mail workspace">Open Mail</button>
           <button type="button" onClick={() => void refresh()} disabled={isRefreshing} className="grid h-9 w-9 place-items-center rounded-full text-[#5f6368] transition hover:bg-[#eaf1fb] hover:text-[#0b57d0] disabled:opacity-60" aria-label="Refresh email results">{isRefreshing ? <MaterialIcon name="refresh" className="h-[19px] w-[19px] animate-spin" /> : <MaterialIcon name="refresh" className="h-[19px] w-[19px]" />}</button>
           <a href="https://mail.google.com/mail/u/0/#inbox" target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-[18px] border border-[#dadce0] bg-white px-3 text-[12px] font-medium text-[#0b57d0] transition hover:bg-[#f8fafd] focus:outline-none focus:ring-2 focus:ring-[#0b57d0]/30">Open Gmail <MaterialIcon name="open_in_new" className="h-3.5 w-3.5" /></a>
         </div>

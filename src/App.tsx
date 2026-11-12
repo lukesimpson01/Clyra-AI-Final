@@ -127,6 +127,7 @@ import {
   MORPH_SHELL_DELAY_MS,
 } from "./components/chat/SpotifyNotch";
 import { SpotifyWorkspace } from "./components/spotify/SpotifyWorkspace";
+import { ClyraMailHost } from "./components/mail/ClyraMailWorkspace";
 import type { SpotifyTrack } from "./lib/electron-runtime";
 import { SpotifyRunTimeline, type SpotifyRun, type SpotifyRunStep } from "./components/chat/SpotifyRunTimeline";
 import ClyraComposerShell, {
@@ -10808,6 +10809,7 @@ Please analyze the code you just wrote and fix this error.`;
   return (
     <TerminalRunnerProvider>
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
+      <ClyraMailHost />
       <VoiceCallHost
         call={voiceCall}
         testMode={voiceTestMode}

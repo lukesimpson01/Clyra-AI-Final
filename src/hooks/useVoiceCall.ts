@@ -491,6 +491,16 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       acknowledge("Got it. I've added that to the same task.");
       return true;
     }
+    if (/^(?:open|show|switch to|go to)\s+(?:my\s+)?(?:gmail|mail|inbox|emails?)(?:\s+app)?[.!]?$/i.test(clean)) {
+      window.dispatchEvent(new CustomEvent("clyra:mail:open"));
+      acknowledge("Opening your connected inbox. I can still hear you.");
+      return true;
+    }
+    if (/\b(?:compose|write|draft|new)\b[\s\S]{0,60}\b(?:email|message)\b|\b(?:email|message)\b[\s\S]{0,50}\b(?:compose|write|draft)\b/i.test(clean) && /\b(?:email|gmail|inbox|mail)\b/i.test(clean)) {
+      window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true } }));
+      acknowledge("I opened a new email draft. Please review the recipient, subject and message before sending.");
+      return true;
+    }
     const google = detectGoogleService(clean);
     if (google && await executeGoogle(google, clean)) {
       acknowledge("I've handled that Google Workspace request.");
