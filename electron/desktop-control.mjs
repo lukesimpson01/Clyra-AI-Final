@@ -29,7 +29,17 @@ using System;
 using System.Runtime.InteropServices;
 public static class ClyraWindowsInput {
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
-  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public KEYBDINPUT ki;
+    [FieldOffset(0)] public MOUSEINPUT mi;
+    [FieldOffset(0)] public HARDWAREINPUT hi;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT {
+    public uint uMsg; public ushort wParamL; public ushort wParamH;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out POINT point);
@@ -151,7 +161,11 @@ export class DesktopControlService {
       // Screen coordinates can be negative on a left-hand monitor. Keeping
       // the transparent overlay on the display that owns the target avoids
       // mixing physical and device-independent coordinates.
-      this.cursorWindow.setBounds(display.bounds, false);
+      const current = this.cursorWindow.getBounds();
+      if (current.x !== display.bounds.x || current.y !== display.bounds.y
+        || current.width !== display.bounds.width || current.height !== display.bounds.height) {
+        this.cursorWindow.setBounds(display.bounds, false);
+      }
       return this.cursorWindow;
     }
     const { width, height } = display.bounds;
@@ -439,19 +453,24 @@ for ($i=1; $i -le $count; $i++) {
           return this.key(action.key, action.label || "Key");
         case "scroll": {
           if (this.paused || this.guideOnly || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
+          // Positive deltaY means down, matching browser wheel semantics.
           const amount = Math.max(-20, Math.min(20, Number(action.deltaY ?? action.amount) || 0));
+          if (!amount) return { ok: true, deltaY: 0 };
           if (process.platform === "win32") {
-            const wheel = Math.round(amount >= 0 ? 120 : -120);
+            const wheel = Math.round(amount > 0 ? -120 : 120);
             const repeats = Math.max(1, Math.round(Math.abs(amount)));
             await runWindowsPowerShell(`${WINDOWS_INPUT}\nfor ($i = 0; $i -lt ${repeats}; $i++) { [ClyraWindowsInput]::mouse_event(0x0800, 0, 0, ${wheel}, [UIntPtr]::Zero) }`);
           } else if (process.platform === "darwin") {
-            await this.macInput("scroll", this.lastPoint.x, this.lastPoint.y, -Math.round(amount));
+            const point = screen.getCursorScreenPoint();
+            await this.macInput("scroll", point.x, point.y, -Math.round(amount));
           } else if (this.xdotool) {
-            const button = amount >= 0 ? "4" : "5";
+            const button = amount > 0 ? "5" : "4";
             await execFileAsync(this.xdotool, ["click", "--repeat", String(Math.max(1, Math.round(Math.abs(amount)))), button], { timeout: 3_000 });
           } else {
             return { ok: false, error: "Scrolling is unavailable on this platform" };
           }
+          const actual = screen.getCursorScreenPoint();
+          await this.setCursor({ ...actual, label: "Scrolling", kind: "scroll" });
           return { ok: true, deltaY: amount };
         }
         case "wait":
