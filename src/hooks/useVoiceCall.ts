@@ -675,9 +675,21 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       sessionIdRef.current = created.sessionId;
       dispatch({ type: "SET_SESSION_ID", sessionId: created.sessionId });
 
+      let transportReady = false;
+      let captureReady = false;
+      let announcedReady = false;
+      const announceReady = () => {
+        if (announcedReady || !transportReady || !captureReady || startSequence !== startSequenceRef.current) return;
+        announcedReady = true;
+        engine.current.ready = true;
+        dispatch({ type: "MIC_READY" });
+        touchActivity();
+      };
       const socket = new WebSocket(created.websocketUrl);
       socketRef.current = socket;
+      let rejectOpening: ((error: Error) => void) | null = null;
       const opened = new Promise<void>((resolve, reject) => {
+        rejectOpening = reject;
         socket.onopen = () => resolve();
         socket.onerror = () => reject(new Error("Clyra’s speech engine isn’t reachable."));
       });
@@ -686,12 +698,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         try { message = JSON.parse(String(event.data)); } catch { return; }
         if (socketRef.current !== socket) return;
         if (message.type === "pipeline_mode") {
-          engine.current.ready = true;
-          // Do not advertise a working microphone until capture actually starts.
-          if (captureRef.current?.mediaStream) {
-            dispatch({ type: "MIC_READY" });
-            touchActivity();
-          }
+          transportReady = true;
+          announceReady();
         } else if (message.type === "partial_done") {
           engine.current.partialInFlight = false;
         } else if (message.type === "transcript_partial") {
@@ -711,6 +719,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       };
       socket.onclose = () => {
         if (socketRef.current === socket) {
+          if (!transportReady) rejectOpening?.(new Error("The speech connection closed before it was ready."));
+          engine.current.ready = false;
           socketRef.current = null;
           if (sessionRef.current.active && sessionRef.current.state !== "ending") dispatch({ type: "ERROR", error: { code: "VOICE_DISCONNECTED", message: "I lost the speech connection. End the call and try again.", retryable: true } });
         }
@@ -725,10 +735,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         return;
       }
       capture.setMuted(sessionRef.current.muted);
-      if (engine.current.ready) {
-        dispatch({ type: "MIC_READY" });
-        touchActivity();
-      }
+      captureReady = true;
+      announceReady();
     } catch (error) {
       if (startSequence !== startSequenceRef.current) return;
       await teardownEngine();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { stopMediaStreamTracks } from "../src/lib/voicePcmCapture";
 import { VoiceActivityGate } from "../src/lib/voiceActivityGate";
 import { shouldInterruptVoiceReply } from "../src/lib/voiceTurnDetection";
+import { TranscriptStabilizer } from "../src/speech/transcriptStabilizer";
 import { createVoiceSessionState, voiceSessionReducer } from "../src/voice/state/voiceSession";
 
 // The old raw-WebSocket PCM/phrase-buffering protocol (voicePcmPacket.ts,
@@ -162,3 +163,13 @@ assert.equal(shouldInterruptVoiceReply("thinking", false), true);
 assert.equal(shouldInterruptVoiceReply("acting_browser", true), true, "live task acknowledgement must be interruptible");
 assert.equal(shouldInterruptVoiceReply("acting_clyra", false), false, "do not cancel an agent that isn't speaking");
 console.log("voice-unit-tests: task speech interruption passed");
+
+const captions = new TranscriptStabilizer();
+assert.equal(captions.update("Research the competitors"), "Research the competitors");
+assert.equal(captions.update("Research the competitors and pricing"), "Research the competitors and pricing");
+assert.equal(captions.update("competitors and pricing for TikTok"), "Research the competitors and pricing for TikTok", "rolling STT must not erase early words");
+assert.equal(captions.finalize("Research competitor pricing for TikTok"), "Research competitor pricing for TikTok", "final decode remains authoritative");
+assert.equal(captions.update("Start a different question"), "Start a different question", "new utterances do not inherit old captions");
+captions.reset();
+assert.equal(captions.update(""), "");
+console.log("voice-unit-tests: rolling transcript stabilizer passed");
