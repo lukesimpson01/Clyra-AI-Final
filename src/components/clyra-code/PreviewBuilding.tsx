@@ -99,7 +99,12 @@ export function PreviewBuilding({ phase, step }: { phase: "starting" | "building
     if (reduced) { setBuilt(BLOCKS.length); return; }
     const timer = built < BLOCKS.length
       ? window.setTimeout(() => setBuilt((count) => count + 1), built === 0 ? 260 : STEP_MS)
-      : window.setTimeout(() => setLayoutIndex((index) => (index + 1) % LAYOUTS.length), HOLD_MS);
+      : window.setTimeout(() => {
+          // Restart the drawing strokes on EVERY layout. Previously built was
+          // stuck at the final count, so the animation stopped after one cycle.
+          setBuilt(0);
+          setLayoutIndex((index) => (index + 1) % LAYOUTS.length);
+        }, HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [built, layoutIndex, reduced]);
 
