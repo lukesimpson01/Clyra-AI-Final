@@ -59,6 +59,7 @@ function getViteBinary(projectPath: string) {
 async function waitForReady(state: RunnerState, port: number, timeoutMs = 45000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
+    if (state.session.status === "server_crashed" || state.session.status === "build_failed") return;
     // Frameworks can report a different bound port after startup.
     const candidateUrls = [state.session.url, `http://127.0.0.1:${port}`, `http://localhost:${port}`].filter(Boolean) as string[];
     for (const candidate of candidateUrls) {
@@ -68,7 +69,7 @@ async function waitForReady(state: RunnerState, port: number, timeoutMs = 45000)
           ...state.session,
           status: "ready",
           url: candidate,
-          port,
+          port: Number(new URL(candidate).port) || port,
           lastHealthCheckAt: Date.now(),
           lastError: undefined,
         };
@@ -106,6 +107,7 @@ async function prepareSourceDependencies(state: RunnerState, projectPath: string
       cwd: projectPath,
       env: { ...createProcessEnvironment(), CI: "1", BROWSER: "none", FORCE_COLOR: "0" },
       stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
     });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Dependency installation timed out after 180 seconds.")), 180_000);
@@ -246,6 +248,7 @@ export async function startDevServer({
       cwd: projectPath,
       env: { ...createProcessEnvironment(), BROWSER: "none", FORCE_COLOR: "0", HOST: "127.0.0.1", PORT: String(port) },
       stdio: ["pipe", "pipe", "pipe"],
+      shell: Boolean(script) && process.platform === "win32",
     },
   );
   state.process = child;

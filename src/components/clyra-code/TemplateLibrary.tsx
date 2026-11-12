@@ -440,6 +440,7 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-semibold text-[#1D1D1F]">{entry.name}</span>
                   <span className="block truncate text-[12px] text-[#6E6E73]">{subtitleOf(entry)}</span>
+                  <TemplateSampleInlineRating entry={entry} />
                 </span>
                 <Get entry={entry} install={install} inverted />
               </div>
