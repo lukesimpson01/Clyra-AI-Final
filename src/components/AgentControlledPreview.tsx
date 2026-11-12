@@ -223,7 +223,7 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
   const source = `${origin}/?embedTool=${encodeURIComponent(agent.id)}&agentPreview=1`;
   const manual = task.state === "user_controlling";
   const running = !TERMINAL_STATES.has(task.state) && task.state !== "paused_by_user" && !manual;
-  const showPointer = agentPointer && running && agent.id === "vibe";
+  const showPointer = running && agent.id === "vibe" ? agentPointer : null;
 
   return (
     <motion.article
@@ -248,17 +248,17 @@ export function AgentControlledPreview({ agent, messageId }: { agent: PreviewAge
         <AnimatePresence>
           {showPointer ? (
             <motion.div
-              key={agentPointer.id}
+              key={showPointer.id}
               aria-hidden="true"
               className="pointer-events-none absolute z-20"
-              style={{ left: agentPointer.x, top: agentPointer.y }}
+              style={{ left: showPointer.x, top: showPointer.y }}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
             >
-              <AgentCursorGlyph pressed={agentPointer.kind === "click"} />
-              {agentPointer.kind === "click" ? <motion.span
+              <AgentCursorGlyph pressed={showPointer.kind === "click"} />
+              {showPointer.kind === "click" ? <motion.span
                 className="pointer-events-none absolute -left-4 -top-4 h-8 w-8 rounded-full border-[1.5px] border-[#1E6FFF]/55"
                 initial={{ scale: 0.35, opacity: 0.75 }}
                 animate={{ scale: 1.5, opacity: 0 }}
