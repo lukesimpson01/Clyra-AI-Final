@@ -268,7 +268,7 @@ function classifyTool(tool: string, input: Record<string, unknown>): { kind: Act
   if (/(?:^|_)(shadcn|21st|twentyfirst|twenty_first)(?:_|$)/.test(lower)) {
     const provider = /shadcn/.test(lower) ? "shadcn/ui" : "21st.dev";
     const item = firstString(input, "name", "component", "componentName", "slug", "identifier", "item", "query", "q", "search");
-    const operation = /(?:search|list|browse|inspiration|registry|lookup)/.test(lower) ? "Scanning" : /(?:get_component|view|fetch|read)/.test(lower) ? "Inspecting" : "Adding";
+    const operation = /(?:search|list|browse|inspiration|registr(?:y|ies)|lookup)/.test(lower) ? "Scanning" : /(?:get_component|view|fetch|read)/.test(lower) ? "Inspecting" : "Adding";
     return { kind: operation === "Scanning" ? "mcp" : "component", target: provider + " · " + operation + (item ? " " + item : " components") };
   }
   if (/^(bash|shell|command|execute|exec|run|terminal|shell_command)$/.test(lower)) {

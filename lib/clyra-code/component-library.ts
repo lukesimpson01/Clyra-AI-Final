@@ -54,12 +54,12 @@ export async function ensureComponentMcpConfig(projectPath: string): Promise<voi
       ...servers,
       shadcn: {
         type: "local", command: ["npx", "-y", "shadcn@latest", "mcp"],
-        timeout: 20_000, codemode: false,
+        timeout: { startup: 60_000, catalog: 30_000 }, codemode: false,
       },
       "21st": {
         type: "remote", url: TWENTY_FIRST_MCP, oauth: false,
         headers: { "x-api-key": "{env:API_KEY_21ST}" },
-        disabled: !apiKey(), timeout: 20_000, codemode: false,
+        disabled: !apiKey(), timeout: { startup: 30_000, catalog: 30_000 }, codemode: false,
       },
     },
   };
