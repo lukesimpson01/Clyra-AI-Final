@@ -1381,6 +1381,7 @@ export default function ClyraCodeWorkspace({
           void loadProjects().then(() => selectProject(projectId));
         }}
         existingProjectIds={state.projects.map((project) => project.id)}
+        onProjectsChanged={() => { void loadProjects(); }}
         onOpenInstalled={(projectId, entry) => {
           setLibraryOpen(false);
           setHandoffFading(true);

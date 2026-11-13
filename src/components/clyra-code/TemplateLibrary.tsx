@@ -479,6 +479,7 @@ export function TemplateLibrary({
   projectId,
   onClose,
   onImported,
+  onProjectsChanged,
   onAskClyra,
   onOpenInstalled,
   existingProjectIds,
@@ -487,6 +488,8 @@ export function TemplateLibrary({
   projectId: string | null;
   onClose: () => void;
   onImported: (projectId: string) => void;
+  /** Called after a one-tap Get creates a project, so the workspace list includes it before Open is shown. */
+  onProjectsChanged?: () => void;
   onAskClyra: (entry: TemplateManifest) => void;
   /** Open an installed app in Clyra Code: select it, start the dev server, and start the setup chat. */
   onOpenInstalled?: (projectId: string, entry: TemplateManifest) => void;
@@ -629,13 +632,14 @@ export function TemplateLibrary({
         writeInstalled(next);
         return next;
       });
+      onProjectsChanged?.();
       setJustInstalled(entry);
     } catch (reason) {
       setInstallErrors((current) => ({ ...current, [entry.id]: reason instanceof Error ? reason.message : "The download failed." }));
     } finally {
       setPhases((current) => { const next = { ...current }; delete next[entry.id]; return next; });
     }
-  }, [phases]);
+  }, [phases, onProjectsChanged]);
 
   useEffect(() => {
     if (!justInstalled) return;
