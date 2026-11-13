@@ -31,7 +31,8 @@ test.beforeAll(async ({ request }) => {
   const created = await request.post(`${API}/api/vibe/projects`, { data: { name: PROJECT_NAME, prompt: "sidebar test" } });
   expect(created.ok()).toBeTruthy();
   projectId = ((await created.json()) as { project: { id: string } }).project.id;
-  // Session titles and sidebar search are local metadata; do not require a model runtime.
+  // Sidebars and conversation metadata must work without a model API key,
+  // so don't boot an LLM just to create a local task title.
   const session = await request.post(`${API}/api/opencode/sessions`, { data: { projectId, title: THREAD_TITLE } });
   expect(session.ok()).toBeTruthy();
   threadId = ((await session.json()) as { id: string }).id;
@@ -63,12 +64,15 @@ test("the + beside Projects offers only real project actions", async ({ page }) 
   await expect(page.getByRole("menuitem")).toHaveCount(2);
 });
 
-test("New task starts a thread in the selected project without creating a project", async ({ page, request }) => {
+test("New task opens a fresh composer without saving an empty thread or another project", async ({ page, request }) => {
   await openWorkspace(page);
   await page.locator(`[data-project-row="${projectId}"]`).click();
   const before = await listThreads(request, projectId);
   await page.getByRole("button", { name: "New task", exact: true }).click();
-  await expect.poll(async () => (await listThreads(request, projectId)).length, { timeout: 30_000 }).toBe(before.length + 1);
+  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible();
+  // The first Send creates the thread; opening/abandoning a task must not
+  // generate hundreds of blank conversations in the project sidebar.
+  expect((await listThreads(request, projectId)).length).toBe(before.length);
   const projects = (await (await request.get(`${API}/api/vibe/projects`)).json()) as { projects: Array<{ id: string }> };
   expect(projects.projects.filter((project) => project.id === projectId)).toHaveLength(1);
 });

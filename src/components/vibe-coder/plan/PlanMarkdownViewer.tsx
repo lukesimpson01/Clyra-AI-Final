@@ -24,7 +24,7 @@ ${plan.taskGraph?.map((t: any, i: number) => `${i + 1}. **${t.name}**: ${t.exact
 
   return (
     <div className="prose prose-invert prose-sm max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown remarkPlugins={[[remarkGfm, { singleTilde: false }]]}>
         {markdownContent}
       </ReactMarkdown>
     </div>

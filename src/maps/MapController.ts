@@ -3,6 +3,8 @@ import type { Coordinate, ClyraPlace, Route } from "../../lib/maps/types";
 import { TILE_CATEGORIES } from "./categories";
 import type { TransitLeg } from "../../lib/maps/transit";
 import type { CameraFrame } from "../navigation/NavigationCameraController";
+import { RouteFlyover } from "./routeFlyover";
+import { installTilePoiLayer } from "./tilePoiLayer";
 
 const ROUTE_SOURCE = "clyra-route";
 const ROUTE_CASING_LAYER = "clyra-route-casing";
@@ -108,6 +110,8 @@ export class MapController {
 
   ensureLayers() {
     const map = this.map;
+    // draw the map's own places as quiet grey glyphs (under any route we draw), replacing the base style's coloured badges
+    try { installTilePoiLayer(map); } catch { /* a style without place tiles keeps its own */ }
 
     if (!map.getSource(ROUTE_SOURCE)) {
       map.addSource(ROUTE_SOURCE, { type: "geojson", data: emptyFC() });
@@ -385,8 +389,36 @@ export class MapController {
     });
   }
 
+  private routeFlyover: RouteFlyover | null = null;
+
   get flying() {
-    return this.flyoverFrame != null;
+    return this.flyoverFrame != null || this.routeFlyover?.running === true;
+  }
+
+  /** Cinematic flight along a route: a dot travels it, the camera trails, and every real turn is a slow stop. */
+  startRouteFlyover(route: Route, onEnd?: () => void, onState?: (info: { progress: number; speed: number; phase: "cruise" | "hold" | "turn" }) => void) {
+    this.stopFlyover();
+    const map = this.map;
+    const finish = () => {
+      this.stopFlyover();
+      this.clearDot();
+      this.setProgress(null, 0);
+      onEnd?.();
+    };
+    const flight = new RouteFlyover(
+      map,
+      route,
+      { dot: (c, b) => this.setDotPosition(c, b), progress: (m) => this.setProgress(route, m), state: onState },
+      finish,
+    );
+    this.routeFlyover = flight;
+    flight.start();
+    const c = map.getCanvasContainer();
+    const stop = () => finish();
+    for (const ev of ["mousedown", "wheel", "touchstart"]) c.addEventListener(ev, stop, { once: true, passive: true });
+    this.flyoverStop = () => {
+      for (const ev of ["mousedown", "wheel", "touchstart"]) c.removeEventListener(ev, stop);
+    };
   }
 
   /** Slow orbit around a point over 3D buildings. Any user gesture ends it. */
@@ -415,7 +447,12 @@ export class MapController {
     for (const ev of ["mousedown", "wheel", "touchstart"]) c.addEventListener(ev, stop, { once: true, passive: true });
   }
 
+  pauseRouteFlyover(paused: boolean) { this.routeFlyover?.setPaused(paused); }
+  setRouteFlyoverSpeed(scale: number) { this.routeFlyover?.setScale(scale); }
+
   stopFlyover() {
+    this.routeFlyover?.stop();
+    this.routeFlyover = null;
     if (this.flyoverFrame != null) cancelAnimationFrame(this.flyoverFrame);
     this.flyoverFrame = null;
     this.flyoverStop?.();

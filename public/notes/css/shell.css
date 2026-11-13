@@ -124,12 +124,8 @@
   font-size: 14.5px; font-weight: 500; padding-right: 0;
   transition: padding var(--duration-slide) var(--ease-settle);
 }
-.nav-item.selected .nav-name,
-.nav-item:hover .nav-name,
-.nav-item:focus-visible .nav-name { grid-template-columns: 1fr; }
-.nav-item.selected .nav-name-text,
-.nav-item:hover .nav-name-text,
-.nav-item:focus-visible .nav-name-text { padding: 0 6px 0 5px; }
+.nav-item.selected .nav-name { grid-template-columns: 1fr; }
+.nav-item.selected .nav-name-text { padding: 0 6px 0 5px; }
 
 /* Exactly one item is ever expanded: the one being pointed at wins, and the
    selected item steps aside while that is true. */
@@ -163,7 +159,7 @@
 .add-subject-label { font-size: 13.5px; }
 
 .section-header.drop-into {
-  background: var(--accent-soft); border-radius: var(--radius);
+  background: transparent; border-radius: var(--radius); outline: 2px solid var(--accent); outline-offset: -2px;
 }
 
 .sidebar-body { flex: 1; min-height: 0; padding: 4px 0 8px; }
@@ -206,7 +202,7 @@
 .page-row:hover { color: var(--text-primary); }
 .page-row.selected { color: var(--text-primary); font-weight: 500; }
 .page-row.selected::before { opacity: 1; transform: scale(1); background: var(--background-selected); }
-.page-row.drop-into { background: var(--accent-soft); }
+.page-row.drop-into { background: transparent; outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .page-caret {
   display: grid; place-items: center; width: 18px; height: 18px; flex: none;
@@ -384,7 +380,7 @@
 .tab.active { background: var(--background-selected); }
 .tab.closing { max-width: 0; opacity: 0; padding: 0; }
 .tab.active { color: var(--text-primary); }
-.tab.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drag-over { box-shadow: none; outline: 2px solid var(--accent); outline-offset: -2px; }
 .tab-icon { flex: none; display: grid; place-items: center; width: 16px; height: 16px; font-size: 13px; }
 .tab-icon svg { width: 14px; height: 14px; }
 .tab-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -446,20 +442,43 @@
 .split-surface { display: grid; min-width: 0; min-height: 0; gap: 1px; overflow: hidden; background: var(--border-soft); }
 .split-surface.horizontal { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .split-surface.vertical { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-.split-pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--background-main); transition: background-color 180ms var(--ease), box-shadow 220ms var(--ease-out); }
+.split-surface.grid-3, .split-surface.grid-4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.split-surface.grid-3 .split-pane:last-child { grid-column: 1 / -1; }
+.split-pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--background-main); transition: background-color 180ms var(--ease), box-shadow 220ms var(--ease-out), opacity 200ms var(--ease-out), transform 200ms var(--ease-out); }
+.split-pane.entering { animation: split-pane-in 280ms var(--ease-out); }
+.split-pane.leaving { opacity: 0; transform: scale(.985); pointer-events: none; }
+.split-pane.drop-ready { background: var(--background-main); box-shadow: inset 0 0 0 2px var(--accent); }
+@keyframes split-pane-in { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
 .split-pane.active { box-shadow: inset 0 2px 0 var(--accent); }
-.split-pane-head { display: flex; align-items: center; gap: 7px; flex: none; height: 32px; padding: 0 7px 0 10px; border-bottom: 1px solid var(--border-soft); color: var(--text-secondary); font-size: 12.5px; font-weight: 500; user-select: none; }
+.split-pane-head { display: flex; align-items: center; gap: 4px; flex: none; height: 33px; padding: 0 5px 0 7px; border-bottom: 1px solid var(--border-soft); color: var(--text-secondary); font-size: 12.5px; font-weight: 500; user-select: none; }
+.split-pane-tabs { display: flex; align-items: center; min-width: 0; flex: 1 1 auto; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.split-pane-tabs::-webkit-scrollbar { display: none; }
+.split-pane-tab { display: flex; flex: 0 1 138px; align-items: center; gap: 5px; flex-basis: 138px; width: 138px; max-width: 0; min-width: 0; height: 25px; padding: 0; overflow: hidden; border-radius: 6px; color: var(--text-secondary); font-size: 12px; opacity: 0; cursor: default; transition: max-width var(--duration-tab) var(--ease-tab), padding var(--duration-tab) var(--ease-tab), opacity calc(var(--duration-tab) * .6) var(--ease-tab), background var(--duration-hover) var(--ease), color var(--duration-hover) var(--ease); }
+.split-pane-tab.settled { max-width: 138px; padding: 0 4px 0 6px; opacity: 1; }
+.split-pane-tab.closing { max-width: 0; padding: 0; opacity: 0; }
+.split-pane-tab.dragging { opacity: .45; }
+.split-pane-tab.drag-over { box-shadow: none; outline: 2px solid var(--accent); outline-offset: -2px; }
+.split-pane-tabs { flex: 0 1 auto; }
+.split-pane-head { overflow: hidden; }
+.tab-list.pane-drop { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+.split-surface .split-drop-overlay { top: 34px; }
+.split-pane-tab:hover { background: var(--background-hover); color: var(--text-primary); }
+.split-pane-tab.active { background: var(--background-selected); color: var(--text-primary); }
+.split-pane-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-pane-tab-close { display: grid; place-items: center; width: 17px; height: 17px; margin-left: auto; border-radius: 4px; color: var(--text-tertiary); opacity: 0; transition: opacity var(--duration-hover) var(--ease), background var(--duration-hover) var(--ease); }
+.split-pane-tab:hover .split-pane-tab-close, .split-pane-tab.active .split-pane-tab-close { opacity: 1; }
+.split-pane-tab-close:hover { background: var(--border-medium); color: var(--text-primary); }
+.split-pane-add, .split-pane-close { flex: none; width: 24px; height: 24px; opacity: .72; }
+.split-pane-add:hover, .split-pane-close:hover { opacity: 1; }
 .split-pane-icon { display: grid; place-items: center; width: 16px; height: 16px; flex: none; font-size: 13px; }
 .split-pane-icon svg { width: 14px; height: 14px; }
 .split-pane-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.split-pane-close { width: 24px; height: 24px; opacity: 0; }
-.split-pane:hover .split-pane-close, .split-pane.active .split-pane-close, .split-pane-close:focus-visible { opacity: 1; }
 .split-pane-body { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* Drop targets stay out of the way until a tab is genuinely being moved.
    Their inner ghost responds continuously to the edge below the pointer. */
 .split-drop-overlay { position: absolute; inset: 0; z-index: 120; pointer-events: none; }
-.split-drop-overlay::before { content: ""; position: absolute; z-index: -1; border: 1px solid color-mix(in srgb, var(--accent) 62%, white); border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 14%, transparent); opacity: 0; transition: inset 180ms var(--ease-out), opacity 120ms ease; }
+.split-drop-overlay::before { content: ""; position: absolute; z-index: -1; border: 2px solid var(--accent); border-radius: 10px; background: transparent; box-shadow: none; opacity: 0; transition: inset 180ms var(--ease-out), opacity 120ms ease; }
 .split-drop-overlay[data-edge]::before { opacity: 1; }
 .split-drop-overlay[data-edge="left"]::before { inset: 12px 51% 12px 12px; }
 .split-drop-overlay[data-edge="right"]::before { inset: 12px 12px 12px 51%; }
@@ -476,9 +495,10 @@
    a modest dim only signals that a temporary layer is above the workspace. */
 .workspace.has-split { position: relative; isolation: isolate; overflow: hidden; grid-template-columns: minmax(0, 1fr) !important; }
 .workspace.has-split .main { position: relative; z-index: 1; }
+.workspace.has-split .tabstrip { position: relative; z-index: 4; background: var(--background-main); }
 .workspace.has-split::after { content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: rgba(18, 22, 30, .10); opacity: 0; transition: opacity 180ms ease; }
 .workspace.has-split.split-panels-dimmed::after { opacity: 1; }
-.workspace.has-split .sidebar, .workspace.has-split .rail { position: absolute; top: 0; bottom: 0; z-index: 3; min-width: 0; overflow: hidden; box-shadow: 0 18px 44px rgba(15, 23, 42, .16); transition: transform var(--duration-panel) var(--ease-glide), box-shadow 180ms ease; }
+.workspace.has-split .sidebar, .workspace.has-split .rail { position: absolute; top: var(--tab-height); bottom: 0; z-index: 3; min-width: 0; overflow: hidden; box-shadow: 0 18px 44px rgba(15, 23, 42, .16); transition: transform var(--duration-panel) var(--ease-glide), box-shadow 180ms ease; }
 .workspace.has-split .sidebar { left: 0; width: var(--sidebar-width); transform: translateX(-100%); border-right-color: var(--border-soft); }
 .workspace.has-split .rail { right: 0; width: var(--rail-width); transform: translateX(100%); border-left-color: var(--border-soft); }
 .workspace.has-split.split-sidebar-open .sidebar, .workspace.has-split.split-rail-open .rail { transform: translateX(0); pointer-events: auto; }
@@ -490,7 +510,8 @@
 .workspace.has-split .sidebar-menu { display: grid; }
 
 @media (max-width: 760px) {
-  .split-surface.horizontal { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .split-surface.horizontal, .split-surface.grid-3, .split-surface.grid-4 { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(auto-fit, minmax(0, 1fr)); }
+  .split-surface.grid-3 .split-pane:last-child { grid-column: auto; }
   .workspace.has-split .sidebar { width: min(88vw, var(--sidebar-width)); }
   .workspace.has-split .rail { width: min(92vw, var(--rail-width)); }
 }
@@ -901,3 +922,12 @@ svg[data-icon="dots"] { stroke-width: 3.4; }
   .workspace.tour-mode, .workspace.tour-mode.rail-hidden { grid-template-columns: minmax(0, 1fr); }
   .workspace.tour-mode .rail { display: none; }
 }
+
+/* A chat preview is the frozen conversation: full-size, clipped, never interactive. */
+.tab-preview-chat { height: 520px; overflow: hidden; background: var(--background-main); }
+.tab-preview-chat .chat-view { position: relative; height: 520px; display: flex; flex-direction: column; }
+.tab-preview-chat .chat-thread, .tab-preview-chat .thread { overflow: hidden !important; }
+.tab-preview-chat * { animation: none !important; transition: none !important; pointer-events: none !important; }
+
+.tab-preview-screen { background: var(--background-main); }
+.tab-preview-screen .page-scroll, .tab-preview-screen .scroll { overflow: hidden !important; height: 520px !important; }

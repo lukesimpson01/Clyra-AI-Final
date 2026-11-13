@@ -53,6 +53,15 @@ assert.equal(cleanDictation("set a timer for 5 minutes actually 6").needsModel, 
 // A correction only replaces its own clause; the rest of the sentence survives
 assert.equal(c("Set a timer for five minutes, actually six, and remind me to call Priya before Friday."), "Set a timer for six minutes, and remind me to call Priya before Friday.");
 assert.equal(c("meet at three actually four pm, then lunch"), "Meet at four pm, then lunch.");
+// A spoken number can be several words: the whole run is replaced ("nine" -> "ten thirty", not "thirty")
+assert.equal(c("Remind me to call Claire tomorrow at nine, no wait, make that ten thirty."), "Remind me to call Claire tomorrow at ten thirty.");
+assert.equal(c("Book it for twenty five people, I mean thirty"), "Book it for thirty people.");
+// The model sometimes writes "ten thirty" as 1030: after a time word it is a clock time, and a correction swaps it in whole
+assert.equal(c("Remind me to call Claire tomorrow at 9, no wait, make that 1030."), "Remind me to call Claire tomorrow at 10:30.");
+assert.equal(c("Let's meet at 530 tomorrow"), "Let's meet at 5:30 tomorrow.");
+assert.equal(c("it costs 1030 dollars"), "It costs 1030 dollars.");
+assert.equal(c("we sold 2500 units"), "We sold 2500 units.");
+assert.equal(c("open now, and, uh, add it as a stop"), "Open now, and add it as a stop.");
 // Selection routing: instruction vs replacement text
 for (const yes of ["make it sound smarter", "Make it longer.", "rewrite this more formally", "translate to French", "shorten it", "fix the grammar", "can you make this friendlier", "turn this into bullet points", "add more detail", "summarize"]) assert.equal(looksLikeInstruction(yes), true, yes);
 for (const no of ["see you at six tomorrow", "add milk to the list", "the quarterly numbers look strong", "I think we should make a plan for the trip next week because it will be fun", "thanks for your help"]) assert.equal(looksLikeInstruction(no), false, no);

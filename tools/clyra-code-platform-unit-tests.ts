@@ -186,6 +186,12 @@ async function main() {
       framework: "swift-testing", total: 84, failed: 0, passed: 84, durationSeconds: 4.1,
     });
     equal(parseSwiftTests("✘ Test run with 5 tests in 2 suites failed after 0.2 seconds.")?.failed, 5);
+    // Swift on Linux can emit an unrelated XCTest zero-test preamble followed by
+    // the actual Swift Testing count; the real cases must not disappear.
+    equal(parseSwiftTests(
+      "Test Suite 'All tests' passed.\\nExecuted 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds\\n" +
+      "✔ Test run with 2 tests passed after 0.013 seconds."
+    ), { framework: "swift-testing", total: 2, failed: 0, passed: 2, durationSeconds: 0.013 });
     equal(parseSwiftTests("nothing relevant"), undefined);
     equal(parseSwiftTests("Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds\n✔ Test run with 2 tests in 0 suites passed after 0.013 seconds."), {
       framework: "swift-testing", total: 2, failed: 0, passed: 2, durationSeconds: 0.013,

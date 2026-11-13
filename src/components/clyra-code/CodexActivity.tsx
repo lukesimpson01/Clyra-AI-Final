@@ -12,26 +12,34 @@ import {
   Blocks,
   PackagePlus,
   ChevronDown,
+  Bot,
+  FilePenLine,
+  FileSearch,
+  GitBranch,
+  Image as ImageIcon,
+  Plug,
+  FlaskConical,
+  FolderSearch,
+  ListTodo,
+  PanelTop,
+  SearchCode,
+  ShieldAlert,
   Minus,
   X,
   Download,
-  FolderTree,
   Globe,
-  Hammer,
-  ListChecks,
-  Pencil,
-  Play,
-  Search,
-  ShieldCheck,
   SquareTerminal,
   Trash2,
   Wrench,
+  ChevronRight,
+  Square,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { AgentAction } from "./store";
 import { InlineDiffCard, TerminalCard } from "./harness";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { AGENT_EASE } from "./motion";
+import { describeCall, groupSummary } from "./activityModel";
 import { describeCodeError } from "./codeErrorPresentation";
 
 const VERBS: Record<string, { active: string; done: string; failed: string }> = {
@@ -50,19 +58,25 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
   test: { active: "Testing", done: "Tested", failed: "Tests failed" },
   preview: { active: "Opening preview", done: "Opened preview", failed: "Preview failed" },
   fetch: { active: "Fetching", done: "Fetched", failed: "Fetch failed" },
+  git: { active: "Running git", done: "Ran git", failed: "git failed" },
+  browser: { active: "Using the browser", done: "Used the browser", failed: "Browser step failed" },
+  image: { active: "Viewing an image", done: "Viewed an image", failed: "Couldn’t view the image" },
+  subagent: { active: "Running a subagent", done: "Ran a subagent", failed: "Subagent failed" },
   todo: { active: "Planning", done: "Updated plan", failed: "Planning failed" },
   generic: { active: "Working", done: "Done", failed: "Failed" },
 };
 
+/* One thin-stroke family, chosen by what the call does (Lucide, 1.75px). */
 const ICONS: Record<string, typeof BookOpen> = {
-  read: BookOpen, edit: Pencil, create: Pencil, delete: Trash2, search: Search, research: Globe, list: FolderTree,
-  command: SquareTerminal, build: Hammer, check: ShieldCheck, test: Play, preview: Globe, fetch: Download, todo: ListChecks,
-  mcp: Blocks, component: PackagePlus,
-  generic: Wrench,
+  read: FileSearch, edit: FilePenLine, create: FilePenLine, delete: Trash2, search: SearchCode, research: Globe, list: FolderSearch,
+  command: SquareTerminal, build: SquareTerminal, check: FlaskConical, test: FlaskConical, preview: PanelTop, fetch: Download,
+  todo: ListTodo, permission: ShieldAlert, git: GitBranch, browser: PanelTop, image: ImageIcon, subagent: Bot, mcp: Plug, component: PackagePlus, generic: Wrench,
 };
 
 const FILE_KINDS = /^(edit|create|delete)$/;
-const TERMINAL_KINDS = /^(command|build|check|test|preview)$/;
+const TERMINAL_KINDS = /^(command|build|check|test|preview|git)$/;
+
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 
 function isRunning(action: AgentAction) {
   return action.status === "active" || action.status === "queued";
@@ -79,29 +93,14 @@ export function liveStepLabel(actions: AgentAction[]) {
     const action = actions[index];
     if (!isRunning(action)) continue;
     if (action.kind === "permission") return "Waiting for approval";
+    const words = describeCall(action);
+    if (words) return clip(words.target ? `${words.active} ${action.kind === "image" ? baseName(words.target) : words.target}` : words.active, 56);
     const verb = (VERBS[action.kind] ?? VERBS.generic).active;
     const target = FILE_KINDS.test(action.kind) || action.kind === "read" ? baseName(action.target) : action.target;
     const short = target.length > 44 ? `${target.slice(0, 43)}…` : target;
     return short ? `${verb} ${short}` : `${verb}…`;
   }
   return null;
-}
-
-/** The header line for a finished group, in Codex's plain-sentence form. */
-export function activitySummary(actions: AgentAction[]) {
-  const edits = actions.filter((a) => FILE_KINDS.test(a.kind));
-  const reads = actions.filter((a) => a.kind === "read" || a.kind === "list");
-  const searches = actions.filter((a) => a.kind === "search" || a.kind === "research");
-  const commands = actions.filter((a) => TERMINAL_KINDS.test(a.kind));
-  const parts = [
-    edits.length ? (edits.every((a) => a.kind === "create") ? "created files" : "edited files") : "",
-    reads.length ? "read files" : "",
-    searches.length ? "searched" : "",
-    commands.length ? "ran commands" : "",
-  ].filter(Boolean);
-  if (!parts.length) return "Worked";
-  const sentence = parts.join(", ");
-  return sentence[0].toUpperCase() + sentence.slice(1);
 }
 
 function formatDuration(ms: number) {
@@ -173,8 +172,11 @@ export const ActivityRow = memo(function ActivityRow({
   const failed = action.status === "error";
   const isFile = FILE_KINDS.test(action.kind);
   const isTerminal = TERMINAL_KINDS.test(action.kind);
-  const verb = running ? verbs.active : failed ? verbs.failed : action.status === "cancelled" ? "Stopped" : verbs.done;
-  const target = isFile || action.kind === "read" ? baseName(action.target) : action.target;
+  const words = describeCall(action);
+  const verb = words
+    ? running ? words.active : failed ? words.failed : action.status === "cancelled" ? "Stopped" : words.done
+    : running ? verbs.active : failed ? verbs.failed : action.status === "cancelled" ? "Stopped" : verbs.done;
+  const target = words ? (action.kind === "image" ? baseName(words.target) : words.target) : isFile || action.kind === "read" ? baseName(action.target) : action.target;
 
   const diffLines = useMemo(() => {
     if (!isFile) return [];
@@ -230,6 +232,7 @@ export const ActivityRow = memo(function ActivityRow({
           </span>
         ) : null}
         {running ? <span className="cxa-outcome">{action.status === "queued" ? "Pending" : isTerminal ? "Running…" : ""}</span> : null}
+        {hasBody ? <ChevronRight className="cxa-row-chevron" data-open={open || undefined} strokeWidth={1.8} aria-hidden /> : null}
       </button>
       <AnimatePresence initial={false}>
         {open && hasBody ? (
@@ -326,16 +329,12 @@ export function ActivityGroup({
     return () => observer.disconnect();
   }, [open]);
 
-  // While working, the run header above names the live step; the group line summarises what is already done.
-  const settled = actions.filter((action) => !isRunning(action));
-  const header = working && live
-    ? (settled.length ? `${activitySummary(settled)}…` : "Starting…")
-    : activitySummary(actions);
-  // The header names the step in progress by its icon (the live row below carries the words); once done, a pencil
-  // when files changed, otherwise the first action's kind.
+  // Named by what the group did, in the order it did it; a trailing ellipsis means something in it is still running.
+  const header = groupSummary(actions);
+  // The icon follows what is happening now; once settled, a pen when files changed, otherwise the first call's kind.
   const HeadIcon = working && live
     ? ICONS[live.kind] ?? Wrench
-    : actions.some((action) => FILE_KINDS.test(action.kind)) ? Pencil : ICONS[actions[0]?.kind ?? "generic"] ?? Wrench;
+    : actions.some((action) => FILE_KINDS.test(action.kind)) ? FilePenLine : ICONS[actions[0]?.kind ?? "generic"] ?? Wrench;
 
   return (
     <div className="cxa-group" data-open={open || undefined}>
@@ -377,7 +376,8 @@ function clock(ms: number) {
   const m = Math.floor((total % 3600) / 60);
   const sec = total % 60;
   const pad = (n: number) => String(n).padStart(2, "0");
-  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+  /* "12s", "1m 04s", "1h 02m" — the same clock Clyra Notes shows. */
+  return h ? `${h}h ${pad(m)}m` : m ? `${m}m ${pad(sec)}s` : `${sec}s`;
 }
 
 /** Ticks once a second, and only while the run is live; nothing else re-renders for it. */
@@ -406,47 +406,66 @@ export function runLabel(live: AgentAction | undefined) {
  */
 export function RunHeader({
   phase,
-  label,
   since,
   until,
   summary,
+  actionCount = 0,
+  open = false,
+  onToggle,
+  onStop,
 }: {
   phase: "running" | "complete" | "failed" | "cancelled";
-  label: string;
+  label?: string;
   since: number;
   until: number | null;
   summary?: string | null;
+  /** How many actions the run took; shown once it is done. */
+  actionCount?: number;
+  /** Whether the run's folded actions are showing. */
+  open?: boolean;
+  onToggle?: (anchor: HTMLElement) => void;
   onStop?: () => void;
 }) {
-  const reduced = useReducedMotion();
   const live = phase === "running";
-  const title = live ? "Working" : phase === "complete" ? "Completed" : phase === "failed" ? "Needs attention" : "Stopped";
+  const timed = live || Boolean(until && until >= since);
+  const lead = live ? "Working for" : phase === "complete" ? (timed ? "Worked for" : "Worked") : phase === "failed" ? "Needs attention" : "Stopped";
+  const meta = !live ? [actionCount ? `${actionCount} action${actionCount === 1 ? "" : "s"}` : null, summary].filter(Boolean).join(" · ") : "";
+  const expandable = !live && Boolean(onToggle) && actionCount > 0;
+  /* As in Clyra Notes: "Working for 12s" with a sweeping hairline while it runs;
+     afterwards "Worked for 1m 04s · 9 actions ›", which folds the work away. */
+  const top = (
+    <>
+      {phase === "failed" || phase === "cancelled" ? (
+        <span className="cxr-indicator" aria-hidden>{phase === "failed" ? <X strokeWidth={2.6} /> : <Minus strokeWidth={2.6} />}</span>
+      ) : null}
+      <span className={cn("cxr-label", live && "cc-shimmer-text")}>{lead}</span>
+      {timed && phase !== "failed" && phase !== "cancelled" ? <ElapsedClock since={since} until={live ? null : until} /> : null}
+      {meta ? <span className="cxr-meta">{meta}</span> : null}
+      {expandable ? <ChevronRight className="cxr-chevron" data-open={open || undefined} strokeWidth={1.8} aria-hidden /> : null}
+    </>
+  );
   return (
     <div className="cxr" data-phase={phase} role="status" aria-live="polite">
       <div className="cxr-top">
-        <span className="cxr-indicator" aria-hidden>{live || phase === "complete" ? null : phase === "failed" ? <X strokeWidth={2.6} /> : <Minus strokeWidth={2.6} />}</span>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.span
-            key={title}
-            className="cxr-label"
-            initial={reduced ? false : { opacity: 0, y: 2 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -2 }}
-            transition={{ duration: 0.16, ease: AGENT_EASE }}
-          >
-            {title}
-          </motion.span>
-        </AnimatePresence>
-        {/* A settled run only shows its duration when both ends are known (restored sessions may lack the end). */}
-        {live || (until && until >= since) ? (
-          <>
-            <span className="cxr-dot" aria-hidden>·</span>
-            <ElapsedClock since={since} until={live ? null : until} />
-          </>
+        {expandable ? (
+          <button type="button" className="cxr-toggle" aria-expanded={open} onClick={(event) => onToggle?.(event.currentTarget)}>{top}</button>
+        ) : <span className="cxr-toggle is-static">{top}</span>}
+        {live && onStop ? (
+          <button type="button" className="cxr-stop" onClick={onStop} title="Stop">
+            <Square strokeWidth={0} fill="currentColor" aria-hidden />
+            Stop
+          </button>
         ) : null}
-        {live ? <span className="cxr-step" aria-label="Current agent activity">{label === "Working" ? "Thinking" : label}</span> : null}
-        {!live && summary ? <span className="cxr-summary">{summary}</span> : null}
       </div>
+    </div>
+  );
+}
+
+/** A finished run's actions, folded behind its header; opens and closes smoothly. */
+export function RunFold({ open, children }: { open: boolean; children: React.ReactNode }) {
+  return (
+    <div className="cxr-fold" data-open={open || undefined} aria-hidden={open ? undefined : true}>
+      <div className="cxr-fold-inner">{children}</div>
     </div>
   );
 }

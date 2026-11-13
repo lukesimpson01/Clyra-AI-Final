@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Blocks, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
+import { AppWindow, Blocks, Bug, Folder, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { GENERATED_APPS_EVENT, readGeneratedApps, setGeneratedApp } from "../../lib/userGeneratedApps";
 import { api } from "./api";
 import { shouldAskPlatform, useClyraCode, type AgentAction } from "./store";
 import { Sidebar, ClyraMark, SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth, type ChatThread, type SidebarSort } from "./Sidebar";
@@ -14,11 +15,11 @@ import { TerminalPanel } from "./TerminalPanel";
 import { GitHubPopover } from "./GitHubPopover";
 import { formatTokens } from "./format";
 import { answerDirective, platformDirective, type BriefPlatform } from "./appBrief";
-import { ModeTabs, type WorkspaceMode } from "./ModeTabs";
+import { AppRail, APP_RAIL_WIDTH, type WorkspaceMode } from "./ModeTabs";
 import { DesignPicker } from "./DesignPicker";
 import { OpenDesignPanel } from "./OpenDesignPanel";
 import { TemplateLibrary } from "./TemplateLibrary";
-import { ComponentLibraryPanel } from "./ComponentLibraryPanel";
+import { ComponentLibraryPanel, COMPONENT_PANEL_WIDTH } from "./ComponentLibraryPanel";
 import type { ComponentCatalogItem } from "./api";
 import { WelcomeProjectPicker, formatRecentTime } from "./WelcomeProjectPicker";
 import { designDirective, type DesignSystemSummary, type DesignTemplateSummary } from "../../../lib/clyra-design/directive";
@@ -34,6 +35,12 @@ const NARROW_BREAKPOINT = 720;
 // Panels glide on one calm curve (no spring overshoot); while the divider is dragged they follow the pointer exactly.
 const PANEL_EASE = { duration: 0.4, ease: [0.3, 0.8, 0.3, 1] as const };
 const UNTITLED_PROJECT_NAME = "Untitled project";
+
+/** A greeting from the person's own clock. */
+const greetingFor = (date = new Date()) => {
+  const hour = date.getHours();
+  return hour < 5 ? "Working late." : hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
+};
 
 const WELCOME_SUBTITLES = [
   ["Turn an ", "idea", " into something real."],
@@ -142,6 +149,12 @@ export default function ClyraCodeWorkspace({
   const [creating, setCreating] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [launcherAppIds, setLauncherAppIds] = useState(() => new Set(readGeneratedApps().map((app) => app.projectId)));
+  useEffect(() => {
+    const update = () => setLauncherAppIds(new Set(readGeneratedApps().map((app) => app.projectId)));
+    window.addEventListener(GENERATED_APPS_EVENT, update);
+    return () => window.removeEventListener(GENERATED_APPS_EVENT, update);
+  }, []);
   const [componentLibraryOpen, setComponentLibraryOpen] = useState(false);
   // True while a design project is being handed back to the Code workspace:
   // the design surface fades out before the switch, so the handoff reads as
@@ -163,6 +176,8 @@ export default function ClyraCodeWorkspace({
   const [designSystemId, setDesignSystemId] = useState<string | null>(null);
   const [designTemplateId, setDesignTemplateId] = useState<string | null>(null);
   const [welcomeSubtitle] = useState(() => WELCOME_SUBTITLES[Math.floor(Math.random() * WELCOME_SUBTITLES.length)]);
+  const [greeting] = useState(() => greetingFor());
+  const [composerDraft, setComposerDraft] = useState<{ id: number; text: string } | null>(null);
   const [threadsByProject, setThreadsByProject] = useState<Record<string, ChatThread[]>>({});
   const [hiddenProjectIds, setHiddenProjectIds] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("clyra-code:hidden-projects") || "[]"); } catch { return []; }
@@ -306,7 +321,7 @@ export default function ClyraCodeWorkspace({
   }, [editedFileCount]);
 
   useEffect(() => {
-    setAgentActivityCount(Object.values(state.actions).filter((action) => /^(command|build|check|test|preview)$/.test(action.kind)).length);
+    setAgentActivityCount(Object.values(state.actions).filter((action) => /^(command|build|check|test|preview|git)$/.test(action.kind)).length);
   }, [state.actions]);
 
   const preview = usePreview(state.activeProjectId, buildVersion);
@@ -358,7 +373,10 @@ export default function ClyraCodeWorkspace({
   const [shellWidth, setShellWidth] = useState(0);
   const narrow = shellWidth > 0 && shellWidth < NARROW_BREAKPOINT;
   // Below the breakpoint the rail leaves the layout; it returns as an overlay drawer.
-  const sidebarWidth = narrow || sidebarCollapsed ? 0 : railWidth;
+  // Wide windows dock the library beside the rail and push the workspace; smaller ones overlay it.
+  const componentDockable = !narrow && shellWidth >= 1080;
+  const componentPanelDocked = componentLibraryOpen && mode === "code" && componentDockable;
+  const sidebarWidth = narrow ? 0 : componentPanelDocked ? COMPONENT_PANEL_WIDTH : sidebarCollapsed ? 0 : railWidth;
   const [dragging, setDragging] = useState(false);
   const [conversationWidth, setConversationWidth] = useState(() => {
     const raw = Number(localStorage.getItem(WIDTH_KEY));
@@ -373,7 +391,7 @@ export default function ClyraCodeWorkspace({
   useLayoutEffect(() => {
     const shell = shellRef.current;
     if (!shell) return;
-    const update = () => setShellWidth(shell.clientWidth);
+    const update = () => setShellWidth(Math.max(0, shell.clientWidth - APP_RAIL_WIDTH));
     update();
     const observer = new ResizeObserver(update);
     observer.observe(shell);
@@ -399,7 +417,7 @@ export default function ClyraCodeWorkspace({
     if (localStorage.getItem(WIDTH_KEY)) return;
     const shell = shellRef.current;
     if (!shell) return;
-    const available = shell.clientWidth - sidebarWidth - 2;
+    const available = shell.clientWidth - APP_RAIL_WIDTH - sidebarWidth - 2;
     const target = Math.round(available * 0.47);
     const max = available - MIN_PREVIEW;
     setConversationWidth(Math.min(max, Math.max(MIN_CONVERSATION, target)));
@@ -430,7 +448,7 @@ export default function ClyraCodeWorkspace({
       const move = (moveEvent: PointerEvent) => {
         const shell = shellRef.current;
         if (!shell) return;
-        const max = shell.clientWidth - sidebarWidth - MIN_PREVIEW - 2;
+        const max = shell.clientWidth - APP_RAIL_WIDTH - sidebarWidth - MIN_PREVIEW - 2;
         const next = Math.min(max, Math.max(MIN_CONVERSATION, startWidth + moveEvent.clientX - startX));
         setConversationWidth(next);
       };
@@ -488,7 +506,9 @@ export default function ClyraCodeWorkspace({
 
   /* -------------------- helpers -------------------- */
   const activeProject = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
-  const taskTitle = state.sessionTitle || (state.log.length ? "Task" : "");
+  /* A task with no saved title is named by its first request, as Codex does, rather than a generic "Task". */
+  const firstPrompt = (state.log.find((entry) => entry.type === "user") as { text?: string } | undefined)?.text?.replace(/\s+/g, " ").trim() ?? "";
+  const taskTitle = state.sessionTitle || (firstPrompt ? (firstPrompt.length > 70 ? `${firstPrompt.slice(0, 68)}…` : firstPrompt) : state.log.length ? "Task" : "");
   const diffTotals = useMemo(
     () => state.diffs.reduce((acc, diff) => ({ files: acc.files + 1, additions: acc.additions + (diff.additions || 0), deletions: acc.deletions + (diff.deletions || 0) }), { files: 0, additions: 0, deletions: 0 }),
     [state.diffs],
@@ -564,8 +584,8 @@ export default function ClyraCodeWorkspace({
     );
   }, [hasConversation, reducedMotion]);
   const recentProjects = useMemo(
-    () => state.projects.filter((project) => !project.archivedAt && project.id !== activeProject?.id && (project.kind === "design") === (mode === "design")).slice(0, 3),
-    [mode, state.projects, activeProject?.id],
+    () => state.projects.filter((project) => !project.archivedAt && !hiddenProjectIds.includes(project.id) && (project.kind === "design") === (mode === "design")),
+    [mode, state.projects, hiddenProjectIds],
   );
 
   // Keep preview content out of the width animation.  The pane itself glides
@@ -595,7 +615,7 @@ export default function ClyraCodeWorkspace({
   const retryAction = useCallback(
     (action: AgentAction) => {
       void startRun(
-        /^(command|build|check|test|preview)$/.test(action.kind)
+        /^(command|build|check|test|preview|git)$/.test(action.kind)
           ? `The command \`${action.target}\` failed. Investigate the error and fix it:\n${action.error ?? ""}\n${(action.output ?? "").slice(-2000)}`
           : `The ${action.kind} action on ${action.target} failed. Investigate and fix it.`,
       );
@@ -610,6 +630,24 @@ export default function ClyraCodeWorkspace({
       setBuildVersion((version) => version + 1);
     }
   }, [undoLastCheckpoint]);
+
+  // Warm the agent runtime as soon as a project is open, so pressing Enter finds it ready
+  // instead of waiting on the runtime to boot after the message is sent.
+  const warmedRuntimes = useRef(new Set<string>());
+  useEffect(() => {
+    const projectId = state.activeProjectId;
+    if (!projectId || mode !== "code" || warmedRuntimes.current.has(projectId)) return;
+    warmedRuntimes.current.add(projectId);
+    const timer = window.setTimeout(() => { if (!document.hidden) void api.startRuntime(projectId).catch(() => warmedRuntimes.current.delete(projectId)); }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [mode, state.activeProjectId]);
+
+  const componentHint = useMemo(() => {
+    const names = contexts.filter(context => context.id.startsWith("component:")).map(context => context.label);
+    if (!names.length) return null;
+    const label = names.length > 2 ? names.slice(0, 2).join(", ") + " +" + (names.length - 2) : names.join(" and ");
+    return "Say what to do with " + label + " and where to add it…";
+  }, [contexts]);
 
   const referenceComponent = useCallback((item: ComponentCatalogItem) => {
     setContexts((existing) => existing.some(context => context.id === "component:" + item.id) ? existing : [...existing, {
@@ -711,7 +749,7 @@ export default function ClyraCodeWorkspace({
           : "";
         const componentReferences = mode === "code" ? contexts.filter(context => context.id.startsWith("component:")) : [];
         const componentInstruction = componentReferences.length
-          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nUse the locally bundled official component sources in external/shadcn-ui and external/21st-agent-elements, or source files already installed into this project via the Clyra Component Library. Do not use remote MCP tools or paid component APIs. Verify framework and dependency compatibility, then reuse the actual checked-in source rather than inventing a substitute. Never claim source was installed without checking project files.\n\n"
+          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nThese come from the Clyra component library (real source cloned from shadcn-ui/ui in external/shadcn-library and serafimcloud/21st in external/21st-library). If a component is not yet in this project, copy its source from there and adapt it to the project's structure. Follow the user's instruction below about what to do with it and where to place it."
           : "";
         void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + componentInstruction + attachmentContext + text, command === "plan" ? "plan" : undefined, {
           ...options,
@@ -731,7 +769,26 @@ export default function ClyraCodeWorkspace({
   // Library Open selects the cloned project; usePreview manages its real dev
   // server. No AI prompt or generated edits are involved in source opening.
   const [handoffFading, setHandoffFading] = useState(false);
-  const [libraryWelcome, setLibraryWelcome] = useState<{ name: string; projectId: string } | null>(null);
+  // The installed app's thread gets a quiet welcome prompt once setup is done.
+  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
+  const [libraryWelcome, setLibraryWelcome] = useState<{ name: string; sessionId: string | null } | null>(null);
+  useEffect(() => {
+    if (!libraryWelcome || libraryWelcome.sessionId || !state.sessionId || !running) return;
+    setLibraryWelcome((current) => (current && !current.sessionId ? { ...current, sessionId: state.sessionId } : current));
+  }, [libraryWelcome, running, state.sessionId]);
+  useEffect(() => {
+    if (!autoStart || state.activeProjectId !== autoStart.projectId || running) return;
+    const { name, repositoryUrl } = autoStart;
+    setAutoStart(null);
+    setRightPanelOpen(true);
+    setRightTab("browser");
+    void submitPrompt(
+      `I approved setup commands for the downloaded ${name} source (source: ${repositoryUrl}). Inspect its README, scripts, licence and dependencies first. Before running anything destructive, privileged, or network-facing, request separate confirmation. Install dependencies and start a localhost-only dev server only where supported; report any missing database or third-party credentials rather than faking success. Never copy Clyra's DeepSeek API key or other host environment secrets into this project's files, prompts, previews, logs or exports. If this imported app needs a model API, explain the requirements and ask the user to configure a provider credential using a separate secure server-side setting; do not ask them to paste secrets into chat or expose them in code. Retain necessary login and authentication controls until a safe local-only alternative is explicitly approved. Verify the real preview, give a two-line summary of results and errors, then ask what to customise.`,
+      [],
+      undefined,
+      { userText: `Set up and run ${name}` },
+    );
+  }, [autoStart, running, state.activeProjectId, submitPrompt]);
 
   // The welcome composer sends with the chosen app type. The brief clears only
   // after a send succeeds, so a rejected send keeps the user's choice.
@@ -915,52 +972,11 @@ export default function ClyraCodeWorkspace({
       animate={{ opacity: handoffFading ? 0 : 1 }}
       transition={{ duration: reducedMotion ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] }}
     >
-      {/* One switcher for the whole workspace: it always sits at the same
-          top-left spot whether the Code or Design surface is showing, so
-          switching modes can never be covered by the other surface. */}
-      <header className="cc-workspace-header relative z-40 flex h-[48px] shrink-0 items-center gap-1.5 border-b border-black/[0.05] bg-white px-3.5">
-        <ModeTabs mode={mode} onChange={changeMode} />
-        <span className="flex-1" aria-hidden />
-        {/* Source control and the desktop launcher live inline in this row, so
-            they can never overlap the conversation header, the preview
-            toolbar, or each other at any width. Icon-only below md. */}
-        {mode === "code" && activeProject ? (
-          <GitHubPopover projectId={activeProject.id} projectName={activeProject.name} />
-        ) : null}
-        {mode === "code" && desktopProject && preview.session?.url && canLaunchElectronPreview ? (
-          <button
-            type="button"
-            onClick={() => void launchDesktopPreview()}
-            className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[#3977F6] transition-colors duration-150 hover:bg-[#3977F6]/[0.07]"
-            title="Launch this desktop project in Electron"
-          >
-            <Play className="h-[12px] w-[12px]" fill="currentColor" strokeWidth={1.8} />
-            <span className="hidden md:inline">Launch app</span>
-          </button>
-        ) : null}
-        {mode === "code" ? (
-          <button type="button" onClick={() => setComponentLibraryOpen(true)}
-            title="Browse components from shadcn and 21st.dev"
-            className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[#50535b] transition-colors hover:bg-[#f3f3f3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/30">
-            <Blocks className="h-[14px] w-[14px]" strokeWidth={1.65}/>
-            Components
-          </button>
-        ) : null}
-        {mode === "code" ? (
-          <button
-            type="button"
-            onClick={() => setLibraryOpen(true)}
-            className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] bg-[#F4F4F3] px-2.5 text-[11.5px] font-medium text-[#3F4248] transition-colors hover:bg-[#E9E9E7] hover:text-[#1F2125] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5F6368]/35"
-          >
-            <LibraryBig className="h-[13px] w-[13px]" strokeWidth={1.7} />
-            Library
-          </button>
-        ) : null}
-        {(mode as WorkspaceMode) === "design" ? (
-          <span className="pr-1 text-[11px] text-[#A0A2A6]">Clyra Design</span>
-        ) : null}
-      </header>
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      {/* The rail and the workspace sit side by side; the terminal docks under both. */}
+      <div className="flex min-h-0 w-full flex-1 overflow-hidden">
+      {/* The app rail, as in Codex: surfaces and the Library as icons on the far left. */}
+      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen(false); setLibraryOpen((open) => mode !== "code" ? true : !open); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(false); setComponentLibraryOpen((open) => mode !== "code" ? true : !open); }} />
+      <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
       {/* OpenDesign embed. Mounted once so the Design tab switches instantly
           (the iframe stays loaded in the background) and never reloads. */}
       <motion.div
@@ -994,7 +1010,7 @@ export default function ClyraCodeWorkspace({
         failedSessionId={state.runState === "failed" ? state.sessionId : null}
         waitingSessionId={questionSet && state.sessionId ? state.sessionId : null}
         variant={narrow ? "drawer" : "rail"}
-        collapsed={narrow ? !drawerOpen : sidebarCollapsed}
+        collapsed={narrow ? !drawerOpen : sidebarCollapsed || componentPanelDocked}
         width={railWidth}
         onResizeWidth={updateRailWidth}
         macInset={macInset}
@@ -1038,6 +1054,16 @@ export default function ClyraCodeWorkspace({
             console.error("Could not open the project folder:", error);
           });
         }}
+      />
+
+      <ComponentLibraryPanel
+        open={componentLibraryOpen && mode === "code"}
+        docked={componentDockable}
+        onClose={() => setComponentLibraryOpen(false)}
+        onReference={referenceComponent}
+        referencedIds={contexts.map(context => context.id)}
+        projectId={activeProject?.id ?? null}
+        projectName={activeProject?.displayName || activeProject?.name || null}
       />
 
       {/* -------- centre: agent conversation -------- */}
@@ -1087,11 +1113,13 @@ export default function ClyraCodeWorkspace({
           ) : null}
           {activeProject ? (
             <>
-              <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-[var(--text-primary)]">
+              {/* One line, as in Codex: a folder glyph, the task, and the project it belongs to. */}
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Folder className="h-[15px] w-[15px] shrink-0 text-[#5D5D5D]" strokeWidth={1.7} aria-hidden />
+                <h1 className="min-w-0 shrink truncate text-[14px] font-medium tracking-[-0.01em] text-[var(--text-primary)]">
                   {taskTitle || "New task"}
                 </h1>
-                <div className="cc-project-context truncate">{activeProject.name}</div>
+                <span className="hidden min-w-[60px] max-w-[40%] shrink-[3] truncate text-[13px] text-[var(--text-tertiary)] lg:inline">{activeProject.name}</span>
               </div>
               {running ? (
                 <span className="cc-thread-status" aria-live="polite">
@@ -1114,11 +1142,45 @@ export default function ClyraCodeWorkspace({
                 <button
                   type="button"
                   title="Open project folder"
+                  aria-label="Open project folder"
                   onClick={() => void api.openProjectFolder(activeProject.id).catch((error) => console.error("Could not open the project folder:", error))}
                   className="cc-thread-chip"
                 >
-                  <FolderOpen className="h-[13px] w-[13px]" strokeWidth={1.7} />
-                  Open
+                  <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.7} />
+                </button>
+              ) : null}
+              {mode === "code" && activeProject ? (
+                <button type="button"
+                  aria-pressed={launcherAppIds.has(activeProject.id)}
+                  aria-label={launcherAppIds.has(activeProject.id) ? "Remove from app launcher" : "Add to app launcher"}
+                  title={launcherAppIds.has(activeProject.id) ? "Remove from app launcher" : "Add to app launcher"}
+                  onClick={() => {
+                    const next = setGeneratedApp(activeProject.id, activeProject.displayName || activeProject.name, !launcherAppIds.has(activeProject.id));
+                    setLauncherAppIds(new Set(next.map((app) => app.projectId)));
+                  }}
+                  className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                  <AppWindow className="h-[14px] w-[14px]" strokeWidth={1.7} />
+                  <span className="hidden xl:inline">{launcherAppIds.has(activeProject.id) ? "In launcher" : "Add app"}</span>
+                </button>
+              ) : null}
+              {mode === "code" ? (
+                <button type="button" onClick={() => { setLibraryOpen(false); setComponentLibraryOpen((open) => !open); }} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                  <Blocks className="h-[14px] w-[14px]" strokeWidth={1.7} />
+                  <span className="hidden xl:inline">Components</span>
+                </button>
+              ) : null}
+              {mode === "code" && activeProject ? (
+                <GitHubPopover projectId={activeProject.id} projectName={activeProject.name} />
+              ) : null}
+              {mode === "code" && desktopProject && preview.session?.url && canLaunchElectronPreview ? (
+                <button
+                  type="button"
+                  onClick={() => void launchDesktopPreview()}
+                  className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium text-[#3977F6] transition-colors duration-150 hover:bg-[#3977F6]/[0.07]"
+                  title="Launch this desktop project in Electron"
+                >
+                  <Play className="h-[12px] w-[12px]" fill="currentColor" strokeWidth={1.8} />
+                  <span className="hidden md:inline">Launch app</span>
                 </button>
               ) : null}
               <button
@@ -1145,8 +1207,8 @@ export default function ClyraCodeWorkspace({
                 // home never reads as movement or heavy layout work.
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0, transition: { duration: reducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] } }}
-                transition={{ duration: reducedMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+                exit={{ opacity: 0, transition: { duration: reducedMotion ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] } }}
+                transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.2, 0.8, 0.2, 1] }}
                 className="cc-welcome cc-scroll flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pt-[14vh]"
               >
                 <div className="mx-auto flex w-full max-w-[620px] flex-col items-center px-5 text-center">
@@ -1161,12 +1223,7 @@ export default function ClyraCodeWorkspace({
                       <>{welcomeSubtitle[0]}<span className="text-[var(--accent-blue)]">{welcomeSubtitle[1]}</span>{welcomeSubtitle[2]}</>
                     )}
                   </motion.p>
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: reducedMotion ? 0 : 0.26, delay: reducedMotion ? 0 : 0.04, ease: [0.22, 1, 0.36, 1] }}
-                    className="mt-[18px] flex justify-center"
-                  >
+                  <div className="mt-[18px] flex justify-center">
                     <WelcomeProjectPicker
                       projects={visibleProjects}
                       activeProjectId={state.activeProjectId}
@@ -1176,7 +1233,7 @@ export default function ClyraCodeWorkspace({
                       open={welcomeMenu === "projects"}
                       onOpenChange={(open) => setWelcomeMenu(open ? "projects" : null)}
                     />
-                  </motion.div>
+                  </div>
                   <div ref={welcomeComposerRef} className="mt-[26px] w-full">
                     <Composer
                       running={false}
@@ -1185,7 +1242,7 @@ export default function ClyraCodeWorkspace({
                       onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                       onSubmit={submitFromWelcome}
                       onStop={cancelRun}
-                      placeholder={mode === "design" ? "Describe the screen to design…" : "Ask Clyra to build, fix, or change something…"}
+                      placeholder={mode === "design" ? "Describe the screen to design…" : componentHint ?? "Ask Clyra to build, fix, or change something…"}
                       welcome
                       brief={mode === "design" ? null : briefPlatform}
                       onBriefClear={() => setBriefPlatform(null)}
@@ -1201,87 +1258,33 @@ export default function ClyraCodeWorkspace({
                   </div>
                   {mode === "design" ? (
                     <div className="mt-4 w-full">
-                      <DesignPicker
-                        systems={catalog.systems}
-                        templates={catalog.templates}
-                        systemId={designSystemId}
-                        templateId={designTemplateId}
-                        onSystem={setDesignSystemId}
-                        onTemplate={setDesignTemplateId}
-                      />
+                      <DesignPicker systems={catalog.systems} templates={catalog.templates} systemId={designSystemId} templateId={designTemplateId} onSystem={setDesignSystemId} onTemplate={setDesignTemplateId} />
                     </div>
                   ) : null}
-                  {importPathDraft !== null ? (
-                    <div className="mt-3 flex w-full items-center gap-1.5">
-                      <input
-                        autoFocus
-                        value={importPathDraft}
-                        onChange={(event) => setImportPathDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") { event.preventDefault(); void importProjectFromPath(importPathDraft); }
-                          else if (event.key === "Escape") { event.preventDefault(); setImportPathDraft(null); setImportError(null); }
-                        }}
-                        placeholder="/path/to/your/project"
-                        className="h-[34px] flex-1 rounded-[9px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-3 text-[12.5px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent-blue)]/40"
-                      />
-                      <button
-                        type="button"
-                        disabled={importingProject || !importPathDraft.trim()}
-                        onClick={() => void importProjectFromPath(importPathDraft)}
-                        className="h-[34px] shrink-0 rounded-[9px] bg-[#3977F6] px-3 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-40"
-                      >
-                        {importingProject ? "Opening…" : "Open"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setImportPathDraft(null); setImportError(null); }}
-                        className="h-[34px] shrink-0 rounded-[9px] px-2.5 text-[12.5px] text-[#9A9CA0] transition-colors hover:text-[#696B70]"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : null}
-                  {importError ? (
-                    <p className="mt-2 text-[11.5px] text-[#D64545]">{importError}</p>
-                  ) : null}
+                  {importError ? <p className="mt-2 text-[11.5px] text-[#D64545]">{importError}</p> : null}
                   {recentProjects.length ? (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ duration: reducedMotion ? 0 : 0.26, delay: reducedMotion ? 0 : 0.05, ease: [0.22, 1, 0.36, 1] }}
-                      className="mt-8 w-full text-left"
-                    >
+                    <div className="mt-8 w-full text-left">
                       <p className="mb-2 px-0.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#C1C3C7]">Recent</p>
                       <div className="grid grid-cols-3 gap-2.5">
-                        {recentProjects.slice(0, 3).map((project, index) => (
-                          <motion.button
+                        {recentProjects.slice(0, 3).map((project) => (
+                          <button
                             key={project.id}
                             type="button"
                             title={project.displayName || project.name || project.id}
                             onClick={() => selectProject(project.id)}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ duration: reducedMotion ? 0 : 0.22, delay: reducedMotion ? 0 : 0.08 + index * 0.04, ease: [0.22, 1, 0.36, 1] }}
-                            whileHover={reducedMotion ? undefined : { y: -2 }}
-                            className="group flex flex-col overflow-hidden rounded-[11px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] text-left shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-[border-color,box-shadow] duration-150 hover:border-black/[0.12] hover:shadow-[0_6px_18px_rgba(15,23,42,0.08)]"
+                            className="group flex flex-col overflow-hidden rounded-[11px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] text-left shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-[border-color,transform] duration-150 hover:-translate-y-0.5 hover:border-black/[0.14]"
                           >
                             <span className="aspect-[16/10] w-full overflow-hidden bg-[var(--surface-muted)]">
-                              <img
-                                src={`/api/vibe/projects/${project.id}/thumbnail`}
-                                alt=""
-                                loading="lazy"
-                                className="h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.03]"
-                                onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
-                              />
+                              <img src={`/api/vibe/projects/${project.id}/thumbnail`} alt="" loading="lazy" className="h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.03]" onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />
                             </span>
                             <span className="flex flex-col gap-0.5 px-2.5 py-2">
                               <span className="min-w-0 truncate text-[11.5px] font-medium text-[#3A3C40]">{project.displayName || project.name || project.id}</span>
                               <span className="text-[10px] text-[#B0B2B6]">{formatRecentTime(project.updatedAt)}</span>
                             </span>
-                          </motion.button>
+                          </button>
                         ))}
                       </div>
-                    </motion.div>
+                    </div>
                   ) : null}
                 </div>
               </motion.div>
@@ -1294,13 +1297,14 @@ export default function ClyraCodeWorkspace({
                 transition={{ duration: reducedMotion ? 0 : 0.26, ease: [0.22, 1, 0.36, 1] }}
                 className="flex min-h-0 flex-1 flex-col"
               >
-                {/* Library projects launch the existing checkout, without a setup agent run. */}
-                {libraryWelcome && state.activeProjectId === libraryWelcome.projectId ? (
-                  <div className="mx-auto mt-3 flex w-full max-w-[760px] items-center gap-3 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+                {/* A library app's thread keeps a quiet welcome prompt at the top:
+                    the setup run finishes, then the user is invited to change it. */}
+                {libraryWelcome && state.sessionId === libraryWelcome.sessionId && state.log.length > 0 ? (
+                  <div className="mx-auto mt-3 flex w-full max-w-[688px] items-center gap-3 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                     <span className="cc-squircle flex h-8 w-8 shrink-0 items-center justify-center bg-[#3977F6]/[0.09] text-[#3977F6]"><LibraryBig className="h-4 w-4" strokeWidth={1.7} /></span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} · {preview.session?.status === "ready" || preview.session?.status === "running" ? "Preview ready" : "Source cloned"}</span>
-                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">From the Clyra Library. Preview starts directly from the cloned source; changes are optional.</span>
+                      <span className="block truncate text-[12.5px] font-medium text-[var(--text-primary)]">{libraryWelcome.name} {running ? "setup is running" : "source project"}</span>
+                      <span className="block text-[11.5px] leading-[1.45] text-[var(--text-tertiary)]">Imported from the Clyra Library. Check the actual setup results below before editing or publishing.</span>
                     </span>
                   </div>
                 ) : null}
@@ -1325,7 +1329,7 @@ export default function ClyraCodeWorkspace({
                   />
                 )}
                 {state.runState === "failed" && state.error ? (
-                  <div className="mx-auto mb-1 flex w-full max-w-[760px] items-center gap-2 px-5 text-[11.5px] text-[#76787D]">
+                  <div className="mx-auto mb-1 flex w-full max-w-[688px] items-center gap-2 px-5 text-[11.5px] text-[#76787D]">
                     <span className="min-w-0 flex-1 truncate">The last run needs attention.</span>
                     <button
                       type="button"
@@ -1336,11 +1340,12 @@ export default function ClyraCodeWorkspace({
                     </button>
                   </div>
                 ) : null}
-                <footer className="flex h-[17px] shrink-0 items-center gap-3 px-4 text-[9.5px] text-[#A0A2A6]">
-                  <span>Local</span>
-                  <span className="cc-mono truncate">{activeProject?.id ?? "Creating project…"}</span>
-                  {tokensLabel ? <span className="cc-counter ml-auto">{tokensLabel}</span> : null}
-                </footer>
+                {/* Codex keeps the space above the composer clear: only the token count, when there is one. */}
+                {tokensLabel ? (
+                  <footer className="flex h-[17px] shrink-0 items-center justify-end px-4 text-[10.5px] text-[#A0A2A6]">
+                    <span className="cc-counter">{tokensLabel}</span>
+                  </footer>
+                ) : null}
                 <div ref={conversationComposerRef}>
                 <Composer
                   running={running}
@@ -1349,6 +1354,7 @@ export default function ClyraCodeWorkspace({
                   onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                   onSubmit={submitPrompt}
                   onStop={() => void cancelRun()}
+                  placeholder={componentHint ?? undefined}
                   question={questionSet}
                   questionSubmitting={questionSubmitting}
                   onQuestionSubmit={handleQuestionSubmit}
@@ -1397,18 +1403,13 @@ export default function ClyraCodeWorkspace({
               onPreviewError={handlePreviewError}
               fullscreen={previewFullscreen}
               onToggleFullscreen={() => setPreviewFullscreen((value) => !value)}
+              onClose={() => setRightPanelOpen(false)}
             />
           </motion.div>
       </motion.div>
       </div>
 
-      <ComponentLibraryPanel
-        open={componentLibraryOpen && mode === "code"}
-        onClose={() => setComponentLibraryOpen(false)}
-        onReference={referenceComponent}
-        referencedIds={contexts.map(context => context.id)}
-        projectId={activeProject?.id ?? null}
-      />
+
       <TemplateLibrary
         open={libraryOpen && mode === "code"}
         projectId={state.activeProjectId}
@@ -1420,15 +1421,26 @@ export default function ClyraCodeWorkspace({
         existingProjects={state.projects}
         onInstalled={() => { void loadProjects(); }}
         onOpenInstalled={(projectId, entry) => {
+          // Downloading source is safe; installing dependencies and running scripts is a
+          // separate, explicit trust decision. Cancel still opens the files for review.
+          const allowSetup = window.confirm(
+            `Open ${entry.name} source in Clyra Code?\n\nChoose OK to also authorise the agent to inspect the README, install dependencies and run development commands from this third-party repository. These commands can execute code on your computer.\n\nChoose Cancel to open the source for review without automatic setup.`,
+          );
           setLibraryOpen(false);
           setHandoffFading(true);
           void loadProjects().then(async () => {
             selectProject(projectId);
             setSidebarCollapsed(false);
             try { localStorage.setItem(SIDEBAR_KEY, "0"); } catch { /* storage unavailable */ }
-            setRightPanelOpen(true);
+            setRightPanelOpen(allowSetup);
             setRightTab("browser");
-            setLibraryWelcome({ name: entry.name, projectId });
+            if (allowSetup) {
+              setLibraryWelcome({ name: entry.name, sessionId: null });
+              setAutoStart({ projectId, name: entry.name, repositoryUrl: entry.repositoryUrl });
+            } else {
+              setLibraryWelcome(null);
+              setAutoStart(null);
+            }
             await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 0 : 240));
             setHandoffFading(false);
           });
@@ -1442,6 +1454,7 @@ export default function ClyraCodeWorkspace({
         }}
       />
 
+      </div>
       </div>
       <div aria-hidden={(mode as WorkspaceMode) === "design" ? true : undefined}>
       <TerminalPanel

@@ -7,6 +7,7 @@ import { chatReplyFailureText, isCreditsError } from "./lib/chatReplyErrors";
 import { CreditsNotice } from "./components/chat/CreditsNotice";
 import { AgentTodo, ChatAgentRunView } from "./components/chat/ChatAgentRun";
 import { ChatMapCard } from "./components/chat/ChatMapCard";
+import { ChatCodeRun } from "./components/chat/ChatCodeRun";
 import { shouldUseBrowserUse, shouldUseChatAgent, streamChatAgent, type ChatAgentRun } from "./lib/chatAgentClient";
 import { ChatBrowserRunView, type ChatBrowserRunState } from "./components/chat/ChatBrowserRun";
 import { reduceRunItems, type RunEvent, type RunItem } from "./lib/browserRunFeed";
@@ -46,13 +47,9 @@ import {
   Code2,
   BookOpen,
   Earth,
-  Feather,
-  Flame,
   Gift,
   MapPin,
-  Rocket,
   Scissors,
-  Zap,
   ArrowUpIcon,
   Check,
   Copy,
@@ -161,6 +158,8 @@ import { AttachmentThumb, FilePreviewDialog, describeFile } from "./components/c
 import {
   ActivitySteps,
   AssistantResponse,
+  ActivityCollapse,
+  ACTIVITY_COLLAPSE_SECONDS,
   AssistantStatus,
   ChatMenu,
   JumpToLatest,
@@ -184,7 +183,7 @@ import { useConnectivity } from "./hooks/useConnectivity";
 import { resolveDeviceLocation, timeZoneCity } from "./hooks/useDeviceLocation";
 import { VoiceWaveIcon } from "./components/voice/VoiceWaveIcon";
 import { VoiceWaveform } from "./components/voice/VoiceWaveform";
-import { VoicePcmCapturer } from "./lib/voicePcmCapture";
+import { useComposerVoiceCapture } from "./lib/useComposerVoiceCapture";
 import { applyDictionary, inferContext, localDictationCleanup, routeSpeechIntent } from "./speech";
 import { useVoiceCall } from "./hooks/useVoiceCall";
 import { appendDictatedText, canStartDictation, type ComposerDictationPhase } from "./lib/composerDictation";
@@ -1234,225 +1233,6 @@ function BootIntroOverlay({
   );
 }
 
-function useComposerVoiceCapture(onComplete: (text: string) => void) {
-  const [phase, setPhase] = useState<ComposerDictationPhase>("idle");
-  const [level, setLevel] = useState(0);
-  const [detail, setDetail] = useState("");
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const captureRef = useRef<VoicePcmCapturer | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const sessionIdRef = useRef("");
-  const silenceTimerRef = useRef<number | null>(null);
-  const transcribeTimeoutRef = useRef<number | null>(null);
-  const heardSpeechRef = useRef(false);
-  const lastSpeechAtRef = useRef(0);
-  const startedAtRef = useRef(0);
-  const phaseRef = useRef<ComposerDictationPhase>("idle");
-  const recognitionRef = useRef<any>(null);
-
-  useEffect(() => { phaseRef.current = phase; }, [phase]);
-
-  // Recording clock is derived from the moment capture began, not a placeholder.
-  useEffect(() => {
-    if (phase !== "listening") return;
-    const tick = () => setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
-    tick();
-    const timer = window.setInterval(tick, 500);
-    return () => window.clearInterval(timer);
-  }, [phase]);
-
-  const release = useCallback(() => {
-    if (silenceTimerRef.current != null) window.clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = null;
-    if (transcribeTimeoutRef.current != null) window.clearTimeout(transcribeTimeoutRef.current);
-    transcribeTimeoutRef.current = null;
-    captureRef.current?.stop();
-    captureRef.current = null;
-    try { socketRef.current?.close(); } catch { /* already closed */ }
-    socketRef.current = null;
-    sessionIdRef.current = "";
-    try { recognitionRef.current?.abort?.(); } catch { /* already stopped */ }
-    recognitionRef.current = null;
-    setLevel(0);
-  }, []);
-
-  const cancel = useCallback(() => {
-    release();
-    setPhase("idle");
-    setDetail("");
-  }, [release]);
-
-  /** Ends capture and asks the local engine for the final transcript (stop keeps the audio). */
-  const flush = useCallback(() => {
-    if (phaseRef.current !== "listening") return;
-    phaseRef.current = "transcribing";
-    setPhase("transcribing");
-    setDetail("Transcribing");
-    captureRef.current?.stop();
-    captureRef.current = null;
-    if (socketRef.current?.readyState !== WebSocket.OPEN) {
-      release();
-      setPhase("error");
-      setDetail("The voice service disconnected. Try again.");
-      return;
-    }
-    socketRef.current.send(JSON.stringify({ type: "flush", sessionId: sessionIdRef.current }));
-    // Watchdog: a stalled engine must not leave the mic stuck on "Transcribing".
-    transcribeTimeoutRef.current = window.setTimeout(() => {
-      transcribeTimeoutRef.current = null;
-      if (phaseRef.current !== "transcribing") return;
-      release();
-      setPhase("error");
-      setDetail("Transcription timed out. Try again.");
-    }, 25_000);
-  }, [release]);
-
-  /** Enters "listening" only when capture has really started for this socket. */
-  const markListening = useCallback((socket: WebSocket) => {
-    if (phaseRef.current !== "starting" || socketRef.current !== socket) return;
-    if (transcribeTimeoutRef.current != null) window.clearTimeout(transcribeTimeoutRef.current);
-    transcribeTimeoutRef.current = null;
-    startedAtRef.current = Date.now();
-    setElapsedSeconds(0);
-    phaseRef.current = "listening";
-    setPhase("listening");
-    setDetail("Listening");
-  }, []);
-
-  const start = useCallback(async () => {
-    // Error is a recoverable state: a failed attempt must not block the next tap.
-    if (!canStartDictation(phaseRef.current)) return;
-    heardSpeechRef.current = false;
-    lastSpeechAtRef.current = 0;
-    phaseRef.current = "starting";
-    setPhase("starting");
-    setDetail("Starting microphone");
-    try {
-      const desktop = getElectronDesktop();
-      const permissions = await desktop?.dictation.ensurePermissions?.().catch(() => null);
-      if (permissions && permissions.ok === false) throw new Error(String(permissions.error || "Microphone permission is blocked."));
-      const origin = await desktop?.dictation.serviceUrl().catch(() => "") || window.location.origin;
-      const response = await fetch(new URL("/voice/session", origin), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "dictation", history: [] }),
-      });
-      const session = await response.json();
-      if (!response.ok || !session.websocketUrl) throw new Error(session.error || "Voice service is unavailable.");
-      const socket = new WebSocket(String(session.websocketUrl));
-      socketRef.current = socket;
-      sessionIdRef.current = String(session.sessionId || "");
-      // If the engine never confirms capture, fail visibly instead of sitting on "Starting".
-      transcribeTimeoutRef.current = window.setTimeout(() => {
-        transcribeTimeoutRef.current = null;
-        if (phaseRef.current !== "starting") return;
-        release();
-        setPhase("error");
-        setDetail("Clyra's voice service didn't respond. Try again.");
-      }, 12_000);
-      socket.onmessage = (event) => {
-        let message: Record<string, unknown>;
-        try { message = JSON.parse(String(event.data)); } catch { return; }
-        if (message.type === "pipeline_mode" && (message.mode === "pipeline" || message.mode === "local") && !captureRef.current) {
-          const capture = new VoicePcmCapturer((data, seq) => {
-            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "audio", sessionId: session.sessionId, codec: "pcm16", data, seq }));
-          }, Number(message.sampleRate) || 16_000, (nextLevel) => {
-            setLevel(nextLevel);
-            const now = performance.now();
-            if (nextLevel >= 0.07) {
-              heardSpeechRef.current = true;
-              lastSpeechAtRef.current = now;
-              if (silenceTimerRef.current != null) window.clearTimeout(silenceTimerRef.current);
-              silenceTimerRef.current = null;
-              return;
-            }
-            if (!heardSpeechRef.current || silenceTimerRef.current != null || now - lastSpeechAtRef.current < 1_100) return;
-            // Recording is ended by the user (tap or release). This is only a
-            // safety net for a forgotten mic, so it waits for a long silence.
-            silenceTimerRef.current = window.setTimeout(() => {
-              silenceTimerRef.current = null;
-              if (performance.now() - lastSpeechAtRef.current >= 4_000) flush();
-            }, 4_000);
-          });
-          captureRef.current = capture;
-          void capture.start().then(() => markListening(socket)).catch((error) => {
-            release();
-            setPhase("error");
-            setDetail(error instanceof Error ? error.message : "Microphone access was denied.");
-          });
-        } else if (message.type === "pipeline_mode" && message.mode === "browser" && !recognitionRef.current) {
-          const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-          if (!Recognition) {
-            release();
-            setPhase("error");
-            setDetail("Clyra's local speech engine is warming up. Try again in a moment.");
-            return;
-          }
-          const recognition = new Recognition();
-          recognition.continuous = false;
-          recognition.interimResults = true;
-          recognition.lang = navigator.language || "en-AU";
-          recognitionRef.current = recognition;
-          recognition.onresult = (recognitionEvent: any) => {
-            let finalText = "";
-            for (let i = recognitionEvent.resultIndex; i < recognitionEvent.results.length; i += 1) {
-              if (recognitionEvent.results[i].isFinal) finalText += recognitionEvent.results[i][0].transcript;
-            }
-            if (finalText.trim() && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "utterance", sessionId: session.sessionId, text: finalText.trim() }));
-          };
-          recognition.onerror = () => { if (phaseRef.current === "listening") { release(); setPhase("error"); setDetail("Speech recognition could not hear the microphone."); } };
-          recognition.onstart = () => markListening(socket);
-          try { recognition.start(); } catch { /* Chromium can reject a duplicate start; current session remains live. */ }
-        } else if (message.type === "dictation_final") {
-          const transcript = String(message.text || "").trim();
-          release();
-          if (!transcript) {
-            setPhase("error");
-            setDetail("No speech was detected.");
-            window.setTimeout(cancel, 1_600);
-            return;
-          }
-          setPhase("transcribing");
-          setDetail("Refining your prompt");
-          void fetch("/api/dictation/cleanup", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ transcript, level: "light", dictionary: [] }),
-          })
-            .then(async (cleanup) => {
-              const payload = await cleanup.json().catch(() => ({}));
-              if (!cleanup.ok || !payload?.ok) throw new Error(payload?.error || "Prompt cleanup failed.");
-              onComplete(String(payload.text || transcript));
-              setPhase("idle");
-              setDetail("");
-            })
-            .catch(() => {
-              onComplete(transcript);
-              setPhase("idle");
-              setDetail("");
-            });
-        } else if (message.type === "error") {
-          release();
-          setPhase("error");
-          setDetail(String(message.message || "Voice transcription failed."));
-        }
-      };
-      socket.onerror = () => {
-        release();
-        setPhase("error");
-        setDetail("Voice service connection failed.");
-      };
-    } catch (error) {
-      release();
-      setPhase("error");
-      setDetail(error instanceof Error ? error.message : "Voice service is unavailable.");
-    }
-  }, [cancel, flush, onComplete, release]);
-
-  useEffect(() => () => release(), [release]);
-  return { phase, level, detail, elapsedSeconds, start, stop: flush, cancel };
-}
-
 /** Soft ease-out used by composer expand and chat status reveals.
  *  Strong deceleration at the end so the bar settles rather than snapping. */
 const CHAT_EASE_OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -1834,6 +1614,7 @@ export const AnimatedMessage = ({
   codeHighlighting = true,
   codeTheme = "dark",
   assistantKind = "chat",
+  codeRun,
   thinkingMode = "thinking",
   youtubeVideoId,
   searchSources,
@@ -1883,6 +1664,8 @@ export const AnimatedMessage = ({
   isThinking?: boolean;
   isStreaming?: boolean;
   vibeUserPrompt?: string;
+  /** A coding request running on the Vibe Coder harness; its live actions render in the message. */
+  codeRun?: { projectId: string; sessionId: string; projectName?: string; startedAt: number };
   fontSizeClass?: string;
   markdownSupport?: boolean;
   codeHighlighting?: boolean;
@@ -2082,6 +1865,10 @@ export const AnimatedMessage = ({
   }, [isVibe, showThinking, basicThinking, thinkingMode, sourceViews, searchQuery, googleActivity, isStreaming, searchSources, searchCitations, harnessSteps]);
 
   const responseEnter = wasLiveRef.current;
+  /* a live activity block (search, research…) was on screen: the answer waits for it to fold away */
+  const hadActivityRef = useRef(false);
+  if (showThinking && !basicThinking) hadActivityRef.current = true;
+  const answerDelay = hadActivityRef.current ? ACTIVITY_COLLAPSE_SECONDS * 0.6 : 0;
   const softFailure = !isStreaming && isSoftFailureMessage(content);
   /* the answer's [S3] markers become links to the sources they name, shown by host */
   const linkCitations = (text: string) =>
@@ -2161,6 +1948,7 @@ export const AnimatedMessage = ({
         enter={responseEnter}
         streaming={!!isStreaming}
         error={softFailure}
+        delay={answerDelay}
       >
         {bodyContent(content)}
       </AssistantResponse>
@@ -2198,19 +1986,24 @@ export const AnimatedMessage = ({
           icon={<Brain />}
           finished={!showThinking}
         />
-      ) : showThinking ? (
-        <AssistantStatus
-          kind={statusKind}
-          label={statusLabel}
-          query={thinkingMode === "search" ? searchQuery : undefined}
-          sources={thinkingMode === "search" ? sourceViews : []}
-          steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
-          note={memoryActivity}
-        />
       ) : (
         <>
-          {!isVibe && !basicThinking && thoughtSeconds ? <ThoughtLine seconds={thoughtSeconds} /> : null}
-          {completedActivity}
+          <ActivityCollapse active={showThinking}>
+            <AssistantStatus
+              kind={statusKind}
+              label={statusLabel}
+              query={thinkingMode === "search" ? searchQuery : undefined}
+              sources={thinkingMode === "search" ? sourceViews : []}
+              steps={thinkingMode === "google" || thinkingMode === "research" ? googleActivity : []}
+              note={memoryActivity}
+            />
+          </ActivityCollapse>
+          {!showThinking ? (
+            <>
+              {!isVibe && !basicThinking && thoughtSeconds ? <ThoughtLine seconds={thoughtSeconds} /> : null}
+              {completedActivity}
+            </>
+          ) : null}
         </>
       )}
       {browserRun ? (
@@ -2235,6 +2028,7 @@ export const AnimatedMessage = ({
       {mapLocation ? <ChatMapCard location={mapLocation} /> : null}
       {hasInlineStatusCard ? missionNodes : null}
       {answerNode}
+      {codeRun ? <ChatCodeRun key={codeRun.sessionId} projectId={codeRun.projectId} sessionId={codeRun.sessionId} projectName={codeRun.projectName} justStarted={Date.now() - codeRun.startedAt < 90_000} /> : null}
       {showAnswer && !isStreaming && !isVibe && !useDocumentUI ? <SourcesFooter sources={sourceViews} query={thinkingMode === "search" ? searchQuery : undefined} /> : null}
       {hasInlineStatusCard ? null : missionNodes}
     </div>
@@ -2430,6 +2224,20 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 );
 Textarea.displayName = "Textarea";
 
+/** Words of a search query, longest first so "chat gpt" lights up as one phrase before its parts. */
+function searchTerms(query: string) {
+  return Array.from(new Set(query.toLowerCase().split(/\s+/).filter(Boolean))).sort((a, b) => b.length - a.length);
+}
+
+/** The slice of `text` around its first match, so a hit deep in a long message still shows in a one-line row. */
+function snippetAround(text: string, query: string, radius = 36) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const lower = flat.toLowerCase();
+  const at = searchTerms(query).map((term) => lower.indexOf(term)).filter((n) => n >= 0).sort((a, b) => a - b)[0];
+  if (at === undefined || at <= radius) return flat;
+  return `…${flat.slice(Math.max(0, at - radius))}`;
+}
+
 const HighlightText = React.memo(({
   text,
   highlight,
@@ -2437,21 +2245,17 @@ const HighlightText = React.memo(({
   text: string;
   highlight: string;
 }) => {
-  if (!highlight.trim()) return <>{text}</>;
-  const lower = highlight.toLowerCase();
-  const parts = text.split(
-    new RegExp(`(${highlight.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"),
-  );
+  const terms = searchTerms(highlight);
+  if (!terms.length) return <>{text}</>;
+  const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const parts = text.split(pattern);
   return (
     <>
       {parts.map((part, i) =>
-        part.toLowerCase() === lower ? (
-          <span
-            key={i}
-            className="text-blue-500 font-medium transition-colors duration-300 ease-out"
-          >
+        i % 2 === 1 ? (
+          <mark key={i} className="clyra-search-hit">
             {part}
-          </span>
+          </mark>
         ) : (
           part
         ),
@@ -2584,6 +2388,7 @@ export default function App() {
     assistantKind?: "chat" | "vibe";
     /** User prompt for this Vibe reply—drives the fixed Thought summary. */
     vibeUserPrompt?: string;
+    codeRun?: { projectId: string; sessionId: string; projectName?: string; startedAt: number };
     thinkingMode?: "thinking" | "coding" | "youtube" | "search" | "weather" | "maps" | "google" | "research" | "spotify";
     googleAction?: string;
     googleDetail?: string;
@@ -2880,8 +2685,19 @@ export default function App() {
       setVisitedWorkspaceTabs((current) => (current.includes(tab) ? current : [...current, tab]));
       setActiveWorkspaceTab(tab);
     };
+    const openProject = (event: Event) => {
+      const projectId = String((event as CustomEvent).detail || "");
+      if (!projectId) return;
+      setVibeProjectToOpen(projectId);
+      setVisitedWorkspaceTabs((current) => (current.includes("vibe") ? current : [...current, "vibe"]));
+      setActiveWorkspaceTab("vibe");
+    };
     window.addEventListener("clyra:open-workspace", open);
-    return () => window.removeEventListener("clyra:open-workspace", open);
+    window.addEventListener("clyra:open-vibe-project", openProject);
+    return () => {
+      window.removeEventListener("clyra:open-workspace", open);
+      window.removeEventListener("clyra:open-vibe-project", openProject);
+    };
   }, []);
   const [taskViewPreviews, setTaskViewPreviews] = useState<Record<string, TaskViewPreview>>({});
   const taskViewSelectionRef = useRef(false);
@@ -3755,7 +3571,7 @@ export default function App() {
       setIsInputExpanded(true);
       requestAnimationFrame(() => textareaRef.current?.focus());
     };
-    const offResult = flow.onInlineResult?.(({ text }) => deliver(text));
+    const offResult = flow.onInlineResult?.(({ text }) => { if (flowInlineRef.current) deliver(text); });
     flowDeliverRef.current = deliver;
     return () => { offState?.(); offResult?.(); };
   }, []);
@@ -3769,6 +3585,7 @@ export default function App() {
     elapsedSeconds: composerDictation.elapsedSeconds,
     detail: flowSession ? flowSession.detail : composerDictation.detail,
     flow: flowSession,
+    steps: composerDictation.steps,
     // In the desktop app the mic button drives the same Flow engine as the global hotkey, shown inline here.
     onStart: () => {
       const flow = getElectronDesktop()?.dictation;
@@ -3964,21 +3781,10 @@ export default function App() {
       });
   }, [chats, currentChatId, messages]);
   const shellEfforts: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (kind: ChatEffort, size = 15) =>
-      kind === "light" ? (
-        <Feather size={size} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
-      ) : kind === "medium" ? (
-        <Zap size={size} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
-      ) : kind === "high" ? (
-        <Flame size={size} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
-      ) : (
-        <Rocket size={size} strokeWidth={1.8} color="#DC2626" strokeLinecap="round" strokeLinejoin="round" />
-      );
     return CHAT_EFFORTS.map((v) => ({
       value: v,
       label: CHAT_EFFORT_LABEL[v],
       hint: CHAT_EFFORT_HINT[v],
-      icon: iconFor(v),
       onPick: () => setChatEffort(v),
     }));
   }, []);
@@ -6307,9 +6113,15 @@ The local fallback is intentionally compact so recovery stays fast and reliable.
           msg.id === aiMsgId
             ? {
                 ...msg,
-                content: `Started a real Clyra Code session for **${String(createdPayload?.project?.name || "this project")}**. The project and session were created successfully; Clyra is now working in Vibe. I’ll only report the build as complete after the runtime’s checks and preview verification finish.`,
+                content: `Working on **${String(createdPayload?.project?.name || "this project")}** in Clyra Code. Every step below comes from the same agent harness as Vibe Coder.`,
                 isThinking: false,
                 isStreaming: false,
+                codeRun: {
+                  projectId,
+                  sessionId,
+                  projectName: String(createdPayload?.project?.name || "") || undefined,
+                  startedAt: Date.now(),
+                },
               }
             : msg,
         ),
@@ -7774,6 +7586,7 @@ Please analyze the code you just wrote and fix this error.`;
           await streamChatAgent({
             messages: history,
             model: CHAT_EFFORT_MODEL[chatEffort],
+            effort: chatEffort,
             signal: streamController.signal,
             onEvent: (event) => {
               if (event.type === "todos") { run.todos = event.items; patch(); }
@@ -10465,6 +10278,7 @@ Please analyze the code you just wrote and fix this error.`;
                 vibeUserPrompt={
                   message.vibeUserPrompt
                 }
+                codeRun={message.codeRun}
                 thinkingMode={message.thinkingMode}
                 youtubeVideoId={message.youtubeVideoId}
                 searchSources={message.searchSources}
@@ -10859,6 +10673,11 @@ Please analyze the code you just wrote and fix this error.`;
         {isAppLauncherOpen ? (
           <AppLauncher
             onClose={() => setIsAppLauncherOpen(false)}
+            onOpenGeneratedProject={(projectId) => {
+              setIsAppLauncherOpen(false);
+              setVibeProjectToOpen(projectId);
+              handleWorkspaceTabChange("vibe");
+            }}
             onOpenTool={(tool) => {
               setIsAppLauncherOpen(false);
               setSelectedCommand(null);
@@ -11436,7 +11255,7 @@ Please analyze the code you just wrote and fix this error.`;
                                       ? "You: "
                                       : "AI: "}
                                     <HighlightText
-                                      text={matchedMessage.content}
+                                      text={snippetAround(matchedMessage.content, searchQuery)}
                                       highlight={searchQuery}
                                     />
                                   </div>

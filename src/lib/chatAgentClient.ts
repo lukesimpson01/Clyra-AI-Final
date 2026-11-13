@@ -27,13 +27,15 @@ export function shouldUseChatAgent(text: string): boolean {
 export async function streamChatAgent(args: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   model?: string;
+  /** The composer's effort level: sets how deep the agent works (steps, searches, how hard it checks). */
+  effort?: "light" | "medium" | "high" | "max";
   signal?: AbortSignal;
   onEvent: (event: AgentEvent) => void;
 }) {
   const response = await fetch("/api/chat/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ messages: args.messages, model: args.model }),
+    body: JSON.stringify({ messages: args.messages, model: args.model, effort: args.effort }),
     signal: args.signal,
   });
   if (!response.ok || !response.body) throw new Error(`Chat API error: ${response.status} ${await response.text().catch(() => "")}`);

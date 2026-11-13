@@ -1,30 +1,51 @@
 /**
- * Offline, source-owned component catalogue for Clyra Code.
- * Sources: shadcn-ui/ui (MIT) and 21st-dev/agent-elements (MIT).
- * This is NOT the hosted 21st.dev marketplace: no private/paid data is copied.
- * Reading, browsing and installing never call a component registry or MCP.
+ * Source-owned component library for Clyra Code.
+ *
+ * Sources are plain `git clone`s of the upstream repositories:
+ *   shadcn-ui/ui          -> external/shadcn-library   (MIT)
+ *   serafimcloud/21st     -> external/21st-library     (MIT)
+ * Browsing renders the real source in sandboxed frames; "Add" copies the real
+ * source (and the local files it imports) into the project. No hosted registry,
+ * MCP or API key is involved once the repositories are cloned.
  */
 import type { Application } from "express";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
+import { frameHtml, FRAME_VERSION, SHADCN_ROOT, TWENTYFIRST_ROOT, warmFrames } from "./component-frames";
 
 const run = promisify(execFile);
 const REPO = process.cwd();
-const SHADCN = path.join(REPO, "external", "shadcn-ui", "apps", "v4", "registry", "new-york-v4", "ui");
-const ELEMENTS = path.join(REPO, "external", "21st-agent-elements", "public", "r");
-const SOURCE_REPOS = ["external/shadcn-ui", "external/21st-agent-elements"];
+const SHADCN_REPO = path.join(REPO, "external", "shadcn-library");
+const TWENTYFIRST_REPO = path.join(REPO, "external", "21st-library");
+const SHADCN_UI = path.join(SHADCN_ROOT, "ui");
+const SHADCN_EXAMPLES = path.join(SHADCN_ROOT, "examples");
+const SHADCN_CHARTS = path.join(SHADCN_ROOT, "charts");
+const TWENTYFIRST_UI = path.join(TWENTYFIRST_ROOT, "components", "ui");
+const CUSTOM_DEMOS = path.join(REPO, "lib", "clyra-code", "component-demos");
 const SAFE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const MAX_FILES = 100;
 const MAX_TOTAL_BYTES = 1_500_000;
 
+export const COMPONENT_CATEGORIES = [
+  "Buttons", "Forms & Inputs", "Text", "Navigation & Menus", "Overlays", "Feedback",
+  "Data Display", "Charts", "Layout", "Chat & Composer", "Effects & Backgrounds", "Sections",
+] as const;
+export type ComponentCategory = typeof COMPONENT_CATEGORIES[number];
+
 export type LocalSource = "shadcn" | "21st";
 export type LocalComponent = {
   id: string; source: LocalSource; name: string; title: string;
-  description: string; category: string; registryId: string;
+  description: string; category: ComponentCategory; registryId: string;
   docsUrl: string; origin: string; offline: true;
+  /** Frame URL of the real, running component. */
+  previewUrl: string;
+  /** Size of the page the preview is rendered at before it is scaled down. */
+  frame: { width: number; height: number };
+  /** Additional real examples (variants) of the same component. */
+  examples: Array<{ name: string; title: string; previewUrl: string }>;
 };
 export type LocalComponentDetail = {
   item: LocalComponent;
@@ -34,139 +55,360 @@ export type LocalComponentDetail = {
   requirements: string[];
   license: string;
 };
+
 const pretty = (name: string) => name.split("-").map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(" ");
 const nativePath = (root: string, relative: string) => path.resolve(root, ...relative.split("/"));
 async function exists(file: string) { try { await fs.access(file); return true; } catch { return false; } }
 
+const CATEGORY_OF: Record<string, ComponentCategory> = {
+  button: "Buttons", "button-group": "Buttons", toggle: "Buttons", "toggle-group": "Buttons",
+  input: "Forms & Inputs", "input-group": "Forms & Inputs", "input-otp": "Forms & Inputs", textarea: "Forms & Inputs",
+  "native-select": "Forms & Inputs", select: "Forms & Inputs", combobox: "Forms & Inputs", checkbox: "Forms & Inputs",
+  "radio-group": "Forms & Inputs", switch: "Forms & Inputs", slider: "Forms & Inputs", field: "Forms & Inputs",
+  form: "Forms & Inputs", label: "Forms & Inputs", calendar: "Forms & Inputs", multiselect: "Forms & Inputs",
+  kbd: "Text", typography: "Text", "text-shimmer": "Text", "text-morph": "Text", tag: "Text",
+  "dropdown-menu": "Navigation & Menus", "context-menu": "Navigation & Menus", menubar: "Navigation & Menus",
+  "navigation-menu": "Navigation & Menus", breadcrumb: "Navigation & Menus", pagination: "Navigation & Menus",
+  tabs: "Navigation & Menus", sidebar: "Navigation & Menus", command: "Navigation & Menus", "pricing-tab": "Navigation & Menus",
+  dialog: "Overlays", "alert-dialog": "Overlays", sheet: "Overlays", drawer: "Overlays", popover: "Overlays",
+  "hover-card": "Overlays", tooltip: "Overlays",
+  alert: "Feedback", sonner: "Feedback", progress: "Feedback", spinner: "Feedback", skeleton: "Feedback",
+  empty: "Feedback", badge: "Feedback", marker: "Feedback", banner: "Feedback", "circle-progress": "Feedback",
+  table: "Data Display", card: "Data Display", avatar: "Data Display", carousel: "Data Display", item: "Data Display",
+  accordion: "Data Display", collapsible: "Data Display", chart: "Charts",
+  separator: "Layout", "scroll-area": "Layout", "aspect-ratio": "Layout", resizable: "Layout", direction: "Layout",
+  attachment: "Chat & Composer", bubble: "Chat & Composer", message: "Chat & Composer",
+  "aurora-background": "Effects & Backgrounds", "shimmer-button": "Buttons", "hero-pill": "Sections", mockup: "Sections",
+};
+
+function inferCategory(name: string): ComponentCategory {
+  if (CATEGORY_OF[name]) return CATEGORY_OF[name];
+  if (/^block-(login|signup)/.test(name) || /^block-(dashboard|sidebar)/.test(name) || /^(hero|pricing|footer|header|banner|mockup)/.test(name)) return "Sections";
+  if (/button/.test(name)) return "Buttons";
+  if (/input|select|checkbox|radio|switch|slider|form|field|textarea|calendar|date|picker|otp/.test(name)) return "Forms & Inputs";
+  if (/dialog|sheet|drawer|popover|tooltip|hover/.test(name)) return "Overlays";
+  if (/menu|tabs|breadcrumb|pagination|command|sidebar|nav/.test(name)) return "Navigation & Menus";
+  if (/alert|toast|sonner|progress|spinner|skeleton|badge|loading/.test(name)) return "Feedback";
+  if (/table|card|avatar|carousel|accordion|collapsible|chart/.test(name)) return name.startsWith("chart") ? "Charts" : "Data Display";
+  if (/text|typography|kbd|label|tag/.test(name)) return "Text";
+  if (/aurora|shimmer|background|gradient|glow/.test(name)) return "Effects & Backgrounds";
+  return "Layout";
+}
+
+const BLOCK_DESCRIPTIONS: Array<[RegExp, string]> = [
+  [/^login/, "A complete login page."], [/^signup/, "A complete sign-up page."],
+  [/^sidebar/, "An application shell with a sidebar layout."], [/^dashboard/, "A dashboard page with charts, data table and navigation."],
+];
+/** Examples that have no matching ui file: [catalogue name, example file]. */
+const EXAMPLE_ONLY: Record<string, string> = {
+  typography: "typography-demo", "data-table": "data-table-demo", "date-picker": "date-picker-demo", "mode-toggle": "mode-toggle",
+};
+/** 21st files that are tied to the 21st product, or whose API differs from the shared demo. */
+const SKIP_21ST = new Set(["card"]);
+const BLOCK_FRAME = { width: 1280, height: 800 };
+const SMALL_FRAME = { width: 480, height: 360 };
+
+const DESCRIPTIONS: Record<string, string> = {
+  "data-table": "A sortable, filterable data table built on TanStack Table.",
+  "date-picker": "A date picker with a popover calendar.",
+  "mode-toggle": "A light and dark mode switcher.",
+  accordion: "Vertically stacked sections that expand to reveal content.",
+  alert: "A callout that draws attention to important information.",
+  "alert-dialog": "A modal that interrupts the user and needs a response.",
+  "aspect-ratio": "Keeps content at a fixed width-to-height ratio.",
+  attachment: "File chips with progress, state and actions for composers.",
+  avatar: "An image with a fallback for representing a person.",
+  badge: "A small label for status, counts and categories.",
+  breadcrumb: "Shows the path to the current page.",
+  bubble: "Chat bubbles in several tones for conversations.",
+  button: "Buttons in every variant and size, with icons and loading states.",
+  "button-group": "Joins related buttons into one control.",
+  calendar: "A date picker calendar with ranges and presets.",
+  card: "A surface with header, content and footer.",
+  carousel: "A swipeable, keyboard-friendly carousel.",
+  chart: "Chart primitives themed from your colour tokens.",
+  checkbox: "A checkbox with indeterminate and disabled states.",
+  collapsible: "An element that expands and collapses.",
+  combobox: "A searchable select with keyboard navigation.",
+  command: "A command palette with fuzzy search.",
+  "context-menu": "A menu opened by right-click.",
+  dialog: "A modal window layered over the page.",
+  drawer: "A drag-to-dismiss panel that slides from the edge.",
+  "dropdown-menu": "A menu opened from a trigger, with submenus and shortcuts.",
+  empty: "An empty-state with icon, title and actions.",
+  field: "Accessible form fields with labels, hints and errors.",
+  form: "Form wiring for react-hook-form with validation.",
+  "hover-card": "A preview card shown when hovering a link.",
+  input: "A text input in every state.",
+  "input-group": "Inputs with leading and trailing addons.",
+  "input-otp": "A one-time-code input with auto-advance.",
+  item: "A flexible list row with media, title and actions.",
+  kbd: "Keyboard key caps for shortcuts.",
+  label: "An accessible label for form controls.",
+  marker: "Inline timeline markers for chat and activity.",
+  menubar: "A desktop-style menu bar.",
+  message: "Chat messages with avatar, header and footer.",
+  "native-select": "A styled native select element.",
+  "navigation-menu": "A site navigation with flyout content.",
+  pagination: "Page navigation with previous and next.",
+  popover: "A floating panel anchored to a trigger.",
+  progress: "A progress bar for tasks and uploads.",
+  "radio-group": "A set of radio options.",
+  resizable: "Draggable resizable panels.",
+  "scroll-area": "Custom scrollbars that follow your theme.",
+  select: "A styled select with groups and scrolling.",
+  separator: "A visual divider.",
+  sheet: "A side panel that slides over the page.",
+  sidebar: "A composable, collapsible application sidebar.",
+  skeleton: "A shimmering placeholder while content loads.",
+  slider: "A range slider.",
+  sonner: "Toast notifications.",
+  spinner: "An animated loading indicator.",
+  switch: "A toggle switch.",
+  table: "A responsive data table.",
+  tabs: "Layered content sections, one visible at a time.",
+  textarea: "A multi-line text input.",
+  toggle: "A two-state pressable button.",
+  "toggle-group": "A set of toggles for single or multiple choice.",
+  tooltip: "A small hint shown on hover or focus.",
+  typography: "Headings, paragraphs, lists and quotes.",
+  "aurora-background": "A slow drifting aurora gradient for hero sections.",
+  banner: "A dismissible announcement banner.",
+  "circle-progress": "A compact circular progress indicator.",
+  mockup: "A browser and device frame for screenshots.",
+  multiselect: "A searchable multi-value select with tags.",
+  "hero-pill": "An announcement pill for hero sections.",
+  "pricing-tab": "An animated billing-period switcher.",
+  "shimmer-button": "A button with a travelling shimmer border.",
+  tag: "A hash-tag chip.",
+  "text-morph": "Characters morph from one word to the next.",
+  "text-shimmer": "Text with a travelling shimmer, for loading states.",
+};
+
+function describe(name: string, source: LocalSource, category: ComponentCategory) {
+  return DESCRIPTIONS[name] ?? (name.startsWith("chart-")
+    ? "A real " + pretty(name.replace(/^chart-/, "")).toLowerCase() + " chart built on the chart primitives."
+    : (source === "shadcn" ? "shadcn/ui" : "21st") + " " + category.toLowerCase() + " component.");
+}
+
+let cleanupCatalogue: LocalComponent[] | undefined;
+
+const frameUrl = (source: LocalSource, entry: string) => `/api/clyra-code/components/frame/${source}/${entry}?v=${FRAME_VERSION}`;
+
+async function listDir(directory: string, extension = ".tsx") {
+  return (await fs.readdir(directory).catch(() => [] as string[])).filter(file => file.endsWith(extension)).map(file => file.slice(0, -extension.length));
+}
+
+async function buildCatalogue(): Promise<LocalComponent[]> {
+  const items: LocalComponent[] = [];
+  if (await exists(SHADCN_UI)) {
+    const ui = (await listDir(SHADCN_UI)).filter(name => !name.startsWith("_") && SAFE.test(name));
+    const examples = (await listDir(SHADCN_EXAMPLES)).filter(name => SAFE.test(name));
+    const custom = new Set(await listDir(path.join(CUSTOM_DEMOS, "shadcn")));
+    const owner = (example: string) => ui.filter(name => example === name || example.startsWith(name + "-")).sort((a, b) => b.length - a.length)[0];
+    for (const name of ui) {
+      const mine = examples.filter(example => owner(example) === name);
+      const demo = custom.has(name) ? name : mine.includes(name + "-demo") ? name + "-demo" : mine[0];
+      if (!demo) continue;
+      const category = CATEGORY_OF[name] ?? "Layout";
+      items.push({
+        id: "shadcn:" + name, source: "shadcn", name, registryId: name, title: pretty(name),
+        description: describe(name, "shadcn", category), category,
+        docsUrl: "https://ui.shadcn.com/docs/components/" + name, origin: "shadcn-ui/ui", offline: true,
+        previewUrl: frameUrl("shadcn", demo), frame: SMALL_FRAME,
+        examples: mine.filter(example => example !== demo).slice(0, 24).map(example => ({
+          name: example, title: pretty(example.slice(name.length + 1) || example), previewUrl: frameUrl("shadcn", example),
+        })),
+      });
+    }
+    // Examples that have no ui file of their own.
+    for (const [name, demo] of Object.entries(EXAMPLE_ONLY)) {
+      if (!examples.includes(demo)) continue;
+      const mine = examples.filter(example => example.startsWith(name + "-") && example !== demo);
+      const category = inferCategory(name);
+      items.push({
+        id: "shadcn:" + name, source: "shadcn", name, registryId: name, title: pretty(name),
+        description: describe(name, "shadcn", category), category, docsUrl: "https://ui.shadcn.com/docs/components/" + name,
+        origin: "shadcn-ui/ui", offline: true, previewUrl: frameUrl("shadcn", demo), frame: SMALL_FRAME,
+        examples: mine.map(example => ({ name: example, title: pretty(example.slice(name.length + 1)), previewUrl: frameUrl("shadcn", example) })),
+      });
+    }
+    for (const chart of (await listDir(SHADCN_CHARTS)).filter(name => name.startsWith("chart-") && SAFE.test(name))) {
+      items.push({
+        id: "shadcn:" + chart, source: "shadcn", name: chart, registryId: chart, title: pretty(chart.replace(/^chart-/, "")) + " chart",
+        description: describe(chart, "shadcn", "Charts"), category: "Charts",
+        docsUrl: "https://ui.shadcn.com/charts", origin: "shadcn-ui/ui", offline: true,
+        previewUrl: frameUrl("shadcn", chart), frame: SMALL_FRAME, examples: [],
+      });
+    }
+  }
+  if (await exists(path.join(SHADCN_ROOT, "blocks"))) {
+    for (const block of (await fs.readdir(path.join(SHADCN_ROOT, "blocks")).catch(() => [] as string[])).sort()) {
+      if (!SAFE.test(block) || !await exists(path.join(SHADCN_ROOT, "blocks", block, "page.tsx"))) continue;
+      items.push({
+        id: "shadcn:block-" + block, source: "shadcn", name: "block-" + block, registryId: block, title: pretty(block),
+        description: BLOCK_DESCRIPTIONS.find(([pattern]) => pattern.test(block))?.[1] ?? "A full page block.",
+        category: "Sections", docsUrl: "https://ui.shadcn.com/blocks", origin: "shadcn-ui/ui", offline: true,
+        previewUrl: frameUrl("shadcn", "block-" + block), frame: BLOCK_FRAME, examples: [],
+      });
+    }
+  }
+  if (await exists(TWENTYFIRST_UI)) {
+    const custom = new Set(await listDir(path.join(CUSTOM_DEMOS, "21st")));
+    for (const name of await listDir(TWENTYFIRST_UI)) {
+      if (!SAFE.test(name) || SKIP_21ST.has(name)) continue;
+      if (!custom.has(name) && !existsSync(path.join(SHADCN_EXAMPLES, name + "-demo.tsx"))) continue;
+      const category = inferCategory(name);
+      items.push({
+        id: "21st:" + name, source: "21st", name, registryId: name, title: pretty(name),
+        description: describe(name, "21st", category), category, docsUrl: "https://21st.dev",
+        origin: "serafimcloud/21st", offline: true, previewUrl: frameUrl("21st", name), frame: SMALL_FRAME, examples: [],
+      });
+    }
+  }
+  return items.sort((a, b) => a.title.localeCompare(b.title));
+}
+
+export async function listLocalComponents(): Promise<LocalComponent[]> {
+  if (!cleanupCatalogue || !cleanupCatalogue.length) {
+    cleanupCatalogue = await buildCatalogue();
+    // Build every preview in the background, cards first, so the library never waits on one.
+    const entryOf = (url: string) => url.replace(/\?.*$/, "").split("/").slice(-2);
+    warmFrames(cleanupCatalogue.flatMap(item => [item.previewUrl, ...item.examples.map(example => example.previewUrl)])
+      .map(url => { const [source, entry] = entryOf(url); return { source: source as LocalSource, entry }; }));
+  }
+  return cleanupCatalogue;
+}
+
 let cloneInFlight: Promise<void> | undefined;
-/** Try to hydrate gitlinks on first browse; after cloning, all catalog and source reads are offline. */
+/** First browse: plain `git clone --depth 1` of each missing repository. */
 export async function ensureLocalComponentSources(): Promise<void> {
-  if (await exists(path.join(SHADCN, "button.tsx")) && await exists(path.join(ELEMENTS, "index.json"))) return;
+  const need: Array<[string, string]> = [];
+  if (!existsSync(SHADCN_UI)) need.push(["https://github.com/shadcn-ui/ui.git", SHADCN_REPO]);
+  if (!existsSync(TWENTYFIRST_UI)) need.push(["https://github.com/serafimcloud/21st.git", TWENTYFIRST_REPO]);
+  if (!need.length) return;
   if (!cloneInFlight) {
-    cloneInFlight = run("git", ["submodule", "update", "--init", "--depth", "1", "--", ...SOURCE_REPOS], {
-      cwd: REPO, timeout: 180_000, maxBuffer: 512 * 1024,
-    }).then(() => undefined).finally(() => { cloneInFlight = undefined; });
+    cloneInFlight = (async () => {
+      for (const [url, target] of need) {
+        if (existsSync(target)) await fs.rm(target, { recursive: true, force: true });
+        await run("git", ["clone", "--depth", "1", url, target], { cwd: REPO, timeout: 300_000, maxBuffer: 2 * 1024 * 1024 });
+      }
+      cleanupCatalogue = undefined;
+    })().finally(() => { cloneInFlight = undefined; });
   }
   await cloneInFlight;
 }
 
 export async function localSourceStatus() {
   return [
-    {
-      id: "shadcn" as const, available: await exists(path.join(SHADCN, "button.tsx")),
-      detail: "shadcn/ui · official MIT source · local Git submodule",
-    },
-    {
-      id: "21st" as const, available: await exists(path.join(ELEMENTS, "index.json")),
-      detail: "21st.dev Agent Elements · 26 open-source components · local Git submodule",
-    },
+    { id: "shadcn" as const, available: await exists(SHADCN_UI), detail: "shadcn-ui/ui · git clone · MIT" },
+    { id: "21st" as const, available: await exists(TWENTYFIRST_UI), detail: "serafimcloud/21st · git clone · MIT" },
   ];
 }
 
-function catalogItem(source: LocalSource, name: string): LocalComponent {
-  return source === "shadcn"
-    ? { id: "shadcn:" + name, source, name, registryId: name, title: pretty(name),
-        description: "Editable shadcn/ui component from the official local source.",
-        category: "UI component", docsUrl: "https://ui.shadcn.com/docs/components/" + name,
-        origin: "shadcn-ui/ui", offline: true }
-    : { id: "21st:" + name, source, name, registryId: name, title: pretty(name),
-        description: "Agent Elements component from the official 21st.dev open-source registry.",
-        category: "Agent UI", docsUrl: "https://agent-elements.21st.dev/docs/" + name,
-        origin: "21st-dev/agent-elements", offline: true };
-}
-
-export async function listLocalComponents(): Promise<LocalComponent[]> {
-  const result: LocalComponent[] = [];
-  if (await exists(SHADCN)) {
-    const files = await fs.readdir(SHADCN).catch(() => []);
-    for (const file of files) {
-      if (!file.endsWith(".tsx") || file.startsWith("_")) continue;
-      const name = file.slice(0, -4);
-      if (SAFE.test(name)) result.push(catalogItem("shadcn", name));
-    }
-  }
-  if (await exists(path.join(ELEMENTS, "index.json"))) {
-    const index = JSON.parse(await fs.readFile(path.join(ELEMENTS, "index.json"), "utf8")) as {
-      items?: Array<{ name?: string }>;
-    };
-    for (const { name } of index.items ?? []) {
-      if (name && SAFE.test(name) && await exists(path.join(ELEMENTS, name + ".json"))) {
-        result.push(catalogItem("21st", name));
-      }
-    }
-  }
-  return result.sort((a, b) => a.title.localeCompare(b.title));
-}
-
 function verify(source: string, name: string): asserts source is LocalSource {
-  if (!["shadcn", "21st"].includes(source) || !SAFE.test(name)) {
-    throw new Error("Unknown component.");
-  }
+  if (!["shadcn", "21st"].includes(source) || !SAFE.test(name)) throw new Error("Unknown component.");
 }
 
-type RegistryPackage = {
-  name: string; files?: Array<{ path: string; content: string }>;
-  dependencies?: string[]; devDependencies?: string[];
-  registryDependencies?: string[]; css?: unknown;
-};
+const LOCAL_IMPORT = /from\s+(["'])((?:@\/|\.{1,2}\/)[^"']*)\1/g;
+const RELATIVE_CACHE_LIMIT = 200;
 
-function local21stDependency(value: string): string | null {
-  // A registry URL is metadata only. Never fetch it. Resolve only checked-in JSON.
-  try {
-    const name = decodeURIComponent(new URL(value).pathname.split("/").pop() ?? "").replace(/\.json$/, "");
-    return SAFE.test(name) ? name : null;
-  } catch {
-    return SAFE.test(value) ? value : null;
-  }
+type SourceFile = { target: string; content: string; origin: string };
+
+function packagesOf(code: string): string[] {
+  const sources = [...code.matchAll(/(?:from\s*|import\s*|require\()\s*["']([^"']+)["']/g)].map(m => m[1]);
+  return [...new Set(sources.filter(s => !s.startsWith(".") && !s.startsWith("@/") && s !== "cn" && !s.startsWith("node:")
+      && !["react", "react-dom", "react/jsx-runtime"].includes(s) && !s.startsWith("next/"))
+    .map(s => s.startsWith("@") ? s.split("/").slice(0, 2).join("/") : s.split("/")[0]))];
 }
 
-/** Get genuine checked-in code; never return a mock preview as real source. */
+/** Resolves a component to its real files and every local file it imports. */
+async function collectSource(source: LocalSource, name: string): Promise<{ files: SourceFile[]; packages: string[]; references: string[] }> {
+  const files = new Map<string, SourceFile>();
+  const queue: Array<{ file: string; target: string }> = [];
+  const root = source === "shadcn" ? SHADCN_ROOT : TWENTYFIRST_ROOT;
+  const first = source === "shadcn"
+    ? (name.startsWith("block-") ? { file: path.join(SHADCN_ROOT, "blocks", name.slice(6), "page.tsx"), target: "blocks/" + name.slice(6) + "/page.tsx" }
+        : name.startsWith("chart-") && name !== "chart" ? { file: path.join(SHADCN_CHARTS, name + ".tsx"), target: "components/" + name + ".tsx" }
+        : EXAMPLE_ONLY[name] ? { file: path.join(SHADCN_EXAMPLES, EXAMPLE_ONLY[name] + ".tsx"), target: "components/" + name + ".tsx" }
+        : { file: path.join(SHADCN_UI, name + ".tsx"), target: "components/ui/" + name + ".tsx" })
+    : { file: path.join(TWENTYFIRST_UI, name + ".tsx"), target: "components/ui/" + name + ".tsx" };
+  queue.push(first);
+  const references: string[] = [];
+  const resolveLocal = async (from: string, specifier: string): Promise<{ file: string; target: string } | null> => {
+    let base: string;
+    let target: string;
+    if (specifier === "cn" || specifier === "@/lib/utils" || specifier === "@/registry/new-york-v4/lib/utils") return null;
+    if (specifier.startsWith("@/registry/new-york-v4/")) {
+      const rest = specifier.slice("@/registry/new-york-v4/".length);
+      base = path.join(SHADCN_ROOT, rest);
+      target = rest.replace(/^ui\//, "components/ui/");
+    } else if (specifier.startsWith("@/")) {
+      base = path.join(root, specifier.slice(2));
+      target = specifier.slice(2);
+    } else {
+      base = path.resolve(path.dirname(from), specifier);
+      target = path.relative(root, base).replaceAll(path.sep, "/");
+      if (target.startsWith("..")) return null;
+      if (source === "shadcn" && target.startsWith("ui/")) target = "components/" + target;
+    }
+    for (const candidate of [base, base + ".tsx", base + ".ts", path.join(base, "index.tsx")]) {
+      if (await fs.stat(candidate).then((entry) => entry.isFile()).catch(() => false)) return { file: candidate, target: candidate === base ? target : target + path.extname(candidate) };
+    }
+    return null;
+  };
+  const resolved = new Map<string, Map<string, string>>();
+  while (queue.length) {
+    const { file, target } = queue.shift()!;
+    if (files.has(target)) continue;
+    if (files.size >= MAX_FILES) throw new Error("Component dependency graph exceeds the safety limit.");
+    const content = await fs.readFile(file, "utf8");
+    files.set(target, { target, content, origin: file });
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
+    const mapping = new Map<string, string>();
+    resolved.set(target, mapping);
+    for (const match of content.matchAll(LOCAL_IMPORT)) {
+      const specifier = match[2];
+      const dependency = await resolveLocal(file, specifier);
+      if (!dependency) continue;
+      mapping.set(specifier, dependency.target);
+      if (!files.has(dependency.target)) queue.push(dependency);
+      const uiMatch = /^components\/ui\/([a-z0-9-]+)\.tsx$/.exec(dependency.target);
+      if (uiMatch && uiMatch[1] !== name) references.push(uiMatch[1]);
+    }
+    if (resolved.size > RELATIVE_CACHE_LIMIT) break;
+  }
+  // Rewrite every local import to a relative path inside the destination project.
+  const out: SourceFile[] = [];
+  for (const [target, entry] of files) {
+    const mapping = resolved.get(target) ?? new Map<string, string>();
+    let content = entry.content.replace(/from\s+(["'])(cn|@\/lib\/utils|@\/registry\/new-york-v4\/lib\/utils)\1/g, (_all, quote: string) => {
+      const relative = path.posix.relative(path.posix.dirname(target), "lib/utils");
+      return "from " + quote + (relative.startsWith(".") ? relative : "./" + relative) + quote;
+    });
+    content = content.replace(LOCAL_IMPORT, (all: string, _quote: string, specifier: string) => {
+      const destination = mapping.get(specifier);
+      if (!destination) return all;
+      const bare = destination.replace(/\.(tsx?|jsx?)$/, "");
+      const relative = path.posix.relative(path.posix.dirname(target), bare);
+      return "from \"" + (relative.startsWith(".") ? relative : "./" + relative) + "\"";
+    });
+    out.push({ target, content, origin: entry.origin });
+  }
+  return { files: out, packages: [...new Set(out.flatMap(file => packagesOf(file.content)))], references: [...new Set(references)] };
+}
+
+/** Real checked-in code; never a mock. */
 export async function readLocalComponent(source: LocalSource, name: string): Promise<LocalComponentDetail> {
   verify(source, name);
-  const item = catalogItem(source, name);
-  if (source === "shadcn") {
-    const code = await fs.readFile(path.join(SHADCN, name + ".tsx"), "utf8");
-    const references = [...code.matchAll(/@\/registry\/new-york-v4\/ui\/([a-z0-9-]+)/g)]
-      .map(match => match[1]).filter(value => value !== name);
-    const dependencies = [...code.matchAll(/from\s+["']([^./@][^"']*)["']/g)]
-      .map(match => match[1]).filter(dep => dep !== "cn" && dep !== "react" && dep !== "react-dom");
-    return { item, files: [{ path: "components/ui/" + name + ".tsx", content: code }],
-      dependencies: [...new Set(dependencies)], registryDependencies: [...new Set(references)],
-      requirements: ["React", "Tailwind CSS", "shadcn-compatible CSS variables"], license: "MIT" };
-  }
-  const registry = JSON.parse(await fs.readFile(path.join(ELEMENTS, name + ".json"), "utf8")) as RegistryPackage;
-  const files = (registry.files ?? []).filter(file => typeof file.content === "string" && typeof file.path === "string");
-  if (!files.length) throw new Error("This item has no locally installable source.");
-  return { item, files: files.map(file => ({
-    path: local21stFilePath(file.path), content: file.content,
-  })), dependencies: [...(registry.dependencies ?? []), ...(registry.devDependencies ?? [])],
-    registryDependencies: (registry.registryDependencies ?? []).map(local21stDependency).filter((v): v is string => Boolean(v)),
-    requirements: ["React 19", "Tailwind CSS v4", "Agent Elements design tokens"], license: "MIT" };
-}
-
-function local21stFilePath(sourcePath: string): string {
-  const cleaned = sourcePath.replaceAll("\\", "/");
-  const prefix = "registry/agent-elements/";
-  if (!cleaned.startsWith(prefix)) throw new Error("Unsupported registry file path.");
-  const relative = cleaned.slice(prefix.length);
-  if (!relative || relative.split("/").some(segment => !segment || segment === "." || segment === "..")
-      || !/^[a-zA-Z0-9_./-]+$/.test(relative)) throw new Error("Invalid registry path.");
-  return "components/agent-elements/" + relative;
-}
-
-function translateShadcn(code: string): string {
-  return code
-    .replace(/(["'])@\/registry\/new-york-v4\/ui\//g, "$1@/components/ui/")
-    .replace(/(["'])cn\1/g, "$1@/lib/utils$1");
-}
-function translate21st(code: string): string {
-  return code.replace(/(["'])@\/registry\/agent-elements\//g, "$1@/components/agent-elements/");
-}
-function importedPackages(code: string): string[] {
-  const sources = [...code.matchAll(/(?:from\s*|import\s*|require\()\s*["']([^"']+)["']/g)].map(m => m[1]);
-  return [...new Set(sources.filter(s => !s.startsWith(".") && !s.startsWith("@/") &&
-    !s.startsWith("node:") && !["react", "react-dom", "react/jsx-runtime"].includes(s))
-    .map(s => s.startsWith("@") ? s.split("/").slice(0, 2).join("/") : s.split("/")[0]))];
+  const item = (await listLocalComponents()).find(entry => entry.source === source && entry.name === name);
+  if (!item) throw new Error("Unknown component.");
+  const collected = await collectSource(source, name);
+  return {
+    item, files: collected.files.map(file => ({ path: file.target, content: file.content })),
+    dependencies: collected.packages, registryDependencies: collected.references,
+    requirements: ["React", "Tailwind CSS", "shadcn-compatible CSS variables"], license: "MIT",
+  };
 }
 
 export async function installLocalComponent(projectId: string, source: LocalSource, name: string) {
@@ -181,71 +423,26 @@ export async function installLocalComponent(projectId: string, source: LocalSour
     ...((manifest.devDependencies ?? {}) as Record<string, string>) };
   if (!("react" in depRecord)) throw new Error("Components require a React project.");
   const baseDir = await exists(path.join(project, "src")) ? "src/" : "";
-  const queue: Array<{ source: LocalSource; name: string }> = [{ source, name }];
-  const seen = new Set<string>();
+  const collected = await collectSource(source, name);
   const files = new Map<string, string>();
-  const required = new Set<string>();
-  while (queue.length) {
-    const next = queue.shift()!;
-    const key = next.source + ":" + next.name;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (seen.size > MAX_FILES) throw new Error("Component dependency graph exceeds the safety limit.");
-    const component = await readLocalComponent(next.source, next.name);
-    component.registryDependencies.forEach(dep => queue.push({ source: next.source, name: dep }));
-    for (const file of component.files) {
-      const translated = next.source === "shadcn" ? translateShadcn(file.content) : translate21st(file.content);
-      const targetPath = baseDir + file.path;
-      const portable = translated.replace(/(["'])@\/(components\/(?:ui|agent-elements)\/[a-zA-Z0-9_/-]+|lib\/utils)\1/g,
-        (_all, quote: string, target: string) => {
-          const relative = path.posix.relative(path.posix.dirname(targetPath), baseDir + target);
-          return quote + (relative.startsWith(".") ? relative : "./" + relative) + quote;
-        });
-      files.set(targetPath, portable);
-      importedPackages(portable).forEach(dep => required.add(dep));
-    }
-  }
+  for (const file of collected.files) files.set(baseDir + file.target, file.content);
   if ([...files.values()].reduce((sum, value) => sum + Buffer.byteLength(value), 0) > MAX_TOTAL_BYTES) {
     throw new Error("Component source exceeds the maximum install size.");
   }
+  const required = new Set(collected.packages);
   const utilsRelative = baseDir + "lib/utils.ts";
-  const hasCnHelper = [...files.values()].some(code => /from ["'](?:\.\.\/)+lib\/utils["']/.test(code));
-  if (hasCnHelper && !await exists(nativePath(project, utilsRelative))) {
+  const needsCn = [...files.values()].some(code => /from ["'](?:\.\.?\/)+(?:lib\/)?utils["']/.test(code));
+  if (needsCn && !files.has(utilsRelative) && !await exists(nativePath(project, utilsRelative))) {
     files.set(utilsRelative, 'import { clsx, type ClassValue } from "clsx";\nimport { twMerge } from "tailwind-merge";\nexport function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }\n');
     required.add("clsx"); required.add("tailwind-merge");
   }
-  // Preserve source attribution when copying files under MIT.
-  const licenseSource = source === "shadcn"
-    ? path.join(REPO, "external", "shadcn-ui", "LICENSE.md")
-    : path.join(REPO, "external", "21st-agent-elements", "LICENSE");
-  const licensePath = baseDir + (source === "shadcn"
-    ? "components/ui/LICENSE.shadcn.md" : "components/agent-elements/LICENSE.21st.txt");
+  const licenseSource = path.join(source === "shadcn" ? SHADCN_REPO : TWENTYFIRST_REPO, source === "shadcn" ? "LICENSE.md" : "LICENSE");
+  const licensePath = baseDir + (source === "shadcn" ? "components/LICENSE.shadcn.md" : "components/LICENSE.21st.txt");
   if (!await exists(nativePath(project, licensePath)) && await exists(licenseSource)) {
     files.set(licensePath, await fs.readFile(licenseSource, "utf8"));
   }
-  // Agent Elements uses local CSS tokens. Copy the real upstream stylesheet and
-  // import it once into a recognised project CSS entrypoint, never a remote URL.
-  let stylesheetPatch: { file: string; before: string; after: string } | null = null;
-  let stylesheetNeedsImport = false;
-  if (source === "21st") {
-    const agentStyle = path.join(REPO, "external", "21st-agent-elements", "lib", "agent-ui", "agent-ui.css");
-    const styleRelative = baseDir + "components/agent-elements/agent-ui.css";
-    if (await exists(agentStyle)) files.set(styleRelative, await fs.readFile(agentStyle, "utf8"));
-    const candidates = ["src/index.css", "src/globals.css", "app/globals.css", "styles/globals.css", "index.css", "globals.css"];
-    const cssEntry = (await Promise.all(candidates.map(async file => await exists(nativePath(project, file)) ? file : null)))
-      .find((entry): entry is string => Boolean(entry));
-    if (cssEntry && await exists(agentStyle)) {
-      const destination = nativePath(project, cssEntry);
-      const before = await fs.readFile(destination, "utf8");
-      const relative = path.posix.relative(path.posix.dirname(cssEntry), styleRelative);
-      const importPath = relative.startsWith(".") ? relative : "./" + relative;
-      const declaration = '@import "' + importPath + '";';
-      if (!before.includes(declaration)) stylesheetPatch = { file: destination, before, after: declaration + "\n" + before };
-    } else if (await exists(agentStyle)) stylesheetNeedsImport = true;
-  }
   const newDependencies = [...required].filter(dep => !(dep in depRecord));
-  // Identical shared registry dependencies are already installed and may be reused.
-  // Different user-authored files are never silently overwritten.
+  // Identical shared files are reused; different user-authored files are never overwritten.
   for (const [relative, content] of files) {
     const destination = nativePath(project, relative);
     if (!destination.startsWith(project + path.sep)) throw new Error("Unsafe component file path.");
@@ -254,7 +451,6 @@ export async function installLocalComponent(projectId: string, source: LocalSour
       else throw new Error("A different file already exists at " + relative + ". No files were changed.");
     }
   }
-  // Roll back only newly created component files if a later write fails.
   const written: string[] = [];
   try {
     for (const [relative, content] of files) {
@@ -263,17 +459,49 @@ export async function installLocalComponent(projectId: string, source: LocalSour
       await fs.writeFile(destination, content, { encoding: "utf8", flag: "wx" });
       written.push(destination);
     }
-    if (stylesheetPatch) await fs.writeFile(stylesheetPatch.file, stylesheetPatch.after, "utf8");
   } catch (error) {
     await Promise.all(written.map(file => fs.unlink(file).catch(() => undefined)));
-    if (stylesheetPatch) await fs.writeFile(stylesheetPatch.file, stylesheetPatch.before, "utf8").catch(() => undefined);
     throw error;
   }
-  return { ok: true, installed: [...seen], files: [...files.keys()],
+  return { ok: true, installed: [source + ":" + name, ...collected.references.map(ref => source + ":" + ref)], files: [...files.keys()],
     dependenciesToInstall: newDependencies,
-    note: (newDependencies.length ? "Source installed. Install the listed npm dependencies before building." :
-      "Local component source installed. Run your project's validation and preview.") +
-      (stylesheetNeedsImport ? " Import components/agent-elements/agent-ui.css into your main CSS file." : "") };
+    note: newDependencies.length ? "Added. Install " + newDependencies.join(", ") + " before building."
+      : "Added to your project. Run your preview to see it." };
+}
+
+const TWENTY_FIRST_MCP = "https://21st.dev/api/mcp";
+const asObject = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const twentyFirstKey = () => (process.env.API_KEY_21ST || process.env.TWENTY_FIRST_API_KEY || "").trim();
+
+/**
+ * Connects the project's agent to the official component MCP servers: shadcn's
+ * local `shadcn mcp` (no key) and 21st.dev's Magic MCP (needs API_KEY_21ST, so it
+ * stays disabled until a key exists). The key is read from the environment and is
+ * never written to disk. Invalid user-authored settings are left untouched.
+ */
+export async function ensureComponentMcpConfig(projectPath: string): Promise<void> {
+  const destination = path.join(projectPath, "opencode.json");
+  const content = await fs.readFile(destination, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "{}";
+    throw error;
+  });
+  const config = asObject(JSON.parse(content));
+  const mcp = asObject(config.mcp);
+  const servers = asObject(mcp.servers);
+  config.$schema ??= "https://opencode.ai/config.json";
+  config.mcp = {
+    ...mcp,
+    servers: {
+      ...servers,
+      shadcn: { type: "local", command: ["npx", "-y", "shadcn@latest", "mcp"], timeout: 20_000, codemode: false },
+      "21st": {
+        type: "remote", url: TWENTY_FIRST_MCP, oauth: false, headers: { "x-api-key": "{env:API_KEY_21ST}" },
+        disabled: !twentyFirstKey(), timeout: 20_000, codemode: false,
+      },
+    },
+  };
+  const next = JSON.stringify(config, null, 2) + "\n";
+  if (content !== next) await fs.writeFile(destination, next, "utf8");
 }
 
 /** Remove only Clyra's previously injected remote component MCP settings. */
@@ -298,26 +526,44 @@ export async function removeLegacyComponentMcpConfig(projectPath: string): Promi
 }
 
 function problem(error: unknown) { return error instanceof Error ? error.message : "Component action failed."; }
+const FRAME_HEADERS = {
+  "Content-Type": "text/html; charset=utf-8",
+  "Cache-Control": "private, max-age=86400",
+  "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data: https:; connect-src 'none'; frame-ancestors 'self' http://localhost:* http://127.0.0.1:*",
+};
+
 export function registerComponentLibraryRoutes(app: Application): void {
   app.get("/api/clyra-code/components/status", async (_req, res) => {
-    res.json({ sources: await localSourceStatus(),
-      offline: true, setup: "npm run setup:component-sources" });
+    res.json({ sources: await localSourceStatus(), offline: true, setup: "npm run setup:component-sources" });
   });
   app.get("/api/clyra-code/components", async (req, res) => {
     const source = String(req.query.source || "all");
     if (!["all", "shadcn", "21st"].includes(source)) { res.status(400).json({ error: "Invalid source." }); return; }
     const query = String(req.query.q || "").slice(0, 100).trim().toLowerCase();
+    const category = String(req.query.category || "");
     let setupError = "";
     try { await ensureLocalComponentSources(); } catch (error) { setupError = problem(error); }
     try {
       const available = await localSourceStatus();
-      const items = (await listLocalComponents()).filter(item => (source === "all" || item.source === source)
+      const all = await listLocalComponents();
+      const items = all.filter(item => (source === "all" || item.source === source)
+        && (!category || item.category === category)
         && (!query || [item.name, item.title, item.description, item.category].some(v => v.toLowerCase().includes(query))));
       const errors = available.filter(status => !status.available).map(status => ({
-        source: status.id, message: "Local source not available. Run npm run setup:component-sources. " + setupError,
+        source: status.id, message: "Source not cloned yet. Run npm run setup:component-sources. " + setupError,
       }));
-      res.json({ items, errors, offline: true, total: items.length });
+      const counts: Record<string, number> = {};
+      for (const item of all) counts[item.category] = (counts[item.category] ?? 0) + 1;
+      res.json({ items, errors, offline: true, total: items.length, categories: COMPONENT_CATEGORIES.filter(name => counts[name]).map(name => ({ name, count: counts[name] })) });
     } catch (error) { res.status(500).json({ error: problem(error) }); }
+  });
+  app.get("/api/clyra-code/components/frame/:source/:entry", async (req, res) => {
+    try {
+      const source = req.params.source, entry = req.params.entry;
+      if (!["shadcn", "21st"].includes(source) || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(entry)) { res.status(400).send("Unknown preview."); return; }
+      res.removeHeader("X-Frame-Options");
+      res.set(FRAME_HEADERS).send(await frameHtml({ source: source as LocalSource, entry }));
+    } catch (error) { res.status(500).type("text/plain").send("Preview unavailable: " + problem(error)); }
   });
   app.get("/api/clyra-code/components/:source/:name", async (req, res) => {
     try {

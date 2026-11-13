@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, ArrowDownUp, MoreHorizontal, Pencil, Pin, PanelLeftClose, Plus, Search, Settings2, Trash2, X, type LucideIcon, SquarePen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { VibeProject } from "./api";
+
+/** "now", "5m", "3h", "2d", "4w" — the compact age shown on a task row. */
+function shortAgo(ms: number) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d`;
+  return `${Math.floor(s / 604800)}w`;
+}
 
 export type ChatThread = {
   id: string;
@@ -106,6 +116,13 @@ export function Sidebar({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(activeProjectId ? [activeProjectId] : []));
   const [menu, setMenu] = useState<MenuState>(null);
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
+  const [allOpen, setAllOpen] = useState(() => {
+    try { return localStorage.getItem("clyra-code:sidebar-all-open") !== "0"; } catch { return true; }
+  });
+  const toggleAll = () => setAllOpen((open) => {
+    try { localStorage.setItem("clyra-code:sidebar-all-open", open ? "0" : "1"); } catch { /* storage unavailable */ }
+    return !open;
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ kind: "project" | "chat"; projectId: string; chatId?: string; value: string } | null>(null);
@@ -186,6 +203,12 @@ export function Sidebar({
   };
   const pinned = ordered.filter((project) => project.pinned && matches(project));
   const unpinned = ordered.filter((project) => !project.pinned && matches(project));
+  /* With many projects the list is two groups: the few you touched last, then everything else (never the same
+     project twice). Sorted by name, or with only a handful of projects, it stays one plain list. */
+  const RECENT_COUNT = 5;
+  const grouped = sort === "recent" && unpinned.length > RECENT_COUNT + 2;
+  const recentGroup = grouped ? unpinned.slice(0, RECENT_COUNT) : unpinned;
+  const restGroup = grouped ? unpinned.slice(RECENT_COUNT) : [];
 
   useEffect(() => {
     if (!needle) return;
@@ -245,7 +268,7 @@ export function Sidebar({
 
   // `isolate` keeps the shared selection surface below each row's content. The
   // neutral fill is intentionally quiet: hierarchy comes from space and type.
-  const rowBase = "group/row isolate relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1 rounded-[12.5px] text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#3977F6]/35";
+  const rowBase = "group/row isolate relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1 rounded-[9px] text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#3977F6]/35";
   /** The shared id lets the active surface move between rows without a flash. */
   const selectionHighlight = (layoutId: string) => (
     <motion.span
@@ -263,7 +286,7 @@ export function Sidebar({
     const running = project.id === activeProjectId && Boolean(runningSessionId);
     const displayName = project.displayName || project.name || project.id;
     return (
-      <div key={project.id} className="group/project mb-px">
+      <div key={project.id} className="group/project mb-[2px]">
         <div
           role="button"
           tabIndex={0}
@@ -274,7 +297,7 @@ export function Sidebar({
           onClick={() => { toggleExpanded(project.id); onSelectProject(project.id); }}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSelectProject(project.id); } }}
           onContextMenu={(event) => { event.preventDefault(); openMenu(event, { kind: "project", projectId: project.id }); }}
-          className={cn(rowBase, "h-[30px] gap-[9px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !selected && "hover:bg-[rgba(26,28,31,0.04)]")}
+          className={cn(rowBase, "h-[34px] gap-[10px] pl-2 pr-[6px] text-[#0D0D0D]", !selected && "hover:bg-black/[0.045]")}
         >
           {selected ? selectionHighlight("sidebar-project-selection") : null}
           {isExpanded ? <FolderOpen className="h-[16px] w-[16px] shrink-0 text-[rgba(26,28,31,0.72)]" strokeWidth={1.6} aria-hidden /> : <Folder className="h-[16px] w-[16px] shrink-0 text-[rgba(26,28,31,0.72)]" strokeWidth={1.6} aria-hidden />}
@@ -330,7 +353,7 @@ export function Sidebar({
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               className="overflow-hidden"
             >
-              <div className="py-px pl-[25px]">
+              <div className="cc-thread-tree relative py-px pl-[29px]">
                 {projectThreads.length ? projectThreads.map((thread, index) => {
                   const threadSelected = project.id === activeProjectId && thread.id === activeSessionId;
                   const chatEditing = editing?.kind === "chat" && editing.projectId === project.id && editing.chatId === thread.id;
@@ -339,7 +362,7 @@ export function Sidebar({
                     <div
                       key={thread.id}
                       // CSS entrance (not a JS-driven one): it can never be left half-applied if the app is hidden mid-way.
-                      className={cn(rowBase, "h-[30px] pl-2 pr-[5px] text-[rgba(26,28,31,0.85)]", !threadSelected && "hover:bg-[rgba(26,28,31,0.04)]", !reduceMotion && "cc-row-in")}
+                      className={cn(rowBase, "h-[30px] pl-2 pr-[5px] text-[#3A3A3A]", !threadSelected && "hover:bg-black/[0.045]", !reduceMotion && "cc-row-in")}
                       style={reduceMotion ? undefined : { animationDelay: `${Math.min(index, 8) * 30}ms` }}
                       role="button"
                       tabIndex={0}
@@ -362,7 +385,7 @@ export function Sidebar({
                           className="min-w-0 flex-1 rounded-[4px] bg-white px-1 text-[12px] text-[#303136] outline-none ring-1 ring-[#3977F6]/35"
                         />
                       ) : (
-                        <MarqueeText className="min-w-0 flex-1 text-[14px] font-[430] leading-[21px] tracking-[-0.01em]">{highlight(threadTitle)}</MarqueeText>
+                        <MarqueeText className="min-w-0 flex-1 text-[13.5px] font-[420] leading-[20px] tracking-[-0.005em]">{highlight(threadTitle)}</MarqueeText>
                       )}
                       {/* One state per thread. Each state has a text label, so colour is never the only signal. */}
                       {failedSessionId === thread.id ? (
@@ -373,6 +396,8 @@ export function Sidebar({
                         <span className="cc-running-dot" role="img" aria-label="Working" title="Working" />
                       ) : justCompletedId === thread.id ? (
                         <span role="img" aria-label="Completed" title="Completed" className="shrink-0 leading-none"><Check className="cc-done-in h-[13px] w-[13px] text-[#1A7F37]" strokeWidth={2.2} /></span>
+                      ) : thread.time?.updated ? (
+                        <span className="shrink-0 text-[12px] tabular-nums text-[#8F8F8F] group-hover/row:hidden">{shortAgo(thread.time.updated)}</span>
                       ) : null}
                       <button
                         type="button"
@@ -389,7 +414,7 @@ export function Sidebar({
                   <button
                     type="button"
                     onClick={() => onNewChat(project.id)}
-                    className="flex h-[34px] w-full items-center gap-1.5 rounded-[8px] px-2.5 text-left text-[11.5px] text-[#85878C] transition-colors duration-150 hover:bg-black/[0.04] hover:text-[#45474C]"
+                    className="flex h-[34px] w-full items-center gap-1.5 rounded-[10px] px-2.5 text-left text-[11.5px] text-[#5D5D5D] transition-colors duration-150 hover:bg-black/[0.05] hover:text-[#0D0D0D]"
                   >
                     <Plus className="h-3 w-3" strokeWidth={1.8} aria-hidden />
                     Start a new task
@@ -412,15 +437,15 @@ export function Sidebar({
         .map((thread) => ({ project, thread })),
     );
     if (!projectHits.length && !threadHits.length) {
-      return <div className="px-1.5 py-2 text-[11.5px] text-[#96989D]">No matching projects or tasks.</div>;
+      return <div className="px-1.5 py-2 text-[11.5px] text-[#8F8F8F]">No matching projects or tasks.</div>;
     }
     return (
       <div aria-label="Search results" className="flex flex-col gap-2">
         {projectHits.length ? (
           <section aria-label="Matching projects">
-            <h2 className="px-1.5 pb-1 pt-1 text-[10.5px] font-medium tracking-[0.02em] text-[#9A9CA0]">Projects</h2>
+            <h2 className="px-1.5 pb-1 pt-1 text-[10.5px] font-medium tracking-[0.02em] text-[#8F8F8F]">Projects</h2>
             {projectHits.map((project) => (
-              <button key={project.id} type="button" title={project.name} onClick={() => { onSelectProject(project.id); setSearchOpen(false); setQuery(""); }} className="flex h-[30px] w-full items-center gap-2 rounded-[7px] px-2 text-left text-[12.5px] text-[#45474C] transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
+              <button key={project.id} type="button" title={project.name} onClick={() => { onSelectProject(project.id); setSearchOpen(false); setQuery(""); }} className="flex h-[32px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-[14px] text-[#0D0D0D] transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
                 <Folder className="h-[13px] w-[13px] shrink-0 text-[#8A8C91]" strokeWidth={1.6} aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{highlight(project.displayName || project.name || project.id)}</span>
               </button>
@@ -429,11 +454,11 @@ export function Sidebar({
         ) : null}
         {threadHits.length ? (
           <section aria-label="Matching threads">
-            <h2 className="px-1.5 pb-1 pt-1 text-[10.5px] font-medium tracking-[0.02em] text-[#9A9CA0]">Threads</h2>
+            <h2 className="px-1.5 pb-1 pt-1 text-[10.5px] font-medium tracking-[0.02em] text-[#8F8F8F]">Threads</h2>
             {threadHits.map(({ project, thread }) => (
-              <button key={`${project.id}:${thread.id}`} type="button" title={`${thread.title} · ${project.displayName || project.name}`} onClick={() => { onSelectChat(project.id, thread.id); setSearchOpen(false); setQuery(""); }} className="flex min-h-[34px] w-full flex-col justify-center rounded-[7px] px-2 py-0.5 text-left transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
-                <span className="min-w-0 truncate text-[12px] text-[#4B4D52]">{highlight(thread.title || "New task")}</span>
-                <span className="min-w-0 truncate text-[10.5px] text-[#9A9CA0]">{project.displayName || project.name}</span>
+              <button key={`${project.id}:${thread.id}`} type="button" title={`${thread.title} · ${project.displayName || project.name}`} onClick={() => { onSelectChat(project.id, thread.id); setSearchOpen(false); setQuery(""); }} className="flex min-h-[34px] w-full flex-col justify-center rounded-[10px] px-2 py-0.5 text-left transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/35">
+                <span className="min-w-0 truncate text-[14px] text-[#0D0D0D]">{highlight(thread.title || "New task")}</span>
+                <span className="min-w-0 truncate text-[10.5px] text-[#8F8F8F]">{project.displayName || project.name}</span>
               </button>
             ))}
           </section>
@@ -500,7 +525,7 @@ export function Sidebar({
                 aria-label="Search projects and tasks"
                 className="min-w-0 flex-1 bg-transparent text-[12px] text-[#34363A] outline-none placeholder:text-[#A0A2A6]"
               />
-              <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setSearchOpen(false); }} className="flex h-5 w-5 items-center justify-center rounded-[5px] text-[#96989D] hover:text-[#505258]">
+              <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setSearchOpen(false); }} className="flex h-5 w-5 items-center justify-center rounded-[5px] text-[#8F8F8F] hover:text-[#505258]">
                 <X className="h-3 w-3" strokeWidth={1.8} />
               </button>
             </div>
@@ -540,17 +565,17 @@ export function Sidebar({
       <div ref={listRef} onKeyDown={onListKeyDown} onClick={() => { setMenu(null); setAddMenu(null); }} className="cc-scroll mt-1.5 min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {!needle && pinned.length ? (
           <section aria-label="Pinned projects" className="mb-3">
-            <h2 className="px-2 pb-1 pt-2 text-[14px] font-medium text-[rgba(26,28,31,0.49)]">Pinned</h2>
+            <h2 className="px-2 pb-1 pt-2 text-[12px] font-medium text-[#8a8a87]">Pinned</h2>
             {pinned.map(renderProject)}
           </section>
         ) : null}
 
         {needle ? renderSearchResults() : null}
         {!needle ? <section aria-label="Projects">
-          <div className="flex h-[34px] items-center gap-1 px-2 pb-0.5 pt-3">
-            <h2 className="min-w-0 flex-1 truncate text-[14px] font-medium text-[rgba(26,28,31,0.49)]">{noun}</h2>
+          <div className="flex h-[30px] items-center gap-1 px-2 pt-2">
+            <h2 className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#8a8a87]">{noun}</h2>
             {runningCount ? (
-              <span className="flex items-center gap-1 rounded-full bg-[#3977F6]/[0.08] px-1.5 py-[1px] text-[10.5px] font-medium text-[#3977F6]" title={`${runningCount} agent${runningCount === 1 ? "" : "s"} working`}>
+              <span className="flex items-center gap-1 px-1 text-[11px] font-medium text-[#3977F6]" title={`${runningCount} agent${runningCount === 1 ? "" : "s"} working`}>
                 <span className="cc-running-dot cc-running-dot--inline" aria-hidden /> {runningCount}
               </span>
             ) : null}
@@ -558,31 +583,48 @@ export function Sidebar({
               <button
                 type="button"
                 onClick={() => onSortChange(sort === "recent" ? "name" : "recent")}
-                title={`Sort: ${SORT_LABEL[sort]}. Click to change.`}
-                className="rounded-[5px] px-1.5 py-[2px] text-[10.5px] font-medium text-[#9A9CA0] transition-colors duration-150 hover:bg-black/[0.04] hover:text-[#5F6368]"
+                title={`Sorted by ${sort === "recent" ? "last activity" : "name"}. Click to sort by ${sort === "recent" ? "name" : "last activity"}.`}
+                aria-label={`Sorted by ${sort === "recent" ? "last activity" : "name"}. Change sort`}
+                className="flex h-[22px] w-[22px] items-center justify-center rounded-[6px] text-[#8a8a87] transition-colors duration-150 hover:bg-black/[0.045] hover:text-[#202020] active:bg-black/[0.075]"
               >
-                {SORT_LABEL[sort]}
+                <ArrowDownUp className="h-3 w-3" strokeWidth={1.8} />
               </button>
             ) : null}
-            <button type="button" aria-label="Add project" aria-haspopup="menu" title="Add project" onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); setAddMenu({ x: Math.max(8, Math.min(rect.right - 198, window.innerWidth - 204)), y: rect.bottom + 5 }); }} className="flex h-[22px] w-[22px] items-center justify-center rounded-[6px] text-[#76787D] transition-all duration-150 hover:bg-black/[0.05] hover:text-[#34363A] active:scale-95">
+            <button type="button" aria-label="Add project" aria-haspopup="menu" title="Add project" onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); setAddMenu({ x: Math.max(8, Math.min(rect.right - 198, window.innerWidth - 204)), y: rect.bottom + 5 }); }} className="flex h-[22px] w-[22px] items-center justify-center rounded-[6px] text-[#8a8a87] transition-all duration-150 hover:bg-black/[0.05] hover:text-[#34363A] active:scale-95">
               <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
             </button>
           </div>
 
           {!hasAnyProject ? (
             <div className="px-1.5 py-3">
-              <p className="text-[12px] font-medium text-[#45474C]">{noun === "Designs" ? "No designs yet" : "No projects yet"}</p>
-              <p className="mt-0.5 text-[11.5px] leading-[1.45] text-[#96989D]">{noun === "Designs" ? "Start a design, and it will be listed here." : "Open a folder or create a project to start coding."}</p>
+              <p className="text-[12px] font-medium text-[#0D0D0D]">{noun === "Designs" ? "No designs yet" : "No projects yet"}</p>
+              <p className="mt-0.5 text-[11.5px] leading-[1.45] text-[#8F8F8F]">{noun === "Designs" ? "Start a design, and it will be listed here." : "Open a folder or create a project to start coding."}</p>
               <div className="mt-2 flex gap-1.5">
                 {onOpenExisting ? (
-                  <button type="button" onClick={onOpenExisting} className="h-[26px] rounded-[7px] border border-black/[0.07] bg-white px-2.5 text-[11.5px] text-[#45474C] hover:bg-[#FBFBFA]">Open project</button>
+                  <button type="button" onClick={onOpenExisting} className="h-[26px] rounded-[7px] border border-black/[0.07] bg-white px-2.5 text-[11.5px] text-[#0D0D0D] hover:bg-[#FBFBFA]">Open project</button>
                 ) : null}
-                <button type="button" onClick={onNewProject} className="h-[26px] rounded-[7px] px-2.5 text-[11.5px] text-[#3977F6] hover:bg-[#3977F6]/[0.06]">New project</button>
+                <button type="button" onClick={onNewProject} className="h-[26px] rounded-[10px] px-2.5 text-[11.5px] text-[#3977F6] hover:bg-[#3977F6]/[0.06]">New project</button>
               </div>
             </div>
           ) : null}
-          {hasAnyProject && !pinned.length && !unpinned.length ? <div className="px-1.5 py-2 text-[11.5px] text-[#96989D]">No matching projects or tasks.</div> : null}
-          {unpinned.map(renderProject)}
+          {hasAnyProject && !pinned.length && !unpinned.length ? <div className="px-1.5 py-2 text-[11.5px] text-[#8F8F8F]">No matching projects or tasks.</div> : null}
+          {grouped ? <div className="mt-1 flex h-[26px] items-center px-2 text-[11.5px] font-medium text-[#a0a09d]">Recent</div> : null}
+          {recentGroup.map(renderProject)}
+          {grouped ? (
+            <>
+              <button
+                type="button"
+                onClick={toggleAll}
+                aria-expanded={allOpen}
+                className="mt-4 flex h-[26px] w-full items-center gap-1 rounded-[7px] px-2 text-left text-[11.5px] font-medium text-[#a0a09d] transition-colors duration-150 hover:bg-black/[0.045] active:bg-black/[0.075]"
+              >
+                <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform duration-150", allOpen && "rotate-90")} strokeWidth={1.8} aria-hidden />
+                All projects
+                <span className="ml-auto text-[11px] font-normal tabular-nums text-[#b0b0ad]">{restGroup.length}</span>
+              </button>
+              <div className="mt-0.5">{allOpen ? restGroup.map(renderProject) : null}</div>
+            </>
+          ) : null}
         </section> : null}
 
         {menu || addMenu ? (
@@ -625,7 +667,7 @@ export function Sidebar({
         {!collapsed ? (
           <>
             <span className="min-w-0 flex-1 truncate text-[12px] text-[#505258]">Luke</span>
-            <button type="button" aria-label="Settings" title="Settings" className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[#8A8C91] transition-colors hover:bg-black/[0.04] hover:text-[#34363A]">
+            <button type="button" aria-label="Settings" title="Settings" className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[#8A8C91] transition-colors hover:bg-black/[0.05] hover:text-[#34363A]">
               <Settings2 className="h-[14px] w-[14px]" strokeWidth={1.7} />
             </button>
           </>
@@ -678,7 +720,7 @@ function Menu({ x, y, items }: { x: number; y: number; items: Array<{ label: str
           type="button"
           role="menuitem"
           onClick={item.action}
-          className={cn("flex h-8 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[11.5px] font-medium outline-none transition-colors hover:bg-[#F2F3F2] focus-visible:bg-[#EDF4FF]", item.destructive ? "text-[#B64A4A] hover:bg-[#FCEEEE] focus-visible:bg-[#FCEEEE]" : "text-[#45484D]")}
+          className={cn("flex h-8 w-full items-center gap-2 rounded-[10px] px-2.5 text-left text-[11.5px] font-medium outline-none transition-colors hover:bg-[#F2F3F2] focus-visible:bg-[#EDF4FF]", item.destructive ? "text-[#B64A4A] hover:bg-[#FCEEEE] focus-visible:bg-[#FCEEEE]" : "text-[#45484D]")}
         >
           <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
           {item.label}

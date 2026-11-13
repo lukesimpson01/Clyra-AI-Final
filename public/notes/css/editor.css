@@ -1413,3 +1413,108 @@
 .synced-state { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-tertiary); }
 .synced-body { min-height: 1.6em; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .synced-body:empty::before { content: "Type here. Every copy of this block shows the same text."; color: var(--text-placeholder, #b4b2ab); }
+
+/* Template colour tones. The default is the quiet grey; any other tone recolours only the surfaces that were grey, through the same theme tokens the rest of the editor uses, so it holds in dark mode too. */
+.block[data-template-tone="blue"], .block[data-template-tone="blue"] .block { --tpl-bg: var(--c-blue-bg); --tpl-card: color-mix(in srgb, var(--c-blue-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-blue) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-blue) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-blue) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-blue) 5%, transparent); }
+.block[data-template-tone="green"], .block[data-template-tone="green"] .block { --tpl-bg: var(--c-green-bg); --tpl-card: color-mix(in srgb, var(--c-green-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-green) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-green) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-green) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-green) 5%, transparent); }
+.block[data-template-tone="purple"], .block[data-template-tone="purple"] .block { --tpl-bg: var(--c-purple-bg); --tpl-card: color-mix(in srgb, var(--c-purple-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-purple) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-purple) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-purple) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-purple) 5%, transparent); }
+.block[data-template-tone="pink"], .block[data-template-tone="pink"] .block { --tpl-bg: var(--c-pink-bg); --tpl-card: color-mix(in srgb, var(--c-pink-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-pink) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-pink) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-pink) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-pink) 5%, transparent); }
+.block[data-template-tone="orange"], .block[data-template-tone="orange"] .block { --tpl-bg: var(--c-orange-bg); --tpl-card: color-mix(in srgb, var(--c-orange-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-orange) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-orange) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-orange) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-orange) 5%, transparent); }
+.block[data-template-tone="yellow"], .block[data-template-tone="yellow"] .block { --tpl-bg: var(--c-yellow-bg); --tpl-card: color-mix(in srgb, var(--c-yellow-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-yellow) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-yellow) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-yellow) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-yellow) 5%, transparent); }
+.block[data-template-tone="red"], .block[data-template-tone="red"] .block { --tpl-bg: var(--c-red-bg); --tpl-card: color-mix(in srgb, var(--c-red-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-red) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-red) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-red) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-red) 5%, transparent); }
+.block[data-template-tone="brown"], .block[data-template-tone="brown"] .block { --tpl-bg: var(--c-brown-bg); --tpl-card: color-mix(in srgb, var(--c-brown-bg) 38%, var(--background-main)); --tpl-line: color-mix(in srgb, var(--c-brown) 24%, var(--background-main)); --tpl-ring-1: color-mix(in srgb, var(--c-brown) 30%, transparent); --tpl-ring-2: color-mix(in srgb, var(--c-brown) 10%, transparent); --tpl-ring-3: color-mix(in srgb, var(--c-brown) 5%, transparent); }
+.block[data-template-tone] .block[data-template-role="lecture-mark"] .text-line { color: var(--tpl-mark, inherit); }
+.block[data-template-tone="blue"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-blue); }
+.block[data-template-tone="green"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-green); }
+.block[data-template-tone="purple"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-purple); }
+.block[data-template-tone="pink"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-pink); }
+.block[data-template-tone="orange"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-orange); }
+.block[data-template-tone="yellow"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-yellow); }
+.block[data-template-tone="red"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-red); }
+.block[data-template-tone="brown"] .block[data-template-role="lecture-mark"] .text-line { color: var(--c-brown); }
+
+/* A callout deliberately created without an icon carries none. */
+.callout-icon.empty { display: none; }
+
+/* ===================================================== template layouts
+   Each hero is its own design, not a recolour of one banner. Surfaces read
+   --tpl-bg / --tpl-line / --tpl-deep so a chosen colour tone reaches them. */
+.block[data-template-style^="hero-"] { margin: 10px 0 26px; }
+.block[data-template-style^="hero-"] > .block-row > .block-content { position: relative; overflow: hidden; }
+.block[data-template-style^="hero-"] .columns { position: relative; z-index: 1; margin: 0; gap: 28px; }
+.block[data-template-style^="hero-"] h1 { margin: 0; }
+.block[data-template-style^="hero-"] h1 + .block { margin-top: 10px; }
+
+/* Poster: oversized title, a giant faint mark, gradient wash. */
+.block[data-template-style="hero-poster"] > .block-row > .block-content { padding: 52px 52px 46px; border-radius: 24px; background: linear-gradient(135deg, var(--tpl-bg, #efeeea) 0%, color-mix(in srgb, var(--tpl-bg, #efeeea) 35%, var(--background-main)) 70%); border: 1px solid var(--tpl-line, var(--border-soft)); }
+.block[data-template-style="hero-poster"] h1 { font-size: clamp(38px, 5.4vw, 64px); line-height: 1.02; letter-spacing: -.045em; font-weight: 760; }
+.block[data-template-style="hero-poster"] .columns > .block:first-child { flex: 1 1 64%; } .block[data-template-style="hero-poster"] .columns > .block:last-child { flex: 0 1 240px; align-self: flex-end; }
+.block[data-template-role="poster-mark"] { position: absolute; right: -10px; top: -46px; margin: 0; pointer-events: none; }
+.block[data-template-role="poster-mark"] .text-line { font-size: clamp(120px, 16vw, 210px); line-height: 1; font-weight: 800; letter-spacing: -.06em; color: var(--tpl-deep, #1f1f1d); opacity: .07; }
+
+/* Band: solid ink with white type. */
+.block[data-template-style="hero-band"] > .block-row > .block-content { padding: 40px 44px; border-radius: 14px; background: var(--tpl-deep, #23231f); color: #fff; box-shadow: inset 0 -6px 0 color-mix(in srgb, var(--tpl-bg, #d9d6cf) 70%, transparent); }
+.block[data-template-style="hero-band"] h1, .block[data-template-style="hero-band"] .text-line { color: #fff; }
+.block[data-template-style="hero-band"] h1 { font-size: clamp(32px, 4.4vw, 50px); letter-spacing: -.035em; }
+.block[data-template-style="hero-band"] [data-template-role="template-eyebrow"] .text-line { color: rgba(255,255,255,.6); }
+.block[data-template-style="hero-band"] [data-template-role="lecture-side-note"] .text-line { color: rgba(255,255,255,.72); }
+.block[data-template-style="hero-band"] .columns > .block:first-child { flex: 1 1 66%; } .block[data-template-style="hero-band"] .columns > .block:last-child { flex: 0 1 260px; align-self: flex-end; }
+.block[data-template-style="fact-strip"] { margin: -12px 0 26px; }
+.block[data-template-style="fact-strip"] .columns { gap: 0; margin: 0; border: 1px solid var(--tpl-line, var(--border-soft)); border-radius: 12px; overflow: hidden; }
+.block[data-template-style="fact-strip"] .columns > .block { flex: 1 1 0; padding: 12px 18px; border-left: 1px solid var(--tpl-line, var(--border-soft)); } .block[data-template-style="fact-strip"] .columns > .block:first-child { border-left: 0; }
+.block[data-template-role="strip-label"] .text-line { color: var(--text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; } .block[data-template-role="strip-value"] .text-line { color: var(--text-primary); font-size: 14px; font-weight: 550; }
+
+/* Stamp: centred, double rules, a seal. */
+.block[data-template-style="hero-stamp"] > .block-row > .block-content { padding: 40px 32px 34px; text-align: center; border-top: 4px double var(--text-secondary); border-bottom: 4px double var(--text-secondary); background: transparent; }
+.block[data-template-style="hero-stamp"] .text-line, .block[data-template-style="hero-stamp"] h1 { text-align: center; }
+.block[data-template-style="hero-stamp"] h1 { font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: clamp(30px, 4vw, 44px); font-weight: 650; letter-spacing: -.01em; }
+.block[data-template-role="stamp-seal"] { margin: 0 0 12px; } .block[data-template-role="stamp-seal"] .text-line { display: grid; place-items: center; width: 56px; height: 56px; margin: 0 auto; padding: 0; border: 2px solid var(--tpl-deep, #55534d); border-radius: 50%; box-shadow: 0 0 0 5px var(--background-main), 0 0 0 6.5px var(--tpl-line, #cfccc4); color: var(--tpl-deep, #55534d); font: 700 15px var(--font-ui); letter-spacing: .02em; }
+.block[data-template-role="stamp-facts"] { text-align: center; margin: 6px 0 4px; } .block[data-template-role="stamp-facts"] .text-line { text-align: center; color: var(--text-secondary); font-size: 13px; letter-spacing: .02em; }
+
+/* Ledger: a hard rule, hairline-separated figures. */
+.block[data-template-style="hero-ledger"] > .block-row > .block-content { padding: 6px 0 20px; border-bottom: 3px solid var(--tpl-deep, var(--text-primary)); }
+.block[data-template-style="hero-ledger"] h1 { font-size: clamp(30px, 4vw, 44px); letter-spacing: -.035em; }
+.block[data-template-style="hero-ledger"] .columns > .block:first-child { flex: 1 1 66%; } .block[data-template-style="hero-ledger"] .columns > .block:last-child { flex: 0 1 270px; align-self: flex-end; }
+.block[data-template-style="stat-row"], .block[data-template-style="stat-ledger"] { margin: 0 0 30px; }
+.block[data-template-style="stat-row"] .columns, .block[data-template-style="stat-ledger"] .columns { gap: 0; margin: 0; }
+.block[data-template-style="stat-ledger"] .columns > .block { flex: 1 1 0; padding: 16px 20px; border-right: 1px solid var(--tpl-line, var(--border-soft)); } .block[data-template-style="stat-ledger"] .columns > .block:last-child { border-right: 0; } .block[data-template-style="stat-ledger"] .columns > .block:first-child { padding-left: 0; }
+.block[data-template-style="stat-row"] .columns > .block { flex: 1 1 0; padding: 4px 22px 4px 0; }
+.block[data-template-role="stat-value"] { margin: 0; } .block[data-template-role="stat-value"] .text-line { font-size: 22px; font-weight: 680; letter-spacing: -.02em; line-height: 1.2; color: var(--text-primary); }
+.block[data-template-role="stat-label"] { margin: 2px 0 0; } .block[data-template-role="stat-label"] .text-line { color: var(--text-tertiary); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Ticket: a stub with a perforated edge. */
+.block[data-template-style="hero-ticket"] > .block-row > .block-content { padding: 34px 0 34px 38px; border: 2px solid var(--tpl-deep, var(--text-secondary)); border-radius: 18px; background: var(--tpl-bg, #f5f4f0); -webkit-mask: radial-gradient(circle 11px at calc(100% - 232px) 0, transparent 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle 11px at calc(100% - 232px) 100%, transparent 98%, #000) bottom / 100% 51% no-repeat; mask: radial-gradient(circle 11px at calc(100% - 232px) 0, transparent 98%, #000) top / 100% 51% no-repeat, radial-gradient(circle 11px at calc(100% - 232px) 100%, transparent 98%, #000) bottom / 100% 51% no-repeat; }
+.block[data-template-style="hero-ticket"] .columns { gap: 0; align-items: stretch; }
+.block[data-template-style="hero-ticket"] .columns > .block:first-child { flex: 1 1 auto; padding-right: 28px; } .block[data-template-style="hero-ticket"] .columns > .block:last-child { flex: 0 0 232px; padding: 4px 26px; border-left: 2px dashed var(--tpl-deep, var(--text-secondary)); display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.block[data-template-style="hero-ticket"] h1 { font-size: clamp(28px, 3.6vw, 42px); letter-spacing: -.035em; }
+.block[data-template-role="ticket-fact"] { margin: 0; } .block[data-template-role="ticket-fact"] .text-line { font-size: 13px; line-height: 1.4; color: var(--text-secondary); } .block[data-template-role="ticket-fact"] .text-line strong { display: block; color: var(--text-tertiary); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
+
+/* Notebook: ruled lines, a red margin, sticky-note facts. */
+.block[data-template-style="hero-notebook"] > .block-row > .block-content { padding: 34px 40px 28px 96px; border-radius: 6px 16px 16px 6px; border: 1px solid var(--tpl-line, #e3e0d6); background: var(--tpl-bg, #fffef9) repeating-linear-gradient(transparent 0 33px, color-mix(in srgb, var(--tpl-deep, #5b8def) 22%, transparent) 33px 34px); box-shadow: inset 70px 0 0 color-mix(in srgb, var(--tpl-bg, #fffef9) 60%, #fff), inset 71px 0 0 #e86b6b55, 0 8px 22px rgba(15,23,42,.05); }
+.block[data-template-style="hero-notebook"] h1 { font-size: clamp(28px, 3.6vw, 40px); letter-spacing: -.03em; line-height: 34px; }
+.block[data-template-style="sticky-row"] { margin: -4px 0 26px; } .block[data-template-style="sticky-row"] .columns { gap: 14px; margin: 0; }
+.block[data-template-style="sticky-row"] .columns > .block { flex: 1 1 0; } .block[data-template-style="sticky-row"] .columns > .block > .block-row > .block-content { padding: 12px 14px; border-radius: 4px 4px 14px 4px; background: var(--tpl-bg, #fdf5c8); box-shadow: 0 2px 6px rgba(15,23,42,.08); transform: rotate(-.6deg); }
+.block[data-template-style="sticky-row"] .columns > .block:nth-child(even) > .block-row > .block-content { transform: rotate(.7deg); }
+.block[data-template-role="sticky-label"] .text-line { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-secondary); } .block[data-template-role="sticky-value"] .text-line { font-size: 14px; color: var(--text-primary); }
+
+/* Rail: a narrow column of facts beside the whole page. */
+.block[data-template-style="layout-rail"] .columns { gap: 36px; align-items: flex-start; margin: 0; }
+.block[data-template-style="layout-rail"] .columns > .block:first-child { flex: 0 0 210px; position: sticky; top: 16px; padding: 18px 18px 14px; border-radius: 14px; background: var(--tpl-bg, #f4f3ef); border: 1px solid var(--tpl-line, var(--border-soft)); }
+.block[data-template-style="layout-rail"] .columns > .block:last-child { flex: 1 1 0; min-width: 0; }
+.block[data-template-role="rail-label"] { margin: 14px 0 0; } .block[data-template-role="rail-label"] .text-line { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); }
+.block[data-template-role="rail-value"] { margin: 2px 0 0; } .block[data-template-role="rail-value"] .text-line { font-size: 14px; font-weight: 550; line-height: 1.4; }
+.block[data-template-role="rail-note"] { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--tpl-line, var(--border-soft)); } .block[data-template-role="rail-note"] .text-line { color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
+@media (max-width: 860px) { .block[data-template-style="layout-rail"] .columns { flex-direction: column; } .block[data-template-style="layout-rail"] .columns > .block:first-child { position: static; flex-basis: auto; width: 100%; } .block[data-template-style="hero-ticket"] > .block-row > .block-content { padding-right: 20px; -webkit-mask: none; mask: none; } .block[data-template-style="hero-ticket"] .columns > .block:last-child { flex-basis: auto; border-left: 0; border-top: 2px dashed var(--tpl-deep, var(--text-secondary)); padding: 16px 0 0; } }
+
+/* Tones also deepen the dark surfaces used by band, ticket and seal layouts. */
+.block[data-template-tone="blue"], .block[data-template-tone="blue"] .block { --tpl-deep: color-mix(in srgb, var(--c-blue) 72%, #000); }
+.block[data-template-tone="green"], .block[data-template-tone="green"] .block { --tpl-deep: color-mix(in srgb, var(--c-green) 72%, #000); }
+.block[data-template-tone="purple"], .block[data-template-tone="purple"] .block { --tpl-deep: color-mix(in srgb, var(--c-purple) 72%, #000); }
+.block[data-template-tone="pink"], .block[data-template-tone="pink"] .block { --tpl-deep: color-mix(in srgb, var(--c-pink) 72%, #000); }
+.block[data-template-tone="orange"], .block[data-template-tone="orange"] .block { --tpl-deep: color-mix(in srgb, var(--c-orange) 72%, #000); }
+.block[data-template-tone="yellow"], .block[data-template-tone="yellow"] .block { --tpl-deep: color-mix(in srgb, var(--c-yellow) 72%, #000); }
+.block[data-template-tone="red"], .block[data-template-tone="red"] .block { --tpl-deep: color-mix(in srgb, var(--c-red) 72%, #000); }
+.block[data-template-tone="brown"], .block[data-template-tone="brown"] .block { --tpl-deep: color-mix(in srgb, var(--c-brown) 72%, #000); }
+.block[data-template-role="stamp-seal"] > .block-row > .block-content > .text-line { width: 56px !important; height: 56px !important; min-width: 0 !important; margin: 0 auto !important; padding: 0 !important; border-radius: 50% !important; }
+.block[data-template-role="stamp-seal"] > .block-row > .block-content { justify-content: center; }
+.block[data-template-role="stamp-seal"] > .block-row > .block-content > .text-line { flex: 0 0 56px !important; }

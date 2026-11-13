@@ -47,6 +47,7 @@ export const escapeHtml = (value) =>
 
 const PATHS = {
   home: "M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5",
+  bolt: "M13 2.5 4.5 13.5H11l-1 8 8.5-11H12l1-8Z",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.35-4.35",
   sparkle: "M12 3.5 13.8 9l5.5 1.8-5.5 1.8L12 18l-1.8-5.4L4.7 10.8 10.2 9 12 3.5ZM18.5 16.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2Z",
   cards: "M4 7.5A1.5 1.5 0 0 1 5.5 6h9A1.5 1.5 0 0 1 16 7.5v9A1.5 1.5 0 0 1 14.5 18h-9A1.5 1.5 0 0 1 4 16.5v-9ZM8 3.5h10A2.5 2.5 0 0 1 20.5 6v10",
@@ -489,7 +490,7 @@ let tooltipTimer = null;
 
 /* 500ms matches the delay a desktop app uses: long enough that moving across
    a toolbar does not flash a trail of labels. */
-export function tooltip(target, label, shortcut) {
+export function tooltip(target, label, shortcut, { delay = 500 } = {}) {
   target.setAttribute("aria-label", label);
   const show = () => {
     tooltipTimer = setTimeout(() => {
@@ -497,7 +498,7 @@ export function tooltip(target, label, shortcut) {
       tooltipNode = el("div", { class: "tooltip" }, label, shortcut ? el("span", { class: "shortcut", text: shortcut }) : null);
       layers().append(tooltipNode);
       position(tooltipNode, target, { align: "center", gap: 6 });
-    }, 500);
+    }, delay);
   };
   const hide = () => { clearTimeout(tooltipTimer); tooltipNode?.remove(); tooltipNode = null; };
   target.addEventListener("mouseenter", show);
@@ -518,3 +519,15 @@ export const mod = isMac ? "⌘" : "Ctrl";
 export const modKey = (event) => (isMac ? event.metaKey : event.ctrlKey);
 
 export { pushLayer };
+
+/* outerHTML drops what a person typed into a textarea or input (it serialises the attribute, not the live value), which
+   made frozen previews show a placeholder where a title was. This copies the live values into the markup first. */
+export function frozenHtml(node) {
+  const clone = node.cloneNode(true);
+  const live = node.querySelectorAll("textarea, input");
+  clone.querySelectorAll("textarea, input").forEach((field, index) => {
+    const value = live[index]?.value ?? "";
+    if (field.tagName === "TEXTAREA") field.textContent = value; else field.setAttribute("value", value);
+  });
+  return clone.outerHTML;
+}

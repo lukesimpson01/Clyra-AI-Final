@@ -1,3 +1,4 @@
+import { changeTotals, phaseOf } from "./activityModel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowDown, FilePlus2, Sparkle, Undo2 } from "lucide-react";
@@ -5,7 +6,7 @@ import { cn } from "../../lib/utils";
 import { MarkdownMessageContent } from "../MarkdownMessageContent";
 import type { AgentAction, ClyraCodeState, LogEntry } from "./store";
 import { AgentActionRow } from "./ActionRow";
-import { ActivityGroup, ActivityRow, RunHeader, runLabel } from "./CodexActivity";
+import { ActivityGroup, ActivityRow, RunFold, RunHeader, runLabel } from "./CodexActivity";
 import { DisclosureRow } from "./harness";
 import { DiffCounters } from "./AnimatedCounter";
 import { stripFilePrefix } from "./format";
@@ -254,7 +255,7 @@ function phaseLabel(actions: AgentAction[]) {
   const research = actions.filter((action) => action.kind === "research").length;
   const lists = actions.filter((action) => action.kind === "list").length;
   const edits = actions.filter((action) => /^(edit|create|delete)$/.test(action.kind));
-  const commands = actions.filter((action) => /^(command|build|check|test|preview)$/.test(action.kind));
+  const commands = actions.filter((action) => /^(command|build|check|test|preview|git)$/.test(action.kind));
   const additions = edits.reduce((total, action) => total + (action.additions ?? 0), 0);
   const deletions = edits.reduce((total, action) => total + (action.deletions ?? 0), 0);
   if (edits.length && !reads && !searches && !lists && !commands.length) {
@@ -375,8 +376,11 @@ export function Conversation({
   onOpenChanges,
   onUndoCheckpoint,
   onStop,
+  inline = false,
 }: {
   onStop?: () => void;
+  /** Render in flow inside a chat message: no scroller, and the prompt is not repeated. */
+  inline?: boolean;
   state: ClyraCodeState;
   running: boolean;
   onReplyPermission: (permissionId: string, response: "allow" | "always" | "deny") => void;
@@ -528,8 +532,11 @@ export function Conversation({
       if (entry.type === "action") {
         const action = state.actions[entry.actionId];
         if (action && action.kind !== "permission") {
+          /* One dropdown per phase of the work (looking around, changing files, running things), so a long run reads
+             as a few steps with the agent's own comments between them rather than one wall of actions. */
           const last = out[out.length - 1];
-          if (last?.type === "group") last.actionIds.push(action.id);
+          const lastAction = last?.type === "group" ? state.actions[last.actionIds[last.actionIds.length - 1]] : undefined;
+          if (last?.type === "group" && lastAction && phaseOf(lastAction.kind) === phaseOf(action.kind)) last.actionIds.push(action.id);
           else out.push({ type: "group", id: `group:${entry.id}`, actionIds: [action.id] });
           continue;
         }
@@ -551,19 +558,68 @@ export function Conversation({
     ? "running" as const
     : state.runState === "complete" || state.runState === "failed" || state.runState === "cancelled" ? state.runState : null;
   const liveAction = primaryActiveActionId ? state.actions[primaryActiveActionId] : undefined;
+  const changes = useMemo(() => changeTotals(state.diffs), [state.diffs]);
   const runSummary = useMemo(() => {
     if (!state.diffs.length) return null;
     const added = state.diffs.reduce((sum, diff) => sum + (diff.additions ?? 0), 0);
     const removed = state.diffs.reduce((sum, diff) => sum + (diff.deletions ?? 0), 0);
     return `${state.diffs.length} file${state.diffs.length === 1 ? "" : "s"} changed · +${added} −${removed}`;
   }, [state.diffs]);
+  /* Each response — the blocks after a prompt — keeps its final answer in view
+     and folds the work that led to it once the run is over, as Clyra Notes does. */
+  const [openFolds, setOpenFolds] = useState<Set<string>>(() => new Set());
+  const segments = useMemo(() => {
+    const list: Array<{ key: string; userIndex: number; start: number; end: number; actions: number }> = [];
+    blocks.forEach((block, index) => {
+      if (block.type !== "entry" || block.entry.type !== "user") return;
+      let next = blocks.length;
+      for (let j = index + 1; j < blocks.length; j += 1) { const b = blocks[j]; if (b.type === "entry" && b.entry.type === "user") { next = j; break; } }
+      let finalAnswer = -1;
+      for (let j = next - 1; j > index; j -= 1) { const b = blocks[j]; if (b.type === "entry" && b.entry.type === "assistant") { finalAnswer = j; break; } }
+      const end = finalAnswer > index ? finalAnswer : next;
+      let actions = 0;
+      for (let j = index + 1; j < end; j += 1) { const b = blocks[j]; actions += b.type === "group" ? b.actionIds.length : b.type === "entry" && b.entry.type === "action" ? 1 : 0; }
+      list.push({ key: block.entry.id, userIndex: index, start: index + 1, end, actions });
+    });
+    return list;
+  }, [blocks]);
+  const liveSegmentKey = runPhase === "running" && lastUserBlockIndex >= 0 && blocks[lastUserBlockIndex]?.type === "entry" ? (blocks[lastUserBlockIndex] as { entry: LogEntry }).entry.id : null;
+  /* Opening or closing a fold changes the height below it. Keeping the clicked
+     header where it is on screen, frame by frame while the height eases, makes
+     the thread glide instead of jumping or catching up afterwards. */
+  const toggleFold = (key: string, anchor?: HTMLElement | null) => {
+    const scroller = scrollRef.current;
+    if (scroller && anchor && !reduced) {
+      const before = anchor.getBoundingClientRect().top;
+      const until = performance.now() + 460;
+      const hold = () => {
+        if (!anchor.isConnected) return;
+        const delta = anchor.getBoundingClientRect().top - before;
+        if (Math.abs(delta) > 0.5) scroller.scrollTop += delta;
+        if (performance.now() < until) requestAnimationFrame(hold);
+      };
+      requestAnimationFrame(hold);
+    }
+    setOpenFolds((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  };
+  const latestSegment = segments[segments.length - 1];
+  /* A task reopened from history has no recorded end; its last action's own time says when it finished. */
+  const restoredRunEnd = useMemo(() => {
+    if (state.runEndedAt || runPhase === "running") return null;
+    let end = 0;
+    for (const action of Object.values(state.actions)) end = Math.max(end, action.endedAt ?? action.startedAt ?? 0);
+    return end || null;
+  }, [state.actions, state.runEndedAt, runPhase]);
   const runHeader = runPhase && (state.runStartedAt || lastPromptTs) ? (
     <RunHeader
       phase={runPhase}
       label={runLabel(liveAction)}
       since={state.runStartedAt ?? lastPromptTs ?? Date.now()}
-      until={state.runEndedAt}
+      until={state.runEndedAt ?? restoredRunEnd}
       summary={runSummary}
+      actionCount={latestSegment?.actions ?? 0}
+      open={latestSegment ? openFolds.has(latestSegment.key) : false}
+      onToggle={latestSegment ? (anchor) => toggleFold(latestSegment.key, anchor) : undefined}
       onStop={onStop}
     />
   ) : null;
@@ -573,10 +629,10 @@ export function Conversation({
   }, [blocks]);
 
   return (
-    <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} className="cc-scroll absolute inset-0 overflow-y-auto px-6 pb-4 pt-3 sm:px-7">
-        <div className="mx-auto flex w-full max-w-[760px] flex-col">
-          {blocks.map((block, index) => {
+    <div className={inline ? "relative w-full" : "relative min-h-0 flex-1"}>
+      <div ref={scrollRef} className={inline ? "w-full" : "cc-scroll absolute inset-0 overflow-y-auto px-6 pb-4 pt-3 sm:px-7"}>
+        <div className={inline ? "flex w-full flex-col" : "mx-auto flex w-full max-w-[688px] flex-col"}>
+          {(() => { const rendered = blocks.map((block, index) => {
             const prevBlock = blocks[index - 1];
             if (block.type === "group") {
               const groupActions = block.actionIds.map((id) => state.actions[id]).filter(Boolean) as AgentAction[];
@@ -614,6 +670,9 @@ export function Conversation({
             // Historical entries (restored sessions) render settled.
             const fresh = Date.now() - entry.ts < 4000;
 
+            if (entry.type === "user" && inline) {
+              return index === lastUserBlockIndex ? <div key={entry.id}>{runHeader}</div> : null;
+            }
             if (entry.type === "user") {
               const previousUserTs = block.previousUserTs;
               const showStamp = previousUserTs === null || entry.ts - previousUserTs > 30 * 60_000;
@@ -628,7 +687,7 @@ export function Conversation({
                   >
                     <div
                       data-invert-ignore="true"
-                      className="cc-user-prompt max-w-[82%] px-[14px] py-[8px] text-[14px] leading-[21px] text-[#1A1C1F]"
+                      className="cc-user-prompt max-w-[82%] px-[16px] py-[9px] text-[14px] leading-[22px] text-[#0D0D0D]"
                     >
                       {entry.answers?.length ? (
                         <div className="mb-1.5 flex flex-col gap-[3px] rounded-[10px] bg-white/60 px-2 py-1.5">
@@ -675,7 +734,34 @@ export function Conversation({
                 />
               </div>
             );
-          })}
+          });
+          /* Fold each finished response's work; the live one stays open. Older
+             responses get a quiet "Worked · N actions" line of their own. */
+          const out: React.ReactNode[] = [];
+          let cursor = 0;
+          for (const segment of segments) {
+            out.push(...rendered.slice(cursor, segment.start));
+            const work = rendered.slice(segment.start, segment.end);
+            const isLive = segment.key === liveSegmentKey;
+            const isLatest = segment === latestSegment;
+            if (isLive || !segment.actions) out.push(...work);
+            else {
+              const open = openFolds.has(segment.key);
+              if (!isLatest || !runHeader) {
+                out.push(
+                  <button key={`${segment.key}-fold`} type="button" className="cxr-past" aria-expanded={open} onClick={(event) => toggleFold(segment.key, event.currentTarget)}>
+                    Worked · {segment.actions} action{segment.actions === 1 ? "" : "s"}
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" data-open={open || undefined} aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+                  </button>,
+                );
+              }
+              out.push(<RunFold key={`${segment.key}-work`} open={open}>{work}</RunFold>);
+            }
+            cursor = segment.end;
+          }
+          out.push(...rendered.slice(cursor));
+          return out;
+          })()}
 
           <AnimatePresence initial={false}>
             {running && !primaryActiveActionId ? (
@@ -720,7 +806,26 @@ export function Conversation({
       </div>
 
       <AnimatePresence>
-        {!pinned ? (
+        {changes.files > 0 && !inline ? (
+          <motion.button
+            key="change-pill"
+            type="button"
+            initial={reduced ? { opacity: 0 } : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: AGENT_EASE }}
+            onClick={onOpenChanges}
+            aria-label={`${changes.files} ${changes.files === 1 ? "file" : "files"} changed, plus ${changes.additions}, minus ${changes.deletions}. Open changes`}
+            className="cc-change-pill"
+          >
+            <span className="cc-change-pill-files">{changes.files} {changes.files === 1 ? "file" : "files"}</span>
+            <DiffCounters additions={changes.additions} deletions={changes.deletions} animate={running} className="cc-change-pill-counts" />
+          </motion.button>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {!pinned && !inline ? (
           <motion.button
             key="jump-to-latest"
             type="button"

@@ -145,6 +145,27 @@ function prepareHtml(html: string, finalUrl: string, selfOrigin: string): string
   return out;
 }
 
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] as string);
+/* What the reading frame shows when a site cannot be fetched. */
+function failurePage(url: string, title: string, detail: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#2c2c2b;--muted:#73726c;--line:rgba(55,53,47,.12)}
+@media (prefers-color-scheme:dark){:root{--bg:#191a1c;--fg:#ececea;--muted:#9b9a96;--line:rgba(255,255,255,.1)}}
+html,body{height:100%;margin:0}body{display:grid;place-items:center;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+main{max-width:380px;padding:28px;text-align:center}h1{font-size:17px;font-weight:650;margin:0 0 6px}p{margin:0 0 16px;color:var(--muted)}
+code{display:block;margin:0 0 18px;font:12px ui-monospace,Menlo,monospace;color:var(--muted);word-break:break-all}
+a{display:inline-block;padding:7px 16px;border-radius:999px;border:1px solid var(--line);color:var(--fg);font-weight:600;text-decoration:none}a:hover{background:var(--line)}
+</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p><code>${escapeHtml(url)}</code><a href="${escapeHtml(proxyPath(url))}">Try again</a></main>
+<script>addEventListener("online",()=>location.reload())</script></body></html>`;
+}
+
+function sendFailurePage(res: express.Response, status: number, url: string, title: string, detail: string): void {
+  res.status(status).type("text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'");
+  res.send(failurePage(url, title, detail));
+}
+
 const proxyPath = (url: string) => `/api/notes/browse?url=${encodeURIComponent(url)}`;
 
 export function registerNotesBrowseRoutes(app: express.Application): void {
@@ -154,7 +175,14 @@ export function registerNotesBrowseRoutes(app: express.Application): void {
       url = normalizeUrl(String(req.query.url ?? ""));
       await assertPublicHost(url.hostname);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Bad address" });
+      const message = error instanceof Error ? error.message : "Bad address";
+      if (req.accepts(["html", "json"]) === "html") {
+        sendFailurePage(res, 400, String(req.query.url ?? ""), /^Could not find/.test(message) ? "Can't find this site" : "This address can't be opened", /^Could not find/.test(message)
+          ? "Check the address for a typo, or your internet connection. The page will load by itself when you're back online."
+          : message);
+        return;
+      }
+      res.status(400).json({ error: message });
       return;
     }
 
@@ -239,6 +267,16 @@ export function registerNotesBrowseRoutes(app: express.Application): void {
       const message = error instanceof Error
         ? (error.name === "AbortError" ? "That site took too long to answer." : error.message)
         : "Could not open that page";
+      /* A frame asking for a page gets a page back: raw JSON in a reading
+         frame is a blank-looking screen with no way forward. */
+      if (req.accepts(["html", "json"]) === "html") {
+        const code = (error as { cause?: { code?: string } })?.cause?.code || "";
+        const offline = ["ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "ENETDOWN"].includes(code);
+        sendFailurePage(res, 502, url.href, offline ? "Can't reach this page" : "This page didn't open", offline
+          ? "Check your internet connection. The page will load by itself when you're back online."
+          : message);
+        return;
+      }
       res.status(502).json({ error: message });
     } finally {
       clearTimeout(timer);

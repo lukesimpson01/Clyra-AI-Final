@@ -6,6 +6,12 @@ contextBridge.exposeInMainWorld("clyraDictationPill", {
     ipcRenderer.on("dictation:pill-state", listener);
     return () => ipcRenderer.removeListener("dictation:pill-state", listener);
   },
+  // Loudness straight from the main process, ~30 times a second, separate from state changes.
+  onLevel(callback) {
+    const listener = (_event, level) => callback(level);
+    ipcRenderer.on("dictation:pill-level", listener);
+    return () => ipcRenderer.removeListener("dictation:pill-level", listener);
+  },
   action(action) {
     ipcRenderer.send("dictation:pill-action", action);
   },

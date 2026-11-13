@@ -82,7 +82,7 @@ export function renderWelcome(host, app) {
     clearTimeout(autoAdvance);
     /* Completion is acknowledged before moving forward, but never holds the
        learner on a finished interaction long enough to feel stalled. */
-    const settle = step?.id === "selection" ? 1000 : 760;
+    const settle = step?.id === "selection" ? 1000 : step?.id === "terminal" ? 2000 : 760;
     autoAdvance = setTimeout(() => {
       if (!busy && STEPS[index] === step) go(index + 1);
     }, reduced() ? 0 : settle);
@@ -146,29 +146,48 @@ export function renderWelcome(host, app) {
     const shell = el("div", { class: "wl-menu-preview", "aria-live": "polite" });
     stage.append(shell);
     let panel = null;
+    let active = 0;
+    let foot = null;
+    const commands = [
+      ["plus", "New page", "A blank page"],
+      ["search", "Search pages", "Find anything by words"],
+      ["template", "Templates", "Browse the library"],
+      ["comment", "Ask Clyra", "Open a new AI chat"],
+    ];
+    const paint = () => panel?.querySelectorAll(".cp-option").forEach((row, position) => {
+      row.classList.toggle("active", position === active);
+      row.setAttribute("aria-selected", String(position === active));
+    });
     const show = () => {
       if (panel) return;
-      const commands = [
-        ["plus", "New page", "A blank page"],
-        ["search", "Search pages", "Find anything by words"],
-        ["template", "Templates", "Browse the library"],
-        ["comment", "Ask Clyra", "Open a new AI chat"],
-      ];
-      panel = el("div", { class: "cp cp-embedded cp-tour-readonly", role: "status", "aria-label": "Command palette preview" },
-        el("div", { class: "cp-field" }, icon("search", 16), el("span", { class: "cp-tour-query", text: "Command palette" }), el("kbd", { class: "cp-esc", text: "Tour" })),
+      foot = el("div", { class: "cp-foot cp-tour-foot" }, "↑ ↓ to move · Enter to choose");
+      panel = el("div", { class: "cp cp-embedded cp-tour-readonly", role: "listbox", "aria-label": "Command palette preview" },
+        el("div", { class: "cp-field" }, icon("search", 16), el("span", { class: "cp-tour-query", text: "Search commands" }), el("kbd", { class: "cp-esc", text: "Tour" })),
         el("div", { class: "cp-list" },
-          el("div", { class: "cp-head" }, el("span", { text: "Preview" })),
-          ...commands.map(([glyph, title, detail]) => el("div", { class: "cp-option", "aria-disabled": "true" },
+          el("div", { class: "cp-head" }, el("span", { text: "Suggested" })),
+          ...commands.map(([glyph, title, detail]) => el("div", { class: "cp-option", role: "option" },
             el("span", { class: "cp-ico" }, icon(glyph, 15)),
             el("span", { class: "cp-text" }, el("span", { class: "cp-name", text: title }), el("span", { class: "cp-desc", text: detail }))))),
-        el("div", { class: "cp-foot cp-tour-foot" }, "Preview only — commands are ready after the tour."));
+        foot);
       shell.dataset.open = "true";
       shell.append(panel);
+      paint();
     };
     stage.revealTourPalette = show;
     stage.handleTourPaletteKey = (event) => {
       if (!panel || !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return false;
       event.preventDefault();
+      if (event.key === "Enter") {
+        /* Enter is the last step: it means something only once a row has been chosen with the arrows. */
+        if (!done["palette-move"]) return true;
+        foot.textContent = `“${commands[active][1]}” would run now. Commands are paused during the tour.`;
+        panel.querySelectorAll(".cp-option")[active]?.classList.add("chosen");
+        mark("palette-run");
+        return true;
+      }
+      active = (active + (event.key === "ArrowDown" ? 1 : -1) + commands.length) % commands.length;
+      paint();
+      mark("palette-move");
       return true;
     };
     return () => { delete stage.revealTourPalette; delete stage.handleTourPaletteKey; };
@@ -235,83 +254,107 @@ export function renderWelcome(host, app) {
     return () => timers.forEach((timer) => clearTimeout(timer));
   };
 
-  /* The same small interaction model as the production selection toolbar:
-     nothing appears until a real text range exists, and it leaves as soon as
-     that range is cleared. This keeps the lesson tactile without editing a
-     workspace page during onboarding. */
+  /* The same interaction as the real selection toolbar, built from the same
+     parts: nothing shows while the mouse is still dragging, and the toolbar
+     floats in above the selection the moment the button is released. */
   const selectionToolbarDemo = (stage) => {
     const demo = el("div", { class: "wl-selection-demo" });
     const text = el("p", { class: "wl-selection-copy", contenteditable: "true", spellcheck: "false" },
-      "Click and drag across a few words in this short note to reveal Clyra’s formatting toolbar.");
-    const colour = (kind, label, task) => el("button", { class: `icon-button toolbar-colour toolbar-colour-${kind} wl-attention`, type: "button", title: label, "aria-label": label, onclick: (event) => {
+      "Click and drag across a few words in this short note, then let go to reveal Clyra’s formatting toolbar.");
+    let saved = null;
+    let dragging = false;
+    const keep = (event) => event.preventDefault();
+    const remember = () => { const selection = window.getSelection(); if (selection?.rangeCount && !selection.isCollapsed) saved = selection.getRangeAt(0).cloneRange(); };
+    const restore = () => { if (!saved) return; const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(saved); };
+    /* Formatting applies to the words that are selected, exactly as it does in a note. */
+    const exec = (command, value = null) => { restore(); document.execCommand("styleWithCSS", false, true); document.execCommand(command, false, value); remember(); };
+    const colour = (kind, label, task) => el("button", { class: `icon-button toolbar-colour toolbar-colour-${kind} wl-attention`, type: "button", title: label, "aria-label": label, onmousedown: keep, onclick: (event) => {
+      remember();
       const swatches = kind === "text"
-        ? [["Default", "var(--text-primary)"], ["Blue", "#1e6fff"], ["Green", "#198754"], ["Red", "#c54949"], ["Purple", "#805ad5"]]
+        ? [["Default", "#37352f"], ["Blue", "#1e6fff"], ["Green", "#198754"], ["Red", "#c54949"], ["Purple", "#805ad5"]]
         : [["Yellow", "#f5dc79"], ["Green", "#b8e4c8"], ["Blue", "#bfd7ff"], ["Pink", "#f5c7d8"], ["Clear", "transparent"]];
       menu(event.currentTarget, swatches.map(([name, value]) => ({ label: name, onSelect: () => {
-        if (kind === "text") text.style.color = value;
-        else text.style.background = value;
+        exec(kind === "text" ? "foreColor" : "hiliteColor", value);
         mark(task);
       } })), { align: "end", class: "toolbar-menu" });
     } },
-      kind === "text" ? el("span", { class: "toolbar-colour-letter", text: "A" }) : icon("highlight", 16));
-    const drop = (label, items, onPick) => el("button", { class: `text-button wl-toolbar-drop wl-toolbar-${label.toLowerCase()}`, type: "button", onclick: (event) => menu(event.currentTarget, items.map(([name, value]) => ({ label: name, onSelect: () => onPick(value) })), { align: "start", class: "toolbar-menu" }) }, label, icon("chevron_down", 11));
-    const toolbar = el("div", { class: "inline-toolbar wl-selection-toolbar", role: "toolbar", "aria-label": "Formatting toolbar preview", hidden: true },
-      el("button", { class: "wl-selection-ask", type: "button", title: "Ask Clyra", onclick: () => mark("selection-highlight") }, icon("sparkle", 14), "Ask Clyra"),
-      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
-      drop("Format", [["Paragraph", "paragraph"], ["Heading", "heading"], ["Quote", "quote"]], (value) => { text.dataset.format = value; mark("selection-highlight"); }),
-      drop("Font", [["Default", "inherit"], ["Serif", "Georgia, serif"], ["Mono", "ui-monospace, monospace"]], (value) => { text.style.fontFamily = value; mark("selection-highlight"); }),
-      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
-      el("button", { class: "icon-button", type: "button", title: "Text alignment", "aria-label": "Text alignment" }, icon("align_left", 14)),
-      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
-      ...[["bold", "Bold"], ["italic", "Italic"], ["underline", "Underline"], ["strike", "Strikethrough"], ["code", "Inline code"], ["equation", "Equation"]].map(([glyph, label]) => el("button", { class: "icon-button", type: "button", title: label, "aria-label": label }, icon(glyph, 14))),
-      el("i", { class: "wl-selection-sep", "aria-hidden": "true" }),
-      ...[["link", "Link"], ["comment", "Comment"]].map(([glyph, label]) => el("button", { class: "icon-button", type: "button", title: label, "aria-label": label }, icon(glyph, 14))),
+      kind === "text" ? el("span", { class: "toolbar-colour-letter", text: "A" }) : icon("highlight", 15));
+    const drop = (label, className, items, onPick) => el("button", { class: `text-button ${className}`, type: "button", title: label, onmousedown: keep, onclick: (event) => { remember(); menu(event.currentTarget, items.map(([name, value]) => ({ label: name, onSelect: () => onPick(value) })), { align: "start", class: "toolbar-menu" }); } }, label, icon("chevron_down", 11));
+    const mark$ = (glyph, label, command) => el("button", { class: "icon-button", type: "button", title: label, "aria-label": label, onmousedown: keep, onclick: (event) => { if (command) { exec(command); event.currentTarget.classList.toggle("active"); } } }, icon(glyph, 15));
+    const sep = () => el("div", { class: "sep", "aria-hidden": "true" });
+    const toolbar = el("div", { class: "inline-toolbar wl-floating-toolbar", role: "toolbar", "aria-label": "Text formatting", hidden: true },
+      el("button", { class: "text-button ask-clyra", type: "button", title: "Ask Clyra about the selection", onmousedown: keep }, icon("sparkle", 15), "Ask Clyra"),
+      sep(),
+      drop("Format", "toolbar-format", [["Paragraph", "p"], ["Heading", "h2"], ["Quote", "blockquote"]], () => {}),
+      drop("Font", "toolbar-font", [["Default", "inherit"], ["Serif", "Georgia, serif"], ["Mono", "ui-monospace, monospace"]], (value) => exec("fontName", value)),
+      mark$("align_left", "Text alignment"),
+      sep(),
+      mark$("bold", "Bold", "bold"), mark$("italic", "Italic", "italic"), mark$("underline", "Underline", "underline"), mark$("strike", "Strikethrough", "strikeThrough"), mark$("code", "Inline code"), mark$("equation", "Equation"),
+      sep(),
+      mark$("link", "Link"), mark$("comment", "Comment"),
       colour("text", "Change text colour", "selection-text-colour"),
       colour("highlight", "Change highlight colour", "selection-highlight-colour"),
-      el("button", { class: "icon-button", type: "button", title: "More formatting", "aria-label": "More formatting" }, icon("dots", 14)));
-    const hint = el("span", { class: "wl-selection-hint", text: "Click and drag across text to continue" });
-    /* Reserve this line before selection so the paragraph does not jump when
-       the toolbar appears on mouse release. */
-    demo.append(text, el("div", { class: "wl-selection-toolbar-slot" }, toolbar), hint);
+      mark$("dots", "More formatting"));
+    const hint = el("span", { class: "wl-selection-hint", text: "Drag across some words, then let go" });
+    demo.append(text, hint);
     stage.append(demo);
+    document.body.append(toolbar);
 
-    const rangeIsInside = (range) => {
+    const selected = () => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || selection.isCollapsed) return null;
+      const range = selection.getRangeAt(0);
       const node = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-      return node && text.contains(node);
+      return node && text.contains(node) ? range : null;
     };
-    const paint = (released = false) => {
-      const selected = window.getSelection();
-      const active = Boolean(selected?.rangeCount && !selected.isCollapsed && rangeIsInside(selected.getRangeAt(0)));
-      if (!released && active) return;
-      toolbar.hidden = !active;
-      demo.classList.toggle("selected", active);
-      if (active) {
-        hint.textContent = "Toolbar ready — choose text colour and highlight";
-        mark("selection-highlight");
-      } else hint.textContent = "Click and drag across text to continue";
+    const hide = () => { toolbar.hidden = true; demo.classList.remove("selected"); };
+    const place = (range) => {
+      const box = range.getBoundingClientRect();
+      toolbar.hidden = false;
+      /* Restart the entrance each time, the way a freshly opened toolbar arrives. */
+      toolbar.style.animation = "none"; void toolbar.offsetWidth; toolbar.style.animation = "";
+      const left = Math.max(12, Math.min(window.innerWidth - toolbar.offsetWidth - 12, box.left + box.width / 2 - toolbar.offsetWidth / 2));
+      const above = box.top - toolbar.offsetHeight - 10;
+      toolbar.style.left = `${left}px`;
+      toolbar.style.top = `${above > 8 ? above : box.bottom + 10}px`;
     };
-    const release = () => paint(true);
-    const keyboardRelease = (event) => { if (event.key.startsWith("Arrow") || event.key === "Shift") paint(true); };
-    document.addEventListener("selectionchange", paint);
-    text.addEventListener("mouseup", release);
-    text.addEventListener("keyup", keyboardRelease);
+    const settle = () => {
+      const range = selected();
+      if (!range) { hide(); hint.textContent = "Drag across some words, then let go"; return; }
+      remember();
+      place(range);
+      demo.classList.add("selected");
+      hint.textContent = "Now change the text colour and add a highlight";
+      mark("selection-highlight");
+    };
+    const press = (event) => { if (event.button === 0) { dragging = true; hide(); } };
+    const lift = () => { if (dragging) { dragging = false; setTimeout(settle, 0); } };
+    const keyed = (event) => { if (event.key === "Shift" || event.key.startsWith("Arrow")) settle(); };
+    /* A selection that disappears takes the toolbar with it, unless one of its own menus is open. */
+    const changed = () => { if (!dragging && !toolbar.hidden && !selected() && !document.querySelector(".layer")) hide(); };
+    text.addEventListener("pointerdown", press);
+    document.addEventListener("pointerup", lift);
+    document.addEventListener("selectionchange", changed);
+    text.addEventListener("keyup", keyed);
     return () => {
-      document.removeEventListener("selectionchange", paint);
-      text.removeEventListener("mouseup", release);
-      text.removeEventListener("keyup", keyboardRelease);
+      text.removeEventListener("pointerdown", press);
+      document.removeEventListener("pointerup", lift);
+      document.removeEventListener("selectionchange", changed);
+      text.removeEventListener("keyup", keyed);
+      toolbar.remove();
     };
   };
 
   const STEPS = [
     { id: "hello", title: "Welcome", hero: true },
 
-    { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action lives in one search box. During the tour it stays safely paused, so nothing here can change your workspace.",
-      tasks: [["palette-open", "Open the command palette", { keys: shortcutLabel("commandPalette") }]],
-      tips: [`Press ${shortcutLabel("commandPalette")} to peek at it, then use it normally once the tour is complete.`, "Your most-used commands appear in Recent."], mount: palettePreview },
+    { id: "palette", kicker: "Keyboard", title: "Command palette", text: "Every action lives in one search box. Open it, move through the list, and choose one. During the tour it stays safely paused, so nothing here can change your workspace.",
+      tasks: [["palette-open", "Open the command palette", { keys: shortcutLabel("commandPalette") }], ["palette-move", "Use ↑ or ↓ to move through commands"], ["palette-run", "Press Enter to choose the highlighted command"]],
+      tips: ["The same three moves work everywhere: open, arrow, Enter.", "Your most-used commands appear in Recent."], mount: palettePreview },
 
-    { id: "terminal", kicker: "Workspace", title: "Terminal", text: "A scoped terminal is available whenever you need it, without leaving Notes.",
-      tasks: [["terminal-open", "Open the terminal from the bottom edge", { keys: shortcutLabel("terminal") }]],
-      tips: [`Press ${shortcutLabel("terminal")} now to open the real terminal from the bottom edge.`, "It is a separate workspace tool, not a command-palette action."] },
+    { id: "terminal", kicker: "Workspace", title: "Terminal", text: "A real terminal, available whenever you need it, without leaving Notes. You can't get this wrong: type anything at all. It doesn't have to be a command.",
+      tasks: [["terminal-open", "Open the terminal", { keys: shortcutLabel("terminal") }], ["terminal-type", "Type anything: a command like ls, your name, or random letters"], ["terminal-enter", "Press Enter to send it"]],
+      tips: ["If it isn't a real command, the terminal simply says so, and nothing breaks.", "It is a separate workspace tool, not a command-palette action."] },
 
     { id: "slash", kicker: "Editing", title: "Slash menu", text: "On any line, press / to choose headings, lists, quotes, tables, media, databases and more.",
       tasks: [["sl-try", "Press / to open the slash menu"], ["sl-move", "Use ↑ or ↓ to move through commands"], ["sl-select", "Press Enter to choose the highlighted command"]],
@@ -324,7 +367,7 @@ export function renderWelcome(host, app) {
       observe: () => { const panel = document.querySelector(".rail-title")?.textContent?.trim(); const id = { Calculator: "r-calc", Browser: "r-browser", Outline: "r-outline", "Linked notes": "r-links", Comments: "r-comments", Chat: "r-chat" }[panel]; if (id) mark(id); },
       tips: ["The chat is saved with the page you are on.", "Close the sidebar with the cross at its top right."] },
 
-    { id: "templates", kicker: "Create", title: "Cornell Notes", text: "A focused Cornell page with a topic header, cue column, notes field, summary and review prompts.",
+    { id: "templates", kicker: "Create", title: "Cornell Notes", text: "The real Cornell method: a ruled cue column for recall questions, notes beside it, and a summary to write at the end.",
       tasks: [["template-preview", "Look through the template previews"]],
       tips: ["Choose it and it is copied into your notes.", "Everything in it is yours to change."],
       mount: async (stage) => {
@@ -340,7 +383,7 @@ export function renderWelcome(host, app) {
       tasks: [["study-note", "Choose a note"], ["study-generate", "Generate the 12-card deck"]],
       tips: ["Rate each card Again, Hard, Good or Easy.", "Wrong answers can become flashcards."], mount: studyPreview },
 
-    { id: "selection", kicker: "Writing", title: "Make text your own", text: "Click and drag across a few words. The real compact toolbar only appears once text is selected.",
+    { id: "selection", kicker: "Writing", title: "Make text your own", text: "Click and drag across a few words, then let go. The toolbar appears the moment you release, just like in a real note.",
       tasks: [["selection-highlight", "Click and drag to highlight text"], ["selection-text-colour", "Change the text colour"], ["selection-highlight-colour", "Add a highlight colour"]],
       tips: ["The tour pauses for five seconds once the checklist is complete.", "Use the compact toolbar to format, link or ask Clyra about the selected text."], mount: selectionToolbarDemo },
 
@@ -663,6 +706,13 @@ export function renderWelcome(host, app) {
   }, { signal });
   document.addEventListener("clyra:terminal-opened", () => {
     if (STEPS[index]?.id === "terminal") mark("terminal-open");
+  }, { signal });
+  /* Whatever is typed counts. Enter only completes the lesson once something has been typed. */
+  document.addEventListener("clyra:terminal-data", (event) => {
+    if (STEPS[index]?.id !== "terminal" || !done["terminal-open"]) return;
+    const data = String(event.detail?.data || "");
+    if (data.includes("\r") && done["terminal-type"]) { mark("terminal-enter"); return; }
+    if (/[^\r\n\x7f\x1b]/.test(data) && !data.startsWith("\x1b")) mark("terminal-type");
   }, { signal });
   const onKey = (event) => {
     /* The embedded palette owns the keystroke itself. The tour only observes

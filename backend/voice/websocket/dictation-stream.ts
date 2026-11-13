@@ -144,7 +144,7 @@ function attachSocketHandlers(sessionId: string, ws: WebSocket) {
         console.log(`[dictation] ${result.engine} ${result.elapsedMs}ms -> ${JSON.stringify(result.text.slice(0, 80))}`);
         const text = result.text;
         voiceSessions.appendMessage(sessionId, "user", text);
-        send(ws, { type: "dictation_final", sessionId, text, elapsedMs: result.elapsedMs, engine: result.engine });
+        send(ws, { type: "dictation_final", sessionId, text, elapsedMs: result.elapsedMs, engine: result.engine, speechMs: (result as { speechMs?: number }).speechMs, audioMs: (result as { audioMs?: number }).audioMs, noSpeech: Boolean((result as { noSpeech?: boolean }).noSpeech) });
       } catch (error) {
         send(ws, {
           type: "error",

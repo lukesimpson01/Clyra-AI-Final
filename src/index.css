@@ -1258,10 +1258,12 @@ body {
   line-height: 1.7;
 }
 
-button,
-input,
-textarea,
-select {
+/* Outside Clyra Code this unlayered reset wins over Tailwind's layered utilities, so a text-[13px] on a button is
+   ignored there. Clyra Code is built on those utilities, so it is left to the base layer's own reset instead. */
+button:where(:not(.clyra-code-root *)),
+input:where(:not(.clyra-code-root *)),
+textarea:where(:not(.clyra-code-root *)),
+select:where(:not(.clyra-code-root *)) {
   font: inherit;
 }
 
@@ -5517,30 +5519,34 @@ body,
    Clyra Code — agent-first coding workspace theme
    ============================================================ */
 .clyra-code-root {
-  --app-background: #FCFCFC;
-  --sidebar-background: #F7F7F6;
+  /* Matched to the Codex desktop app's own tokens (read from its shipped
+     stylesheets): white surfaces, a #f9f9f9 sidebar, #0d0d0d / #5d5d5d /
+     #8f8f8f text, 10%-black hairlines, 5%-black hover and selection, 10px rows
+     and a 22px composer. */
+  --app-background: #FFFFFF;
+  --sidebar-background: #F9F9F9;
   --main-background: #FFFFFF;
   --preview-background: #FFFFFF;
   --composer-surface: #FFFFFF;
-  --surface-muted: #FAFAF9;
-  --surface-hover: rgba(0, 0, 0, .035);
-  --surface-selected: rgba(0, 0, 0, .045);
-  --border-subtle: rgba(0, 0, 0, 0.06);
-  --border-medium: rgba(0, 0, 0, 0.09);
-  --text-primary: #202124;
-  --text-secondary: #686A70;
-  --text-tertiary: #96989D;
-  --text-disabled: #B7B9BD;
+  --surface-muted: #F3F3F3;
+  --surface-hover: rgba(0, 0, 0, .05);
+  --surface-selected: rgba(0, 0, 0, .05);
+  --border-subtle: rgba(0, 0, 0, 0.07);
+  --border-medium: rgba(0, 0, 0, 0.10);
+  --text-primary: #0D0D0D;
+  --text-secondary: #5D5D5D;
+  --text-tertiary: #8F8F8F;
+  --text-disabled: #B4B4B4;
   --accent-blue: #3977F6;
-  --clyra-code-user-bubble: #E8F3FE;
+  --clyra-code-user-bubble: #E8F1FC;
   --addition-green: #268A50;
   --deletion-red: #C24949;
   --warning-amber: #b87918;
-  --radius-row: 6px;
-  --radius-control: 7px;
-  --radius-tab: 8px;
-  --radius-input: 11px;
-  --radius-panel: 8px;
+  --radius-row: 10px;
+  --radius-control: 8px;
+  --radius-tab: 10px;
+  --radius-input: 22px;
+  --radius-panel: 10px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, Helvetica, Arial, sans-serif;
   font-feature-settings: normal;
   letter-spacing: -0.005em;
@@ -10572,9 +10578,11 @@ body,
    (--tv-t): the zoom out, the grid reflow when a window closes, drag-to-reorder and the zoom back in are all the
    same property on the same curve, so nothing disappears and reappears. Decorative depth is a hairline ring and
    one small shadow at the final on-screen size; hover is an outline, never movement. */
-.clyra-task-view { --tv-ease-out: cubic-bezier(.2,.8,.2,1); --tv-ease-in: cubic-bezier(.4,0,1,1); position: absolute; inset: 0; isolation: isolate; overflow: hidden; background: #f3f4f6; }
-.clyra-task-view__backdrop { position: absolute; inset: 0; z-index: 0; background: linear-gradient(180deg, #f7f7f8 0%, #eef0f3 100%); opacity: 0; transition: opacity 240ms var(--tv-ease-out); }
+.clyra-task-view { --tv-ease-out: cubic-bezier(.2,.8,.2,1); --tv-ease-in: cubic-bezier(.4,0,1,1); --tv-expo: cubic-bezier(.16,1,.3,1); --tv-spring: cubic-bezier(.22,1,.36,1); position: absolute; inset: 0; isolation: isolate; overflow: hidden; background: #f3f4f6; }
+.clyra-task-view__backdrop { position: absolute; inset: 0; z-index: 0; background: linear-gradient(180deg, #f7f7f8 0%, #eef0f3 100%); opacity: 0; transition: opacity 520ms var(--tv-expo); }
 .clyra-task-view--open .clyra-task-view__backdrop { opacity: 1; }
+.clyra-task-view--closing .clyra-task-view__backdrop { transition-duration: 340ms; }
+@supports (transition-timing-function: linear(0, 1)) { .clyra-task-view { --tv-spring: linear(0, 0.0403, 0.1379, 0.2646, 0.4002, 0.5313, 0.6498, 0.7513, 0.8344, 0.8996, 0.9486, 0.9835, 1.007, 1.0213, 1.0288, 1.0315, 1.0308, 1.028, 1.0242, 1.0199, 1.0157, 1.0119, 1.0085, 1.0058, 1.0036, 1.0019, 1.0007, 0.9999, 0.9994, 0.9991, 1); } }
 /* Outside Task View the stage is just the workspace: transparent, only the front window showing, and app switches
    are a single horizontal slide (see data-switching). Unseen windows stay rendered at opacity 0 — never a visibility
    toggle, which restyles the whole app. */
@@ -10589,29 +10597,30 @@ body,
 .clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window:not(.is-front) { pointer-events: none; }
 .clyra-task-view .clyra-workspace-card { transform: none; will-change: auto; }
 .clyra-stage-app { position: absolute; inset: 0; display: flex; flex-direction: column; }
-.clyra-task-view__window { position: absolute; left: 0; top: 0; transform-origin: 0 0; transform: var(--tv-closed); will-change: transform; transition: transform 300ms var(--tv-ease-out), opacity 200ms var(--tv-ease-out); }
+.clyra-task-view__window { position: absolute; left: 0; top: 0; transform-origin: 0 0; transform: var(--tv-closed); will-change: transform; transition: transform 620ms var(--tv-spring) calc(min(var(--tv-i, 0), 7) * 22ms), opacity 320ms var(--tv-expo); }
 .clyra-task-view--open .clyra-task-view__window { transform: var(--tv-t); }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 240ms var(--tv-ease-out), opacity 180ms var(--tv-ease-out); }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window { transition: transform 540ms var(--tv-expo), opacity 260ms var(--tv-expo); }
 .clyra-task-view--open .clyra-task-view__window.is-dragging { transition: none; z-index: 8 !important; }
-.clyra-task-view--closing .clyra-task-view__window { transform: var(--tv-closed); transition: transform 280ms var(--tv-ease-out), opacity 160ms var(--tv-ease-in); }
-.clyra-task-view--open .clyra-task-view__window.is-closing-tab { opacity: 0; pointer-events: none; transition: opacity 160ms var(--tv-ease-in); }
+.clyra-task-view--closing .clyra-task-view__window { transform: var(--tv-closed); transition: transform 480ms var(--tv-expo), opacity 280ms var(--tv-ease-in) 90ms; }
+.clyra-task-view--open .clyra-task-view__window.is-closing-tab { opacity: 0; pointer-events: none; transition: opacity 220ms var(--tv-ease-in); }
 .clyra-task-view__surface { position: absolute; inset: 0; overflow: hidden; border-radius: 0; }
 .clyra-task-view--open .clyra-task-view__surface,
 .clyra-task-view--closing .clyra-task-view__surface { background: #fbfbfa; }
 .clyra-task-view--open .clyra-task-view__surface,
 .clyra-task-view--closing .clyra-task-view__surface { border-radius: calc(12px / var(--task-view-target-scale, 1)); }
 .clyra-task-view[data-task-view-phase="closing"] .clyra-task-view__window.is-front .clyra-task-view__surface { border-radius: 0; transition: border-radius 280ms var(--tv-ease-out); }
-.clyra-task-view__window::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.08), 0 calc(4px / var(--task-view-target-scale, 1)) calc(14px / var(--task-view-target-scale, 1)) rgba(15,23,42,.07); opacity: 0; transition: opacity 200ms var(--tv-ease-out); pointer-events: none; }
+.clyra-task-view__window::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.08), 0 calc(4px / var(--task-view-target-scale, 1)) calc(14px / var(--task-view-target-scale, 1)) rgba(15,23,42,.07); opacity: 0; transition: opacity 360ms var(--tv-expo) 120ms, box-shadow 420ms var(--tv-expo); pointer-events: none; }
 .clyra-task-view--open .clyra-task-view__window::before { opacity: 1; }
-.clyra-task-view__window::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(2.5px / var(--task-view-target-scale, 1)) #3977f6; opacity: 0; transition: opacity 120ms ease; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.1), 0 calc(14px / var(--task-view-target-scale, 1)) calc(40px / var(--task-view-target-scale, 1)) rgba(15,23,42,.16); }
+.clyra-task-view__window::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: calc(12px / var(--task-view-target-scale, 1)); box-shadow: 0 0 0 calc(2.5px / var(--task-view-target-scale, 1)) #3977f6; opacity: 0; transition: opacity 220ms var(--tv-expo); pointer-events: none; }
 .clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-hovered::after,
 .clyra-task-view[data-task-view-phase="open"] .clyra-task-view__window.is-dragging::after { opacity: 1; }
 .clyra-task-view__hit-area { position: absolute; inset: 0; z-index: 2; cursor: pointer; border: 0; background: transparent; outline: 0; touch-action: none; }
 .clyra-task-view__window.is-dragging .clyra-task-view__hit-area { cursor: grabbing; }
 .clyra-task-view__hit-area:focus-visible { box-shadow: inset 0 0 0 calc(3px / var(--task-view-target-scale, 1)) rgba(57,119,246,.45); border-radius: calc(12px / var(--task-view-target-scale, 1)); }
-.clyra-task-view__label { position: absolute; left: 50%; top: calc(100% + 12px / var(--task-view-target-scale, 1)); z-index: 3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: calc(3px / var(--task-view-target-scale, 1)) calc(10px / var(--task-view-target-scale, 1)); border-radius: 999px; color: #3a3d43; font: 500 calc(12.5px / var(--task-view-target-scale, 1))/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; letter-spacing: -.01em; transform: translateX(-50%); opacity: 0; transition: opacity 160ms var(--tv-ease-out), background-color 120ms ease, color 120ms ease; pointer-events: none; }
-.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__label { opacity: 1; }
-.clyra-task-view--closing .clyra-task-view__label { opacity: 0; transition: opacity 100ms var(--tv-ease-in); }
+.clyra-task-view__label { position: absolute; left: 50%; top: calc(100% + 12px / var(--task-view-target-scale, 1)); z-index: 3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: calc(3px / var(--task-view-target-scale, 1)) calc(10px / var(--task-view-target-scale, 1)); border-radius: 999px; color: #3a3d43; font: 500 calc(12.5px / var(--task-view-target-scale, 1))/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; letter-spacing: -.01em; transform: translate(-50%, calc(6px / var(--task-view-target-scale, 1))); opacity: 0; transition: opacity 360ms var(--tv-expo) 300ms, transform 520ms var(--tv-expo) 300ms, background-color 200ms ease, color 200ms ease; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__label { opacity: 1; transform: translateX(-50%); }
+.clyra-task-view--closing .clyra-task-view__label { opacity: 0; transition: opacity 140ms var(--tv-ease-in); }
 .clyra-task-view__window.is-hovered .clyra-task-view__label { color: #fff; background: #3977f6; }
 .clyra-task-view__tab-close { position: absolute; left: 0; top: 0; z-index: 9; display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 999px; background: #fff; color: #5b6069; box-shadow: 0 0 0 .5px rgba(15,23,42,.14), 0 1px 4px rgba(15,23,42,.12); cursor: pointer; opacity: 0; pointer-events: none; transform: var(--tv-close-t); transition: opacity 120ms ease, transform 240ms var(--tv-ease-out), background-color 120ms ease, color 120ms ease; }
 .clyra-task-view__tab-close svg { width: 12px; height: 12px; }
@@ -11570,6 +11579,42 @@ body,
    styling cannot reintroduce a second chat gutter or cap the scroll viewport. */
 
 
+/* Words found by a search: blue text, no highlighter box. */
+.clyra-search-hit { background: transparent; color: #0066ff; font-weight: 600; padding: 0; transition: color .2s ease; }
+
+/* Dictation progress rows: the stages of a dictation, shown like a tool run */
+.clyra-dsteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.clyra-dsteps__row { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 12.5px; line-height: 18px; color: #6b6f76; animation: clyra-dsteps-in .26s cubic-bezier(.22,1,.36,1) both; }
+.clyra-dsteps__node { display: grid; place-items: center; width: 16px; height: 16px; flex: none; border-radius: 50%; background: rgba(16,18,24,.06); color: #6b6f76; }
+.clyra-dsteps__row[data-state="active"] .clyra-dsteps__node { background: rgba(0,102,255,.1); color: #0066ff; }
+.clyra-dsteps__row[data-state="done"] .clyra-dsteps__node { background: rgba(21,128,61,.1); color: #15803d; }
+.clyra-dsteps__row[data-state="failed"] .clyra-dsteps__node { background: rgba(185,28,28,.1); color: #b91c1c; }
+.clyra-dsteps__icon { flex: none; opacity: .55; }
+.clyra-dsteps__label { color: #15171c; font-weight: 500; white-space: nowrap; }
+.clyra-dsteps__row[data-state="active"] .clyra-dsteps__label { background: linear-gradient(100deg, #15171c 30%, #8a8f98 50%, #15171c 70%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: clyra-dsteps-shine 1.8s linear infinite; }
+.clyra-dsteps__detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9a9ea6; }
+.clyra-dsteps__spin { animation: clyra-dsteps-spin .8s linear infinite; }
+@keyframes clyra-dsteps-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes clyra-dsteps-shine { to { background-position: -120% 0; } }
+@keyframes clyra-dsteps-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .clyra-dsteps__row, .clyra-dsteps__spin, .clyra-dsteps__row[data-state="active"] .clyra-dsteps__label { animation: none; color: #15171c; background: none; } }
+
+/* Shared dictation controls (Vibe Coder, and any composer): the mic button and the recording strip */
+.clyra-mic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-primary, #15171c); cursor: pointer; touch-action: none; user-select: none; transition: background-color .16s ease, color .16s ease, transform .2s cubic-bezier(.22,1,.36,1); }
+.clyra-mic:hover { background: var(--surface-hover, rgba(16,18,24,.06)); }
+.clyra-mic[data-on="true"] { background: #3977f6; color: #fff; transform: scale(1.06); box-shadow: 0 4px 10px -4px rgba(57,119,246,.6); }
+.clyra-dstrip { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 0 6px 0 8px; background: inherit; border-radius: inherit; }
+.clyra-dstrip__label { display: inline-flex; align-items: center; gap: 7px; flex: none; font-size: 12.5px; font-weight: 500; color: #6b6f76; white-space: nowrap; }
+.clyra-dstrip__label i { width: 7px; height: 7px; border-radius: 50%; background: #3977f6; }
+.clyra-dstrip__label i[data-live="true"] { background: #e0483a; animation: clyra-dstrip-pulse 1.6s ease-in-out infinite; }
+@keyframes clyra-dstrip-pulse { 0%,100% { transform: scale(.8); opacity: .7; } 50% { transform: scale(1.15); opacity: 1; } }
+.clyra-dstrip__wave { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 3px; height: 30px; overflow: hidden; }
+.clyra-dstrip__wave b { display: block; width: 3px; flex: none; border-radius: 2px; background: #3977f6; transition: height .08s linear; }
+.clyra-dstrip__partial { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: #3a3d44; }
+.clyra-dstrip__time { flex: none; min-width: 30px; text-align: right; font-size: 12.5px; font-weight: 500; color: #6b6f76; font-variant-numeric: tabular-nums; }
+.clyra-dstrip__cancel { flex: none; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: rgba(16,18,24,.06); color: #3a3d44; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color .15s; }
+.clyra-dstrip__cancel:hover { background: rgba(16,18,24,.11); }
+@media (prefers-reduced-motion: reduce) { .clyra-dstrip__label i { animation: none !important; } }
 /* Voice call: existing native React surface, now connected directly to the
    live session instead of a detached HTML frame. Keep the Clyra face clear. */
 .clyra-voice-call-host .clyra-voice-call {

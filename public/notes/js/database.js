@@ -210,9 +210,9 @@ async function resolveTemplateRelations(created, specs) {
 
 /* A template becomes a page, with each database it carries created inside it and shown in place. A template that is only one
    database becomes that database's own page. */
-export async function createFromTemplate(context, template, parentId = null, { open = true } = {}) {
+export async function createFromTemplate(context, template, parentId = null, { open = true, tone = "gray" } = {}) {
   const dbs = template.databases || [];
-  const blocks = templateBlocks(template);
+  const blocks = templateBlocks(template, tone);
   const dbBlocks = [];
   const walk = (list) => { for (const block of list) { if (block.type === "database") dbBlocks.push(block); walk(block.children || []); } };
   walk(blocks);
@@ -221,7 +221,7 @@ export async function createFromTemplate(context, template, parentId = null, { o
     const made = await buildDatabase(dbs[blocks[0].props.dbIndex], { parentId, icon: template.emoji, cover: template.cover, name: template.name });
     pageId = made?.page_id;
   } else {
-    const created = await withError(() => api.post("/api/notes/pages", { parentId, title: template.name, icon: template.emoji, cover: template.cover || undefined, blocks }), "Could not create the page");
+    const created = await withError(() => api.post("/api/notes/pages", { parentId, title: template.name, icon: template.emoji, cover: template.cover || undefined, fullWidth: template.wide !== false, blocks }), "Could not create the page");
     if (!created) return null;
     pageId = created.id;
     const createdDatabases = [];
@@ -365,6 +365,10 @@ export class DatabaseView {
       type === "chart" ? button((CHART_KINDS.find(([key]) => key === (this.config.chart || "vbar")) || CHART_KINDS[0])[1], "chart", 0, (anchor) => menu(anchor, CHART_KINDS.map(([key, label]) => ({ label, checked: (this.config.chart || "vbar") === key, onSelect: () => { this.config.chart = key; this.saveConfig(); this.paint(); } })), { align: "start" })) : null,
       type === "calendar" || type === "timeline" ? button("Date by", "calendar", 0, (anchor) => this.dateByMenu(anchor)) : null,
       button("Properties", "pencil", (this.config.hidden || []).length, (anchor) => this.propertiesMenu(anchor)),
+      button("Automations", "bolt", (this.db.page_layout?.automations || []).filter((rule) => rule.enabled).length, async () => {
+        const { openAutomations } = await import("./automations.js");
+        openAutomations(this.db);
+      }),
       el("span", { class: "db-bar-spacer" }),
       search,
       el("button", { class: "db-new", type: "button", onclick: () => this.newRecord() }, icon("plus", 14), el("span", { text: "New" })));

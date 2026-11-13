@@ -6,6 +6,36 @@ import { agentChromeScript } from "./agent-chrome-script.mjs";
 import { planCursorMotion, isPointerAction } from "./ai-cursor-motion.mjs";
 
 const HOME_URL = "https://www.google.com/";
+
+/* A page that fails to load leaves a WebContentsView completely blank: unlike
+   Chrome, Electron draws no error page of its own. This one says what went
+   wrong, offers a retry, and reloads by itself when the connection returns. */
+const ERROR_PAGE_PREFIX = "data:text/html;charset=utf-8,";
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+function loadErrorPage(url, code, description) {
+  const offline = [-106, -21].includes(code);
+  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } })();
+  const title = offline ? "You're offline" : code === -105 ? `Can't find ${host}` : code === -7 || code === -118 ? `${host} took too long to answer` : `Can't reach ${host}`;
+  const detail = offline
+    ? "This page needs an internet connection. It will load by itself as soon as you're back online."
+    : code === -105 ? "Check the address for a typo, or your connection." : "The site may be down, or your connection may have dropped.";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(title)}</title><style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#2c2c2b;--muted:#73726c;--line:rgba(55,53,47,.12);--btn:#2c2c2b;--btn-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#191a1c;--fg:#ececea;--muted:#9b9a96;--line:rgba(255,255,255,.1);--btn:#ececea;--btn-fg:#191a1c}}
+html,body{height:100%;margin:0}body{display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+main{max-width:420px;padding:32px;text-align:center}.icon{width:48px;height:48px;margin:0 auto 18px;border-radius:14px;display:grid;place-items:center;border:1px solid var(--line);color:var(--muted)}
+h1{font-size:20px;font-weight:650;letter-spacing:-.01em;margin:0 0 8px}p{margin:0 0 20px;color:var(--muted)}code{display:block;margin:0 0 22px;font:12px ui-monospace,Menlo,monospace;color:var(--muted);word-break:break-all}
+a{display:inline-block;padding:8px 18px;border-radius:999px;background:var(--btn);color:var(--btn-fg);font-weight:600;text-decoration:none}a:hover{opacity:.88}
+</style></head><body><main><div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2 8.8a15 15 0 0 1 20 0M5 12.4a10 10 0 0 1 14 0M8.5 15.9a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r=".9" fill="currentColor"/>${offline ? '<path d="M3 3l18 18"/>' : ""}</svg></div>
+<h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p><code>${escapeHtml(description || "")} · ${escapeHtml(url)}</code><a href="${escapeHtml(url)}">Try again</a></main>
+<script>addEventListener("online",()=>{location.href=${JSON.stringify(url).replace(/</g, "\\u003c")}})</script></body></html>`;
+  return ERROR_PAGE_PREFIX + encodeURIComponent(html);
+}
+/* While a tab shows that page, everything else should still see the address that failed. */
+const tabUrl = (tab) => {
+  const url = tab?.view?.webContents?.getURL() || "";
+  return url.startsWith(ERROR_PAGE_PREFIX) && tab.failedUrl ? tab.failedUrl : url;
+};
 const MAX_TABS = 16;
 const HIDDEN_SURFACE_BOUNDS = { x: -20_000, y: -20_000, width: 2, height: 2 };
 
@@ -371,7 +401,7 @@ export class ChromiumBrowserManager {
       try {
         const contents = tab?.view?.webContents;
         if (!contents || contents.isDestroyed()) return [];
-        return [{ url: contents.getURL() || HOME_URL }];
+        return [{ url: tabUrl(tab) || HOME_URL }];
       } catch {
         return [];
       }
@@ -480,7 +510,16 @@ export class ChromiumBrowserManager {
       if (tab.id === this.activeTabId) void this.syncAgentChrome();
       this.emitState();
     });
-    contents.on("did-navigate", () => {
+    contents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
+      /* -3 is an aborted load (a new navigation replaced it), not a failure. */
+      if (!isMainFrame || code === -3 || !validatedURL || validatedURL.startsWith("data:")) return;
+      tab.failedUrl = validatedURL;
+      tab.loading = false;
+      void contents.loadURL(loadErrorPage(validatedURL, code, description)).catch(() => undefined);
+      this.emitState();
+    });
+    contents.on("did-navigate", (_event, url) => {
+      if (!String(url || "").startsWith(ERROR_PAGE_PREFIX)) tab.failedUrl = null;
       tab.crashed = false;
       this.recordHistory(tab);
       this.scheduleSave();
@@ -1395,7 +1434,7 @@ export class ChromiumBrowserManager {
     const active = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
     const contents = active?.view?.webContents;
     const readableContents = contents && !contents.isDestroyed() ? contents : null;
-    const url = readableContents?.getURL() || HOME_URL;
+    const url = (readableContents && tabUrl(active)) || HOME_URL;
     const bounds = this.surface.bounds;
     return {
       url,
@@ -1411,7 +1450,7 @@ export class ChromiumBrowserManager {
           return [{
             id: tab.id,
             title: tab.title,
-            url: tabContents.getURL(),
+            url: tabUrl(tab),
             active: tab.id === this.activeTabId,
             loading: tab.loading,
             favicon: tab.favicon,

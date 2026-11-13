@@ -185,6 +185,7 @@ export class Editor {
        or layout. */
     if (block.props?.templateStyle) node.dataset.templateStyle = block.props.templateStyle;
     if (block.props?.templateRole) node.dataset.templateRole = block.props.templateRole;
+    if (block.props?.templateTone) node.dataset.templateTone = block.props.templateTone;
     node.__type = block.type;
     node.__block = block;
 
@@ -308,13 +309,14 @@ export class Editor {
     if (block.type === "callout") {
       const wrapper = el("div", { class: "callout", style: block.props?.color && block.props.color !== "default" ? { background: `var(--c-${block.props.color}-bg)` } : {} },
         el("button", {
-          class: "callout-icon", type: "button", "aria-label": "Change callout icon",
+          class: `callout-icon${block.props?.icon === "" ? " empty" : ""}`, type: "button", "aria-label": "Change callout icon",
           onclick: (event) => this.pickEmoji(event.currentTarget, (emoji) => {
             block.props = { ...block.props, icon: emoji };
             event.currentTarget.textContent = emoji;
+            event.currentTarget.classList.toggle("empty", emoji === "");
             this.commit("callout-icon");
           }),
-        }, block.props?.icon || "💡"),
+        }, block.props?.icon ?? "💡"),
         el("div", { class: "callout-body" }, line, el("div", { class: "block-children callout-children" })),
       );
       append(content, wrapper);
@@ -2174,7 +2176,12 @@ Object.assign(Editor.prototype, {
           iconButton("pencil", "Edit website address", () => this.mediaPrompt(block, null), { size: 14, className: "embed-fullscreen" }),
           iconButton("expand", "Full screen", fullScreen, { size: 14, className: "embed-fullscreen" }),
           el("a", { href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site", icon("arrow_right", 12))));
-      if (block.props?.offline) {
+      /* Whether the machine is offline is decided now, not frozen into the
+         block when it was inserted: an embed added during a dropped
+         connection must not stay an empty card forever. */
+      if (!navigator.onLine) {
+        const retry = () => { if (wrapper.isConnected) { block.__dirty = true; this.render(); } };
+        window.addEventListener("online", retry, { once: true });
         /* Offline is a useful state, not an empty iframe. Keep the embed's
            footprint so the page layout does not jump, explain the next step,
            and leave the original address available when connectivity returns. */
@@ -2183,7 +2190,7 @@ Object.assign(Editor.prototype, {
           el("strong", { text: "You need an internet connection to show this website." }),
           el("p", { text: "Reconnect, then refresh or open the original site." }),
           el("a", { href: url, target: "_blank", rel: "noreferrer noopener" }, "Open site", icon("arrow_right", 13))));
-      } else if (block.props?.embeddable === false) {
+      } else if (block.props?.embeddable === false || block.props?.offline) {
         /* A direct iframe is blocked by sites such as Google. The Notes
            reader proxy is an honest embedded reading view instead of an
            empty rectangle; the original site remains one click away. */
@@ -2314,7 +2321,6 @@ Object.assign(Editor.prototype, {
                 url,
                 title: check?.title || url,
                 embeddable: check ? Boolean(check.embeddable) : false,
-                offline: !check || check.reachable === false,
                 reason: check?.reason,
               });
               return;

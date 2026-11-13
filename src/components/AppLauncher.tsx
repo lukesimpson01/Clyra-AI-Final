@@ -14,6 +14,7 @@ import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring } 
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Bloub, type BloubHandle } from "./bloub/Bloub";
 import { shortcut } from "../lib/platform";
+import { GENERATED_APPS_EVENT, readGeneratedApps, type GeneratedAppShortcut } from "../lib/userGeneratedApps";
 export type LauncherToolId =
   | "chat"
   | "vibe"
@@ -29,6 +30,7 @@ export type LauncherToolId =
 interface AppLauncherProps {
   onOpenTool: (tool: LauncherToolId) => void;
   onClose: () => void;
+  onOpenGeneratedProject?: (projectId: string) => void;
 }
 
 interface LauncherTool {
@@ -108,10 +110,24 @@ function readLastTool(): LauncherToolId {
   return tools.some((tool) => tool.id === stored) ? stored! : "chat";
 }
 
-export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
+export function AppLauncher({ onOpenTool, onClose, onOpenGeneratedProject }: AppLauncherProps) {
   const reduceMotion = useReducedMotion();
   const initialToolIndex = Math.max(0, tools.findIndex((tool) => tool.id === readLastTool()));
   const [activeIndex, setActiveIndex] = useState(initialToolIndex);
+  const [generatedApps, setGeneratedApps] = useState<GeneratedAppShortcut[]>(() => readGeneratedApps());
+  useEffect(() => {
+    const refresh = () => setGeneratedApps(readGeneratedApps());
+    window.addEventListener(GENERATED_APPS_EVENT, refresh);
+    // Shortcuts must lead to existing projects, not deleted files.
+    let mounted = true;
+    void fetch("/api/vibe/projects").then((response) => response.ok ? response.json() : null)
+      .then((data: { projects?: Array<{ id: string }> } | null) => {
+        if (!mounted || !data?.projects) return;
+        const ids = new Set(data.projects.map((item) => item.id));
+        setGeneratedApps(readGeneratedApps().filter((app) => ids.has(app.projectId)));
+      }).catch(() => undefined);
+    return () => { mounted = false; window.removeEventListener(GENERATED_APPS_EVENT, refresh); };
+  }, []);
   const highlightTarget = useMotionValue(initialToolIndex * SLICE_ANGLE);
   const highlightRotation = useSpring(highlightTarget, { stiffness: 980, damping: 58, mass: 0.06 });
   const [hoveredBarAction, setHoveredBarAction] = useState<BarAction | null>(null);
@@ -338,6 +354,24 @@ export function AppLauncher({ onOpenTool, onClose }: AppLauncherProps) {
           </motion.div>
         </div>
 
+        {generatedApps.length ? (
+          <section aria-label="User-generated apps" className="mb-3 w-full max-w-[620px] shrink-0 px-2" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-[11px] font-semibold text-slate-700">My apps</h2>
+              <span className="text-[10px] text-slate-400">From Clyra Code</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+              {generatedApps.map((app) => (
+                <button key={app.projectId} type="button"
+                  onClick={() => { onOpenGeneratedProject?.(app.projectId); onClose(); }}
+                  className="group flex min-w-[140px] max-w-[200px] shrink-0 flex-col items-start gap-1 rounded-[10px] border border-slate-200/80 bg-white px-3 py-2 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40">
+                  <span className="w-full truncate text-[12px] font-medium text-slate-800">{app.name}</span>
+                  <span className="text-[9px] font-medium text-blue-600">User generated</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
         <motion.div
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}

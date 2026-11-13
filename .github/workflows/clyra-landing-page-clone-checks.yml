@@ -1,0 +1,37 @@
+name: Clyra landing page Git clone verification
+
+on:
+  push:
+    branches: [vibe-coder-polish-and-templates]
+    paths:
+      - "lib/clyra-code/library/landing-pages.ts"
+      - "tools/verify-landing-page-clones.py"
+      - ".github/workflows/clyra-landing-page-clone-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clyra-landing-clones-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clone-all:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run real Git shallow clones of all 75 template repositories
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: python3 tools/verify-landing-page-clones.py
+      - name: Publish per-repository clone commands, success results and pinned revisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: landing-page-clone-verification
+          path: landing-page-clone-results.json
+          if-no-files-found: warn
+          retention-days: 30

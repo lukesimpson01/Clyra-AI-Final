@@ -38,10 +38,10 @@ type Drag = { id: string; pointerId: number; startX: number; startY: number; ori
  * windows travel from where they are to where they go instead of disappearing and reappearing.
  */
 
-// Keep in step with the transform transitions in index.css (open 300 ms, close 280 ms, tab close 160 ms fade).
-const OPEN_MS = 320;
-const CLOSE_MS = 300;
-const TAB_CLOSE_MS = 240;
+// Keep in step with the transform transitions in index.css (open 620 ms spring + up to 154 ms stagger, close 480 ms, tab close 220 ms fade).
+const OPEN_MS = 780;
+const CLOSE_MS = 520;
+const TAB_CLOSE_MS = 260;
 // Switching apps outside Task View: the whole workspace slides as one surface.
 // Outgoing travels to -direction×W, incoming from +direction×W, sharing one ease.
 const SWITCH_MS = 500;
@@ -434,6 +434,7 @@ export const WorkspaceTaskView = memo(forwardRef<TaskViewHandle, {
         width: source.width,
         height: source.height,
         zIndex: isDragging ? 8 : selectingId === tab.id ? 6 : isFront ? 3 : isLeaving ? 2 : 1,
+        "--tv-i": index,
         "--tv-t": openTransform,
         "--tv-closed": closedTransform,
         "--task-view-target-scale": String(cardScale),

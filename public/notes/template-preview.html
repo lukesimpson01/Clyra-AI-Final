@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/notes/css/tokens.css">
     <link rel="stylesheet" href="/notes/css/shell.css">
     <link rel="stylesheet" href="/notes/css/editor.css">
+    <link rel="stylesheet" href="/notes/css/templates.css">
     <link rel="stylesheet" href="/notes/css/database.css">
     <link rel="stylesheet" href="/notes/css/study.css">
     <style>
@@ -25,8 +26,10 @@
       #shot .editor-host { font-size: 16px; line-height: 1.55; }
       /* the cover and icon a real page created from the template would carry */
       #shot { padding-top: 0; }
-      #shot .shot-cover { height: 96px; margin: 0 -56px 0; }
+      #shot .shot-cover { height: 132px; margin: 0 -56px 0; }
       #shot .shot-icon { font-size: 46px; line-height: 1; margin: -26px 0 8px; position: relative; }
+      /* A designed document is shown at a real page width, scaled to the card. */
+      #shot { width: 1040px; padding: 28px 40px 40px; zoom: 0.6923; box-sizing: border-box; }
       /* Hover-only chrome must not be captured mid-state. */
       #shot .block-gutter, #shot .table-actions, #shot .table-grip { display: none !important; }
     </style>
@@ -43,12 +46,12 @@
       if (params.get("theme") === "dark") document.documentElement.dataset.notesTheme = "dark";
 
       const template = TEMPLATES.find((entry) => entry.id === params.get("id")) || TEMPLATES[0];
-      document.querySelector(".shot-title").textContent = template.name;
+      document.querySelector(".shot-title").style.display = "none";
       const cover = document.querySelector(".shot-cover");
-      if (template.cover) cover.style.background = template.cover; else cover.style.display = "none";
+      if (template.cover) cover.style.background = template.cover.startsWith("linear-gradient") ? template.cover : `url("${template.cover}") center / cover`; else cover.style.display = "none";
       const iconNode = document.querySelector(".shot-icon");
       if (template.emoji && template.id !== "blank") iconNode.textContent = template.emoji; else iconNode.style.display = "none";
-      const page = { id: `preview-${template.id}`, title: template.name, blocks: templatePreviewBlocks(template), breadcrumb: [] };
+      const page = { id: `preview-${template.id}`, title: template.name, blocks: templatePreviewBlocks(template, params.get("tone") || "gray"), breadcrumb: [] };
       new Editor(document.querySelector(".editor-host"), { page, readOnly: true });
       /* The tool waits on this flag rather than a fixed delay. */
       requestAnimationFrame(() => requestAnimationFrame(() => { document.body.dataset.ready = "true"; }));

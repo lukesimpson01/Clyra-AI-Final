@@ -387,6 +387,7 @@ async function connectTerminal(tabId = term.activeTab) {
       // terminal whenever its visible surface is clicked, like Vibe Coder.
       term.mount.addEventListener("pointerdown", () => term.xterm?.focus());
       term.xterm.onData((data) => {
+        document.dispatchEvent(new CustomEvent("clyra:terminal-data", { detail: { data } }));
         if (data) document.dispatchEvent(new CustomEvent("clyra:terminal-input", { detail: { data } }));
         if (data.includes("\r")) document.dispatchEvent(new CustomEvent("clyra:terminal-command"));
         const active = activeSession();

@@ -13,55 +13,45 @@ interface PlaceResultsListProps {
   title?: string;
 }
 
-/** Numbered result cards synced with the numbered pins MapController draws
- * on the map — hovering a card highlights its pin and vice versa. */
+/** Numbered result rows synced with the numbered pins on the map: hovering a row lights its pin and back. */
 export function PlaceResultsList({ places, hoveredId, onHover, onHoverPrefetch, onSelect, title }: PlaceResultsListProps) {
   if (!places.length) return null;
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -16 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -16 }}
-      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-      className="pointer-events-auto absolute bottom-0 left-0 top-[68px] z-20 w-[408px] max-w-[100vw] overflow-y-auto"
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="mx-sheet mx-sheet--auto"
+      aria-label="Results"
     >
-      {title ? (
-        <div className="sticky top-0 border-b border-slate-100 bg-white px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">
-          {title}
+      <div className="mx-head" style={{ paddingBottom: 6 }}>
+        <div className="min-w-0">
+          <p className="mx-eyebrow">{places.length} place{places.length === 1 ? "" : "s"}</p>
+          {title ? <h3 className="mx-title capitalize">{title}</h3> : null}
         </div>
-      ) : null}
-      <ul>
+      </div>
+      <ul className="mx-scroll" style={{ padding: "0 6px 8px", margin: 0, listStyle: "none" }}>
         {places.map((place, i) => (
           <li key={place.id}>
             <button
               type="button"
-              onMouseEnter={() => {
-                onHover(place.id);
-                onHoverPrefetch?.(place);
-              }}
+              className="mx-row"
+              data-hover={hoveredId === place.id}
+              onMouseEnter={() => { onHover(place.id); onHoverPrefetch?.(place); }}
               onMouseLeave={() => onHover(null)}
               onClick={() => onSelect(place)}
-              className={
-                "flex w-full items-start gap-2.5 border-b border-slate-50 px-4 py-3 text-left transition-colors last:border-b-0 active:scale-[0.99] " +
-                (hoveredId === place.id ? "bg-slate-50" : "hover:bg-slate-50")
-              }
             >
-              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 border-[#3b82f6] text-[10px] font-bold text-slate-900">
-                {i + 1}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13.5px] font-semibold text-slate-900">{place.name}</span>
-                <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11.5px] text-slate-500">
+              <span className="mx-num">{i + 1}</span>
+              <span className="mx-row__body">
+                <span className="mx-row__title">{place.name}</span>
+                <span className="mx-row__meta">
                   {place.categories[0] ? <span className="capitalize">{place.categories[0].replace(/_/g, " ")}</span> : null}
                   {typeof place.distanceMeters === "number" ? (
-                    <span className="inline-flex items-center gap-1">
-                      <MapPin className="h-3 w-3" /> {formatDistance(place.distanceMeters)}
-                    </span>
+                    <span className="inline-flex items-center gap-1"><MapPin size={11} /> {formatDistance(place.distanceMeters)}</span>
                   ) : null}
                   {typeof place.detourSeconds === "number" ? (
-                    <span className="inline-flex items-center gap-1 text-[#3b82f6]">
-                      <Clock className="h-3 w-3" /> +{Math.round(place.detourSeconds / 60)} min
-                    </span>
+                    <span className="inline-flex items-center gap-1" style={{ color: "var(--mx-accent-ink)" }}><Clock size={11} /> +{Math.round(place.detourSeconds / 60)} min</span>
                   ) : null}
                 </span>
               </span>
@@ -69,6 +59,6 @@ export function PlaceResultsList({ places, hoveredId, onHover, onHoverPrefetch, 
           </li>
         ))}
       </ul>
-    </motion.div>
+    </motion.section>
   );
 }

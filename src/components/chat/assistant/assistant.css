@@ -767,3 +767,14 @@
   animation: clyra-spin .8s linear infinite;
 }
 @keyframes clyra-spin { to { transform: rotate(360deg); } }
+
+/* A coding request in chat: the Vibe Coder harness, in the message. */
+.clyra-chat-code { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; margin-top: 4px; }
+.clyra-chat-code > div { width: 100%; }
+.clyra-chat-code__open {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--chat-secondary, #6b6f76); font: 500 12.5px/1 inherit; font-family: inherit; cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.clyra-chat-code__open:hover { background: rgba(16, 18, 24, .05); color: var(--chat-ink, #0d0d0d); }
+.clyra-chat-code__open:focus-visible { outline: 2px solid var(--chat-ink, #0d0d0d); outline-offset: 2px; }

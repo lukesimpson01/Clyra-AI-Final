@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PerimeterBeam } from "./PerimeterBeam";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Bug, CheckCircle2, Clipboard, Feather, File as FileIcon, FileSearch, Flame, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X, Zap } from "lucide-react";
+import { ArrowUp, Bug, CheckCircle2, Clipboard, File as FileIcon, FileSearch, Folder, Globe2, Image, ListChecks, Mic, MousePointer2, Plus, Square, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { QuestionComposer, type QuestionAnswers, type QuestionSet } from "./QuestionComposer";
-import { ChevronDown14, type TodoRow } from "./harness";
-import { AgentTodo } from "../chat/ChatAgentRun";
+import { ChevronDown14 } from "./harness";
+import { PlanCard } from "./PlanCard";
+import type { PlanRow } from "./activityModel";
 import "../chat/assistant/agent-actions.css";
 import { EffortSlider } from "../chat/EffortSlider";
 import type { ComposerEffortOption } from "../chat/ClyraComposerShell";
 import type { BriefPlatform } from "./appBrief";
 import { BriefHeader, BriefSkeleton, IOSHostNote } from "./BriefComponents";
 import { useClickAway } from "./useClickAway";
+import { useDictationController, appendDictatedText } from "../../lib/useDictationController";
+import { DictationMicButton, DictationStepsDrawer, DictationStrip } from "../chat/DictationMic";
 
 export type ComposerContext = {
   id: string;
@@ -65,6 +69,7 @@ export function Composer({
   onStop,
   placeholder = "Ask Clyra to make a change…",
   welcome = false,
+  draft = null,
   onCommandChange,
   question,
   questionSubmitting = false,
@@ -86,6 +91,8 @@ export function Composer({
   onStop: () => void;
   placeholder?: string;
   welcome?: boolean;
+  /** A prepared prompt from outside (a welcome entry point). A new id replaces what is typed and focuses the field. */
+  draft?: { id: number; text: string } | null;
   onCommandChange?: (command: ComposerCommand | null) => void;
   question?: QuestionSet | null;
   questionSubmitting?: boolean;
@@ -97,13 +104,15 @@ export function Composer({
   effortMenuOpen?: boolean;
   onEffortMenuOpenChange?: (open: boolean) => void;
   /** The agent's current plan, docked directly above the input card. */
-  plan?: readonly TodoRow[] | null;
+  plan?: readonly PlanRow[] | null;
   /** A chosen app type from the welcome chips. Shows the guided brief until the user types. */
   brief?: BriefPlatform | null;
   onBriefClear?: () => void;
 }) {
   const reducedMotion = useReducedMotion();
   const [value, setValue] = useState("");
+  /* the same microphone as Chat: speech fills the field and never sends */
+  const dictation = useDictationController((spoken) => { setValue((previous) => appendDictatedText(previous, spoken)); requestAnimationFrame(() => textareaRef.current?.focus()); });
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentMenu, setAttachmentMenu] = useState(false);
   const [command, setCommand] = useState<ComposerCommand | null>(null);
@@ -113,6 +122,13 @@ export function Composer({
   const [effortMenuInternal, setEffortMenuInternal] = useState(false);
   const effortMenu = effortControlled ? (effortMenuOpen ?? false) : effortMenuInternal;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (!draft) return;
+    setValue(draft.text);
+    const node = textareaRef.current;
+    if (!node) return;
+    requestAnimationFrame(() => { node.focus(); node.setSelectionRange(draft.text.length, draft.text.length); });
+  }, [draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // A hidden mirror of the field, laid out with identical classes, gives the
   // true content height without touching the live textarea's height. Setting
   // the textarea to "auto" to measure it would snap it, so the transition
@@ -218,11 +234,17 @@ export function Composer({
     // chat" must be sendable without forcing the user to type filler text.
     if (!text && attachments.length === 0 && contexts.length === 0) return;
     const contextBlock = contexts.length ? `${contexts.map((context) => `[${context.label}] ${context.detail}`).join("\n")}\n\n` : "";
-    const submitted = await Promise.resolve(onSubmit(contextBlock + text, attachments, command ?? undefined));
-    if (!submitted) return;
-    attachments.forEach((attachment) => attachment.preview && URL.revokeObjectURL(attachment.preview));
-    setAttachments([]);
+    /* Clear at once, as Codex does; if the request cannot be sent, the text comes back. */
+    const sentAttachments = attachments;
     setValue("");
+    setAttachments([]);
+    const submitted = await Promise.resolve(onSubmit(contextBlock + text, sentAttachments, command ?? undefined)).catch(() => false);
+    if (!submitted) {
+      setValue((current) => current || text);
+      setAttachments((current) => (current.length ? current : sentAttachments));
+      return;
+    }
+    sentAttachments.forEach((attachment) => attachment.preview && URL.revokeObjectURL(attachment.preview));
     setCommand(null);
     onCommandChange?.(null);
     contexts.forEach((context) => onRemoveContext(context.id));
@@ -264,43 +286,39 @@ export function Composer({
   const attached = attachments.length > 0 || contexts.length > 0;
   const activeEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[1];
   const effortOptions: ComposerEffortOption[] = useMemo(() => {
-    const iconFor = (id: "low" | "medium" | "high") =>
-      id === "low" ? (
-        <Feather size={15} strokeWidth={1.8} color="#8A919E" strokeLinecap="round" strokeLinejoin="round" />
-      ) : id === "medium" ? (
-        <Zap size={15} strokeWidth={1.8} color="#2A2D34" strokeLinecap="round" strokeLinejoin="round" fill="rgba(42,45,52,.12)" />
-      ) : (
-        <Flame size={15} strokeWidth={1.8} color="#D97706" strokeLinecap="round" strokeLinejoin="round" />
-      );
     return EFFORT_LEVELS.map((level) => ({
       value: level.id,
       label: level.name,
       hint: level.detail,
-      icon: iconFor(level.id),
       onPick: () => onEffortChange?.(level.id),
     }));
   }, [onEffortChange]);
-  const finished = !running && Boolean(plan?.length) && (plan as readonly TodoRow[]).every((item) => item.status === "completed");
   return (
     <div className={cn("relative px-3", welcome ? "pt-0" : "pb-2 pt-1")}>
       {plan?.length ? (
-        <motion.div
-          layout
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-          className={cn("mx-auto", welcome ? "max-w-[620px]" : "max-w-[680px]")}
-        >
-          <AgentTodo
-            live={Boolean(running) && !finished}
-            todos={plan.map((item, index) => ({ id: String(index), content: item.content, status: item.status === "completed" ? "completed" : item.status === "in_progress" ? "in_progress" : "pending" }))}
-          />
-        </motion.div>
+        /* A one-line spacer keeps the composer still; the plan grows upward from it over the thread. */
+        <div className={cn("relative mx-auto h-[38px]", welcome ? "max-w-[620px]" : "max-w-[688px]")}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-x-0 bottom-1 z-[6]"
+          >
+            <PlanCard plan={plan} live={Boolean(running)} className="shadow-[0_1px_2px_rgba(0,0,0,0.03)]" />
+          </motion.div>
+        </div>
       ) : null}
+      {/* A single blue beam travels the border on the welcome screen and while the agent is working. */}
+      <PerimeterBeam active={Boolean(welcome || running)} className={welcome ? "max-w-[620px]" : "max-w-[688px]"}>
       <motion.div
         data-running={running ? "" : undefined}
         data-welcome={welcome ? "" : undefined}
-        className={cn("cc-composer relative mx-auto overflow-visible rounded-[20px] border border-black/[0.08] bg-white", welcome ? "max-w-[620px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14]" : "max-w-[680px] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14] focus-within:shadow-[0_0_0_3px_rgba(30,111,255,0.07),0_12px_28px_-16px_rgba(20,24,32,0.16)]")}
+        className={cn(
+          "cc-composer relative mx-auto overflow-visible border bg-white",
+          welcome
+            ? "max-w-[620px] rounded-[22px] border-black/[0.10] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14]"
+            : "max-w-[688px] rounded-[22px] border-black/[0.10] shadow-[0_1px_2px_rgba(20,24,32,0.04),0_12px_28px_-16px_rgba(20,24,32,0.16)] focus-within:border-black/[0.14] focus-within:shadow-[0_0_0_3px_rgba(30,111,255,0.07),0_12px_28px_-16px_rgba(20,24,32,0.16)]",
+        )}
       >
         <AnimatePresence initial={false}>
           {question ? (
@@ -333,7 +351,9 @@ export function Composer({
         </AnimatePresence>
         {command ? (() => { const item = CODING_COMMANDS.find((candidate) => candidate.id === command)!; const Icon = item.icon; return <div className="px-3 pt-2"><span className="inline-flex h-5 items-center gap-1 rounded-[6px] bg-[var(--accent-blue)]/[0.1] px-1.5 text-[10.5px] font-medium text-[var(--accent-blue)]"><Icon className="h-3 w-3" strokeWidth={1.7} />{item.name}<button type="button" aria-label={`Remove ${item.name} command`} onClick={() => { setCommand(null); onCommandChange?.(null); }} className="ml-0.5 rounded text-[var(--accent-blue)]/70 hover:text-[var(--accent-blue)]"><X className="h-2.5 w-2.5" /></button></span></div>; })() : null}
         {brief ? <BriefHeader platform={brief} onClear={() => onBriefClear?.()} /> : null}
+        <DictationStepsDrawer dictation={dictation} />
         <div className="relative">
+        <DictationStrip dictation={dictation} height={fieldHeight ? Math.min(Number(fieldHeight) || 44, 120) : 44} />
         <div
           ref={mirrorRef}
           aria-hidden
@@ -373,13 +393,15 @@ export function Composer({
         </AnimatePresence>
         </div>
         {brief === "ios" ? <IOSHostNote /> : null}
-        <div className={cn("flex h-8 items-center gap-1 px-2 pb-1.5", welcome && "h-9 px-3 pb-2")}>
+        <div className={cn("flex h-10 items-center gap-1.5 px-2.5 pb-2", welcome && "px-3")}>
           <div ref={attachmentMenuRef} className="relative">
-            <button type="button" aria-label="Add attachment" onClick={() => setAttachmentMenu((open) => !open)} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><Plus className="h-4 w-4" strokeWidth={1.7} /></button>
+            <button type="button" aria-label="Add attachment" onClick={() => setAttachmentMenu((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover)]"><Plus className="h-[18px] w-[18px]" strokeWidth={1.6} /></button>
             <AnimatePresence>{attachmentMenu ? <motion.div initial={{ opacity: 0, y: 4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 3, scale: 0.98 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }} className="absolute bottom-8 left-0 z-30 w-[176px] rounded-[10px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">
               {[["Image", Image, () => imageInputRef.current?.click()], ["File", FileIcon, () => fileInputRef.current?.click()], ["Folder", Folder, () => folderInputRef.current?.click()], ["Paste from clipboard", Clipboard, pasteClipboard]].map(([label, Icon, action]) => { const IconComponent = Icon as typeof Image; return <button key={label as string} type="button" onClick={action as () => void} className="flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[11.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"><IconComponent className="h-3.5 w-3.5 text-[var(--text-tertiary)]" strokeWidth={1.65} />{label as string}</button>; })}
             </motion.div> : null}</AnimatePresence>
           </div>
+          {/* As in Codex: attachments on the left; the model/effort picker, voice and send together on the right. */}
+          <span className="flex-1" />
           <div className="relative">
             <button
               ref={effortButtonRef}
@@ -409,15 +431,16 @@ export function Composer({
                   document.body,
                 )
               : null}
-          </div><span className="flex-1" />
-          <button type="button" aria-label="Voice input" onClick={() => textareaRef.current?.focus()} className="flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><Mic className="h-3.5 w-3.5" strokeWidth={1.65} /></button>
-          {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--app-background)] transition-colors duration-150 hover:opacity-90 active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-[30px] w-[30px] items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[var(--accent-blue)] text-white hover:brightness-110" : "bg-[var(--surface-muted)] text-[var(--text-disabled)]")}><ArrowUp className="h-3.5 w-3.5" strokeWidth={2.15} /></button>}
+          </div>
+          <DictationMicButton dictation={dictation} />
+          {running ? <button type="button" onClick={onStop} aria-label="Stop" className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--app-background)] transition-colors duration-150 hover:opacity-90 active:scale-[0.96]"><Square className="h-[10px] w-[10px]" fill="currentColor" /></button> : <button type="button" onClick={submit} disabled={!value.trim() && attachments.length === 0 && contexts.length === 0} aria-label="Send" className={cn("flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 active:scale-[0.96]", value.trim() || attachments.length || contexts.length ? "bg-[var(--accent-blue)] text-white hover:brightness-110" : "bg-[var(--accent-blue)]/45 text-white")}><ArrowUp className="h-4 w-4" strokeWidth={2.1} /></button>}
         </div>
             </motion.div>
           )}
         </AnimatePresence>
         <AnimatePresence>{commandQuery !== null && visibleCommands.length ? <motion.div initial={{ opacity: 0, y: 4, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 3, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }} className="clyra-command-palette absolute bottom-[calc(100%+7px)] left-0 z-40 w-full overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--composer-surface)] p-1 shadow-[0_10px_24px_rgba(15,23,42,0.11)]">{visibleCommands.map((item, index) => { const Icon = item.icon; return <button key={item.id} type="button" onMouseEnter={() => setCommandIndex(index)} onClick={() => selectCommand(item.id)} className={cn("flex h-9 w-full items-center gap-2 rounded-[6px] px-2.5 text-left transition-colors", index === commandIndex ? "bg-[var(--surface-hover)]" : "hover:bg-[var(--surface-hover)]")}><Icon className="h-3.5 w-3.5 text-[var(--text-secondary)]" strokeWidth={1.65} /><span className="min-w-0 flex-1"><span className="block text-[11.5px] font-medium text-[var(--text-secondary)]">/{item.id}</span></span><span className="truncate text-[10.5px] text-[var(--text-tertiary)]">{item.description}</span></button>; })}</motion.div> : null}</AnimatePresence>
       </motion.div>
+      </PerimeterBeam>
       <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files, "image"); event.currentTarget.value = ""; }} />
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
       <input ref={folderInputRef} type="file" multiple className="hidden" onChange={(event) => { if (event.currentTarget.files) addFiles(event.currentTarget.files, "folder"); event.currentTarget.value = ""; }} />

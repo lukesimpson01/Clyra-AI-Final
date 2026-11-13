@@ -11,6 +11,8 @@ import { safeFetchUserUrl } from "../security/safe-fetch";
 import * as recorder from "./recorder";
 import { blocksToMarkdown, markdownToBlocks, spanText, parseSpans, type Block } from "./blocks";
 import { registerNotesBrowseRoutes } from "./browse";
+import * as history from "./history";
+import { exportPage, loadDoc, toHtml, type ExportFormat } from "./export";
 import type { Rating } from "./fsrs";
 
 /* Drafts carry no ids; the store needs them before it can write parent
@@ -284,7 +286,24 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   }));
   app.patch("/api/notes/pages/:id", wrap((req) => store.updatePage(req.params.id, req.body)));
   app.put("/api/notes/pages/:id/blocks", wrap((req) => store.saveBlocks(req.params.id, (req.body.blocks || []) as Block[])));
-  app.post("/api/notes/pages/:id/agent-edit", wrap((req) => store.applyAgentEdit(req.params.id, req.body || {})));
+  /* Accepted chat edits are committed before and after, tied to the chat message they came from. */
+  app.post("/api/notes/pages/:id/agent-edit", wrap((req) => {
+    const meta = { messageId: req.body?.messageId, chatId: req.body?.chatId, editId: req.body?.editId };
+    history.snapshot(req.params.id, "Before Clyra's edit", { ...meta, kind: "before" });
+    const result = store.applyAgentEdit(req.params.id, req.body || {});
+    if (result.ok) {
+      const label = `Clyra: ${String(req.body?.summary || (req.body?.kind === "replace" ? "edited text" : "added content")).slice(0, 90)}`;
+      const saved = history.snapshot(req.params.id, label, { ...meta, kind: "after" });
+      return { ...result, version: saved.ok ? saved.sha : null };
+    }
+    return result;
+  }));
+  app.get("/api/notes/pages/:id/history", wrap((req) => history.list(req.params.id)));
+  app.post("/api/notes/pages/:id/history", wrap((req) => history.snapshot(req.params.id, String(req.body?.label || "Saved version"), { ...(req.body?.meta || {}), kind: "manual" })));
+  app.get("/api/notes/pages/:id/history/:sha", wrap((req, res) => { const found = history.read(req.params.id, req.params.sha); if (!found) { res.status(404); return { error: "Version not found." }; } return found; }));
+  app.post("/api/notes/pages/:id/history/:sha/restore", wrap((req) => history.restore(req.params.id, req.params.sha)));
+  /* Markdown to blocks, so a proposed change can be previewed with the real editor before it is applied. */
+  app.post("/api/notes/markdown/blocks", wrap((req) => markdownToBlocks(String(req.body?.markdown || ""))));
   app.post("/api/notes/pages/:id/move", wrap((req) => store.movePage(req.params.id, req.body.parentId ?? null, Number(req.body.index ?? 0))));
   app.post("/api/notes/pages/:id/duplicate", wrap((req) => store.duplicatePage(req.params.id)));
   app.delete("/api/notes/pages/:id", wrap((req) => store.trashPage(req.params.id)));
@@ -310,6 +329,8 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.patch("/api/notes/properties/:id", wrap((req) => store.updateProperty(req.params.id, req.body)));
   app.delete("/api/notes/properties/:id", wrap((req) => store.deleteProperty(req.params.id)));
   app.post("/api/notes/databases/:id/views", wrap((req) => store.createView(req.params.id, req.body)));
+  app.get("/api/notes/databases/:id/automations", wrap((req) => store.listAutomations(req.params.id)));
+  app.put("/api/notes/databases/:id/automations", wrap((req) => store.saveAutomations(req.params.id, req.body?.automations)));
   app.patch("/api/notes/views/:id", wrap((req) => store.updateView(req.params.id, req.body)));
   app.delete("/api/notes/views/:id", wrap((req) => store.deleteView(req.params.id)));
   app.post("/api/notes/views/:id/query", wrap((req) => store.queryView(req.params.id, req.body || {})));
@@ -543,6 +564,7 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   app.post("/api/notes/chats", wrap((req, res) => { res.status(201); return store.createChat(req.body?.title, req.body?.pageId); }));
   app.get("/api/notes/chats/:id", wrap((req) => store.getChat(req.params.id)));
   app.post("/api/notes/chats/:id/messages", wrap((req) => store.addChatMessage(req.params.id, req.body || {})));
+  app.patch("/api/notes/chats/:id/messages/:messageId", wrap((req) => store.updateChatMessageRun(req.params.id, req.params.messageId, req.body?.run)));
   app.patch("/api/notes/chats/:id", wrap((req) => store.renameChat(req.params.id, String(req.body?.title || ""))));
   app.delete("/api/notes/chats/:id", wrap((req) => store.deleteChat(req.params.id)));
   app.post("/api/notes/chats/prune", wrap((req) => store.pruneEmptyChats(req.body?.keepId)));
@@ -604,6 +626,19 @@ export function registerNotesRoutes(app: express.Application, express_: typeof e
   /* ---- import / export ---- */
   app.post("/api/notes/import/markdown", wrap((req, res) => { res.status(201); return store.importMarkdown(String(req.body.markdown || ""), req.body); }));
   app.post("/api/notes/export", wrap(() => store.exportAll()));
+  /* One page as Word, Markdown, PDF or print-ready HTML. */
+  app.get("/api/notes/pages/:id/export", async (req, res) => {
+    const format = String(req.query.format || "docx") as ExportFormat;
+    if (!["docx", "md", "pdf", "html"].includes(format)) { res.status(400).json({ error: "Unknown format." }); return; }
+    try {
+      const result = await exportPage(req.params.id, format);
+      if ("error" in result) { res.status(result.status).json({ error: result.error }); return; }
+      res.setHeader("Content-Type", result.type);
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+      res.setHeader("X-Export-Filename", encodeURIComponent(result.filename));
+      res.send(result.body);
+    } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "Export failed." }); }
+  });
 
   /* ---- AI ---- */
   app.get("/api/notes/ai/status", (_req, res) => res.json({ configured: ai.aiConfigured(), actions: Object.keys(ai.INLINE_ACTIONS) }));

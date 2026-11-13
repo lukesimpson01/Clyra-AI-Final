@@ -939,13 +939,15 @@ export function createRecord(databaseId: string, input: Record<string, unknown> 
     title: String(input.title ?? (titleProperty ? values[titleProperty.id] ?? "" : "")),
     icon: (input.icon as string) || null,
   })!;
-  setRecordValues(String(page.id), values);
+  setRecordValues(String(page.id), values, { quiet: true });
+  runAutomations(databaseId, String(page.id), { added: true, changed: [] });
   return getPage(String(page.id));
 }
 
-export function setRecordValues(recordId: string, values: Record<string, unknown>) {
+export function setRecordValues(recordId: string, values: Record<string, unknown>, options: { quiet?: boolean } = {}) {
   const record = db.prepare("SELECT database_id FROM pages2 WHERE id=?").get(recordId) as { database_id: string } | undefined;
   if (!record) return { error: "Record not found" };
+  const before = options.quiet ? null : (recordValues(recordId) as Record<string, unknown>);
   const properties = new Map(
     (db.prepare("SELECT * FROM db_properties WHERE database_id=?").all(record.database_id) as Array<Record<string, unknown>>)
       .map((row) => [String(row.id), propertyRow(row)]),
@@ -972,7 +974,67 @@ export function setRecordValues(recordId: string, values: Record<string, unknown
     db.prepare("UPDATE pages2 SET updated_at=datetime('now') WHERE id=?").run(recordId);
   })();
   indexPage(recordId);
+  if (before) {
+    const after = recordValues(recordId) as Record<string, unknown>;
+    const changed = Object.keys(values).filter((id) => JSON.stringify(before[id] ?? null) !== JSON.stringify(after[id] ?? null));
+    if (changed.length) runAutomations(record.database_id, recordId, { added: false, changed });
+  }
   return { ok: true, values: recordValues(recordId) };
+}
+
+/* ------------------------------------------------------------ automations
+   Database rules, as in Notion: when a page is added, or a property changes
+   (optionally to one value), set properties or send a notification. Rules
+   live with the database's layout settings; a rule's own changes never
+   re-trigger rules, so nothing can loop. */
+export type AutomationRule = {
+  id: string; name: string; enabled: boolean;
+  trigger: { type: "added" } | { type: "changed"; property: string; to?: unknown };
+  actions: Array<{ type: "set"; property: string; value: unknown } | { type: "notify"; text: string }>;
+};
+let automating = false;
+const sameValue = (a: unknown, b: unknown) => {
+  const norm = (v: unknown) => (Array.isArray(v) ? v.map(String).sort().join(",") : v && typeof v === "object" && "start" in (v as Record<string, unknown>) ? String((v as Record<string, unknown>).start) : v === null || v === undefined ? "" : String(v));
+  return norm(a) === norm(b);
+};
+export function listAutomations(databaseId: string): AutomationRule[] {
+  const database = getDatabase(databaseId);
+  return (database?.page_layout?.automations as AutomationRule[] | undefined) ?? [];
+}
+export function saveAutomations(databaseId: string, rules: unknown) {
+  const database = getDatabase(databaseId);
+  if (!database) return { error: "Database not found" };
+  const clean = (Array.isArray(rules) ? rules : []).slice(0, 50).map((rule: any) => ({
+    id: String(rule?.id || newId()), name: String(rule?.name || "Automation").slice(0, 120), enabled: rule?.enabled !== false,
+    trigger: rule?.trigger?.type === "changed" ? { type: "changed", property: String(rule.trigger.property || ""), ...(rule.trigger.to !== undefined && rule.trigger.to !== "" ? { to: rule.trigger.to } : {}) } : { type: "added" },
+    actions: (Array.isArray(rule?.actions) ? rule.actions : []).slice(0, 10).map((action: any) => action?.type === "notify"
+      ? { type: "notify", text: String(action.text || "").slice(0, 300) }
+      : { type: "set", property: String(action?.property || ""), value: action?.value ?? null }),
+  }));
+  db.prepare("UPDATE databases SET page_layout=? WHERE id=?").run(JSON.stringify({ ...database.page_layout, automations: clean }), databaseId);
+  return { ok: true, automations: clean };
+}
+function runAutomations(databaseId: string, recordId: string, event: { added: boolean; changed: string[] }) {
+  if (automating) return;
+  const rules = listAutomations(databaseId).filter((rule) => rule.enabled);
+  if (!rules.length) return;
+  const values = recordValues(recordId) as Record<string, unknown>;
+  const fires = rules.filter((rule) => rule.trigger.type === "added"
+    ? event.added
+    : !event.added && event.changed.includes(rule.trigger.property) && (rule.trigger.to === undefined || sameValue(values[rule.trigger.property], rule.trigger.to)));
+  if (!fires.length) return;
+  automating = true;
+  try {
+    const title = String((getPage(recordId) as Record<string, unknown> | null)?.title || "Untitled");
+    for (const rule of fires) {
+      const updates: Record<string, unknown> = {};
+      for (const action of rule.actions) {
+        if (action.type === "set" && action.property) updates[action.property] = action.value === "@now" ? { start: new Date().toISOString().slice(0, 10) } : action.value;
+        if (action.type === "notify") addInboxEvent({ kind: "automation", title: rule.name, body: `${title}${action.text ? `: ${action.text}` : ""}`, pageId: recordId });
+      }
+      if (Object.keys(updates).length) setRecordValues(recordId, updates, { quiet: true });
+    }
+  } finally { automating = false; }
 }
 
 const ROLLUP_FUNCTIONS = ["count", "count_values", "sum", "average", "min", "max", "latest", "earliest", "percent_checked", "show_original"] as const;
@@ -1648,8 +1710,16 @@ export function getChat(id: string): Record<string, unknown> | null {
       ...row,
       sources: unjson<unknown[]>(row.sources, []),
       citations: unjson<unknown[]>(row.citations, []),
+      run: unjson<Record<string, unknown> | null>(row.run, null),
     }));
   return { ...chat, messages };
+}
+
+/* A reply's run changes after it is saved: a proposed edit gets accepted or dismissed. */
+export function updateChatMessageRun(chatId: string, messageId: string, run: unknown) {
+  if (!run || typeof run !== "object") return { error: "run is required" };
+  const result = db.prepare("UPDATE chat_messages SET run=? WHERE id=? AND chat_id=?").run(JSON.stringify(run).slice(0, 400_000), messageId, chatId);
+  return { ok: result.changes > 0 };
 }
 
 export function createChat(title?: string, pageId?: string | null) {
@@ -1666,9 +1736,10 @@ export function addChatMessage(chatId: string, message: Record<string, unknown>)
   const sort = (db.prepare("SELECT coalesce(max(sort),-1) AS m FROM chat_messages WHERE chat_id=?").get(chatId) as { m: number }).m + 1;
   const id = newId();
   db.prepare(
-    "INSERT INTO chat_messages(id,chat_id,role,text,sources,citations,searched,sort) VALUES(?,?,?,?,?,?,?,?)",
+    "INSERT INTO chat_messages(id,chat_id,role,text,sources,citations,searched,sort,run) VALUES(?,?,?,?,?,?,?,?,?)",
   ).run(id, chatId, String(message.role || "user"), String(message.text || ""),
-    json(message.sources || []), json(message.citations || []), (message.searched as string) || null, sort);
+    json(message.sources || []), json(message.citations || []), (message.searched as string) || null, sort,
+    message.run && typeof message.run === "object" ? JSON.stringify(message.run).slice(0, 400_000) : null);
   if (message.role === "user" && (chat.title === "New chat" || !chat.title.trim())) {
     const title = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 70) || "New chat";
     db.prepare("UPDATE chats SET title=? WHERE id=?").run(title, chatId);

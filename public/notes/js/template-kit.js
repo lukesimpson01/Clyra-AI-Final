@@ -6,7 +6,16 @@
    because a tracker you can sort and drag is better than a table you can only type into. */
 import { inlineMarkdown } from "./editor.js";
 
-export const b = (type, text = "", props = {}, children = []) => ({ type, text: inlineMarkdown(text), props, children });
+/* Inline markdown is parsed on first read, not when the module loads: the
+   editor and its rich-text helpers import each other, so parsing here would
+   reach into a module that has not finished initialising. */
+export const b = (type, text = "", props = {}, children = []) => {
+  let parsed;
+  const block = { type, props, children };
+  Object.defineProperty(block, "raw", { value: text, enumerable: false });
+  Object.defineProperty(block, "text", { enumerable: true, configurable: true, get: () => (parsed ??= inlineMarkdown(text)) });
+  return block;
+};
 export const h1 = (text) => b("h1", text);
 export const h2 = (text) => b("h2", text);
 export const h3 = (text) => b("h3", text);

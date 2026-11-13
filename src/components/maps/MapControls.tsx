@@ -27,8 +27,8 @@ const MODES: { id: Basemap; label: string }[] = [
   { id: "satellite", label: "Satellite" },
 ];
 
-const card = "overflow-hidden rounded-xl bg-white shadow-[0_2px_10px_rgba(15,23,42,.22)]";
-const btn = "grid h-10 w-10 place-items-center text-slate-600 outline-none transition-colors hover:bg-slate-100 focus-visible:bg-slate-100 active:bg-slate-200";
+const card = "mx-ctrl-group";
+const btn = "mx-ctrl";
 
 /** Esri satellite tile covering the map centre, used as the Layers thumbnail. */
 function thumbUrl(center: [number, number]) {
@@ -73,11 +73,11 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
     <>
       {/* Tools — top right */}
       <div style={{ right: rightInset }} className="pointer-events-none absolute top-4 z-30 flex flex-col items-end gap-2 transition-[right] duration-300 ease-out">
-        <div className={"pointer-events-auto divide-y divide-slate-200 " + card}>
+        <div className={"pointer-events-auto " + card}>
           <button type="button" aria-label={is3d ? "Switch to 2D" : "Switch to 3D"} title={is3d ? "2D" : "3D"} className={btn + " text-[11px] font-bold"} onClick={() => getMap()?.easeTo({ pitch: is3d ? 0 : 60, duration: 600 })}>
             {is3d ? "2D" : <Box className="h-[18px] w-[18px]" />}
           </button>
-          <button type="button" aria-label={flying ? "Stop Flyover" : "Start Flyover"} title="Flyover" className={btn + (flying ? " bg-blue-50 text-blue-600" : "")} onClick={onFlyover}>
+          <button type="button" aria-label={flying ? "Stop Flyover" : "Start Flyover"} data-on={flying} title="Flyover" className={btn} onClick={onFlyover}>
             <Orbit className="h-[18px] w-[18px]" />
           </button>
           <button type="button" aria-label="Download this area for offline use" title={downloadLabel ?? "Save area offline"} className={btn + " text-[10px] font-bold"} onClick={onDownload}>
@@ -85,8 +85,8 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
           </button>
         </div>
         {showCompass ? (
-          <button type="button" aria-label="Reset north" title="Reset north" className={"pointer-events-auto grid h-10 w-10 place-items-center rounded-full bg-white shadow-[0_2px_10px_rgba(15,23,42,.22)] transition-transform active:scale-90"} onClick={() => getMap()?.easeTo({ bearing: 0, pitch: 0, duration: 500 })}>
-            <Compass className="h-5 w-5 text-slate-700" style={{ transform: `rotate(${-bearing}deg)` }} />
+          <button type="button" aria-label="Reset north" title="Reset north" className="pointer-events-auto mx-ctrl mx-ctrl--solo !rounded-full" onClick={() => getMap()?.easeTo({ bearing: 0, pitch: 0, duration: 500 })}>
+            <Compass className="h-5 w-5" style={{ transform: `rotate(${-bearing}deg)` }} />
           </button>
         ) : null}
       </div>
@@ -94,7 +94,7 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
       {/* Layers tile — bottom left */}
       <div style={{ left: leftInset + 16 }} className="pointer-events-none absolute bottom-[68px] z-30 transition-[left] duration-300 ease-out">
         {menu ? (
-          <div className={"pointer-events-auto mb-2 flex gap-1.5 p-1.5 " + card}>
+          <div className="pointer-events-auto mx-pop mb-2 flex gap-1.5 p-1.5">
             {MODES.map((m) => (
               <button
                 key={m.id}
@@ -103,14 +103,14 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
                   onBasemap(m.id);
                   setMenu(false);
                 }}
-                className={"relative w-[72px] rounded-lg p-1 text-center text-[11.5px] font-semibold outline-none transition-colors " + (basemap === m.id ? "bg-[#e8f0fe] text-[#1a5fb4]" : "text-slate-600 hover:bg-slate-100")}
+                className={"relative w-[72px] rounded-lg p-1 text-center text-[11.5px] font-semibold outline-none transition-colors " + (basemap === m.id ? "bg-[#0066ff]/10 text-[#0052cc]" : "text-[#6b6f76] hover:bg-[#f3f4f6]")}
               >
                 <span
                   className="mb-1 block h-12 w-full rounded-md bg-cover bg-center"
                   style={{ backgroundImage: m.id === "satellite" ? `url(${thumbUrl(center)})` : undefined, backgroundColor: m.id === "driving" ? "#fde7a8" : "#e9efe6" }}
                 />
                 {m.label}
-                {basemap === m.id ? <Check className="absolute right-2 top-2 h-3.5 w-3.5 rounded-full bg-white p-0.5 text-[#1a5fb4]" /> : null}
+                {basemap === m.id ? <Check className="absolute right-2 top-2 h-3.5 w-3.5 rounded-full bg-white p-0.5 text-[#0052cc]" /> : null}
               </button>
             ))}
           </div>
@@ -119,7 +119,7 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
           type="button"
           aria-label="Map layers"
           onClick={() => setMenu((v) => !v)}
-          className="pointer-events-auto relative block h-[62px] w-[62px] overflow-hidden rounded-xl border-2 border-white bg-cover bg-center shadow-[0_2px_10px_rgba(15,23,42,.35)] outline-none transition-transform active:scale-95"
+          className="pointer-events-auto relative block h-[54px] w-[54px] overflow-hidden rounded-[14px] bg-cover bg-center shadow-[0_0_0_2px_#fff,0_4px_14px_-4px_rgba(16,18,24,.4)] outline-none transition-transform active:scale-95"
           style={{ backgroundImage: `url(${thumbUrl(center)})` }}
         >
           <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1 pb-1 pt-4 text-[11px] font-semibold text-white">Layers</span>
@@ -128,13 +128,13 @@ export function MapControls({ getMap, basemap, onBasemap, onLocate, locating, on
 
       {/* Look Around, locate, zoom — bottom right */}
       <div style={{ right: rightInset }} className="pointer-events-none absolute bottom-[68px] z-30 flex flex-col items-end gap-2 transition-[right] duration-300 ease-out">
-        <button type="button" aria-label="Look Around" title="Look Around" className={"pointer-events-auto grid h-10 w-10 place-items-center rounded-xl bg-white text-amber-500 shadow-[0_2px_10px_rgba(15,23,42,.22)] outline-none transition-transform hover:scale-105 active:scale-90"} onClick={onLookAround}>
-          <PersonStanding className="h-6 w-6" />
+        <button type="button" aria-label="Look Around" title="Look Around" className="pointer-events-auto mx-ctrl mx-ctrl--solo" onClick={onLookAround}>
+          <PersonStanding />
         </button>
-        <button type="button" aria-label="Show my location" title="Your location" className={"pointer-events-auto grid h-10 w-10 place-items-center rounded-xl bg-white text-slate-700 shadow-[0_2px_10px_rgba(15,23,42,.22)] outline-none transition-transform hover:scale-105 active:scale-90"} onClick={onLocate}>
-          {locating ? <Locate className="h-5 w-5 animate-pulse text-blue-500" /> : <LocateFixed className="h-5 w-5" />}
+        <button type="button" aria-label="Show my location" title="Your location" className="pointer-events-auto mx-ctrl mx-ctrl--solo" onClick={onLocate}>
+          {locating ? <Locate className="h-5 w-5 animate-pulse text-[#0066ff]" /> : <LocateFixed className="h-5 w-5" />}
         </button>
-        <div className={"pointer-events-auto divide-y divide-slate-200 " + card}>
+        <div className={"pointer-events-auto " + card}>
           <button type="button" aria-label="Zoom in" className={btn} onClick={() => getMap()?.zoomIn({ duration: 250 })}>
             <Plus className="h-[18px] w-[18px]" />
           </button>

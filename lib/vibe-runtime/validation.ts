@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { ValidationEvidence } from "./runtime";
+import { createProcessEnvironment, sanitizeToolOutputForModel } from "../clyra-code/security/environment";
 
 type PackageJson = { scripts?: Record<string, string> };
 
@@ -21,9 +22,9 @@ async function collectJavaScriptFiles(directory: string): Promise<string[]> {
 
 function run(command: string, args: string[], cwd: string, timeoutMs = 120_000) {
   return new Promise<{ exitCode: number; output: string }>((resolve) => {
-    const child = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"], env: createProcessEnvironment() });
     let output = "";
-    const push = (value: Buffer) => { output = `${output}${value.toString()}`.slice(-24_000); };
+    const push = (value: Buffer) => { output = `${output}${sanitizeToolOutputForModel(value.toString())}`.slice(-24_000); };
     child.stdout.on("data", push);
     child.stderr.on("data", push);
     const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);

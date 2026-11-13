@@ -9,7 +9,7 @@
    does not lose what you were half way through typing. */
 import { el, clear, icon, iconButton, append } from "./dom.js";
 import { api } from "./api.js";
-import { state, withError } from "./state.js";
+import { state, withError, activeTab } from "./state.js";
 import { readPreference, writePreference } from "./preferences.js";
 import { calculatorPanel } from "./panels/calculator.js";
 import { browserPanel } from "./panels/browser.js";
@@ -171,24 +171,21 @@ export class Rail {
     const node = el("div", { class: "rail-chat" });
     let view = null;
     let attachedFor = null;
-    /* The rail is constructed before the workspace has loaded, so a chat
-       panel built at that moment renders the "AI is not configured" state
-       and would keep it forever. It is rebuilt once the answer changes. */
-    let builtWithAi = null;
+    /* The chat itself is shared with the full-screen view (views/chat.js),
+       which also rebuilds it if it was made before AI was configured. */
     return {
       node,
       focus: () => view?.focus?.(),
       reattach() { attachedFor = null; return this.refresh(); },
       refresh: async () => {
-        if (view && builtWithAi !== state.aiConfigured) {
-          view.destroy?.();
-          clear(node);
-          view = null;
-          attachedFor = null;
-        }
-        if (!view) {
-          builtWithAi = state.aiConfigured;
+        /* The chat is shared with the full-screen view. Bring it here only
+           when this panel is really showing and full screen is not, or a
+           background refresh would pull it out of the full-screen chat. */
+        const showing = this.context.railOpen?.() && this.current === "chat" && activeTab()?.kind !== "chat";
+        if (!showing) return;
+        if (!view || !view.isIn(node)) {
           view = renderChat(node, this.context, { compact: true });
+          attachedFor = null;
         }
         const pageId = this.context.currentPageId?.();
         view.setPage?.(pageId || null);

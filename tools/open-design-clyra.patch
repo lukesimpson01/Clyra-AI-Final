@@ -1492,3 +1492,53 @@ index 0000000..0000000
 +  }
 +}
 
+diff --git a/apps/web/app/layout.tsx b/apps/web/app/layout.tsx
+index bf272b8..0857199 100644
+--- a/apps/web/app/layout.tsx
++++ b/apps/web/app/layout.tsx
+@@ -12,6 +12,8 @@ import '../src/components/TestCampaignModal.module.css';
+ import '../src/components/HoverTouchpointOverlay.module.css';
+ import '../src/components/ProductionCampaignBadge.module.css';
+ import '../src/components/OnboardingWelcome.module.css';
++// Clyra's theme loads last so the Design tab matches Notes and Code.
++import '../src/styles/clyra-theme.css';
+ 
+ export const metadata: Metadata = {
+   title: 'OpenDesign',
+diff --git a/apps/web/src/styles/clyra-theme.css b/apps/web/src/styles/clyra-theme.css
+new file mode 100644
+index 0000000..7e845cd
+--- /dev/null
++++ b/apps/web/src/styles/clyra-theme.css
+@@ -0,0 +1,31 @@
++/* Clyra theme for the Design tab.
++
++   The Design tab is one workspace with Clyra Notes and Clyra Code, so it
++   uses their visual language: the system UI face for every line (no Georgia
++   headline, no Albert Sans), Notes' warm near-black ink, its blue accent for
++   the primary action, and a headline without the highlighter plate and
++   typing caret. Kept as one stylesheet loaded last so the upstream styles
++   stay untouched and this file is the whole difference. */
++:root {
++  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
++  --serif: var(--sans);
++  --clyra-ink: #2c2c2b;
++  --clyra-ink-2: #6b6b6b;
++  --clyra-accent: #2383e2;
++}
++html, body, button, input, textarea, select { font-family: var(--sans); }
++
++.home-hero__title {
++  font-family: var(--sans) !important;
++  font-weight: 700;
++  font-size: 38px;
++  line-height: 1.12;
++  letter-spacing: -0.035em;
++  color: var(--clyra-ink);
++}
++.home-hero__title [class*="plate"], .home-hero__title [class*="caret"] { display: none !important; }
++.home-hero__title [class*="ink"] { color: inherit !important; background: none !important; }
++.home-hero__subtitle { color: var(--clyra-ink-2); font-size: 15px; }
++.home-hero__brand-name { font-family: var(--sans); }
++[data-theme="dark"] .home-hero__title { color: #f1f1ef; }
++@media (prefers-color-scheme: dark) { html:not([data-theme]) .home-hero__title { color: #f1f1ef; } }

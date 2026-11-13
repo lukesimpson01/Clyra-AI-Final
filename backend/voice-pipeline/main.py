@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from config import load_config
 from echo_llm import router as echo_router
+from llm_gateway import router as llm_gateway_router
 from bot import run_bot
 from whisper_cpp_stt import shutdown_warm_server
 
@@ -40,6 +41,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Clyra Voice Pipeline", version="3.0.0", lifespan=lifespan)
 app.include_router(echo_router)
+app.include_router(llm_gateway_router)
 
 config = load_config()
 

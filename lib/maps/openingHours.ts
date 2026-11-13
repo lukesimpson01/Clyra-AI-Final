@@ -107,3 +107,17 @@ export function openingState(raw: string | undefined, now: Date = new Date()): H
   }
   return { state: "closed" };
 }
+
+
+/** The whole week as display rows ("Monday", "9:00 am – 5:00 pm"), or null when the string isn't understood. */
+export function weeklyHours(raw: string | undefined): Array<{ day: string; text: string }> | null {
+  if (!raw) return null;
+  const rules = parse(raw);
+  if (!rules) return null;
+  return DAY_NAMES.map((day, index) => {
+    if (rules === "24/7") return { day, text: "Open 24 hours" };
+    const spans = spansFor(rules, index);
+    if (!spans || spans === "off") return { day, text: "Closed" };
+    return { day, text: spans.map(([a, b]) => `${fmt(a)} – ${fmt(b)}`).join(", ") };
+  });
+}

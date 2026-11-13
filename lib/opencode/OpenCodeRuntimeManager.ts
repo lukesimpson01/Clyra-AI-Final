@@ -105,6 +105,7 @@ type TaskLedger = {
   status: "executing" | "completed" | "failed" | "cancelled";
   planPath?: string;
   todos: Array<{ id: string; title: string; status: "pending" | "in_progress" | "completed" }>;
+  designReviewed?: boolean;
   modifiedFiles: string[];
   verification: { passed: string[]; failed: string[] };
   createdAt: number;
@@ -434,7 +435,8 @@ export class OpenCodeRuntimeManager {
     const ledger = await fs.promises.readFile(ledgerPath, "utf8")
       .then((value) => JSON.parse(value) as TaskLedger)
       .catch(() => undefined);
-    if (!ledger || !["greenfield", "large"].includes(ledger.complexity)) return undefined;
+    if (!ledger || ["trivial", "small", "investigative"].includes(ledger.complexity)) return undefined;
+    const substantial = ["greenfield", "large"].includes(ledger.complexity);
 
     const diff = await this.client(project.projectPath).session.diff({ path: { id: sessionId }, throwOnError: true }).catch(() => []);
     const sessionFiles = (diff as Array<{ file?: string }>).map((entry) => entry.file).filter((file): file is string => Boolean(file));
@@ -454,11 +456,23 @@ export class OpenCodeRuntimeManager {
     if (singleFileTask) {
       return implementationFiles.length ? undefined : "the requested file was not created";
     }
-    const minimumFiles = 3;
+    /* Medium changes, refactors and fixes must also touch real code; only new products need several files. */
+    const minimumFiles = substantial ? 3 : 1;
     if (implementationFiles.length < minimumFiles) {
-      return `only ${implementationFiles.length} implementation file${implementationFiles.length === 1 ? "" : "s"} changed (need a real multi-file implementation)`;
+      return substantial
+        ? `only ${implementationFiles.length} implementation file${implementationFiles.length === 1 ? "" : "s"} changed (need a real multi-file implementation)`
+        : "no project file was changed yet";
     }
-    if (!hasValidation) return "no real build, typecheck, test, or lint command ran";
+    const projectHasChecks = await fs.promises.readFile(path.join(project.projectPath, "package.json"), "utf8")
+      .then((raw) => /"(?:build|typecheck|test|lint)"\s*:/.test(raw)).catch(() => false);
+    if (!hasValidation && (substantial || projectHasChecks)) return "no real build, typecheck, test, or lint command ran";
+    /* Interfaces get one design pass before they count as done, judged like a product designer would. */
+    const uiWork = implementationFiles.some((file) => /\.(?:tsx|jsx|vue|svelte|html|css|scss|swift)$/i.test(file));
+    if (uiWork && !ledger.designReviewed && /(?:design|ui|page|app|screen|landing|component|layout|style|dashboard|site|website|interface)/i.test(ledger.objective)) {
+      ledger.designReviewed = true;
+      await fs.promises.writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8").catch(() => undefined);
+      return "the interface has not had its design review: look at the running preview (or the rendered markup) as a product designer and fix hierarchy, spacing on a consistent scale, typography, alignment, empty/loading/error states, hover and focus states, contrast, and narrow-width layout. Remove anything generic or placeholder-looking, then re-run the build";
+    }
     return undefined;
   }
 

@@ -1,55 +1,45 @@
 /**
- * Stable human-readable project labels for the Clyra Code workspace.
- *
- * The project list may have a temporary prompt/placeholder as its stored name.
- * Derive a display-only label from the project's own manifest or HTML title
- * without ever modifying the persisted project name or ID.
+ * Human-friendly project titles returned by Clyra Code.
+ * Pure helper: it reads no files and never changes a saved project name.
  */
-
-export type ProjectDisplayNameInput = {
+type DisplayNameCandidate = {
   name: string;
   renamedByUser?: boolean;
   packageName?: string | null;
   htmlTitle?: string | null;
 };
+const GENERIC_NAMES = new Set([
+  "untitled", "untitled project", "new project", "vite + react",
+  "vite + react + ts", "vite + typescript", "react app",
+  "react + vite", "my app", "app", "index",
+]);
+const decodeEntities = (value: string) => value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (_match, code: string) => {
+  const key = code.toLowerCase();
+  const map: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  if (map[key]) return map[key];
+  const numeric = key.startsWith("#x") ? Number.parseInt(key.slice(2), 16)
+    : key.startsWith("#") ? Number.parseInt(key.slice(1), 10) : NaN;
+  return Number.isInteger(numeric) && numeric > 0 && numeric <= 0x10ffff
+    ? String.fromCodePoint(numeric) : _match;
+});
+const clean = (value?: string | null) => decodeEntities(String(value ?? ""))
+  .replace(/<[^>]*>/g, " ").replace(/[\u0000-\u001f\u007f]/g, " ")
+  .replace(/\s+/g, " ").trim().slice(0, 96);
 
-function clean(value: unknown, max = 90): string {
-  return typeof value === "string"
-    ? value.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max)
-    : "";
-}
-
-/** Extract a safe text title from an HTML entry point; no HTML is executed. */
 export function htmlTitleOf(html: string): string | undefined {
-  const match = /<title(?:\s+[^>]*)?>([\s\S]*?)<\/title\s*>/i.exec(html);
-  if (!match) return undefined;
-  const title = clean(match[1].replace(/<[^>]*>/g, "").replace(/&(?:amp|#38);/gi, "&").replace(/&(?:lt|#60);/gi, "<").replace(/&(?:gt|#62);/gi, ">").replace(/&(?:quot|#34);/gi, '"').replace(/&#39;|&apos;/gi, "'"));
-  return title || undefined;
+  const title = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(String(html || ""))?.[1];
+  const cleaned = clean(title);
+  return cleaned || undefined;
 }
 
-function placeholder(value: string): boolean {
-  return !value
-    || /^(?:untitled(?:\s+project)?|new\s+(?:vibe\s+)?project|vibe\s+project|new\s+app|my\s+app|react\s+app|vite(?:\s*\+\s*react)?|clyra(?:\s+project)?)$/i.test(value)
-    || /^(?:build|make|create|develop|generate|design)\s+(?:me\s+)?(?:a|an|the|my)\s+/i.test(value);
-}
-
-function usefulTitle(value: string) {
-  const v = clean(value);
-  return v && !placeholder(v) && !/^(?:localhost|index|home|untitled|vite\s*\+\s*react)$/i.test(v) ? v : "";
-}
-
-function packageToLabel(value: string) {
-  const last = clean(value).replace(/^@[^/]+\//, "");
-  if (!last || placeholder(last)) return "";
-  return last.replace(/[-_]+/g, " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
-}
-
-export function displayNameFor(input: ProjectDisplayNameInput): string {
-  const stored = clean(input.name);
-  if (input.renamedByUser && stored) return stored;
-  if (!placeholder(stored)) return stored;
-  return usefulTitle(input.htmlTitle ?? "")
-    || packageToLabel(input.packageName ?? "")
-    || stored
-    || "Untitled project";
+/** Honour explicit user renames; otherwise prefer the app's meaningful display title. */
+export function displayNameFor(entry: DisplayNameCandidate): string {
+  const original = clean(entry.name);
+  if (entry.renamedByUser && original) return original;
+  // HtmlTitleOf already returns plain text. Reject raw markup from untrusted callers.
+  const title = /<[^>]*>/.test(String(entry.htmlTitle ?? "")) ? "" : clean(entry.htmlTitle);
+  if (title && !GENERIC_NAMES.has(title.toLowerCase())) return title;
+  const packageName = clean(entry.packageName).replace(/^@[^/]+\//, "").replace(/[-_]+/g, " ");
+  if (packageName && !GENERIC_NAMES.has(packageName.toLowerCase())) return packageName;
+  return original || "Untitled project";
 }

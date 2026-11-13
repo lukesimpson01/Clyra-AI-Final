@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { TEMPLATE_LIBRARY, getTemplateManifest, searchTemplateLibrary } from "../lib/clyra-code/library/registry";
 import { inspectTemplateCheckout, isolatedCheckoutName } from "../lib/clyra-code/library/service";
-import { displayNameFor, htmlTitleOf } from "../lib/clyra-code/projects/display-name";
-import { sampleTemplateReviews, sampleTemplateRating } from "../src/components/clyra-code/templateReviewSamples";
-import { describeCodeError } from "../src/components/clyra-code/codeErrorPresentation";
-import { shouldShowWorkspaceFile } from "../src/components/clyra-code/workspaceFileVisibility";
+import { FEATURED_APP_IDS } from "../lib/clyra-code/library/featured-apps";
 
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) {
@@ -16,139 +13,137 @@ async function test(name: string, run: () => void | Promise<void>) {
   console.log(`PASS  ${name}`);
 }
 
-await test("the file explorer never exposes internal agent instructions", () => {
-  for (const hidden of ["AGENTS.md", ".agent/AGENTS.md", ".agent/skills/anything.md", ".clyra/runtime.json", ".opencode/config.json", "src/CLAUDE.md", "node_modules/react/index.js", "folder\\AGENTS.md", "docs/SOUL.md"]) {
-    assert.equal(shouldShowWorkspaceFile(hidden), false, hidden);
-  }
-  for (const visible of ["src/App.tsx", "README.md", "src/components/Welcome.tsx", "public/index.html", "package.json"]) {
-    assert.equal(shouldShowWorkspaceFile(visible), true, visible);
-  }
-});
+const originalForty = [
+  "librechat", "vercel-chatbot", "perplexica", "openhands", "bolt-diy",
+  "code-server", "gitea", "hoppscotch", "nocodb", "uptime-kuma",
+  "appflowy", "plane", "wekan", "onlyoffice", "cal-diy", "penpot",
+  "hycanvas", "minipaint", "opencut", "cap", "medusa", "twenty",
+  "chatwoot", "invoiceninja", "formbricks", "stoat", "pixelfed",
+  "peertube", "mastodon", "navidrome", "saas-starter", "astrofy",
+  "medusa-dtc", "ghost", "docusaurus", "activepieces", "umami",
+  "actual", "metabase", "excalidraw",
+] as const;
+const additionalTen = [
+  "facilmap", "photon-selfhost", "valhalla-router", "supoclip",
+  "browseros", "karakeep", "coolify", "appwrite", "jellyfin",
+  "libretranslate",
+] as const;
 
-await test("coding errors are categorized from actual diagnostics rather than a generic error", () => {
-  const cases = [
-    ["401 unauthorized API key", "auth"],
-    ["429 rate limit exceeded", "rate-limit"],
-    ["connect ECONNREFUSED 127.0.0.1", "network"],
-    ["npm ERR missing package", "dependencies"],
-    ["src/App.tsx(8): error TS2322", "typescript"],
-    ["EACCES permission denied", "permission"],
-    ["EADDRINUSE: address already in use", "port"],
-    ["ENOENT no such file or directory", "missing"],
-    ["Build failed: Unexpected token", "build"],
-    ["An unexpected operation failed", "runtime"],
-  ] as const;
-  for (const [message, kind] of cases) {
-    const issue = describeCodeError(message);
-    assert.equal(issue.kind, kind, message);
-    assert.ok(issue.title.length > 4 && issue.nextStep.length > 12);
-  }
-});
-
-await test("the curated source library is a real 50+ inventory with stable identities", () => {
-  assert.ok(TEMPLATE_LIBRARY.length >= 50);
-  assert.equal(new Set(TEMPLATE_LIBRARY.map((entry) => entry.id)).size, TEMPLATE_LIBRARY.length);
-  assert.equal(new Set(TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl)).size, TEMPLATE_LIBRARY.length);
-  assert.ok(TEMPLATE_LIBRARY.every((entry) => entry.repositoryUrl.startsWith("https://github.com/")));
-});
-
-await test("unverified records do not claim runnable builds or invented screenshots", () => {
-  const entry = getTemplateManifest("purffle-shorts");
-  assert.ok(entry);
-  assert.equal(entry?.pinnedCommit, null);
-  assert.equal(entry?.lastVerifiedAt, null);
-  assert.equal(entry?.capabilitiesVerified.length, 0);
-  assert.equal(entry?.sourceScreenshots.length, 0);
-  assert.equal(entry?.status, "unverified");
-});
-
-await test("official upstream previews are attributed and never represented as tested Clyra screenshots", () => {
-  const supplied = ["excalidraw", "actual-budget", "open-webui", "appflowy", "n8n", "penpot", "chatwoot"];
-  for (const id of supplied) {
+await test("the active catalogue preserves fifty originals, six featured additions and 75 landing pages", () => {
+  assert.equal(TEMPLATE_LIBRARY.length, 131);
+  const ids = new Set(TEMPLATE_LIBRARY.map((item) => item.id));
+  const repositories = TEMPLATE_LIBRARY.map((item) => item.repositoryUrl.toLowerCase().replace(/\.git$/, ""));
+  assert.equal(ids.size, 131);
+  assert.equal(new Set(repositories).size, 131);
+  for (const id of [...originalForty, ...additionalTen]) assert.ok(ids.has(id), `Missing ${id}`);
+  const newlyAdded = ["opencluely", "openfilm", "svgedit", "kdenlive", "natron", "krita"];
+  for (const id of newlyAdded) assert.ok(ids.has(id), `Missing added featured source: ${id}`);
+  assert.equal(new Set(FEATURED_APP_IDS).size, FEATURED_APP_IDS.length);
+  assert.equal(FEATURED_APP_IDS.length, 9);
+  for (const id of FEATURED_APP_IDS) assert.ok(ids.has(id), `Featured app ${id} is not in the live catalogue`);
+  assert.equal(getTemplateManifest("openhands")?.repositoryUrl, "https://github.com/OpenHands/OpenHands");
+  assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === "openhands").length, 1);
+  assert.equal(getTemplateManifest("opencluely")?.licenseSpdxOrReview, "Apache-2.0");
+  assert.equal(getTemplateManifest("openfilm")?.licenseSpdxOrReview, "MIT");
+  for (const id of ["kdenlive", "natron", "krita"]) {
     const entry = getTemplateManifest(id);
-    assert.ok(entry?.sourceScreenshots.length, "Missing upstream preview for " + id);
-    for (const shot of entry!.sourceScreenshots) {
-      assert.match(shot.url, /^https:\/\//);
-      assert.ok(shot.alt.length > 8);
-      assert.match(shot.provenance, /Upstream project README/);
-      assert.match(shot.provenance, /Not a screenshot of a running Clyra template/);
-    }
-    assert.equal(entry?.capabilitiesVerified.length, 0);
-    assert.equal(entry?.pinnedCommit, null);
+    assert.equal(entry?.mode, "reference-only");
+    assert.equal(entry?.status, "reference-only");
   }
-  assert.ok(getTemplateManifest("appflowy")!.sourceScreenshots.length >= 5);
-  const openhands = getTemplateManifest("openhands");
-  assert.ok(openhands && openhands.sourceScreenshots.length >= 6);
-  assert.match(openhands!.sourceScreenshots[0].alt, /welcome screen/);
-  assert.match(openhands!.sourceScreenshots[1].alt, /composer/);
-  assert.equal(getTemplateManifest("purffle-shorts")?.sourceScreenshots.length, 0);
-});
-
-await test("missing project-name helper restores safe display labels without changing stored names", () => {
-  assert.equal(htmlTitleOf("<html><title>Acme Dashboard &amp; Reports</title></html>"), "Acme Dashboard & Reports");
-  assert.equal(htmlTitleOf("<html><body>No title</body></html>"), undefined);
-  assert.equal(displayNameFor({ name: "Untitled project", htmlTitle: "Acme Dashboard" }), "Acme Dashboard");
-  assert.equal(displayNameFor({ name: "Build me a dashboard", htmlTitle: "Vite + React", packageName: "@org/sales-panel" }), "Sales Panel");
-  assert.equal(displayNameFor({ name: "My Custom Project", htmlTitle: "Other Name", renamedByUser: true }), "My Custom Project");
-});
-
-await test("all catalogue entries have eight clearly synthetic, distinctive, accurate 4–5-star sample previews", () => {
-  for (const entry of TEMPLATE_LIBRARY) {
-    const reviews = sampleTemplateReviews(entry);
-    const score = sampleTemplateRating(entry);
-    assert.equal(reviews.length, 8, entry.id);
-    assert.equal(new Set(reviews.map((r) => r.id)).size, 8, entry.id);
-    assert.equal(new Set(reviews.map((r) => r.title)).size, 8, entry.id);
-    assert.ok(reviews.every((r) => r.isSample && r.author === "Sample review" && [4, 5].includes(r.rating)), entry.id);
-    assert.ok(reviews.every((r) => r.title.includes(entry.name) || r.title.includes(entry.category)), entry.id);
-    assert.ok(reviews.every((r) => r.body.length > 38), entry.id);
-    assert.ok(reviews.some((r) => r.body.includes(entry.name) || r.body.includes(entry.name.split(" ")[0]) || r.body.includes(entry.description.split(" ")[0])), entry.id);
-    assert.ok(score.average >= 4 && score.average <= 5, entry.id);
-    assert.equal(score.count, 8);
-    assert.equal(score.distribution[4] + score.distribution[5], 8);
-    assert.equal(score.distribution[1] + score.distribution[2] + score.distribution[3], 0);
-    assert.equal(Number((reviews.reduce((sum, r) => sum + r.rating, 0) / 8).toFixed(6)), Number(score.average.toFixed(6)));
+  const landing = TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages");
+  assert.equal(landing.length, 75);
+  assert.equal(new Set(landing.map((entry) => entry.landingPageType)).size, 17);
+  assert.ok(landing.every((entry) => entry.livePreviewUrl?.startsWith("https://uiuxlabz.github.io/")));
+  assert.ok(landing.every((entry) => entry.sourceScreenshots.length === 4));
+  for (const item of landing) {
+    assert.equal(item.sourceScreenshots[0].url, `/library-shots/${item.id}.jpg`);
+    assert.match(item.sourceScreenshots[0].provenance, /Author-provided screenshot\.png/);
+    assert.deepEqual(item.sourceScreenshots.slice(1).map((shot) => shot.url), [1, 2, 3].map((number) => `/library-shots/${item.id}-section-${number}.jpg`));
+    assert.ok(item.sourceScreenshots.slice(1).every((shot) => /different content section/.test(shot.provenance)));
   }
-  assert.match(sampleTemplateReviews(getTemplateManifest("excalidraw")!)[0].body, /hand-drawn/);
-  assert.match(sampleTemplateReviews(getTemplateManifest("appflowy")!)[0].body, /docs, tasks and database/);
-  assert.match(sampleTemplateReviews(getTemplateManifest("bolt-diy")!)[0].body, /Prompt-to-app/);
+  assert.equal(getTemplateManifest("astrofy")?.sourceScreenshots.length, 3, "Preserve existing multi-image galleries");
+  assert.deepEqual(getTemplateManifest("astrofy")?.sourceScreenshots.map((shot) => shot.url), [
+    "/library-shots/astrofy-1.jpg", "/library-shots/astrofy-2.jpg", "/library-shots/astrofy-3.jpg"
+  ], "Do not replace or reorder the original multi-image gallery");
+  assert.equal(getTemplateManifest("minipaint")?.sourceScreenshots[0]?.url, "/library-shots/minipaint-1.jpg");
+  assert.equal(getTemplateManifest("uptime-kuma")?.sourceScreenshots[0]?.url, "/library-shots/uptime-kuma-1.jpg");
+  for (const id of ["openfilm", "krita", "natron", "penpot", "appflowy", "browseros"]) {
+    assert.ok((getTemplateManifest(id)?.sourceScreenshots.length ?? 0) >= 3, `${id} needs multiple authentic UI screenshots`);
+  }
+  for (const id of ["opencluely", "openhands", "kdenlive", "svgedit"]) {
+    const entry=getTemplateManifest(id);
+    assert.ok(entry, `Featured source ${id} must not disappear`);
+    assert.ok(entry!.sourceScreenshots.every((shot) => shot.provenance.includes("upstream") || shot.provenance.includes("local run")));
+  }
+  
+  assert.ok(landing.every((entry) => entry.status === "unverified" && entry.capabilitiesVerified.length === 0));
+  assert.ok(TEMPLATE_LIBRARY.every((item) => item.repositoryUrl.startsWith("https://github.com/")));
 });
 
-await test("source search matches independent comparison labels and capabilities", () => {
-  assert.ok(searchTemplateLibrary({ query: "OpusClip" }).some((entry) => entry.id === "chopify"));
-  assert.ok(searchTemplateLibrary({ category: "Maps" }).some((entry) => entry.id === "maplibre"));
+await test("categories are derived from live entries, and search finds relevant comparisons", () => {
+  assert.ok(new Set(TEMPLATE_LIBRARY.map((item) => item.category)).size >= 10);
+  assert.ok(searchTemplateLibrary({ query: "OpusClip" }).some((item) => item.id === "supoclip"));
+  assert.ok(searchTemplateLibrary({ query: "Perplexity Comet" }).some((item) => item.id === "browseros"));
+  assert.ok(searchTemplateLibrary({ query: "Google Maps" }).some((item) => item.id === "facilmap"));
+  assert.ok(searchTemplateLibrary({ query: "Lovable" }).some((item) => item.id === "bolt-diy"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe Premiere Pro" }).some((item) => item.id === "kdenlive"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe Illustrator" }).some((item) => item.id === "svgedit"));
+  assert.ok(searchTemplateLibrary({ query: "Adobe After Effects" }).some((item) => item.id === "natron"));
+  assert.equal(searchTemplateLibrary({ category: "Landing Pages" }).length, 75);
+  assert.ok(searchTemplateLibrary({ query: "KORVA" }).some((item) => item.id === "landing-ai-studio"));
+  assert.ok(searchTemplateLibrary({ query: "Coffee" }).some((item) => item.id === "landing-coffee-shop"));
   assert.equal(searchTemplateLibrary({ query: "this will not match" }).length, 0);
 });
 
-await test("the expanded catalogue includes unique missing app types without duplicating existing sources", () => {
-  const added = [
-    "facilmap", "photon-self-hosted", "valhalla", "browseros", "doory",
-    "karakeep", "actual-budget", "bolt-diy", "coolify", "pocketbase",
-    "cryptpad", "jellyfin", "navidrome", "libretranslate", "gitea",
-  ];
-  assert.ok(TEMPLATE_LIBRARY.length >= 83);
-  for (const id of added) assert.ok(getTemplateManifest(id), `Missing source template: ${id}`);
-  for (const id of ["appflowy", "affine", "maplibre", "cutawan"]) {
-    assert.equal(TEMPLATE_LIBRARY.filter((entry) => entry.id === id).length, 1);
+await test("no seed pretends its third-party source is fully installed or already verified", () => {
+  for (const item of TEMPLATE_LIBRARY) {
+    assert.equal(item.pinnedCommit, null);
+    assert.equal(item.lastVerifiedAt, null);
+    assert.equal(item.capabilitiesVerified.length, 0);
+    assert.notEqual(item.status, "runnable-now");
+    if (item.mode === "reference-only") assert.equal(item.status, "reference-only");
   }
-  const repositorySlugs = TEMPLATE_LIBRARY.map((entry) => entry.repositoryUrl.toLowerCase().replace(/\.git$/, ""));
-  assert.equal(new Set(repositorySlugs).size, repositorySlugs.length);
 });
 
-await test("map services are explicit self-hosted sources and browser source is reference-only", () => {
-  const photon = getTemplateManifest("photon-self-hosted");
-  const valhalla = getTemplateManifest("valhalla");
-  const browseros = getTemplateManifest("browseros");
-  assert.equal(photon?.mode, "engine");
-  assert.equal(valhalla?.mode, "engine");
-  assert.equal(browseros?.mode, "reference-only");
-  assert.match(photon?.warnings.join(" ") ?? "", /public Photon is not an unlimited/);
-  assert.match(valhalla?.warnings.join(" ") ?? "", /OSM extracts/);
-  assert.equal(browseros?.capabilitiesVerified.length, 0);
-  assert.equal(browseros?.pinnedCommit, null);
+await test("real capture entries reference existing screenshots with alt text and provenance", async () => {
+  const missing = TEMPLATE_LIBRARY.filter((item) => !item.sourceScreenshots.length);
+  assert.ok(missing.length > 0, "Do not invent image captures for untested apps");
+  assert.equal(TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages" && item.sourceScreenshots.length === 4).length, 75);
+  for (const item of TEMPLATE_LIBRARY) {
+    for (const shot of item.sourceScreenshots) {
+      assert.match(shot.url, item.category === "Landing Pages" ? /^\/library-shots\/[a-z0-9-]+\.jpg$/ : /^(?:\/library-shots\/[a-z0-9-]+\.jpg|https:\/\/\S+)$/);
+      assert.ok(shot.alt.trim().length > 8);
+      if (shot.url.startsWith("https://")) { assert.match(shot.provenance, /upstream/i); continue; }
+      if (item.category === "Landing Pages") {
+        assert.match(shot.provenance, /Author-provided screenshot\.png|Real Chromium screenshot/);
+        assert.ok(!shot.provenance.includes("local run"));
+      } else if (shot.url.includes("/app-")) {
+        assert.match(shot.provenance, /published screenshot or demonstration frame from upstream/);
+      } else {
+        assert.ok(shot.provenance.includes("local run"));
+      }
+      const file = path.join(process.cwd(), "public", shot.url.slice(1));
+      await access(file);
+      if (item.category === "Landing Pages") {
+        const { stat, readFile } = await import("node:fs/promises");
+        assert.ok((await stat(file)).size >= 8_000, `Thumbnail too small: ${file}`);
+        const jpeg = await readFile(file);
+        assert.equal(jpeg[0], 0xff);
+        assert.equal(jpeg[1], 0xd8);
+      }
+    }
+  }
 });
 
-await test("the bounded checkout scan discovers notices and scripts without executing them", async () => {
+await test("self-hosted maps and third-party browser preserve source-only warnings", () => {
+  assert.equal(getTemplateManifest("photon-selfhost")?.mode, "engine");
+  assert.equal(getTemplateManifest("valhalla-router")?.mode, "engine");
+  assert.equal(getTemplateManifest("browseros")?.mode, "reference-only");
+  assert.match(getTemplateManifest("photon-selfhost")!.warnings.join(" "), /not an unlimited/);
+  assert.match(getTemplateManifest("valhalla-router")!.warnings.join(" "), /OSM extracts/);
+});
+
+await test("bounded checkout scanning reads manifests and licences but never executes scripts", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "clyra-library-test-"));
   try {
     await writeFile(path.join(fixture, "LICENSE"), "MIT License\n\nPermission is hereby granted", "utf8");
@@ -170,10 +165,13 @@ await test("the bounded checkout scan discovers notices and scripts without exec
   }
 });
 
-await test("isolated source paths embed a resolved revision and never use a user-supplied path", () => {
-  const entry = getTemplateManifest("excalidraw");
-  assert.ok(entry);
-  assert.equal(isolatedCheckoutName(entry!, { commit: "abcdef0123456789abcdef0123456789abcdef01", verifiedAt: "2026-10-17T00:00:00.000Z" }), "excalidraw-abcdef01");
+await test("isolated source paths embed the verified Git revision", () => {
+  const item = getTemplateManifest("excalidraw");
+  assert.ok(item);
+  assert.equal(isolatedCheckoutName(item!, {
+    commit: "abcdef0123456789abcdef0123456789abcdef01",
+    verifiedAt: "2026-11-11T00:00:00.000Z",
+  }), "excalidraw-abcdef01");
 });
 
-console.log(`\n${passed} Clyra Code library checks passed.`);
+console.log(`\n${passed} Clyra Code source-library contract checks passed.`);

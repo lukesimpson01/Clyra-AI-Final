@@ -1,0 +1,140 @@
+name: Clyra Code contracts
+
+# New branch commits supersede obsolete CI runs, saving runner time.
+concurrency:
+  group: clyra-code-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - vibe-coder-polish-and-templates
+    paths:
+      - ".github/workflows/clyra-code-checks.yml"
+      - "lib/clyra-code/**"
+      - "src/components/clyra-code/**"
+      - "src/lib/userGeneratedApps.ts"
+      - "src/components/AppLauncher.tsx"
+      - "src/components/SettingsModal.tsx"
+      - "src/App.tsx"
+      - "tools/clyra-code-library-unit-tests.ts"
+      - "electron/dictation-endpoint.mjs"
+      - "electron/dictation-manager.mjs"
+      - "tools/dictation-endpoint-tests.mjs"
+      - "tools/clyra-library-visual-smoke.mjs"
+      - "lib/vibe-runtime/validation.ts"
+      - "tools/clyra-code-security-tests.ts"
+      - "lib/clyra-code/projects/**"
+      - "tools/clyra-code-display-name-tests.ts"
+      - "tests/clyra-code/library.spec.ts"
+      - "tests/clyra-code/activity.spec.ts"
+      - "tests/clyra-code/responsive.spec.ts"
+      - "tests/clyra-code/sidebar.spec.ts"
+      - "tools/clyra-generated-app-tests.ts"
+      - "tools/clyra-code-beam-tests.ts"
+      - "tools/clyra-code-platform-unit-tests.ts"
+  pull_request:
+    paths:
+      - "lib/clyra-code/**"
+      - "src/components/clyra-code/**"
+      - "src/lib/userGeneratedApps.ts"
+      - "tools/clyra-code-library-unit-tests.ts"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies without executing project scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Source-library unit tests
+        run: npm run test:clyra-code-library
+      - name: Dictation end-of-speech unit tests
+        run: node --test tools/dictation-endpoint-tests.mjs
+      - name: Child-process API credential isolation tests
+        run: npx tsx tools/clyra-code-security-tests.ts
+      - name: Project display-name regression tests
+        run: npx tsx tools/clyra-code-display-name-tests.ts
+      - name: Compile Node server to check missing runtime imports
+        run: npm run build:server
+      - name: User-generated app launcher registry tests
+        run: npx tsx tools/clyra-generated-app-tests.ts
+      - name: Composer border-beam geometry tests
+        run: npx tsx tools/clyra-code-beam-tests.ts
+      - name: Vibe Coder and task recovery contract tests
+        run: |
+          npm run test:vibe-agent-v3
+          npm run test:vibe-runtime
+          npm run test:vibe-task-controller
+          npm run test:clyra-code-platform
+          npm run test:clyra-code-activity
+          npm run test:clyra-code-brief
+      - name: Chat and speech contract tests
+        run: |
+          npm run test:agent-events
+          npm run test:chat-intent
+          npm run test:effort-harness
+          npm run test:composer-dictation
+          npm run test:dictation-hotkey
+          npm run test:speech-flow
+      - name: TypeScript compile check
+        run: npx tsc --noEmit
+      - name: Full frontend and server production build
+        run: npm run build
+
+  browser-library:
+    needs: validate
+    # Playwright 1.59 is not yet compatible with the ubuntu-26.04 runner image.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium for actual visual checks
+        run: npx playwright install --with-deps chromium
+      - name: Start source application
+        run: |
+          npm run dev:source > /tmp/clyra-source.log 2>&1 &
+          echo $! > /tmp/clyra-source.pid
+          for i in $(seq 1 50); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            if ! kill -0 $(cat /tmp/clyra-source.pid) 2>/dev/null; then
+              tail -n 120 /tmp/clyra-source.log
+              exit 1
+            fi
+            sleep 2
+          done
+          tail -n 120 /tmp/clyra-source.log
+          exit 1
+      - name: Run Library, agent-activity, sidebar and responsive browser regressions
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+        run: npx playwright test -c playwright.clyra-code.config.ts tests/clyra-code/library.spec.ts tests/clyra-code/activity.spec.ts tests/clyra-code/responsive.spec.ts tests/clyra-code/sidebar.spec.ts
+      - name: Capture real Clyra Library UI at five responsive widths
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+        run: node tools/clyra-library-visual-smoke.mjs
+      - name: Upload Clyra Library browser captures and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-library-real-browser-qa
+          path: |
+            /tmp/clyra-code-ui-shots/*.png
+            /tmp/clyra-source.log
+            /tmp/clyra-code-playwright/
+          if-no-files-found: warn
+      - name: Stop temporary local app
+        if: always()
+        run: |
+          if [ -f /tmp/clyra-source.pid ]; then kill $(cat /tmp/clyra-source.pid) || true; fi

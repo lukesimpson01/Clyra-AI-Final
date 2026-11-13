@@ -92,13 +92,15 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 27px;
-  padding: 0 9px;
-  border: 1px solid var(--cc-hairline);
+  height: 30px;
+  min-width: 30px;
+  justify-content: center;
+  padding: 0 8px;
+  border: 0;
   border-radius: 8px;
-  background: var(--composer-surface);
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -481,146 +483,30 @@ button.dsh-leading { cursor: pointer; }
    Todo checklist — the composer's docked plan card.
    ============================================================ */
 
-.dsh-todo {
-  box-sizing: border-box;
-  flex: none;
-  overflow: hidden;
-  margin: 0 auto 6px;
-  width: 100%;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  background: var(--composer-surface);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
-}
 
-.dsh-todo-body {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 12px;
-}
 
-.dsh-todo-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
 
-.dsh-todo-lead {
-  display: grid;
-  flex: none;
-  place-items: center;
-  color: var(--text-tertiary);
-}
 
-.dsh-todo-title {
-  flex: none;
-  font-size: 13px;
-  line-height: 24px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
 
-.dsh-todo-progress {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--text-tertiary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.dsh-todo-chevron {
-  display: grid;
-  flex: none;
-  place-items: center;
-  color: var(--text-tertiary);
-  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
-}
 
-.dsh-todo-chevron[data-open="true"] { transform: rotate(180deg); }
 
-.dsh-todo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 0 0;
-  list-style: none;
-  max-height: 180px;
-  overflow-y: auto;
-}
 
 /* The checklist opens and closes by animating the real height of a single
    grid row, so the eased curve touches the actual content height — a slow
    start and a slow stop, with no max-height guesswork. */
-.dsh-todo-collapse {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 320ms cubic-bezier(0.45, 0, 0.55, 1);
-}
 
-.dsh-todo-collapse[data-open="true"] { grid-template-rows: 1fr; }
 
-.dsh-todo-collapse-inner {
-  min-height: 0;
-  overflow: hidden;
-}
 
-.dsh-todo-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--text-secondary);
-}
 
-.dsh-todo-item[data-status="completed"] .dsh-todo-content {
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--text-tertiary) 65%, transparent);
-}
-.dsh-todo-item[data-status="in_progress"] .dsh-todo-content { color: var(--text-primary); font-weight: 500; }
 
-.dsh-todo-glyph {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-}
 
-.dsh-glyph-completed { color: var(--addition-green); }
-.dsh-glyph-pending { color: var(--text-disabled); }
 
-.dsh-glyph-progress {
-  color: var(--accent-blue);
-  animation: dsh-todo-spin 1s linear infinite;
-}
 
-@keyframes dsh-todo-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .dsh-glyph-progress { animation: none; }
-  .dsh-todo-collapse { transition: none; }
 }
 
-.dsh-todo-content {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color 240ms ease;
-}
 
 /* ============================================================
    Composer chips and menus.
@@ -638,10 +524,10 @@ button.dsh-leading { cursor: pointer; }
   border-radius: 24px;
   outline: none;
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
+  color: var(--text-primary);
+  font-size: 14px;
   line-height: 20px;
-  font-weight: 500;
+  font-weight: 450;
   cursor: pointer;
   transition: background-color 100ms ease;
 }
@@ -1091,6 +977,129 @@ button.dsh-leading { cursor: pointer; }
 
 /* Todo checklist: a white pill when folded, a white rounded card when open. Done circles are hollow rings with a
    thin green tick — never a filled disc. */
+
+/* The to-do strip above the composer: quieter and tighter in Clyra Code, as Codex's is. */
+.clyra-code-root .clyra-plan { border-color: rgba(0, 0, 0, 0.07); border-radius: 14px; }
+.clyra-code-root .clyra-plan__trigger { height: 36px; min-height: 36px; padding: 0 12px 0 10px; gap: 8px; }
+.clyra-code-root .clyra-plan__ring, .clyra-code-root .clyra-plan__ring > svg:first-child { flex-basis: 18px; width: 18px; height: 18px; }
+.clyra-code-root .clyra-plan__title { font-size: 13px; color: #0D0D0D; font-weight: 450; }
+.clyra-code-root .clyra-plan__counter { font-size: 12px; color: #8F8F8F; }
+
+/* ------------------------------------------------ run header, as in Clyra Notes */
+.clyra-code-root .cxr { margin: 12px 0 6px; }
+.clyra-code-root .cxr-top { display: flex; align-items: center; gap: 8px; min-height: 26px; font-size: 13px; color: #5D5D5D; }
+.clyra-code-root .cxr-toggle { display: inline-flex; align-items: center; gap: 7px; min-width: 0; padding: 2px 6px 2px 0; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.clyra-code-root .cxr-toggle.is-static { cursor: default; }
+.clyra-code-root .cxr-toggle:not(.is-static):hover { color: #0D0D0D; }
+.clyra-code-root .cxr-label { font-weight: 550; color: #5D5D5D; white-space: nowrap; flex: none; }
+.clyra-code-root .cxr[data-phase="running"] .cxr-label { color: #0D0D0D; }
+.clyra-code-root .cxr-clock { color: #5D5D5D; font-weight: 550; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.clyra-code-root .cxr-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8F8F8F; }
+.clyra-code-root .cxr-chevron { width: 13px; height: 13px; flex: none; color: #8F8F8F; transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
+.clyra-code-root .cxr-chevron[data-open] { transform: rotate(90deg); }
+.clyra-code-root .cxr-stop { margin-left: auto; height: 26px; padding: 0 10px; border-radius: 999px; background: rgba(0, 0, 0, .05); color: #5D5D5D; font-size: 12.5px; font-weight: 500; }
+.clyra-code-root .cxr-stop:hover { background: rgba(0, 0, 0, .08); color: #0D0D0D; }
+.clyra-code-root .cxr-line { height: 2px; max-width: 190px; margin-top: 6px; border-radius: 999px; background: rgba(0, 0, 0, .07); }
+.clyra-code-root .cxr[data-phase="running"] .cxr-line { animation: none; }
+.clyra-code-root .cxr[data-phase="running"] .cxr-sheen { display: block; width: 35%; background: linear-gradient(90deg, transparent, #0d0d0d, transparent); opacity: .45; transform: translateX(-110%); animation: cxr-sheen-run 1.8s ease-in-out infinite; }
+.clyra-code-root .cxr:not([data-phase="running"]) .cxr-line { display: none; }
+@keyframes cxr-sheen-run { to { transform: translateX(400%); } }
+@keyframes cxr-rule-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* The Notes shimmer: a soft light passing over the live label. */
+.cc-shimmer-text { background: linear-gradient(100deg, #8f8f8f 20%, #0d0d0d 50%, #8f8f8f 80%) 100% 50% / 240% 100%; -webkit-background-clip: text; background-clip: text; color: transparent !important; -webkit-text-fill-color: transparent; animation: cc-shimmer 2s linear infinite; }
+@keyframes cc-shimmer { from { background-position: 100% 50%; } to { background-position: -100% 50%; } }
+
+/* A finished run's work, folded; opens with the same eased height as Notes. */
+.cxr-fold { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 360ms cubic-bezier(.22, 1, .36, 1), opacity 240ms ease; }
+.cxr-fold[data-open] { grid-template-rows: 1fr; opacity: 1; }
+.cxr-fold-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.cxr-fold[data-open] .cxr-fold-inner { padding-bottom: 6px; }
+.cxr-past { display: inline-flex; align-self: flex-start; align-items: center; gap: 6px; margin: 10px 0 2px; padding: 2px 8px 2px 0; border: 0; background: none; color: #8F8F8F; font: 500 12.5px/20px inherit; cursor: pointer; }
+.cxr-past:hover { color: #0D0D0D; }
+.cxr-past svg { transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
+.cxr-past svg[data-open] { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .cxr-fold { transition: none; } .cc-shimmer-text, .clyra-code-root .cxr[data-phase="running"] .cxr-sheen { animation: none; } }
+
+/* Sidebar: a hairline ties each project's tasks to it. */
+.cc-thread-tree::before { content: ""; position: absolute; left: 16px; top: 4px; bottom: 4px; width: 1px; background: rgba(0, 0, 0, .08); border-radius: 1px; }
+
+/* ───────── Plan (Codex-style checklist) ─────────
+   A hairline card, not a panel: thin circles, a turning ring for the step in progress, a check when done. Folded, it is
+   one grey line. Only the active ring moves. */
+.pl { border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 12px; background: #fff; color: #5d5d5d; font-size: 13px; line-height: 20px; }
+.pl--panel { border: 0; border-radius: 0; background: transparent; padding: 4px 14px 14px; }
+.pl-toggle { display: flex; width: 100%; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background-color 120ms ease; }
+.pl-toggle:hover { background: rgba(0, 0, 0, 0.035); }
+.pl-icon { width: 15px; height: 15px; flex: none; color: #8f8f8f; }
+.pl-title { font-weight: 550; color: #0d0d0d; }
+.pl-count { margin-left: auto; font-variant-numeric: tabular-nums; color: #8f8f8f; }
+.pl[data-open] .pl-count { margin-left: auto; }
+.pl-chevron { width: 13px; height: 13px; flex: none; color: #8f8f8f; transition: transform 200ms cubic-bezier(.22, 1, .36, 1); }
+.pl-chevron[data-open] { transform: rotate(90deg); }
+.pl-head { display: flex; align-items: baseline; justify-content: space-between; padding: 8px 0 6px; }
+.pl-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms cubic-bezier(.22, 1, .36, 1); }
+.pl-fold[data-open] { grid-template-rows: 1fr; }
+.pl-fold-inner { min-height: 0; overflow: hidden; }
+.pl-list { margin: 0; padding: 2px 12px 10px; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.pl--panel .pl-list { padding: 0; }
+.pl-step { display: flex; align-items: flex-start; gap: 9px; padding: 3px 0; animation: pl-in 220ms cubic-bezier(.22, 1, .36, 1) both; }
+.pl-mark { display: inline-flex; width: 16px; height: 20px; flex: none; align-items: center; justify-content: center; }
+.pl-text { min-width: 0; color: #0d0d0d; transition: color 240ms ease; }
+.pl-step[data-status="completed"] .pl-text, .pl-step[data-status="cancelled"] .pl-text { color: #8f8f8f; }
+.pl-step[data-status="pending"] .pl-text, .pl-step[data-status="paused"] .pl-text { color: #5d5d5d; }
+.pl-step[data-status="blocked"] .pl-text { color: #0d0d0d; }
+.pl-glyph { display: block; }
+.pl-glyph--pending, .pl-glyph--paused, .pl-glyph--cancelled { color: #b3b3b3; }
+.pl-glyph--active { color: #3977f6; }
+.pl-glyph--done { color: #5d5d5d; }
+.pl-glyph--blocked { color: #c0463f; }
+.pl-ring { transform-origin: 8px 8px; animation: pl-spin 0.9s linear infinite; }
+.pl-tick { stroke-dasharray: 12; stroke-dashoffset: 0; animation: pl-draw 320ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+@keyframes pl-draw { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
+@keyframes pl-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .pl-ring, .pl-tick, .pl-step { animation: none; } .pl-fold, .pl-chevron { transition: none; } }
+
+/* The change summary: one small pill at the foot of the thread, real numbers, no shadow weight. */
+.cc-change-pill { position: absolute; right: 20px; bottom: 12px; z-index: 9; display: inline-flex; height: 26px; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid rgba(0, 0, 0, 0.09); border-radius: 999px; background: rgba(255, 255, 255, 0.96); color: #3a3a3a; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease; }
+.cc-change-pill:hover { background: #f6f6f5; border-color: rgba(0, 0, 0, 0.14); }
+.cc-change-pill:focus-visible { outline: 2px solid #3977f6; outline-offset: 2px; }
+.cc-change-pill-counts { font-size: 12px !important; }
+.cc-change-pill-counts span:first-child { color: #1f8a4c; }
+.cc-change-pill-counts span:last-child { color: #c0463f; }
+
+/* Every file edit and command row carries its own "›": it opens that row's diff or terminal output, and turns down. */
+.cxa-row-chevron { width: 13px; height: 13px; flex: none; margin-left: 2px; color: var(--cxa-faint); transition: transform 180ms cubic-bezier(.22, 1, .36, 1), color 150ms ease; }
+.cxa-row-chevron[data-open] { transform: rotate(90deg); }
+.cxa-row:hover .cxa-row-chevron { color: var(--cxa-ink); }
+@media (prefers-reduced-motion: reduce) { .cxa-row-chevron { transition: none; } }
+
+/* ───────── Welcome: quiet text rows, hairline surfaces, neutral hover ─────────
+   Controls are bare by default; hover is a soft grey, pressed a little stronger. No scaling, no glow. */
+.cw-row { border-radius: 8px; transition: background-color 140ms ease; }
+.cw-row:hover, .cw-row:focus-within { background: rgba(0, 0, 0, 0.045); }
+.cw-row-main { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 40px 0 10px; border: 0; border-radius: 8px; background: none; text-align: left; font: inherit; cursor: pointer; outline: none; }
+.cw-row-main:focus-visible { box-shadow: inset 0 0 0 1.5px rgba(30, 111, 255, 0.4); }
+.cw-more { position: absolute; right: 5px; top: 50%; translate: 0 -50%; display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #777; opacity: 0; cursor: pointer; transition: opacity 140ms ease, background-color 140ms ease; }
+.cw-row:hover .cw-more, .cw-row:focus-within .cw-more, .cw-more.is-open { opacity: 1; }
+.cw-more:hover, .cw-more.is-open { background: rgba(0, 0, 0, 0.06); }
+.cw-more:active { background: rgba(0, 0, 0, 0.075); }
+.cw-more:focus-visible { outline: 2px solid rgba(30, 111, 255, 0.5); outline-offset: 1px; }
+.cw-menu-item { display: flex; width: 100%; height: 30px; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 7px; background: none; color: #202020; font: 13px/1 inherit; text-align: left; cursor: pointer; transition: background-color 120ms ease; }
+.cw-menu-item:hover, .cw-menu-item:focus-visible { background: rgba(0, 0, 0, 0.055); outline: none; }
+.cw-menu-item:active { background: rgba(0, 0, 0, 0.075); }
+.cw-action { display: inline-flex; height: 30px; align-items: center; gap: 7px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #666; font-size: 13px; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
+.cw-action:hover { background: rgba(0, 0, 0, 0.045); color: #202020; }
+.cw-action:active { background: rgba(0, 0, 0, 0.075); }
+.cw-action:focus-visible { outline: 2px solid rgba(30, 111, 255, 0.5); outline-offset: 1px; }
+.cw-link { padding: 3px 8px; border: 0; border-radius: 6px; background: transparent; color: #777; font-size: 12px; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
+.cw-link:hover { background: rgba(0, 0, 0, 0.045); color: #202020; }
+.cw-link:active { background: rgba(0, 0, 0, 0.075); }
+.cw-link:focus-visible { outline: 2px solid rgba(30, 111, 255, 0.5); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .cw-row, .cw-more, .cw-action, .cw-link, .cw-menu-item { transition: none; } }
+.pl-fold-inner { display: flex; flex-direction: column; justify-content: flex-end; }
+.pl:not([data-open]) .pl-toggle { border-radius: 12px; }
 .dsh-todo {
   background: #fff;
   border: 1px solid #e9e9e9;
@@ -1107,31 +1116,11 @@ button.dsh-leading { cursor: pointer; }
 .dsh-todo-item[data-status="completed"] .dsh-todo-content { color: #9a9a9a; text-decoration-color: #c4c4c4; }
 
 
-/* Two independently travelling glow beams, one along each composer edge.
-   Both move on the welcome screen and throughout working/thinking states. */
-.cc-composer::before, .cc-composer::after {
-  content: ""; position: absolute; z-index: 3; left: 14px; right: 14px;
-  height: 2px; pointer-events: none;
-  background: linear-gradient(90deg, transparent 0%, rgba(30,111,255,.08) 22%, rgba(68,149,255,.95) 47%, #d1e7ff 52%, rgba(30,111,255,.65) 59%, transparent 100%);
-  background-size: 42% 100%; background-repeat: no-repeat;
-  filter: drop-shadow(0 0 5px rgba(30,111,255,.8));
-  animation: cc-composer-beam 4.2s ease-in-out infinite alternate;
-  opacity: .65;
-}
-.cc-composer::before { top: -1px; }
-.cc-composer::after { bottom: -1px; animation-direction: alternate-reverse; animation-delay: -1.7s; }
-.cc-composer[data-welcome]::before, .cc-composer[data-welcome]::after { opacity: .85; }
-.cc-composer[data-running]::before, .cc-composer[data-running]::after { animation-duration: 2.5s; opacity: 1; filter: drop-shadow(0 0 8px rgba(30,111,255,.95)); }
+/* The composer's border beam is PerimeterBeam; the composer itself only gets a calm shadow while it works. */
 .cc-composer[data-running] { box-shadow: 0 0 0 1px rgba(30,111,255,.11), 0 9px 34px -15px rgba(30,111,255,.26); }
-@keyframes cc-composer-beam {
-  0% { background-position: -75% 0; opacity: .45; }
-  50% { opacity: 1; }
-  100% { background-position: 170% 0; opacity: .75; }
-}
 .cxr { margin-bottom: 8px; }
 .cxr-step { min-width: 0; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #86868b; font-size: 12px; }
 .cxr[data-phase="running"] .cxr-label { color: #303236; font-weight: 500; }
-@media (prefers-reduced-motion: reduce) { .cc-composer::before, .cc-composer::after { animation: none; opacity: .18; background-position: center; } }
 
 
 /* Each fake preview transforms its existing blocks into a new screen rather
@@ -1142,3 +1131,25 @@ button.dsh-leading { cursor: pointer; }
     opacity .42s cubic-bezier(.22,1,.36,1), transform .42s cubic-bezier(.22,1,.36,1);
 }
 @media (prefers-reduced-motion: reduce) { .cc-pb-block { transition: none; } }
+
+/* Skeleton for live component previews while their frame loads. */
+.cc-shimmer { background: linear-gradient(100deg, #f3f2f0 30%, #fbfaf9 50%, #f3f2f0 70%) 100% 0 / 220% 100%; animation: cc-skeleton 1.6s linear infinite; }
+@keyframes cc-skeleton { to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) { .cc-shimmer { animation: none; } }
+
+/* Composer border beam: a blue comet on one rounded-rect path, so its speed never changes at the corners. */
+.pbeam__ring { position: absolute; inset: 0; z-index: 5; border-radius: var(--pb-r); pointer-events: none; padding: 2px; overflow: hidden; contain: strict;
+  box-shadow: inset 0 0 0 1px rgb(57 119 246 / 0.16);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.pbeam__ring > i {
+  position: absolute; left: 0; top: 0; width: var(--pb-s); height: var(--pb-s); border-radius: 50%; opacity: var(--pb-o);
+  offset-path: inset(1px round calc(var(--pb-r) - 1px)); offset-rotate: 0deg; offset-anchor: 50% 50%; offset-distance: 0%;
+  background: radial-gradient(closest-side, rgb(214 230 255) 0%, rgb(57 119 246) 40%, rgb(30 111 255 / 0) 100%);
+  animation: pbeam-run var(--pb-lap) linear infinite; animation-delay: calc(var(--pb-lap) * var(--pb-behind));
+}
+@keyframes pbeam-run { to { offset-distance: 100%; } }
+@media (prefers-reduced-motion: reduce) { .pbeam__ring > i { animation: none; display: none; } .pbeam__ring { box-shadow: inset 0 0 0 1.4px rgb(57 119 246 / 0.5); } }
+
+/* A sideways rail must not swallow vertical scrolling: wheel and trackpad scrolls over it pass to the page. */
+.cc-scroll.overflow-x-auto:not(.overflow-y-auto), .cc-scroll.overflow-x-scroll:not(.overflow-y-scroll) { overscroll-behavior-y: auto; }

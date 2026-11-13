@@ -28,6 +28,8 @@ import { ClyraFace } from "../../voice/ClyraFace";
 import { setOrbAnchor } from "../../voice/orbAnchor";
 import { registerHomeFace, type HomeFaceHandle } from "../../voice/homeFace";
 import { FlowComposerOverlay, type FlowSession } from "./FlowComposerOverlay";
+import { DictationSteps } from "./DictationSteps";
+import type { DictationStep } from "../../lib/dictationSteps";
 import { EffortSlider } from "./EffortSlider";
 import {
   canStartDictation,
@@ -44,7 +46,8 @@ export interface ComposerEffortOption {
   value: string;
   label: string;
   hint: string;
-  icon: ReactNode;
+  /** Levels are named, not pictured: no per-level symbol is drawn. */
+  icon?: ReactNode;
   onPick: () => void;
 }
 
@@ -143,6 +146,8 @@ export interface ComposerDictationState {
   onCancel?: () => void;
   /** Present while the desktop app's Flow engine is driving this dictation (live words, edits, final text). */
   flow?: FlowSession | null;
+  /** The stages of this dictation (listening, hearing you stop, transcribing, fixing), shown like a tool run. */
+  steps?: DictationStep[];
 }
 
 export interface ClyraComposerShellProps {
@@ -244,6 +249,13 @@ export interface ClyraComposerShellProps {
 
 const EASE = "cubic-bezier(.2,.8,.3,1)";
 const SHELL_EASE = "cubic-bezier(.32,.72,0,1)";
+/** The docked sidebar's slide, and the stillness kept on either side of Manage/Settings. */
+const SIDEBAR_SLIDE_MS = 460;
+const SEQUENCE_PAUSE_MS = 500;
+/** Manage/Settings collapsing back to the composer: the 0.7s hold plus the longest grow-back (0.95s). */
+const MORPH_COLLAPSE_MS = 1650;
+/** The docked sidebar slides back while the shell is settling its last stretch, not after a further pause. */
+const SIDEBAR_RETURN_MS = 850;
 
 /**
  * The Composer artboard's two easings, exported so other Clyra surfaces move
@@ -614,10 +626,21 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // Notify the app shell so it can clear the surrounding chrome (docked
   // sidebar, workspace tab switcher) while a sheet is open and bring it back
   // when the sheet closes.
+  // Sidebar choreography around Manage/Settings, one beat at a time:
+  //   open : the sidebar slides away -> it is fully closed -> 0.5s of stillness -> the sheet morph begins
+  //   close: the sheet morph is finishing its collapse -> the sidebar slides back in (SIDEBAR_RETURN_MS, no extra pause)
+  // `sidebarHold` is what the app shell reads: true from the click until the sidebar may return.
+  const [sidebarHold, setSidebarHold] = useState(false);
+  const sequenceTimerRef = useRef<number | null>(null);
+  const clearSequence = () => {
+    if (sequenceTimerRef.current != null) window.clearTimeout(sequenceTimerRef.current);
+    sequenceTimerRef.current = null;
+  };
+  useEffect(() => () => clearSequence(), []);
   useEffect(() => {
-    onMorphChange?.(morphOpen);
+    onMorphChange?.(sidebarHold || morphOpen);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [morphOpen]);
+  }, [sidebarHold, morphOpen]);
   // Matches the artboard's step==="connected" height (384) exactly — the
   // real detail view (email + scope rows) is the same shape as that step.
   const selectionRows = selections.length;
@@ -636,10 +659,27 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         : 118 + (files.length ? 68 : 0) + selectionRows * 36;
   const backDelay = !morphOpen && collapsing ? ".7s" : "0s";
 
+  /** Opens Manage or Settings. A docked sidebar leaves first; the morph waits for it to be fully gone, plus a beat. */
+  const openMorph = (kind: "manage" | "settings") => {
+    const apply = () => {
+      setManageOpen(kind === "manage");
+      setSettingsOpen(kind === "settings");
+      setConnectionsStep(null);
+    };
+    clearSequence();
+    if (morphOpen) { apply(); return; }
+    setSidebarHold(true);
+    if (!dockSidebar || reduceMotion) { apply(); return; }
+    sequenceTimerRef.current = window.setTimeout(apply, SIDEBAR_SLIDE_MS + SEQUENCE_PAUSE_MS);
+  };
+
   const closeMorph = () => {
+    clearSequence();
     setManageOpen(false);
     setSettingsOpen(false);
     setConnectionsStep(null);
+    // the sidebar comes back as the shell finishes collapsing: soon enough to feel connected, late enough not to compete
+    sequenceTimerRef.current = window.setTimeout(() => setSidebarHold(false), reduceMotion ? 0 : SIDEBAR_RETURN_MS);
     setCollapsing(true);
     if (collapseTimerRef.current != null)
       window.clearTimeout(collapseTimerRef.current);
@@ -854,7 +894,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         paddingLeft: dockSidebar && sidebarIntro ? 272 : 0,
         paddingRight: 0,
         ["--clyra-shell-pad" as string]: "0px",
-        transition: "padding-left .36s cubic-bezier(.22,1,.36,1)",
+        transition: `padding-left ${SIDEBAR_SLIDE_MS}ms ${SHELL_EASE}`,
         // Pure white: the welcome reads as one clean canvas. The header blur
         // and the composer's own shadow carry the depth instead of a grey wash.
         background: "#FFFFFF",
@@ -997,8 +1037,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           boxShadow: "inset -1px 0 0 rgba(16,18,24,0.07)",
           visibility: sidebarShown ? "visible" : "hidden",
           transform: `translateX(${sidebarShown ? 0 : -272}px)`,
+          opacity: sidebarShown ? 1 : 0,
           pointerEvents: sidebarShown ? "auto" : "none",
-          transition: `visibility 0s linear ${sidebarShown ? "0s" : ".36s"}, transform .36s cubic-bezier(.22,1,.36,1)`,
+          willChange: "transform",
+          transition: `visibility 0s linear ${sidebarShown ? "0s" : `${SIDEBAR_SLIDE_MS}ms`}, transform ${SIDEBAR_SLIDE_MS}ms ${SHELL_EASE}, opacity ${sidebarShown ? SIDEBAR_SLIDE_MS * 0.6 : SIDEBAR_SLIDE_MS * 0.9}ms ease`,
         }}
       >
         <div
@@ -1418,9 +1460,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           className="clyra-composer-settings-button"
           onClick={() => {
             if (settingsSheet) {
-              setSettingsOpen((open) => !open);
-              setManageOpen(false);
-              setConnectionsStep(null);
+              if (settingsOpen) closeMorph();
+              else openMorph("settings");
             } else {
               onOpenSettings();
             }
@@ -1863,6 +1904,23 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
         >
           {/* The plan: docked just above the bar, centred, where the agent's progress is read at a glance. */}
           {dockAbove ? <div className="clyra-composer-dock">{dockAbove}</div> : null}
+          {dictation.steps?.length ? (
+            <div
+              style={{
+                position: "absolute",
+                left: 20,
+                bottom: "calc(100% + 10px)",
+                zIndex: 30,
+                padding: "10px 14px 10px 12px",
+                borderRadius: 16,
+                background: "#FFFFFF",
+                boxShadow: "0 0 0 1px rgba(16,18,24,0.06), 0 12px 28px -14px rgba(16,18,24,0.25)",
+                animation: "clyraVoiceIn .35s cubic-bezier(.16,1,.3,1) both",
+              }}
+            >
+              <DictationSteps steps={dictation.steps} />
+            </div>
+          ) : null}
           {/* Flow dictation: covers the whole composer card (same shape), the controls underneath soften away. */}
           {dictation.flow ? (
             <FlowComposerOverlay flow={dictation.flow} onStop={dictation.onStop} onCancel={() => dictation.onCancel?.()} />
@@ -2414,17 +2472,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                       background: effortMenuOpen ? "#F1F2F4" : "transparent",
                     }}
                   >
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 18,
-                        height: 18,
-                      }}
-                    >
-                      {currentEffortOption?.icon}
-                    </span>
+                    
                     {currentEffortOption?.label}
                     <svg
                       width={11}
@@ -2760,7 +2808,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             />
             <button
               type="button"
-              onClick={() => { setManageOpen(true); setSettingsOpen(false); setConnectionsStep(null); }}
+              onClick={() => openMorph("manage")}
               style={{
                 height: 30,
                 padding: "0 12px",
