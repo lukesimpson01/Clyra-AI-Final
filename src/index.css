@@ -11776,6 +11776,10 @@ body,
   background: #fff;
   box-shadow: 0 12px 42px rgba(20, 22, 27, .08);
 }
+/* The webpage itself is the only browser chrome; no animated blue ring. */
+.clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"]::after {
+  display: none;
+}
 .clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"] .clyra-voice-activity__body {
   display: block;
   flex: 1 1 auto;
