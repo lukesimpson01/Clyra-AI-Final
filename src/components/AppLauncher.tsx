@@ -199,7 +199,7 @@ export function AppLauncher({ onOpenTool, onOpenUserApp, onClose }: AppLauncherP
         <aside
           aria-label="Your apps"
           onClick={(event) => event.stopPropagation()}
-          className="absolute bottom-5 left-1/2 z-20 flex w-[min(92vw,640px)] -translate-x-1/2 flex-col gap-2 lg:bottom-auto lg:left-auto lg:right-6 lg:top-1/2 lg:w-[232px] lg:-translate-x-0 lg:-translate-y-1/2"
+          className="absolute bottom-[7.75rem] left-1/2 z-20 flex w-[min(92vw,640px)] -translate-x-1/2 flex-col gap-2 lg:bottom-auto lg:left-auto lg:right-6 lg:top-1/2 lg:w-[232px] lg:-translate-x-0 lg:-translate-y-1/2"
         >
           <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Your apps</p>
           <ul className="flex gap-2 overflow-x-auto pb-1 lg:max-h-[56vh] lg:flex-col lg:overflow-y-auto lg:overflow-x-visible">
