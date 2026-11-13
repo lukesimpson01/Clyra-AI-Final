@@ -789,7 +789,7 @@ export function TemplateLibrary({
 
                 <div className="cc-scroll mt-7 flex overflow-x-auto border-y border-black/[0.08] py-3.5 [scrollbar-width:none]">
                   {[
-                    { k: "License", v: selected.licenseSpdxOrReview, s: "Open source" },
+                    { k: "License", v: selected.licenseSpdxOrReview, s: /review/i.test(selected.licenseSpdxOrReview) ? "Check the terms" : "Open source" },
                     { k: "Category", v: selected.category, s: modeLabel(selected) },
                     { k: "Runs on", v: selected.supportedTargets[0] || "—", s: selected.supportedTargets.length > 1 ? `+${selected.supportedTargets.length - 1} more` : "Target" },
                     { k: "Stack", v: selected.stack[0] || "—", s: selected.stack[1] || "Primary" },
