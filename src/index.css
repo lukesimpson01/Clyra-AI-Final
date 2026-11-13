@@ -11834,6 +11834,14 @@ body,
   margin: 0;
   border-radius: 0;
 }
+/* The compact side-by-side agent rule has higher specificity; immersive
+   camera must still win when browser/email agents are active. */
+.clyra-voice-call[data-media-mode="camera"][data-agent-kind]:not([data-agent-kind="none"]) .clyra-voice-media-stage {
+  max-height: none;
+}
+.clyra-voice-call[data-agent-kind]:not([data-agent-kind="none"]):not([data-media-mode="none"]) .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  max-height: none;
+}
 .clyra-voice-call[data-media-mode="camera"] .clyra-voice-media {
   position: relative;
   width: 100%;
