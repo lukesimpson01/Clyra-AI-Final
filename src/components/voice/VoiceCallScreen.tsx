@@ -781,9 +781,70 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
     title: task.kind === "browser" ? "Web research" : "Clyra task",
     subtitle: task.detail,
   };
+  // Prefer the task's supplied capture. Otherwise show the real managed
+  // browser frame ONLY when its active session matches this voice task.
+  // Never show an unrelated browsing session or invent a website screenshot.
+  const [managedFrame, setManagedFrame] = useState<string | null>(null);
+  useEffect(() => {
+    if (resolved.kind !== "browser" || resolved.preview || !["running", "paused", "waiting"].includes(task.status)) {
+      setManagedFrame(null);
+      return;
+    }
+    const expected = (resolved.subtitle || task.detail || "").trim().toLowerCase().replace(/\\s+/g, " ");
+    if (!expected) return;
+    const controller = new AbortController();
+    let disposed = false;
+    let inFlight = false;
+    let currentUrl: string | null = null;
+    const refresh = async () => {
+      if (disposed || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const response = await fetch("/api/openbrowser/session", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        const payload = await response.json() as { session?: { task?: string; status?: string; updatedAt?: string } | null };
+        const session = payload.session;
+        const actual = (session?.task || "").trim().toLowerCase().replace(/\\s+/g, " ");
+        const live = ["planning", "observing", "executing", "verifying", "recovering", "paused", "waiting_for_user"].includes(session?.status || "");
+        const recent = session?.updatedAt && Date.now() - new Date(session.updatedAt).getTime() < 120_000;
+        if (!live || !recent || actual !== expected) {
+          if (currentUrl) {
+            URL.revokeObjectURL(currentUrl);
+            currentUrl = null;
+            if (!disposed) setManagedFrame(null);
+          }
+          return;
+        }
+        const frameResponse = await fetch("/api/openbrowser/frame?fresh=1", { cache: "no-store", signal: controller.signal });
+        if (!frameResponse.ok || !frameResponse.headers.get("content-type")?.startsWith("image/")) return;
+        const blob = await frameResponse.blob();
+        if (disposed) return;
+        const url = URL.createObjectURL(blob);
+        const previous = currentUrl;
+        currentUrl = url;
+        setManagedFrame(url);
+        if (previous) URL.revokeObjectURL(previous);
+      } catch {
+        // The managed browser may not exist. Keep the honest task activity
+        // surface rather than displaying someone else's stale page.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1_250);
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearInterval(timer);
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      setManagedFrame(null);
+    };
+  }, [resolved.id, resolved.kind, resolved.preview, resolved.subtitle, task.detail, task.status]);
+  const visiblePreview = resolved.preview || managedFrame;
   // No duplicated URL/header/status UI over a live webpage: the agent's
   // controls remain available in the separate, existing call control bar.
-  const showWebsiteOnly = resolved.kind === "browser" && Boolean(resolved.preview);
+  const showWebsiteOnly = resolved.kind === "browser" && Boolean(visiblePreview);
   useEffect(() => {
     if (!resolved.expanded) return;
     const onEscape = (event: KeyboardEvent) => {
@@ -804,7 +865,7 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
       transition={{ duration: reduced ? 0.1 : 0.3, ease: [0.22, 1, 0.36, 1] }}
       className={`clyra-voice-activity${resolved.expanded ? " clyra-voice-activity--expanded" : ""}${controlling ? " clyra-voice-activity--controlled" : ""}`}
       data-surface-kind={resolved.kind}
-      data-has-preview={Boolean(resolved.preview)}
+      data-has-preview={Boolean(visiblePreview)}
       aria-label={`${resolved.title} activity surface`}
     >
       {!showWebsiteOnly ? (
@@ -816,8 +877,8 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
         </header>
       ) : null}
       <div className="clyra-voice-activity__body">
-        {resolved.preview ? <VoiceBrowserPreview preview={resolved.preview} active={controlling && task.kind === "browser"} /> : null}
-        {!resolved.preview && task.steps?.length ? (
+        {visiblePreview ? <VoiceBrowserPreview preview={visiblePreview} active={controlling && task.kind === "browser"} /> : null}
+        {!visiblePreview && task.steps?.length ? (
           <ol className="clyra-voice-activity__steps">
             {task.steps.map((step) => <li key={step.id} data-status={step.status}><span aria-hidden /><p>{step.label}</p></li>)}
           </ol>
