@@ -117,6 +117,7 @@ export const FULL_SEEDS: readonly Seed[] = [
   ["n8n", "n8n", "Zapier, Make", "Automation", "n8n-io/n8n", "Node-based workflow automation.", "full-app", "web, backend", "Fair-code review", "Commercial and distribution terms need review."],
   ["windmill", "Windmill", "Zapier, Retool", "Automation", "windmill-labs/windmill", "Scripts, workflows and apps.", "full-app", "web, backend", "License review", "Requires services and license review."],
   ["open-webui", "Open WebUI", "ChatGPT", "AI Assistant", "open-webui/open-webui", "Chat interface with tools and files.", "full-app", "web, backend", "License review", "Model-provider configuration is required."],
+  ["openhands", "OpenHands", "Codex, Devin, OpenCode", "Code Agents", "OpenHands/OpenHands", "Agentic software development workspace with a welcome composer, conversations and tools.", "full-app", "web, backend", "License review", "Requires agent server, LLM settings and a development environment. Source checkout is not a ready-to-run hosted service."],
   ["continue", "Continue", "Cursor, Codex", "Code Agents", "continuedev/continue", "Codebase-aware coding-agent extension and CLI.", "integration", "IDE, CLI", "Apache-2.0"],
   ["cline", "Cline", "Cursor, Codex", "Code Agents", "cline/cline", "Agentic code editing and command execution.", "integration", "IDE", "Apache-2.0", "Needs explicit command and provider approval."],
   ["medusa", "Medusa", "Shopify", "Commerce", "medusajs/medusa", "Commerce backend, carts and orders.", "full-app", "backend", "License review", "Backend service; pair with an original storefront."],
@@ -145,7 +146,80 @@ export const FULL_SEEDS: readonly Seed[] = [
   ["shortgpt", "ShortGPT", "Crayo, InVideo", "Video & Shorts", "RayVentura/ShortGPT", "Experimental short-form-video automation.", "framework", "Python", "MIT", "Experimental source; verify current maintenance before use."],
   ["novel", "Novel", "Notion AI", "Knowledge", "steven-tey/novel", "Rich-text editor and AI authoring.", "framework", "web", "Apache-2.0"],
   ["cal-diy", "Cal.com DIY", "Calendly", "Scheduling", "calcom/cal.diy", "Appointment booking and scheduling infrastructure.", "full-app", "web, backend", "MIT", "Requires services and calendar integrations."],
+  // Distinct, source-only additions to the Clyra Code catalogue (2026-11-11).
+  ["facilmap", "FacilMap", "Google Maps, My Maps", "Maps", "FacilMap/facilmap", "Collaborative map projects with searchable places, routes and markers.", "full-app", "web, backend", "AGPL-3.0", "A separate map application, not a drop-in MapLibre replacement; full server and OSM services are required."],
+  ["photon-self-hosted", "Photon", "Google Maps Places, address search", "Maps Services", "komoot/photon", "Self-hostable OpenStreetMap geocoder and autocomplete search service.", "engine", "backend, JVM, CLI", "Apache-2.0", "Requires running the service and provisioning an OSM search index; public Photon is not an unlimited Clyra backend."],
+  ["valhalla", "Valhalla", "Google Maps Directions, routing APIs", "Maps Services", "valhalla/valhalla", "Self-hostable OpenStreetMap turn-by-turn routing engine.", "engine", "native, backend, CLI", "License review", "Requires OSM extracts, preprocessed routing tiles and substantial local or server resources; this does not provide a keyless hosted routing API."],
+  ["browseros", "BrowserOS", "Perplexity Comet, ChatGPT Atlas", "AI Browsers", "browseros-ai/BrowserOS", "Chromium-based agentic AI browser with page context and browsing automation.", "reference-only", "desktop", "AGPL-3.0", "Large Chromium source/build; browser and agent dependencies need inspection. Reference checkout only, not an embedded browser."],
+  ["doory", "Doory", "Canva", "Graphic Design", "shaongitbd/doory", "Visual graphics and template-based design editor.", "full-app", "web, backend", "AAL / attribution review", "Attribution Assurance License has specific requirements; review licence, notices and downstream dependencies before commercial integration."],
+  ["karakeep", "Karakeep", "Pocket, Raindrop.io, MyMind", "Bookmarks", "karakeep-app/karakeep", "Bookmark and document collection with full-text search and AI-assisted tagging.", "full-app", "web, backend", "AGPL-3.0", "Self-hosting and optional AI features require service configuration; review AGPL obligations."],
+  ["actual-budget", "Actual Budget", "YNAB", "Finance", "actualbudget/actual", "Local-first personal budgeting with transaction tracking and reports.", "full-app", "web, backend", "License review", "Review sync server configuration and financial data-handling requirements before deployment."],
+  ["bolt-diy", "Bolt DIY", "Bolt.new, Lovable.dev", "AI App Builders", "stackblitz-labs/bolt.diy", "Prompt-driven full-stack web app generation with interactive code and previews.", "full-app", "web, backend", "MIT / dependencies review", "Commercial WebContainer and model-provider terms may apply; source checkout alone is not a working AI app builder."],
+  ["coolify", "Coolify", "Vercel, Heroku, Railway", "Deployment", "coollabsio/coolify", "Self-hosted application deployment, projects and server management.", "full-app", "web, backend", "Apache-2.0", "Requires Docker, infrastructure administration and secure network configuration; never execute deployment scripts during template import."],
+  ["pocketbase", "PocketBase", "Firebase, Supabase", "Backend Services", "pocketbase/pocketbase", "Single-binary backend with database, authentication, files and realtime APIs.", "full-app", "backend, CLI", "MIT", "Backend service; authentication, migrations and deployment remain the imported project's responsibility."],
+  ["cryptpad", "CryptPad", "Google Docs, Google Workspace", "Office Suites", "cryptpad/cryptpad", "Collaborative privacy-focused documents, spreadsheets and shared workspaces.", "full-app", "web, backend", "License review", "Requires collaboration server setup and review of upstream licences and dependencies."],
+  ["jellyfin", "Jellyfin", "Plex", "Media Servers", "jellyfin/jellyfin", "Self-hosted video and music streaming library server.", "full-app", "backend", "License review", "Media server and optional clients are separate projects; use only media for which distribution or access is authorised."],
+  ["navidrome", "Navidrome", "Plexamp, personal music streaming", "Media Servers", "navidrome/navidrome", "Self-hosted music player and streaming service for a personal audio library.", "full-app", "backend, CLI", "License review", "Does not provide Spotify's music catalogue; user supplies their own authorised audio files."],
+  ["libretranslate", "LibreTranslate", "Google Translate, DeepL", "Translation", "LibreTranslate/LibreTranslate", "Self-hosted text translation API and web interface.", "full-app", "web, Python", "License review", "Offline translation requires language models and CPU/RAM capacity; hosted public endpoints can enforce limits or keys."],
+  ["gitea", "Gitea", "GitHub, GitLab", "Git Hosting", "go-gitea/gitea", "Self-hosted Git repositories, pull requests, issues and team access.", "full-app", "web, backend", "MIT", "Requires repository storage, admin configuration and security maintenance; not a plug-in for GitHub authentication."],
 ];
+
+/**
+ * Source-authorised visual previews surfaced in public upstream READMEs.
+ * They illustrate the upstream software; they do not mean Clyra has built,
+ * run or verified the corresponding template, and they are not Clyra captures.
+ * Leave entries empty where a suitable demonstrable preview is unavailable.
+ */
+const UPSTREAM_README_PREVIEWS: Readonly<Record<string, ReadonlyArray<readonly [string, string]>>> = {
+  openhands: [
+    ["https://www.openhands.dev/assets/agent-canvas/01-home-conversations.png", "OpenHands Agent Canvas welcome screen with New Chat and main composer"],
+    ["https://www.openhands.dev/assets/agent-canvas/02-conversation-chat.png", "OpenHands conversation workspace with the chat composer and agent activity"],
+    ["https://www.openhands.dev/assets/agent-canvas/06-automations-list.png", "OpenHands automations dashboard"],
+    ["https://www.openhands.dev/assets/agent-canvas/07-automation-detail.png", "OpenHands automation detail and activity"],
+    ["https://www.openhands.dev/assets/agent-canvas/08-skills.png", "OpenHands Skills browser and catalogue"],
+    ["https://www.openhands.dev/assets/agent-canvas/09-mcp.png", "OpenHands MCP connections and integrations"],
+  ],
+  excalidraw: [
+    ["https://excalidraw.nyc3.cdn.digitaloceanspaces.com/github%2Fproduct_showcase.png", "Excalidraw product canvas showcase from its upstream README"],
+  ],
+  "actual-budget": [
+    ["https://raw.githubusercontent.com/actualbudget/actual/master/demo.png", "Actual Budget dashboard preview from its upstream README"],
+  ],
+  "open-webui": [
+    ["https://cdn.openwebui.com/open-webui-demo.gif", "Open WebUI interface demonstration from its upstream README"],
+  ],
+  appflowy: [
+    ["https://github.com/user-attachments/assets/1c12d629-40a0-4f35-9451-97498cf31a25", "AppFlowy Kanban board for to-dos"],
+    ["https://github.com/user-attachments/assets/0cff82d3-3e40-4057-a5fa-b2e9be8dd863", "AppFlowy databases for tasks and projects"],
+    ["https://github.com/user-attachments/assets/388224f4-0792-4e75-96d1-f1c671b298a3", "AppFlowy database row and comments"],
+    ["https://github.com/user-attachments/assets/ae0cadf2-bb6f-496e-8f84-4916dce1fa62", "AppFlowy notes and report documents"],
+    ["https://github.com/user-attachments/assets/619ea154-f714-4859-ad28-4f0bdf5028f7", "AppFlowy team wiki with AI assistance"],
+    ["https://github.com/user-attachments/assets/5841c491-b564-4a26-b9b6-191def430911", "AppFlowy mobile workspace and summaries"],
+    ["https://github.com/user-attachments/assets/c2ba6bb8-746c-4743-9393-d008a669be95", "AppFlowy mobile collaboration properties"],
+    ["https://github.com/user-attachments/assets/e83dd1a3-4975-4d0e-91a1-9eb6e0d248cd", "AppFlowy mobile document blocks"],
+  ],
+  n8n: [
+    ["https://raw.githubusercontent.com/n8n-io/n8n/master/assets/n8n-screenshot-readme.png", "n8n visual workflow automation editor"],
+  ],
+  penpot: [
+    ["https://github.com/user-attachments/assets/cce75ad6-f783-473f-8803-da9eb8255fef", "Penpot design system interface"],
+    ["https://github.com/user-attachments/assets/0abc02f0-625c-45ab-ad81-4927bec7a055", "Penpot workspace hub"],
+  ],
+  chatwoot: [
+    ["https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/dashboard.png", "Chatwoot customer support dashboard"],
+    ["https://raw.githubusercontent.com/chatwoot/chatwoot/develop/.github/screenshots/header.png", "Chatwoot support interface overview"],
+  ],
+};
+
+function upstreamReadmePreviews(id: string, repositoryUrl: string): SourceScreenshot[] {
+  return (UPSTREAM_README_PREVIEWS[id] ?? []).map(([url, alt]) => ({
+    url,
+    alt,
+    // Upstream documentation does not state the original capture date.
+    capturedAt: "",
+    provenance: "Upstream project README or official documentation (" + repositoryUrl + "); source image selected as of 2026-11-12. Not a screenshot of a running Clyra template.",
+  }));
+}
 
 function split(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -197,7 +271,7 @@ function manifestFromSeed(seed: Seed): TemplateManifest {
     healthcheck: null,
     capabilitiesVerified: [],
     capabilitiesPlanned: [description],
-    sourceScreenshots: [],
+    sourceScreenshots: upstreamReadmePreviews(id, `https://github.com/${repository}`),
     captureProvenance: null,
     compatibility: [
       "Source is not copied into a project automatically.",

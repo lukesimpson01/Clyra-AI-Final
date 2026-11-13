@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FilePlus, FileText, Globe, Link2, Search } from "lucide-react";
+import { ChevronDown, FilePlus, FileText, Globe, Github, Images, Link2, MapPin, PencilLine, Search } from "lucide-react";
 import { SourceStrip } from "./assistant";
 import { ShimmerText } from "./assistant";
+import { ChatResearchResults } from "./ChatResearchResults";
 import type { AgentStepView, ChatAgentRun as Run, TodoItem } from "../../lib/chatAgentClient";
 
 /** While a run grows, keep the newest row in view — but only if the person was already at the bottom (never fight their scroll). */
@@ -15,7 +16,7 @@ export function useFollowGrowth(ref: React.RefObject<HTMLElement | null>, signal
   }, [ref, signal, active]);
 }
 
-const ICON = { web_search: Globe, web_open: FileText, web_find: Search, web_follow_links: Link2, create_note: FilePlus } as const;
+const ICON = { web_search: Globe, web_open: FileText, web_find: Search, web_follow_links: Link2, image_search: Images, github_repo_search: Github, github_repo_inspect: Github, show_map: MapPin, create_note: FilePlus, notes_search: Search, notes_read: FileText, notes_insert: PencilLine, notes_edit: PencilLine, notes_link_page: Link2 } as const;
 
 /**
  * The agent's plan, as in the Clyra agent-UI kit: a compact pill (a spinning activity ring while work continues, the
@@ -103,15 +104,35 @@ function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: 
 /** Every real step the agent took, in order, with the plan above it. Nothing here is decorative: each row is a tool call. */
 export function ChatAgentRunView({ run, live, onOpenNote, showTodo = true }: { run: Run; live: boolean; onOpenNote?: (id: string) => void; showTodo?: boolean }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useFollowGrowth(ref, run.steps.length, live);
+  const [expanded, setExpanded] = useState(false);
+  const showSteps = live || expanded;
+  const stepCount = run.steps.filter((step) => step.state !== "running").length;
+  const running = run.steps.some((step) => step.state === "running");
+  const failed = run.steps.some((step) => step.state === "failed");
+  const SummaryIcon = ICON[run.steps[run.steps.length - 1]?.tool as keyof typeof ICON] ?? Globe;
+  const growthSignal = run.steps.reduce((total, step) =>
+    total + (step.state === "done" ? 1 : 0) + (step.images?.length || 0) + (step.repositories?.length || 0), run.steps.length);
+  useFollowGrowth(ref, growthSignal, live);
   if (!run.todos.length && !run.steps.length) return null;
   return (
     <div className="clyra-agent-run" ref={ref}>
       {showTodo ? <AgentTodo todos={run.todos} live={live} /> : null}
       {run.steps.length ? (
-        <ul className="clyra-ai-activity" aria-label="What Clyra did">
-          {run.steps.map((step) => <StepRow key={step.id} step={step} onOpenNote={onOpenNote} />)}
-        </ul>
+        <>
+          {!live ? (
+            <button type="button" className="clyra-agent-run__summary" aria-expanded={showSteps} onClick={() => setExpanded((value) => !value)}>
+              <span className="clyra-agent-run__summary-icon" aria-hidden><SummaryIcon size={15} strokeWidth={1.7} /></span>
+              <span>{running ? "Working" : failed ? "Tool activity" : "Completed"} {stepCount} tool {stepCount === 1 ? "step" : "steps"}</span>
+              <ChevronDown size={14} className={showSteps ? "is-open" : ""} aria-hidden />
+            </button>
+          ) : null}
+          {showSteps ? (
+            <ul className="clyra-ai-activity" aria-label="What Clyra did">
+              {run.steps.map((step) => <StepRow key={step.id} step={step} onOpenNote={onOpenNote} />)}
+            </ul>
+          ) : null}
+          <ChatResearchResults steps={run.steps} />
+        </>
       ) : null}
     </div>
   );

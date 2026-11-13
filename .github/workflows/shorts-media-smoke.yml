@@ -1,0 +1,62 @@
+name: Shorts media tools smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/shorts/app/**'
+      - 'apps/shorts/openfilm'
+      - '.github/workflows/shorts-media-smoke.yml'
+  workflow_dispatch:
+jobs:
+  media-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the pinned advanced editor
+        run: git submodule update --init apps/shorts/openfilm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and verify system FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg && ffmpeg -version && ffprobe -version
+      - name: Install Shorts dependencies
+        run: npm ci --prefix apps/shorts/app --no-audit --no-fund
+      - name: Run all Shorts media, editor, effects and creator unit tests
+        env:
+          NODE_ENV: test
+        run: node --test --test-concurrency=1 apps/shorts/app/tests/*.test.mjs
+      - name: Build Shorts UI
+        run: npm --prefix apps/shorts/app run build
+      - name: Run 3D plane, surface, camera and face-identity regression tests
+        run: |
+          node --test \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/face-native.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/spatial-refine.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/spatial-geometry.test.mjs \
+            apps/shorts/openfilm/packages/openfilm/studio/ui/src/frame/tests/surface-stability.test.mjs
+
+  advanced-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out only the Shorts OpenFilm submodule
+        run: git submodule update --init apps/shorts/openfilm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: apps/shorts/openfilm/pnpm-lock.yaml
+      - name: Install advanced-editor workspace from committed lockfile
+        working-directory: apps/shorts/openfilm
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck advanced-editor server and UI
+        working-directory: apps/shorts/openfilm
+        run: pnpm --filter openfilm typecheck
+      - name: Build full advanced editor and dedicated 3D WebWorker
+        working-directory: apps/shorts/openfilm
+        run: pnpm --filter openfilm build:ui

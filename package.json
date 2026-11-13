@@ -10,7 +10,7 @@
     "dev:source": "node tools/sqlite-abi.mjs node && node tools/dev-source.mjs",
     "desktop:dev": "node tools/sqlite-abi.mjs electron && node tools/electron-dev.mjs",
     "desktop:build": "npm run desktop:prepare && electron-builder",
-    "desktop:prepare": "npm run build && node tools/build-electron-sidecar.mjs && node tools/seed-desktop-runtime-config.mjs",
+    "desktop:prepare": "npm run build && node tools/build-electron-sidecar.mjs && node tools/seed-desktop-runtime-config.mjs && node tools/prepare-macos-pointer.mjs",
     "desktop:prepare:win": "node tools/prepare-electron-target.mjs win32-x64",
     "desktop:prepare:win:arm64": "node tools/prepare-electron-target.mjs win32-arm64",
     "desktop:build:win": "npm run desktop:prepare:win && electron-builder --win --x64",
@@ -20,6 +20,7 @@
     "setup:open-design": "node tools/open-design-setup.mjs",
     "dev:open-design": "node tools/open-design-daemon.mjs",
     "setup:hermes": "node tools/install-hermes-runtime.mjs",
+    "setup:rea": "npx -y rea-agents@latest setup",
     "setup:speech": "node tools/setup-speech-engine.mjs",
     "shorts:setup": "npm --prefix apps/shorts/app install --no-audit --no-fund && cd apps/shorts/openfilm && pnpm install",
     "editor:setup": "npm --prefix vendor/openfilm install --no-audit --no-fund --legacy-peer-deps && npm --prefix vendor/openfilm run build:ui",
@@ -43,7 +44,8 @@
     "test:dictation-hotkey": "node tools/dictation-hotkey-tests.mjs",
     "test:flow-native": "node tools/flow-native-contract-tests.mjs",
     "test:voice-e2e:dictation": "node tools/voice-call-e2e.mjs --dictation",
-    "test:voice-call-e2e": "node tools/voice-call-webrtc-e2e.mjs",
+    "test:voice-call-e2e": "node tools/voice-call-live-smoke.mjs",
+    "test:voice-call-e2e:legacy": "node tools/voice-call-webrtc-e2e.mjs",
     "test:browser": "tsx tools/openbrowser-e2e.ts",
     "test:deepseek-vision": "tsx tools/deepseek-vision-contract-tests.ts",
     "test:research": "tsx tools/research-grounding-unit-tests.ts",
@@ -67,8 +69,10 @@
     "test:clyra": "npm run test:tools && npm run test:automations && npm run test:care && npm run test:agent-controller && npm run test:computer-agent && npm run test:browser && npm run test:browser-complex && npm run test:research && npm run test:notes && npm run test:vibe-runtime && npm run test:vibe-agent-v3",
     "clyra:test-agent-system": "npm run test:clyra",
     "test:computer-agent": "node tools/computer-agent-contract-tests.mjs",
+    "test:ai-cursor": "node tools/ai-cursor-unit-tests.mjs",
     "test:computer": "npm run test:computer-agent",
     "test:vibe-runtime": "tsx tools/vibe-runtime-unit-tests.ts",
+    "test:vibe-browser-verification": "tsx tools/vibe-live-verification-unit-tests.ts",
     "test:vibe-task-controller": "tsx tools/vibe-task-controller-unit-tests.ts",
     "test:vibe-skills": "tsx tools/vibe-skills-unit-tests.ts",
     "test:vibe-agent-v3": "tsx tools/vibe-agent-v3-unit-tests.ts",
@@ -92,7 +96,13 @@
     "test:memory": "node tools/sqlite-abi.mjs node && tsx tools/memory-unit-tests.ts",
     "test:speech-endpoint": "tsx tools/speech-endpoint-tests.ts",
     "stt:bench": "tsx tools/stt-bench.mts",
-    "test:effort-harness": "tsx tools/effort-harness-tests.ts"
+    "test:effort-harness": "tsx tools/effort-harness-tests.ts",
+    "test:chat-rich": "tsx tools/chat-rich-results-unit-tests.ts",
+    "test:mail": "node tools/mail-mime-tests.mjs",
+    "test:mail-e2e": "node tools/clyra-mail-live-smoke.mjs",
+    "test:component-library": "tsx tools/component-library-unit-tests.ts",
+    "test:component-mcp": "npm run test:component-library",
+    "setup:component-sources": "git submodule update --init --depth 1 external/shadcn-ui external/21st-agent-elements"
   },
   "devDependencies": {
     "@cline/sdk": "^0.0.52",
@@ -169,6 +179,7 @@
       "node_modules/node-gyp-build/**/*"
     ],
     "asarUnpack": [
+      "electron/native-pointer-darwin",
       "node_modules/uiohook-napi/**/*"
     ],
     "extraResources": [

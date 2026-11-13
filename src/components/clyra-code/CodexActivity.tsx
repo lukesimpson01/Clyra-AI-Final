@@ -9,6 +9,8 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpen,
+  Blocks,
+  PackagePlus,
   ChevronDown,
   Bot,
   FilePenLine,
@@ -23,7 +25,6 @@ import {
   SearchCode,
   ShieldAlert,
   Minus,
-  Square,
   X,
   Download,
   Globe,
@@ -31,6 +32,7 @@ import {
   Trash2,
   Wrench,
   ChevronRight,
+  Square,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { AgentAction } from "./store";
@@ -38,6 +40,7 @@ import { InlineDiffCard, TerminalCard } from "./harness";
 import { computeLineDiff, linesFromPatch } from "./diff";
 import { AGENT_EASE } from "./motion";
 import { describeCall, groupSummary } from "./activityModel";
+import { describeCodeError } from "./codeErrorPresentation";
 
 const VERBS: Record<string, { active: string; done: string; failed: string }> = {
   read: { active: "Reading", done: "Read", failed: "Couldn’t read" },
@@ -46,6 +49,8 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
   delete: { active: "Deleting", done: "Deleted", failed: "Delete failed" },
   search: { active: "Searching for", done: "Searched for", failed: "Search failed" },
   research: { active: "Searching the web for", done: "Searched the web for", failed: "Web search failed" },
+  mcp: { active: "Scanning MCP", done: "Scanned MCP", failed: "MCP scan failed" },
+  component: { active: "Inspecting component", done: "Used component", failed: "Component action failed" },
   list: { active: "Exploring", done: "Explored", failed: "Couldn’t explore" },
   command: { active: "Running", done: "Ran", failed: "Failed" },
   build: { active: "Building", done: "Built", failed: "Build failed" },
@@ -57,7 +62,6 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
   browser: { active: "Using the browser", done: "Used the browser", failed: "Browser step failed" },
   image: { active: "Viewing an image", done: "Viewed an image", failed: "Couldn’t view the image" },
   subagent: { active: "Running a subagent", done: "Ran a subagent", failed: "Subagent failed" },
-  mcp: { active: "Using", done: "Used", failed: "Couldn’t use" },
   todo: { active: "Planning", done: "Updated plan", failed: "Planning failed" },
   generic: { active: "Working", done: "Done", failed: "Failed" },
 };
@@ -66,7 +70,7 @@ const VERBS: Record<string, { active: string; done: string; failed: string }> = 
 const ICONS: Record<string, typeof BookOpen> = {
   read: FileSearch, edit: FilePenLine, create: FilePenLine, delete: Trash2, search: SearchCode, research: Globe, list: FolderSearch,
   command: SquareTerminal, build: SquareTerminal, check: FlaskConical, test: FlaskConical, preview: PanelTop, fetch: Download,
-  todo: ListTodo, permission: ShieldAlert, git: GitBranch, browser: PanelTop, image: ImageIcon, subagent: Bot, mcp: Plug, generic: Wrench,
+  todo: ListTodo, permission: ShieldAlert, git: GitBranch, browser: PanelTop, image: ImageIcon, subagent: Bot, mcp: Plug, component: PackagePlus, generic: Wrench,
 };
 
 const FILE_KINDS = /^(edit|create|delete)$/;
@@ -183,6 +187,7 @@ export const ActivityRow = memo(function ActivityRow({
   }, [isFile, action.patch, action.before, action.after, action.contentAfter]);
   const output = [action.output?.trim(), action.error?.trim()].filter(Boolean).join("\n");
   const hasBody = (isFile && diffLines.length > 0) || isTerminal || Boolean(output);
+  const issue = failed ? describeCodeError(output || action.target) : null;
 
   return (
     <motion.div
@@ -220,6 +225,7 @@ export const ActivityRow = memo(function ActivityRow({
         </span>
         {isFile && !failed ? <Stats additions={action.kind === "delete" ? undefined : action.additions} deletions={action.kind === "create" ? undefined : action.deletions} /> : null}
         {isFile && !seen && !running && !failed ? <span className="cxa-unseen" aria-label="New change" /> : null}
+        {issue ? <span className="cxa-outcome" title={issue.nextStep}>{issue.title}</span> : null}
         {isTerminal && !running && action.endedAt ? (
           <span className="cxa-outcome">
             {(() => { const code = exitCodeFrom(output); return code !== null ? `exit ${code} · ` : ""; })()}{formatDuration(action.endedAt - action.startedAt)}
@@ -246,6 +252,7 @@ export const ActivityRow = memo(function ActivityRow({
               ) : (
                 <pre className="cxa-output">{output}</pre>
               )}
+              {issue ? <div className="mt-2 border-l-2 border-[#B96D6D] pl-3 text-[11.5px] leading-[1.55] text-[#76787D]"><span className="font-medium text-[#44464C]">{issue.title}.</span> {issue.nextStep}</div> : null}
               {failed && (onRetry || onOpenTerminal) ? (
                 <div className="cxa-actions">
                   {onRetry ? <button type="button" className="cxa-pill" onClick={() => onRetry(action)}>Ask Clyra to fix</button> : null}
@@ -450,7 +457,6 @@ export function RunHeader({
           </button>
         ) : null}
       </div>
-      <div className="cxr-line" aria-hidden><span className="cxr-sheen" /></div>
     </div>
   );
 }

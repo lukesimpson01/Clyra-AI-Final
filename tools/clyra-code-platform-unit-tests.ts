@@ -193,6 +193,9 @@ async function main() {
       "✔ Test run with 2 tests passed after 0.013 seconds."
     ), { framework: "swift-testing", total: 2, failed: 0, passed: 2, durationSeconds: 0.013 });
     equal(parseSwiftTests("nothing relevant"), undefined);
+    equal(parseSwiftTests("Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds\n✔ Test run with 2 tests in 0 suites passed after 0.013 seconds."), {
+      framework: "swift-testing", total: 2, failed: 0, passed: 2, durationSeconds: 0.013,
+    });
   });
 
   await test("simctl runtime labels come from the identifier", () => {
@@ -263,7 +266,7 @@ let package = Package(
       const testRun = await runSwiftPackage(root, "test", { timeoutMs: 300_000 });
       equal(testRun.ok, true, `tests should pass: ${testRun.tail}`);
       equal(testRun.tests?.failed, 0);
-      ok((testRun.tests?.total ?? 0) >= 1, "at least one test must be counted from real output");
+      ok((testRun.tests?.total ?? 0) >= 1, `at least one test must be counted from real output; tail: ${testRun.tail}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

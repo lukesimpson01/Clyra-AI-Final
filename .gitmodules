@@ -6,3 +6,14 @@
 	path = apps/shorts/openfilm
 	url = https://github.com/lukesimpson01/openfilm.git
 	branch = clyra/spatial-tracking-editor
+
+[submodule "external/shadcn-ui"]
+	path = external/shadcn-ui
+	url = https://github.com/shadcn-ui/ui.git
+	branch = main
+	shallow = true
+[submodule "external/21st-agent-elements"]
+	path = external/21st-agent-elements
+	url = https://github.com/21st-dev/agent-elements.git
+	branch = main
+	shallow = true

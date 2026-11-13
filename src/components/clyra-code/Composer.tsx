@@ -311,6 +311,8 @@ export function Composer({
       {/* A single blue beam travels the border on the welcome screen and while the agent is working. */}
       <PerimeterBeam active={Boolean(welcome || running)} className={welcome ? "max-w-[620px]" : "max-w-[688px]"}>
       <motion.div
+        data-running={running ? "" : undefined}
+        data-welcome={welcome ? "" : undefined}
         className={cn(
           "cc-composer relative mx-auto overflow-visible border bg-white",
           welcome

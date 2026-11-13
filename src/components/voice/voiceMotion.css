@@ -1,0 +1,106 @@
+/* Clyra voice call: deliberately lightweight mode transitions.
+ * Movement uses compositor-owned opacity/transform; no video-frame
+ * processing, large blur animations, or always-on decoration.
+ */
+.clyra-voice-call .clyra-voice-mode-readout {
+  position: absolute;
+  left: clamp(16px, 3vw, 36px);
+  top: 19px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  min-width: 0;
+  max-width: 150px;
+  color: #6b7380;
+  font-size: 11.5px;
+  letter-spacing: -.012em;
+  white-space: nowrap;
+}
+.clyra-voice-call .clyra-voice-mode-readout__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #9ca7b7;
+  transition: background-color .22s ease, box-shadow .22s ease;
+}
+.clyra-voice-call:is([data-state="listening"],[data-state="transcribing"]) .clyra-voice-mode-readout__dot {
+  background: #1e6fff;
+  box-shadow: 0 0 0 3px rgba(30,111,255,.11);
+}
+.clyra-voice-call:is([data-state="acting_browser"],[data-state="acting_computer"],[data-state="acting_clyra"]) .clyra-voice-mode-readout__dot {
+  background: #1e6fff;
+}
+.clyra-voice-call[data-state="responding"] .clyra-voice-mode-readout__dot { background: #487acb; }
+.clyra-voice-call:is([data-state="error"],[data-state="awaiting_approval"]) .clyra-voice-mode-readout__dot { background: #b88545; }
+
+.clyra-voice-call__main--activity .clyra-voice-media-stage {
+  order: 1;
+  display: flex;
+  flex: 1 1 auto;
+  align-self: center;
+  min-height: 0;
+  width: min(940px, 100%);
+  max-height: min(65vh, 650px);
+  transform-origin: center 10%;
+}
+.clyra-voice-call .clyra-voice-media-stage > .clyra-voice-media {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+.clyra-voice-call[data-agent-kind]:not([data-agent-kind="none"]):not([data-media-mode="none"]) .clyra-voice-media-stage {
+  max-height: 37vh;
+}
+.clyra-voice-call[data-agent-kind]:not([data-agent-kind="none"]):not([data-media-mode="none"]) .clyra-voice-activity {
+  max-height: 35vh;
+}
+.clyra-voice-call .clyra-voice-media__recovery {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  max-width: 95%;
+}
+.clyra-voice-call .clyra-voice-media__recovery p { margin: 0; }
+.clyra-voice-call .clyra-voice-media__recovery button {
+  padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,.24);
+  border-radius: 9px;
+  color: #fff;
+  font: 500 12px/1.4 inherit;
+  background: rgba(255,255,255,.1);
+  cursor: pointer;
+  transition: transform .17s ease, background .17s ease;
+}
+.clyra-voice-call .clyra-voice-media__recovery button:hover { background: rgba(255,255,255,.2); }
+.clyra-voice-call .clyra-voice-media__recovery button:active { transform: scale(.96); }
+.clyra-voice-call .clyra-voice-media__actions button:disabled {
+  opacity: .38;
+  cursor: default;
+  pointer-events: none;
+}
+.clyra-voice-call[data-low-power="true"] .clyra-face-fluid { animation-play-state: paused; }
+@media (max-width: 680px) {
+  .clyra-voice-call .clyra-voice-mode-readout { left: 16px; top: 46px; max-width: calc(100vw - 32px); min-height: 19px; font-size: 10.5px; }
+  .clyra-voice-call__main--activity .clyra-voice-media-stage { width: 100%; }
+}
+@media (max-width: 400px) {
+  .clyra-voice-call .clyra-voice-mode-readout { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-voice-call .clyra-voice-mode-readout__dot,
+  .clyra-voice-call .clyra-voice-media__recovery button { transition: none; }
+}
+
+/* A full-screen task must sit ABOVE the call header; otherwise the header
+ * intercepts its exit control. The normal header remains reachable again on
+ * exiting. This is a real pointer-order fix, not a test-only workaround. */
+.clyra-voice-call .clyra-voice-activity--expanded {
+  z-index: 40;
+}

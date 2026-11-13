@@ -45,7 +45,10 @@ import { isElectronRuntime } from "../../lib/electron-runtime";
 import { ElectronWebContentsSurface } from "../ElectronWebContentsSurface";
 import { ShiningText } from "../ShiningText";
 import { PreviewBuilding } from "./PreviewBuilding";
+import { LiveVerificationSurface } from "./LiveVerificationSurface";
 import { liveStepLabel } from "./CodexActivity";
+import { shouldShowWorkspaceFile } from "./workspaceFileVisibility";
+import { describeCodeError } from "./codeErrorPresentation";
 import { api, type FileDiff, type PreviewLogLine, type PreviewSession } from "./api";
 import type { AgentAction, ClyraCodeState } from "./store";
 import { DiffCounters } from "./AnimatedCounter";
@@ -177,6 +180,7 @@ function BrowserView({
   onAddContext,
   agentRunning = false,
   buildStep,
+  verification,
   projectId,
   inspectMode,
   onToggleInspect,
@@ -193,6 +197,7 @@ function BrowserView({
   onOpenTerminal?: () => void;
   onAddContext: (context: ComposerContext) => void;
   agentRunning?: boolean;
+  verification?: ClyraCodeState["verification"];
   /** What the agent is doing right now ("Editing App.tsx"), shown under the building animation. */
   buildStep?: string | null;
   projectId: string | null;
@@ -205,10 +210,17 @@ function BrowserView({
   onClose?: () => void;
 }) {
   const projectPreviewSrc = `/api/vibe/projects/${encodeURIComponent(projectId ?? "")}/preview/`;
-  const [historyIndex, setHistoryIndex] = useState(0);
-  const [history, setHistory] = useState<string[]>([]);
+  type PreviewTab = { id: number; url: string | null; history: string[]; index: number };
+  const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>([{ id: 0, url: null, history: [], index: -1 }]);
+  const [activePreviewTabId, setActivePreviewTabId] = useState(0);
+  const nextPreviewTabId = useRef(1);
+  const currentTab = previewTabs.find((tab) => tab.id === activePreviewTabId) ?? previewTabs[0];
+  const navigatedSrc = currentTab.url;
+  const history = currentTab.history;
+  const historyIndex = currentTab.index;
   const [address, setAddress] = useState("");
-  const [navigatedSrc, setNavigatedSrc] = useState<string | null>(null);
+  const [frameLoaded, setFrameLoaded] = useState(false);
+
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
   // Viewport sizing (device presets + free responsive width) and zoom.
@@ -297,6 +309,7 @@ function BrowserView({
       session?.status === "runtime_error");
   /* An empty project is not a failure: there is simply nothing built yet, so it gets the calm empty state. */
   const nothingToPreview = /no recognised project target|nothing to preview/i.test(String(session?.lastError?.message || ""));
+  const previewError = describeCodeError(session?.lastError?.message || session?.status || "Preview failed");
 
   useEffect(() => {
     if (failed && session?.lastError?.message) onPreviewError?.(session.lastError.message);
@@ -307,6 +320,17 @@ function BrowserView({
      edge of agentRunning is the one signal this component can always see —
      without it the preview keeps showing whatever existed when it last
      mounted, which reads as "the agent built nothing". */
+  // Keep the existing animated building screen until the actual project frame
+  // has loaded, not just until the dev server reports its port is ready.
+  useEffect(() => { setFrameLoaded(false); }, [projectId, frameVersion, activePreviewTabId, navigatedSrc]);
+  const waitingForFirstFrame = ready && !isElectronRuntime() && !frameLoaded;
+  // Keep the building loop running for the entire implementation + repair run.
+  // An intermediate dev-server failure is not a final preview error while the
+  // code agent is still capable of fixing it.
+  const previewLoading = !navigatedSrc && Boolean(projectId) &&
+    (agentRunning || starting || waitingForFirstFrame || !session) &&
+    (!failed || agentRunning);
+
   const wasAgentRunning = useRef(agentRunning);
   useEffect(() => {
     if (wasAgentRunning.current && !agentRunning) {
@@ -318,42 +342,76 @@ function BrowserView({
   }, [agentRunning, onReload]);
 
   useEffect(() => {
-    // Selecting a different Vibe project always returns its panel to that
-    // project's live preview rather than carrying a prior Google tab across.
-    setNavigatedSrc(null);
+    // A different coding project starts with a clean, project-owned preview.
+    setPreviewTabs([{ id: 0, url: null, history: [], index: -1 }]);
+    setActivePreviewTabId(0);
+    nextPreviewTabId.current = 1;
     setAddress("");
-    setHistory([]);
-    setHistoryIndex(0);
   }, [projectId]);
+
+  useEffect(() => {
+    setAddress(navigatedSrc ?? "");
+  }, [activePreviewTabId, navigatedSrc]);
+
+  const updateCurrentTab = useCallback((update: (tab: PreviewTab) => PreviewTab) => {
+    setPreviewTabs((tabs) => tabs.map((tab) => tab.id === activePreviewTabId ? update(tab) : tab));
+  }, [activePreviewTabId]);
 
   const navigate = useCallback((raw: string) => {
     const target = normalizePreviewNavigation(raw);
     if (!target) return;
-    setNavigatedSrc(target);
-    setAddress(target);
-    setHistory((previous) => {
-      const next = [...previous.slice(0, historyIndex + 1), target];
-      setHistoryIndex(next.length - 1);
-      return next;
+    updateCurrentTab((tab) => {
+      const history = [...tab.history.slice(0, tab.index + 1), target];
+      return { ...tab, url: target, history, index: history.length - 1 };
     });
-  }, [historyIndex]);
+    setAddress(target);
+  }, [updateCurrentTab]);
 
   const navigateHistory = useCallback((index: number) => {
     const target = history[index];
     if (!target) return;
-    setHistoryIndex(index);
-    setNavigatedSrc(target);
+    updateCurrentTab((tab) => ({ ...tab, index, url: target }));
     setAddress(target);
-  }, [history]);
+  }, [history, updateCurrentTab]);
 
   const returnToPreview = useCallback(() => {
-    setNavigatedSrc(null);
+    updateCurrentTab((tab) => ({ ...tab, url: null }));
+    setAddress("");
+  }, [updateCurrentTab]);
+
+  const addPreviewTab = useCallback(() => {
+    const id = nextPreviewTabId.current++;
+    setPreviewTabs((tabs) => [...tabs, { id, url: null, history: [], index: -1 }]);
+    setActivePreviewTabId(id);
     setAddress("");
   }, []);
 
+  const closePreviewTab = useCallback((id: number) => {
+    if (previewTabs.length <= 1) return;
+    const index = previewTabs.findIndex((tab) => tab.id === id);
+    const remaining = previewTabs.filter((tab) => tab.id !== id);
+    setPreviewTabs(remaining);
+    if (id === activePreviewTabId) setActivePreviewTabId(remaining[Math.min(index, remaining.length - 1)].id);
+  }, [activePreviewTabId, previewTabs]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-[40px] items-center gap-0.5 border-b border-[color:var(--border-subtle)] px-2">
+      <div className="flex h-[35px] min-w-0 shrink-0 items-center gap-1 border-b border-[color:var(--border-subtle)] px-2">
+        <div className="cc-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="Live preview browser tabs">
+          {previewTabs.map((item, index) => {
+            const active = item.id === activePreviewTabId;
+            const label = item.url ? (() => { try { return new URL(item.url).hostname; } catch { return "Website"; } })() : index === 0 ? "Live preview" : "Preview " + (index + 1);
+            return <div key={item.id} className={cn("group flex h-[27px] min-w-[95px] max-w-[185px] shrink-0 items-center rounded-[7px] px-2 text-[11.5px] transition-colors", active ? "bg-black/[0.055] text-[#2D3035]" : "text-[#777B81] hover:bg-black/[0.035]")}>
+              <button type="button" role="tab" aria-selected={active} onClick={() => setActivePreviewTabId(item.id)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                <Globe className="h-[12px] w-[12px] shrink-0" strokeWidth={1.65} /><span className="truncate">{label}</span>
+              </button>
+              {previewTabs.length > 1 ? <button type="button" aria-label={"Close " + label + " tab"} title="Close tab" onClick={() => closePreviewTab(item.id)} className="ml-1 shrink-0 rounded p-0.5 opacity-50 hover:bg-black/[0.065] hover:opacity-100"><X className="h-[11px] w-[11px]" /></button> : null}
+            </div>;
+          })}
+        </div>
+        <button type="button" aria-label="New preview tab" title="New preview tab" onClick={addPreviewTab} className="flex h-[25px] w-[25px] shrink-0 items-center justify-center rounded-[6px] text-[#6A6D73] hover:bg-black/[0.05]"><FilePlus2 className="h-[13px] w-[13px]" strokeWidth={1.7} /></button>
+      </div>
+      <div className="flex h-[40px] items-center gap-0.5 border-b border-[color:var(--border-subtle)] px-2.5">
         <button
           type="button"
           aria-label="Back"
@@ -441,7 +499,7 @@ function BrowserView({
 
       <div ref={surfaceRef} className="relative min-h-0 flex-1 bg-[#F7F7F6]">
         <div className="cc-scroll absolute inset-0 overflow-auto">
-          {(ready || navigatedSrc) && !agentRunning ? (
+          {(ready || navigatedSrc) ? (
             <div
               className={cn("relative", effectiveWidth ? "mx-auto" : "h-full w-full")}
               style={{
@@ -453,7 +511,7 @@ function BrowserView({
             >
               {isElectronRuntime() ? (
                 <ElectronWebContentsSurface
-                  key={`${projectId}:${frameVersion}:${activeSrc}`}
+                  key={`${projectId}:${activePreviewTabId}:${frameVersion}:${activeSrc}`}
                   source={activeSrc}
                   title={navigatedSrc ? "Vibe browser" : "Live preview"}
                   surfaceId="clyra-code-live-preview"
@@ -462,7 +520,7 @@ function BrowserView({
                 />
               ) : (
                 <iframe
-                  key={`${projectId}:${frameVersion}:${activeSrc}`}
+                  key={`${projectId}:${activePreviewTabId}:${frameVersion}:${activeSrc}`}
                   // Keep the trailing slash so the preview behaves as a directory:
                   // relative JS/CSS assets and the injected inspect bridge resolve
                   // inside this project's proxied namespace.
@@ -473,6 +531,7 @@ function BrowserView({
                   onLoad={(event) => {
                     const win = event.currentTarget.contentWindow;
                     onFrameReady(win);
+                    setFrameLoaded(true);
                     if (!navigatedSrc) win?.postMessage({ type: "clyra:mode", mode: inspectMode }, "*");
                   }}
                 />
@@ -490,13 +549,15 @@ function BrowserView({
               ) : null}
             </div>
           ) : failed && !nothingToPreview ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9]">
-              <p className="text-[13px] font-medium text-[#171717]">Preview could not start</p>
-              {session?.lastError?.message ? (
-                <p className="max-w-[360px] text-center text-[11.5px] leading-[1.45] text-[#8A8A8A]">
-                  {session.lastError.message}
-                </p>
-              ) : null}
+            <div className="flex h-full flex-col items-center justify-center gap-2.5 bg-[#FAFAF9] px-6 text-center" role="alert">
+              <XCircle className="mb-1 h-6 w-6 text-[#B45454]" strokeWidth={1.5} />
+              <p className="text-[14px] font-medium text-[#25272B]">{previewError.title}</p>
+              <p className="max-w-[390px] text-[12px] leading-[1.55] text-[#75777D]">{previewError.detail}</p>
+              <p className="max-w-[390px] text-[11.5px] leading-[1.5] text-[#85878C]">{previewError.nextStep}</p>
+              {session?.lastError?.message ? <details className="max-w-[440px] text-left">
+                <summary className="cursor-pointer text-[11px] text-[#6A6D72] hover:underline">Technical details</summary>
+                <pre className="cc-scroll mt-2 max-h-[120px] overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-black/[0.035] p-2 text-[10.5px] text-[#62656B]">{session.lastError.message}</pre>
+              </details> : null}
               <div className="mt-1 flex items-center gap-1.5">
                 <button
                   type="button"
@@ -530,7 +591,7 @@ function BrowserView({
         </div>
 
         <AnimatePresence>
-          {(starting || agentRunning) && !failed ? (
+          {previewLoading ? (
             <motion.div
               key="preview-loading"
               initial={{ opacity: 0 }}
@@ -539,8 +600,13 @@ function BrowserView({
               transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
               className="absolute inset-0 z-10"
             >
-              <PreviewBuilding phase={starting ? "starting" : "building"} step={buildStep} />
+              <PreviewBuilding phase={starting ? "starting" : "building"} step={verification?.message ?? buildStep} />
             </motion.div>
+          ) : null}
+        </AnimatePresence>
+        <AnimatePresence>
+          {verification?.status === "testing" && !navigatedSrc ? (
+            <LiveVerificationSurface key="live-browser-verification" verification={verification} />
           ) : null}
         </AnimatePresence>
       </div>
@@ -709,11 +775,6 @@ function buildFileTree(files: WorkspaceFile[]) {
   return root;
 }
 
-function shouldShowWorkspaceFile(path: string) {
-  if (path.startsWith(".agent/skills/")) return true;
-  if (path === ".agent/AGENTS.md") return true;
-  return !path.startsWith(".agent/") && !path.startsWith(".clyra/") && !path.startsWith(".git");
-}
 
 function FilesView({ projectId, diffs }: { projectId: string | null; diffs: FileDiff[] }) {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -750,7 +811,7 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
     setSaving(true);
     try {
       const result = await api.writeProjectFile(projectId, selected, draft);
-      setFiles(result.files);
+      setFiles(result.files.filter((file) => shouldShowWorkspaceFile(file.path)));
     } finally { setSaving(false); }
   }, [draft, projectId, selected]);
 
@@ -759,7 +820,7 @@ function FilesView({ projectId, diffs }: { projectId: string | null; diffs: File
     const requested = window.prompt("New file path", "src/Untitled.ts");
     if (!requested?.trim()) return;
     const result = await api.writeProjectFile(projectId, requested.trim(), "");
-    setFiles(result.files);
+    setFiles(result.files.filter((file) => shouldShowWorkspaceFile(file.path)));
     setSelected(requested.trim());
   }, [projectId]);
 
@@ -1202,6 +1263,7 @@ export function RightPanel({
           onAddContext={onAddContext}
           agentRunning={agentRunning}
           buildStep={buildStep}
+          verification={state.verification}
           projectId={state.activeProjectId}
           inspectMode={inspectMode}
           onToggleInspect={() => setInspectMode((mode) => !mode)}

@@ -108,6 +108,7 @@ import { TaskGroupPlanner } from "./lib/vibe-coder/harness/task-group-planner";
 import { FileSpecPlanner } from "./lib/vibe-coder/harness/file-spec-planner";
 import { registerClineRoutes } from "./lib/cline/cline-routes";
 import { registerOpenCodeRoutes } from "./lib/opencode/opencode-routes";
+import { registerComponentLibraryRoutes } from "./lib/clyra-code/offline-component-library";
 import { registerClyraCodePlatformRoutes } from "./lib/clyra-code/routes";
 import { registerVoiceRoutes, attachDictationWebSocket } from "./backend/voice";
 import { registerLocalSpeechRoutes } from "./backend/speech";
@@ -149,6 +150,7 @@ import {
   getManagedBrowserFrame,
   getManagedBrowserAgentSession,
   getManagedBrowserObservation,
+  getManagedBrowserDiagnostics,
   getManagedBrowserState,
   navigateManagedBrowser,
   removeManagedBrowserBookmark,
@@ -1957,23 +1959,45 @@ async function startServer() {
     res.json({ ok: true, mission });
   });
 
+  // A spoken mid-task correction updates the same persisted mission, never
+  // launches a disconnected duplicate or silently reuses previous approvals.
+  app.post("/api/agent/missions/:missionId/revise", async (req, res) => {
+    const missionId = String(req.params.missionId || "").slice(0, 120);
+    const instruction = String(req.body?.instruction || "").trim();
+    if (!instruction || instruction.length > 2_000) {
+      res.status(400).json({ ok: false, error: "An instruction under 2,000 characters is required." });
+      return;
+    }
+    try {
+      const mission = await missionService.revise(missionId, instruction);
+      if (!mission) { res.status(404).json({ ok: false, error: "Mission not found." }); return; }
+      res.status(202).json({ ok: true, mission });
+    } catch (error) {
+      res.status(409).json({ ok: false, error: error instanceof Error ? error.message : "Unable to revise the running mission." });
+    }
+  });
+
   // Resumption is intentional: a stored workflow never wakes itself after a
   // restart. In-flight actions re-enter via a fresh observe/verify boundary;
   // waiting approvals additionally require the exact stored step id here.
   app.post("/api/agent/missions/:missionId/resume", async (req, res) => {
     const missionId = String(req.params.missionId || "").slice(0, 120);
     try {
-      const mission = await missionService.resume({
+      const input = {
         missionId,
         approvedStepIds: Array.isArray(req.body?.approvedStepIds)
           ? req.body.approvedStepIds.filter((id: unknown) => typeof id === "string").slice(0, 50)
           : [],
-      });
+      };
+      const mission = req.body?.background === true
+        ? await missionService.resumeBackground(input)
+        : await missionService.resume(input);
       if (!mission) {
         res.status(404).json({ ok: false, error: "Mission not found." });
         return;
       }
-      res.status(mission.state === "COMPLETED" ? 200 : 409).json({ ok: mission.state === "COMPLETED", mission });
+      const accepted = req.body?.background === true && !["FAILED", "CANCELLED", "WAITING_FOR_APPROVAL", "WAITING_FOR_USER"].includes(mission.state);
+      res.status(accepted ? 202 : mission.state === "COMPLETED" ? 200 : 409).json({ ok: accepted || mission.state === "COMPLETED", mission });
     } catch (error) {
       res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "Mission could not resume." });
     }
@@ -2163,6 +2187,7 @@ async function startServer() {
 
   registerClineRoutes(app);
   registerOpenCodeRoutes(app);
+  registerComponentLibraryRoutes(app);
   registerClyraCodePlatformRoutes(app);
 
   // Clyra Code's source library is separate from the agent loop.  Listing and
@@ -3335,6 +3360,14 @@ async function startServer() {
         error: { message: error instanceof Error ? error.message : "Browser frame unavailable" },
       });
     }
+  });
+
+  // Only the requested test tab's real JavaScript failures count against a
+  // Vibe Coder acceptance test; unrelated user browser tabs are excluded.
+  app.get("/api/openbrowser/diagnostics", (req, res) => {
+    const tabId = String(req.query.tabId || "").slice(0, 120);
+    if (!tabId) return res.status(400).json({ ok: false, error: { message: "Test tab ID required" } });
+    return res.json({ ok: true, ...getManagedBrowserDiagnostics(tabId) });
   });
 
   app.post("/api/openbrowser/navigate", async (req, res) => {

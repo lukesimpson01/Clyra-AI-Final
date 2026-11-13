@@ -4,6 +4,7 @@ import {
   AppWindow, ArrowLeft, ArrowRight, Brain, CircleHelp, Clock, Download, Eye, Globe, Keyboard, MousePointerClick, Navigation, RefreshCw, Search, SquareArrowOutUpRight, Square, TextCursorInput, TriangleAlert,
 } from "lucide-react";
 import { motion } from "motion/react";
+import { AgentCursorGlyph } from "../agent/AgentCursorGlyph";
 import { ActivityDisclosure, ShimmerText } from "./assistant";
 import type { ActionIconKey, AgentStatus, RunItem } from "../../lib/browserRunFeed";
 
@@ -128,7 +129,9 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
             <i /><i /><i />
             <span className="clyra-browserrun__url">{host || "Opening the browser…"}</span>
           </div>
-          <div className="clyra-browserrun__view">
+          <div className="clyra-browserrun__view" style={run.viewport?.width && run.viewport?.height
+            ? { aspectRatio: `${run.viewport.width} / ${run.viewport.height}` }
+            : undefined}>
             {toolName
               ? <div className="clyra-browserrun__tool"><AppWindow aria-hidden /><strong>{toolName}</strong><span>{live ? (lastAction?.label ?? "Getting started") : run.status === "completed" ? "Done" : "Stopped"}</span></div>
               : frame ? <img src={frame} alt={host ? `The browser on ${host}` : "The browser"} draggable={false} /> : <div className="clyra-browserrun__wait">Starting the browser…</div>}
@@ -143,12 +146,12 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
                   left: `${Math.min(100, Math.max(0, (run.cursor.x / (run.viewport?.width || 1440)) * 100))}%`,
                   top: `${Math.min(100, Math.max(0, (run.cursor.y / (run.viewport?.height || 900)) * 100))}%`,
                 }}
-                transition={{ type: "spring", stiffness: 240, damping: 28, mass: 0.6 }}
+                transition={{ type: "spring", stiffness: 430, damping: 38, mass: 0.38, restDelta: 0.1 }}
                 aria-hidden
               >
                 <span className="clyra-pointer__halo" />
-                <svg className={`clyra-pointer__arrow${run.cursor.kind === "click" || run.cursor.kind === "double_click" ? " is-press" : ""}`} key={`a${run.cursor.id}`} viewBox="0 0 24 24"><path d="M5 3v17l4.7-4.7 3 6.4 3-1.5-3.1-6.2 6.8-.7L5 3z" /></svg>
-                {run.cursor.kind === "click" || run.cursor.kind === "double_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1, 2, 3, 4].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
+                <AgentCursorGlyph pressed={run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click"} />
+                {run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
               </motion.div>
             ) : null}
           </div>

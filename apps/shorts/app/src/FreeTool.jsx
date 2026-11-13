@@ -53,7 +53,10 @@ export default function FreeTool({ tool, upload, go }) {
   const isVideo = (f) => f && (f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v|wmv|flv|3gp|mpe?g|ogv|qt)$/i.test(f.name));
   const isAudio = (f) => f && f.type.startsWith('audio/');
 
-  useEffect(() => () => { urls.forEach((u) => URL.revokeObjectURL(u)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Keep the latest object URLs in the unmount cleanup, not the empty first-render list.
+  const liveUrls = useRef([]);
+  liveUrls.current = urls;
+  useEffect(() => () => { liveUrls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
   useEffect(() => () => { if (result?.url) URL.revokeObjectURL(result.url); }, [result]);
   useEffect(() => () => { clearInterval(clock.current); abort.current?.abort(); }, []);
   useEffect(() => { if (name === 'Video Speed Changer') setLevel(200); else if (name === 'Volume Booster') setLevel(150); else setLevel(100); }, [name]);
@@ -61,7 +64,7 @@ export default function FreeTool({ tool, upload, go }) {
   const take = useCallback((incoming) => {
     const picked = Array.from(incoming || []);
     if (!picked.length) return;
-    if (picked.some((f) => f.size > 5 * 1024 ** 3)) { setError('Choose files smaller than 5 GB each.'); return; }
+    if (picked.some((f) => f.size > 1024 ** 3)) { setError('Choose files smaller than 1 GB each.'); return; }
     if (picked.some((f) => !/^(video|audio)\//.test(f.type) && !isVideo(f))) { setError('Choose video or audio files.'); return; }
     setError(''); setResult(null);
     setFiles((old) => (multiple ? [...old, ...picked] : [picked[0]]));
@@ -127,7 +130,7 @@ export default function FreeTool({ tool, upload, go }) {
         {result && first && <div className="ftl2-seg" role="tablist" aria-label="Compare">{[['original', name === 'Video Merger' ? 'Videos' : 'Original'], ['result', 'Result']].map(([k, t]) => <button key={k} type="button" role="tab" aria-selected={view === k} className={view === k ? 'on' : ''} onClick={() => setView(k)}>{t}</button>)}</div>}
         {showSettings && !busy && <button type="button" className="ftl2-ghost" onClick={reset}><X size={14}/> Start over</button>}</header>
       <div className={`ftl2-body${drag ? ' is-drag' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); take(e.dataTransfer.files); }}>
-        {!showSettings && <button type="button" className="ftl2-drop" onClick={() => input.current?.click()}><span><Upload size={26}/></span><b>{multiple ? 'Add the videos to join' : 'Drop a file here'}</b><small>or click to browse · {upload?.formats} · up to 5 GB</small></button>}
+        {!showSettings && <button type="button" className="ftl2-drop" onClick={() => input.current?.click()}><span><Upload size={26}/></span><b>{multiple ? 'Add the videos to join' : 'Drop a file here'}</b><small>or click to browse · {upload?.formats} · up to 1 GB</small></button>}
         {showSettings && name !== 'Video Merger' && (result && view === 'result' ? media(result.url, result.kind, null) : media(urls[0], 'video', first))}
         {showSettings && name === 'Video Merger' && (result && view === 'result' ? media(result.url, 'video') : <ol className="ftl2-list">
           {files.map((f, i) => <li key={`${f.name}-${i}`}><video src={urls[i]} muted preload="metadata" aria-hidden/><span><b>{f.name}</b><small>{meta[i]?.duration ? fmt(meta[i].duration) : '…'} · {size(f.size)}</small></span>

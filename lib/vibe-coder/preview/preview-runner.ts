@@ -56,15 +56,12 @@ function getViteBinary(projectPath: string) {
   return candidates.find((candidate) => existsSync(candidate));
 }
 
-async function waitForReady(state: RunnerState, port: number, timeoutMs = 20000) {
+async function waitForReady(state: RunnerState, port: number, timeoutMs = 45000) {
   const started = Date.now();
-  const candidateUrls = [
-    state.session.url,
-    `http://127.0.0.1:${port}`,
-    `http://localhost:${port}`,
-  ].filter(Boolean) as string[];
-
   while (Date.now() - started < timeoutMs) {
+    if (state.session.status === "server_crashed" || state.session.status === "build_failed") return;
+    // Frameworks can report a different bound port after startup.
+    const candidateUrls = [state.session.url, `http://127.0.0.1:${port}`, `http://localhost:${port}`].filter(Boolean) as string[];
     for (const candidate of candidateUrls) {
       const health = await checkPreviewHealth(candidate);
       if (health.ok) {
@@ -72,7 +69,7 @@ async function waitForReady(state: RunnerState, port: number, timeoutMs = 20000)
           ...state.session,
           status: "ready",
           url: candidate,
-          port,
+          port: Number(new URL(candidate).port) || port,
           lastHealthCheckAt: Date.now(),
           lastError: undefined,
         };
@@ -94,6 +91,41 @@ async function waitForReady(state: RunnerState, port: number, timeoutMs = 20000)
     },
   };
   addLog(state, "error", state.session.lastError.message);
+}
+
+/** On explicit Open only: install source dependencies without running lifecycle scripts. */
+async function prepareSourceDependencies(state: RunnerState, projectPath: string, manager: ReturnType<typeof detectPackageManager>) {
+  if (existsSync(path.join(projectPath, "node_modules"))) return;
+  updateStatus(state, "installing");
+  addLog(state, "info", `Installing ${manager} dependencies (lifecycle scripts disabled).`);
+  const args = manager === "npm" ? ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false"]
+    : manager === "pnpm" ? ["install", "--ignore-scripts", "--no-frozen-lockfile"]
+    : ["install", "--ignore-scripts"];
+  const binary = process.platform === "win32" ? `${manager}.cmd` : manager;
+  await new Promise<void>((resolve, reject) => {
+    const installer = spawn(binary, args, {
+      cwd: projectPath,
+      env: { ...createProcessEnvironment(), CI: "1", BROWSER: "none", FORCE_COLOR: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error("Dependency installation timed out after 180 seconds.")), 180_000);
+    function finish(error?: Error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) { installer.kill(); reject(error); } else resolve();
+    }
+    const capture = (level: PreviewLogLine["level"], raw: string) => {
+      for (const line of raw.split(/\r?\n/)) if (line.trim()) addLog(state, level, sanitizeToolOutputForModel(line));
+    };
+    installer.stdout.on("data", (chunk) => capture("info", String(chunk)));
+    installer.stderr.on("data", (chunk) => capture("warn", String(chunk)));
+    installer.once("error", (error) => finish(error));
+    installer.once("close", (code) => finish(code === 0 ? undefined : new Error(`${manager} install exited with code ${code ?? "unknown"}; see Preview logs.`)));
+  });
+  addLog(state, "info", "Dependencies installed. Launching the source dev script.");
 }
 
 export async function startDevServer({
@@ -139,7 +171,10 @@ export async function startDevServer({
     }
   }
   const hasHtmlEntry = entryFile !== "";
-  if (!hasHtmlEntry) {
+  const packageManager = hasPackageJson ? detectPackageManager(projectPath) : "npm";
+  const script = hasPackageJson ? await detectDevScript(projectPath) : null;
+  // Next.js, Nuxt, SvelteKit, etc. do not require a root index.html file.
+  if (!hasHtmlEntry && !script) {
     // Preserve prior log lines when we re-probe during an agent run so the
     // terminal panel does not flash empty between missing-entry checks.
     const priorLogs = existing?.logs ?? [];
@@ -151,7 +186,7 @@ export async function startDevServer({
       status: "build_failed",
       lastError: {
         title: "Preview files are incomplete",
-        message: "The agent has not yet created an index.html entry point, so Clyra cannot start a preview.",
+        message: "The checkout has no index.html entry point or recognised dev/start/preview script. See the upstream README for runtime requirements.",
       },
     };
     const state = { session, logs: priorLogs };
@@ -161,8 +196,6 @@ export async function startDevServer({
     sessions.set(projectId, state);
     return session;
   }
-  const packageManager = hasPackageJson ? detectPackageManager(projectPath) : "npm";
-  const script = hasPackageJson ? await detectDevScript(projectPath) : null;
   // A package.json without a recognized dev/start/preview script is only a
   // hard failure when there is no HTML entry to fall back to serving
   // statically (vite handles plain HTML + relative-path ES modules with no
@@ -177,9 +210,9 @@ export async function startDevServer({
     projectId,
     projectPath,
     packageManager,
-    devCommand: script ? `${script.scriptName}: ${script.command}` : "static HTML: vite",
+    devCommand: script ? `${packageManager} run ${script.scriptName}: ${script.command}` : "static HTML: vite",
     port,
-    url: `http://127.0.0.1:${port}${entryFile === "index.html" ? "" : `/${entryFile}`}`,
+    url: `http://127.0.0.1:${port}${!script && entryFile !== "index.html" ? `/${entryFile}` : ""}`,
     status: "starting",
     startedAt: Date.now(),
   };
@@ -193,18 +226,29 @@ export async function startDevServer({
       : "Detected a dependency-free static HTML project.",
   );
   addLog(state, "info", `Starting preview on port ${port}.`);
-
+  if (script) {
+    try {
+      await prepareSourceDependencies(state, projectPath, packageManager);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not install source dependencies.";
+      state.session = { ...state.session, status: "build_failed", lastError: { title: "Source setup failed", message } };
+      addLog(state, "error", message);
+      return serialise(state);
+    }
+  }
+  updateStatus(state, "starting");
+  // Run the cloned project's own script; do not generate files or ask the AI
+  // to make the source resemble a generic Vite project.
   const child = spawn(
-    viteBinary || "python3",
-    viteBinary
-      ? ["--host", "127.0.0.1", "--port", String(port), "--strictPort"]
+    script ? (process.platform === "win32" ? `${packageManager}.cmd` : packageManager) : (viteBinary || "python3"),
+    script ? ["run", script.scriptName]
+      : viteBinary ? ["--host", "127.0.0.1", "--port", String(port), "--strictPort"]
       : ["-m", "http.server", String(port), "--bind", "127.0.0.1"],
     {
       cwd: projectPath,
-      // A preview process receives no credentials or harness facts. A project
-      // that needs its own key reads it from its own .env file.
-      env: { ...createProcessEnvironment(), BROWSER: "none", FORCE_COLOR: "0" },
+      env: { ...createProcessEnvironment(), BROWSER: "none", FORCE_COLOR: "0", HOST: "127.0.0.1", PORT: String(port) },
       stdio: ["pipe", "pipe", "pipe"],
+      shell: Boolean(script) && process.platform === "win32",
     },
   );
   state.process = child;
@@ -233,6 +277,10 @@ export async function startDevServer({
 
   child.stdout.on("data", (chunk) => handleOutput("info", chunk.toString()));
   child.stderr.on("data", (chunk) => handleOutput("error", chunk.toString()));
+  child.on("error", (error) => {
+    state.session = { ...state.session, status: "build_failed", lastError: { title: "Source dev server could not launch", message: error.message } };
+    addLog(state, "error", error.message);
+  });
   child.on("close", (code) => {
     if (state.session.status !== "stopped") {
       state.session = {

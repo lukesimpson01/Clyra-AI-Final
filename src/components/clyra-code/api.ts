@@ -12,6 +12,38 @@ import type {
 } from "../../../lib/clyra-code/library/registry";
 import type { TemplateCheckoutInspection, TemplateImportPlan, TemplateRemoteVerification } from "../../../lib/clyra-code/library/service";
 
+
+export type ComponentCatalogItem = {
+  id: string;
+  source: "shadcn" | "21st";
+  name: string;
+  title: string;
+  description: string;
+  category: string;
+  previewUrl?: string;
+  docsUrl?: string;
+  registryId: string;
+  origin?: string;
+  offline?: boolean;
+};
+
+export type ComponentDetails = {
+  item: ComponentCatalogItem;
+  files: Array<{ path: string; content: string }>;
+  dependencies: string[];
+  registryDependencies: string[];
+  requirements: string[];
+  license: string;
+};
+
+export type ComponentInstallResult = {
+  ok: boolean;
+  installed: string[];
+  files: string[];
+  dependenciesToInstall: string[];
+  note: string;
+};
+
 export type VibeProject = {
   id: string;
   name: string;
@@ -137,6 +169,20 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 
 export const api = {
+  componentLibraryStatus: () =>
+    json<{ sources: Array<{ id: "shadcn" | "21st"; available: boolean; detail: string }> }>("/api/clyra-code/components/status"),
+  componentCatalog: (filters: { q?: string; source?: "all" | "shadcn" | "21st" } = {}) => {
+    const query = new URLSearchParams();
+    if (filters.q) query.set("q", filters.q);
+    if (filters.source) query.set("source", filters.source);
+    return json<{ items: ComponentCatalogItem[]; errors: Array<{ source: string; message: string }> }>("/api/clyra-code/components?" + query.toString());
+  },
+  componentDetails: (source: "shadcn" | "21st", name: string) =>
+    json<ComponentDetails>("/api/clyra-code/components/" + enc(source) + "/" + enc(name)),
+  installComponent: (projectId: string, source: "shadcn" | "21st", name: string) =>
+    json<ComponentInstallResult>("/api/clyra-code/components/install", {
+      method: "POST", body: JSON.stringify({ projectId, source, name }),
+    }),
   listProjects: () =>
     json<{ projects: VibeProject[] }>("/api/vibe/projects").then((r) => r.projects ?? []),
 

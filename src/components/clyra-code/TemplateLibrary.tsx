@@ -18,9 +18,12 @@ import {
   Palette,
   Search,
   Sparkles,
+  Star,
   X,
 } from "lucide-react";
 import { api, type TemplateImportMode, type TemplateImportPlan, type TemplateManifest } from "./api";
+import { TemplateRatingGlance, TemplateSampleInlineRating, TemplateScreenshotGallery, TemplateFeaturesAndRequirements, TemplateRatingsAndReviews } from "./TemplateDetailsSections";
+import { discoverOfficialScreenshots } from "./templateSourceScreenshots";
 import { cn } from "../../lib/utils";
 import { useNativeOcclusion } from "../../lib/nativeOcclusion";
 import { FEATURED_APP_IDS } from "../../../lib/clyra-code/library/featured-apps";
@@ -186,8 +189,31 @@ function IconWash({ entry, opacity = 0.5 }: { entry: TemplateManifest; opacity?:
  * app's own icon on a colour wash — crisp at any size, never a cropped social-preview image.
  */
 function SourceVisual({ entry, className = "", iconSize = 64 }: { entry: TemplateManifest; className?: string; iconSize?: number }) {
-  const sourceCapture = entry.sourceScreenshots[0];
+  const root = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [discovered, setDiscovered] = useState<Awaited<ReturnType<typeof discoverOfficialScreenshots>>>([]);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const observer = new IntersectionObserver((changes) => {
+      if (changes.some((change) => change.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "220px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [entry.id]);
+  useEffect(() => {
+    if (!visible || entry.sourceScreenshots.length) return;
+    let alive = true;
+    void discoverOfficialScreenshots(entry.repositoryUrl).then((shots) => {
+      if (alive) setDiscovered(shots);
+    });
+    return () => { alive = false; };
+  }, [entry.repositoryUrl, entry.sourceScreenshots.length, visible]);
+  const sourceCapture = entry.sourceScreenshots[0] ?? discovered[0];
   if (sourceCapture && state !== "failed") {
     return (
       <div className={cn("relative isolate overflow-hidden bg-[#F7F6F5]", className)}>
@@ -345,6 +371,7 @@ function SourceCard({ entry, onChoose, install, index = 0, wide = false }: { ent
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[14px] font-semibold tracking-[-0.012em] text-[#2C2C2B]">{entry.name}</span>
             <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
+            <TemplateSampleInlineRating entry={entry} />
           </span>
         </button>
         <Get entry={entry} install={install} />
@@ -370,6 +397,7 @@ function RankRow({ entry, rank, onChoose, install, index }: { entry: TemplateMan
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[14.5px] font-medium tracking-[-0.012em] text-[#2C2C2B]">{entry.name}</span>
           <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
+          <TemplateSampleInlineRating entry={entry} />
         </span>
       </button>
       <span className="flex shrink-0 flex-col items-center gap-1">
@@ -503,6 +531,7 @@ function Spotlight({ entries, onChoose, install, related }: { entries: TemplateM
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-medium text-[#2C2C2B]">{entry.name}</span>
                 <span className="block truncate text-[12.5px] text-[#78766F]">{subtitleOf(entry)}</span>
+                <TemplateSampleInlineRating entry={entry} />
               </span>
               <span className="pointer-events-auto"><Get entry={entry} install={install} /></span>
             </div>
@@ -546,7 +575,8 @@ export function TemplateLibrary({
   onImported,
   onAskClyra,
   onOpenInstalled,
-  existingProjectIds,
+  onInstalled,
+  existingProjects,
 }: {
   open: boolean;
   projectId: string | null;
@@ -555,8 +585,10 @@ export function TemplateLibrary({
   onAskClyra: (entry: TemplateManifest) => void;
   /** Open an installed app in Clyra Code: select it, start the dev server, and start the setup chat. */
   onOpenInstalled?: (projectId: string, entry: TemplateManifest) => void;
-  /** Projects that still exist, used to drop installs whose project was deleted. */
-  existingProjectIds?: string[];
+  /** Refresh projects after a Git checkout completes. */
+  onInstalled?: (projectId: string) => void;
+  /** Persisted project metadata allows recovering installs on a different browser. */
+  existingProjects?: Array<{ id: string; name: string; prompt?: string }>;
 }) {
   const reduce = useReducedMotion();
   useNativeOcclusion(open);
@@ -590,12 +622,23 @@ export function TemplateLibrary({
   const filtering = Boolean(query.trim() || category);
   const isHome = view === "discover" && !filtering;
 
-  // Drop installs whose project no longer exists, so "Open" never leads nowhere.
+  // Project checkouts, not browser localStorage, are the source of truth.
+  // Retain a fresh download until the async project-list refresh completes.
   const liveInstalled = useMemo(() => {
-    if (!existingProjectIds || !existingProjectIds.length) return installedMap;
-    const alive = new Set(existingProjectIds);
-    return Object.fromEntries(Object.entries(installedMap).filter(([, record]) => alive.has(record.projectId)));
-  }, [installedMap, existingProjectIds]);
+    const alive = new Set((existingProjects ?? []).map((project) => project.id));
+    const recovered: Record<string, InstallRecord> = {};
+    for (const entry of catalogue) {
+      const project = existingProjects?.find((candidate) =>
+        candidate.prompt?.includes(`source checkout from ${entry.repositoryUrl} at `) &&
+        candidate.name.startsWith(entry.name),
+      );
+      if (project) recovered[entry.id] = { projectId: project.id, at: 0 };
+    }
+    for (const [id, record] of Object.entries(installedMap)) {
+      if (!existingProjects || alive.has(record.projectId) || Date.now() - record.at < 60_000) recovered[id] = record;
+    }
+    return recovered;
+  }, [catalogue, installedMap, existingProjects]);
 
   const spotlight = useMemo(() => {
     // Lead with genuine upstream screenshots when any exist. Showing five
@@ -683,13 +726,14 @@ export function TemplateLibrary({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, open, justInstalled]);
 
+  // Reset only on a genuine navigation, not when a project refresh or a
+  // template review triggers a rerender. Avoid touching an exiting page's ref.
   useEffect(() => {
     if (!open) return;
-    const reset = () => contentRef.current?.scrollTo({ top: 0 });
-    reset();
-    const frame = window.requestAnimationFrame(reset);
-    const settle = window.setTimeout(reset, 80);
-    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(settle); };
+    const frame = window.requestAnimationFrame(() => {
+      contentRef.current?.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [open, selected?.id, view, category]);
 
   const choose = (entry: TemplateManifest) => {
@@ -701,7 +745,7 @@ export function TemplateLibrary({
   };
 
   /** One-tap install: verify the pinned revision, then download the source into its own project. */
-  const get = useCallback(async (entry: TemplateManifest) => {
+  const get = useCallback(async (entry: TemplateManifest, newProject = false) => {
     if (phases[entry.id]) return;
     setInstallErrors((current) => { const next = { ...current }; delete next[entry.id]; return next; });
     setPhases((current) => ({ ...current, [entry.id]: "verifying" }));
@@ -712,18 +756,22 @@ export function TemplateLibrary({
       // Let the ring close before the button turns back into a pill that reads Open.
       setPhases((current) => ({ ...current, [entry.id]: "finishing" }));
       await new Promise((resolve) => window.setTimeout(resolve, 520));
-      setInstalledMap((current) => {
-        const next = { ...current, [entry.id]: { projectId: result.project.id, at: Date.now() } };
-        writeInstalled(next);
-        return next;
-      });
-      setJustInstalled(entry);
+      if (!newProject) {
+        setInstalledMap((current) => {
+          const next = { ...current, [entry.id]: { projectId: result.project.id, at: Date.now() } };
+          writeInstalled(next);
+          return next;
+        });
+        setJustInstalled(entry);
+      }
+      onInstalled?.(result.project.id);
+      if (newProject) onOpenInstalled?.(result.project.id, entry);
     } catch (reason) {
       setInstallErrors((current) => ({ ...current, [entry.id]: reason instanceof Error ? reason.message : "The download failed." }));
     } finally {
       setPhases((current) => { const next = { ...current }; delete next[entry.id]; return next; });
     }
-  }, [phases]);
+  }, [phases, onInstalled, onOpenInstalled]);
 
   useEffect(() => {
     if (!justInstalled) return;
@@ -732,11 +780,11 @@ export function TemplateLibrary({
   }, [justInstalled]);
 
   const openInstalled = useCallback((entry: TemplateManifest) => {
-    const record = installedMap[entry.id];
+    const record = liveInstalled[entry.id];
     if (!record) return;
     setJustInstalled(null);
     onOpenInstalled?.(record.projectId, entry);
-  }, [installedMap, onOpenInstalled]);
+  }, [liveInstalled, onOpenInstalled]);
 
   const install: InstallApi = {
     phase: (id) => phases[id],
@@ -776,7 +824,7 @@ export function TemplateLibrary({
 
   const copyClone = async () => {
     if (!selected) return;
-    await navigator.clipboard?.writeText(`git clone ${selected.repositoryUrl}.git`).catch(() => undefined);
+    await navigator.clipboard?.writeText(`git clone ${selected.repositoryUrl.endsWith(".git") ? selected.repositoryUrl : `${selected.repositoryUrl}.git`}`).catch(() => undefined);
   };
 
   const goHome = () => { setView("discover"); setCategory(""); setQuery(""); setLandingKind("All"); setSelected(null); };
@@ -807,7 +855,7 @@ export function TemplateLibrary({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: reduce ? 0 : 0.3, ease: EASE }}
-      className="absolute inset-0 z-[90] flex overflow-hidden bg-white"
+      className="absolute inset-0 z-[90] flex min-h-0 overflow-hidden bg-white"
       role="dialog"
       aria-modal="true"
       aria-label="Clyra Library"
@@ -842,7 +890,7 @@ export function TemplateLibrary({
         </nav>
       </aside>
 
-      <main className="relative flex min-w-0 flex-1 flex-col bg-white">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
         <header className="absolute inset-x-0 top-0 z-20 flex h-[52px] items-center gap-2 bg-white/80 px-3 backdrop-blur-xl [mask-image:linear-gradient(to_bottom,black_75%,transparent)] md:px-5">
           <AnimatePresence initial={false}>
             {canGoBack ? (
@@ -859,13 +907,14 @@ export function TemplateLibrary({
 
         <AnimatePresence mode="wait" initial={false}>
           {selected ? (
-            <motion.div key={`detail-${selected.id}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[68px] md:px-10">
+            <motion.div key={`detail-${selected.id}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[68px] md:px-10">
               <div className="mx-auto max-w-[940px]">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
                   {selected.category !== "Landing Pages" ? <AppIcon entry={selected} size={128} lifted /> : null}
                   <div className="min-w-0 flex-1">
                     <h2 className="text-[26px] font-semibold leading-tight tracking-[-0.028em] text-[#2C2C2B] md:text-[28px]">{selected.name}</h2>
                     <p className="mt-0.5 text-[15px] text-[#78766F]">{subtitleOf(selected)}</p>
+                    <TemplateRatingGlance entry={selected} />
                     <div className="mt-4 flex flex-wrap items-center gap-2.5">
                       <Get entry={selected} install={install} large />
                       {selected.livePreviewUrl ? (
@@ -874,9 +923,24 @@ export function TemplateLibrary({
                           <ExternalLink className="h-3.5 w-3.5" aria-hidden /> Live demo
                         </a>
                       ) : null}
+                      {install.installed(selected.id) ? <button type="button" disabled={Boolean(phases[selected.id])} onClick={() => void get(selected, true)} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[rgba(55,53,47,0.06)] px-3.5 text-[13px] font-medium text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)] disabled:opacity-45">Open in a new project</button> : null}
+                      {install.installed(selected.id) ? <button type="button"
+                        onClick={() => document.getElementById("template-ratings-" + selected.id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" })}
+                        className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[rgba(55,53,47,0.06)] px-3.5 text-[13px] font-medium text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"
+                        aria-label={"Rate " + selected.name}><Star className="h-3.5 w-3.5" aria-hidden /> Rate</button> : null}
                       <button type="button" onClick={() => { onAskClyra(selected); onClose(); }} className="inline-flex h-[32px] items-center gap-1.5 rounded-full bg-[rgba(55,53,47,0.06)] px-3.5 text-[13px] font-semibold text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"><Sparkles className="h-3.5 w-3.5" /> Ask Clyra</button>
                       <a href={selected.repositoryUrl} target="_blank" rel="noreferrer" aria-label="View source on GitHub" title="View source on GitHub" className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[rgba(55,53,47,0.06)] text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)]"><ExternalLink className="h-4 w-4" /></a>
                     </div>
+                    {phases[selected.id] ? <div role="status" aria-live="polite" aria-label="Preparing Git source checkout" className="mt-4 max-w-[360px]">
+                      <div className="flex items-center justify-between gap-3 text-[12px] text-[#55565F]">
+                        <span className="font-medium">Preparing</span>
+                        <span className="text-[#86868B]">{phases[selected.id] === "verifying" ? "Checking Git source" : phases[selected.id] === "downloading" ? "Cloning repository" : "Finishing checkout"}</span>
+                      </div>
+                      <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-[#E8E8ED]">
+                        <motion.div className="h-full w-[36%] rounded-full bg-[#007AFF]" initial={{ x: "-105%" }} animate={{ x: "290%" }} transition={{ duration: 1.35, repeat: Infinity, ease: "easeInOut" }} />
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-[#86868B]">Downloading the actual Git source. Progress is indeterminate until Git finishes.</p>
+                    </div> : null}
                     {install.error(selected.id) ? <p role="alert" className="mt-2 text-[12px] text-[#C0392B]">{install.error(selected.id)}</p> : null}
                     {selected.requiredSecrets.length ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-[12px] border border-[#E5E2DB] bg-[#FAF9F7] px-3 py-2.5" role="note">
@@ -946,6 +1010,8 @@ export function TemplateLibrary({
                   {coverCapabilities(selected).length ? <ul className="mt-3 space-y-1.5 text-[14px] text-[#4A4944]">{coverCapabilities(selected).map((cap) => <li key={cap} className="flex gap-2"><span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[#78766F]" />{cap}</li>)}</ul> : null}
                 </section>
 
+                <TemplateFeaturesAndRequirements entry={selected} />
+
                 <section className="mt-8 border-t border-black/[0.08] pt-5">
                   <h3 className="text-[20px] font-bold tracking-[-0.025em] text-[#2C2C2B]">What happens when you open it</h3>
                   <ol className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -963,6 +1029,8 @@ export function TemplateLibrary({
                   </ol>
                   {selected.compatibility.length ? <ul className="mt-4 grid gap-2 text-[13px] leading-[1.5] text-[#4A4944] sm:grid-cols-2">{selected.compatibility.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />{item}</li>)}</ul> : null}
                 </section>
+
+                <TemplateRatingsAndReviews entry={selected} canReview={install.installed(selected.id)} />
 
                 {related(selected).length ? (
                   <section className="mt-8 border-t border-black/[0.08] pt-5">
@@ -1006,7 +1074,7 @@ export function TemplateLibrary({
               </div>
             </motion.div>
           ) : view === "installed" ? (
-            <motion.div key="installed" ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
+            <motion.div key="installed" ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
               <div className="mx-auto max-w-[1120px]">
                 <h2 className="text-[28px] font-semibold tracking-[-0.03em] text-[#2C2C2B]">Installed</h2>
                 <p className="mt-1 text-[14px] text-[#78766F]">Apps you’ve downloaded. Open one to review its setup in Clyra Code and start changing it.</p>
@@ -1025,7 +1093,7 @@ export function TemplateLibrary({
               </div>
             </motion.div>
           ) : (
-            <motion.div key={`list-${category || "home"}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
+            <motion.div key={`list-${category || "home"}`} ref={contentRef} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25, ease: EASE }} className="cc-scroll min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto px-5 pb-10 pt-[64px] md:px-10">
               <div className="mx-auto max-w-[1180px]">
                 <div className="mb-5">
                   <h2 className="text-[26px] font-bold tracking-[-0.02em] text-[#2C2C2B]">{pageTitle}</h2>
@@ -1124,6 +1192,16 @@ export function TemplateLibrary({
           )}
         </AnimatePresence>
 
+        {/* Show source checkout activity even when Get was tapped on a catalogue card. */}
+        <AnimatePresence>
+          {!selected && Object.values(phases).some(Boolean) ? (
+            <motion.div key="library-clone-progress" role="status" aria-live="polite" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+              className="absolute bottom-5 left-1/2 z-30 w-[min(420px,calc(100%-32px))] -translate-x-1/2 rounded-[14px] border border-black/[0.06] bg-white p-3.5 shadow-[0_12px_36px_rgba(0,0,0,0.12)]">
+              <div className="flex items-center justify-between text-[12.5px]"><span className="font-medium text-[#1D1D1F]">Preparing</span><span className="text-[#86868B]">Git source checkout</span></div>
+              <div className="mt-2.5 h-[3px] overflow-hidden rounded-full bg-[#E8E8ED]"><motion.div className="h-full w-[35%] rounded-full bg-[#007AFF]" initial={{ x: "-105%" }} animate={{ x: "290%" }} transition={{ duration: 1.35, repeat: Infinity, ease: "easeInOut" }} /></div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
         {/* After a download the button already reads Open; this quiet toast offers the same jump without blocking browsing. */}
         <AnimatePresence>
           {justInstalled ? (

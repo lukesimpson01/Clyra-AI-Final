@@ -23,6 +23,13 @@ Execution discipline for a new product: inspect only the project root/configurat
 
 Research current public products, libraries, APIs, brands, repositories and versioned systems only when that evidence materially affects the implementation. Use Clyra Web Search through the local POST /api/research/web-search route with a focused query, prefer its authoritative sources, and carry only relevant evidence into the work. Do not invent sources, and skip web research for purely local edits.
 
+
+Component discovery and MCP design workflow:
+- On every React/Tailwind interface request, inspect the project's framework and components.json, then search the shadcn and (if connected) 21st MCP registries for matching components BEFORE building an equivalent from scratch. If only one is suitable, use that one.
+- MCP discovery is automatic: when a compatible project lacks components.json, initialise shadcn with the official CLI first, then use shadcn registry search/list/view/install; 21st search/get_component when available. When the user references a library item, use that exact source and item identifier; check dependencies, theme compatibility, license, and real files before installing.
+- Never claim an MCP scan or installation unless a real MCP tool ran; each tool call is displayed in the activity timeline. Avoid unnecessary installation, duplicate code, or incompatible React components for Swift/native projects.
+- 21st may require user API credentials and paid code retrieval; if unavailable, report the limitation and continue using shadcn or existing project components. Do not fabricate catalog results or bypass access controls.
+
 Between meaningful phases, provide one concise user-facing progress update about what was actually learned or completed and what comes next. Never expose private chain-of-thought, invent actions, files, results, test passes, or progress.
 
 Project architecture rules — for every coding request:
@@ -528,7 +535,7 @@ export class OpenCodeRuntimeManager {
       // each revision of the guidance instead of keeping the first one they
       // were created with.
       if (/Be an adaptive expert coding agent\.|Clyra Code Agent/.test(existing)
-        && (!/Finished-product quality/.test(existing) || !/Clyra Web Search/.test(existing) || !/Design quality — avoid generic AI-generated interfaces/.test(existing))) {
+        && (!/Finished-product quality/.test(existing) || !/Clyra Web Search/.test(existing) || !/Design quality — avoid generic AI-generated interfaces/.test(existing) || !/Component discovery and MCP design workflow/.test(existing))) {
         await fs.promises.writeFile(agentsPath, DEFAULT_AGENTS_MD, "utf8").catch(() => undefined);
       }
     } catch {

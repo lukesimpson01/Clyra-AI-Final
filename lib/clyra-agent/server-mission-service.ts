@@ -6,6 +6,7 @@ import { runWebSearchResearch } from "../research/research-handlers";
 import { createClyraToolRegistry, routeObjective } from "./catalog";
 import { MissionRuntime, validateJson, type Json, type MissionPlan, type MissionRecord, type ToolResult } from "./core";
 import { MissionStore } from "./mission-store";
+import { replanVoiceMission } from "./mission-revision";
 import { filesList, filesRead, filesWrite, filesMove, filesDelete, pathExists } from "./fs-tools";
 import { terminalRun, gitStatus, gitDiff, gitCommit } from "./terminal-tools";
 import { getManagedBrowserObservation, navigateManagedBrowser, actOnManagedBrowser, type BrowserAction } from "../openbrowser/browser-runtime";
@@ -39,6 +40,8 @@ export class ServerMissionService {
    * persisted after every state boundary. A restart therefore never silently
    * resumes work, while Pause and Stop can still interrupt an active tool. */
   private active = new Map<string, MissionRuntime>();
+  /** A single running job per mission prevents a revision racing its previous tools. */
+  private jobs = new Map<string, Promise<void>>();
   private memoryService: MemoryService | null;
 
   constructor(memoryService?: MemoryService) {
@@ -134,26 +137,109 @@ export class ServerMissionService {
       this.active.delete(id);
     }
   }
-  /** Start a durable task without holding the HTTP response open. Chat can
-   * render the persisted plan immediately, poll its real state, and issue a
-   * pause or stop command while an adapter is active. */
+  /** Background runs checkpoint every stage and never block a live voice response. */
+  private schedule(runtime: MissionRuntime, run: () => Promise<MissionRecord>) {
+    const id = runtime.snapshot().id;
+    this.active.set(id, runtime);
+    const job: Promise<void> = Promise.resolve()
+      .then(run)
+      .then((record) => { this.store.save(record); })
+      .catch((error) => {
+        this.store.save(runtime.snapshot());
+        console.warn("[clyra-agent] background mission stopped unexpectedly", error instanceof Error ? error.message : error);
+      })
+      .finally(() => {
+        if (this.active.get(id) === runtime) this.active.delete(id);
+        if (this.jobs.get(id) === job) this.jobs.delete(id);
+      });
+    this.jobs.set(id, job);
+    return runtime.snapshot();
+  }
+
+  /** Start a durable task and return its receipt before any tool executes. */
   start(input: { missionId?: string; projectId?: string; plan: MissionPlan; approvedStepIds?: string[] }) {
     const runtime = this.createRuntime(input.plan, input.missionId, input.projectId, input.approvedStepIds);
     const initial = runtime.snapshot();
+    if (this.active.has(initial.id)) throw new Error("This mission is already running.");
     this.store.save(initial);
-    this.active.set(initial.id, runtime);
-    void runtime.run()
-      .then((record) => this.store.save(record))
-      .catch((error) => {
-        // The runtime normally records tool failures itself. This final guard
-        // retains a safe checkpoint if an adapter unexpectedly rejects.
-        const record = runtime.snapshot();
-        this.store.save(record);
-        console.warn("[clyra-agent] background mission stopped unexpectedly", error instanceof Error ? error.message : error);
-      })
-      .finally(() => this.active.delete(initial.id));
-    return runtime.snapshot();
+    return this.schedule(runtime, () => runtime.run());
   }
+
+  /** Voice control uses this non-blocking form; existing synchronous resume stays compatible. */
+  async resumeBackground(input: { missionId: string; approvedStepIds?: string[] }) {
+    const active = this.active.get(input.missionId);
+    if (active) {
+      const snapshot = active.snapshot();
+      if (snapshot.state !== "PAUSED") return snapshot;
+      // A user can tap Resume immediately after Pause; don't claim to have
+      // resumed while the previous abortable adapter still owns this mission.
+      const job = this.jobs.get(input.missionId);
+      if (job) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            job,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(() => reject(new Error("The previous action is still pausing. Please try Resume again.")), 10_000);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+    }
+    const saved = this.store.get(input.missionId);
+    if (!saved) return null;
+    if (["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_USER"].includes(saved.state)) return saved;
+    const approved = new Set(input.approvedStepIds || []);
+    const approvalStep = saved.approval?.stepId;
+    if (saved.state === "WAITING_FOR_APPROVAL" && (!approvalStep || !approved.has(approvalStep))) return saved;
+    const runtime = this.createRuntime(saved.plan, saved.id, saved.projectId, input.approvedStepIds, saved);
+    return this.schedule(runtime, () => saved.state === "WAITING_FOR_APPROVAL" && approvalStep
+      ? runtime.approveAndResume(approvalStep)
+      : runtime.resumePersisted());
+  }
+
+  /** Apply a live user correction to the SAME durable mission.
+   * Stop the in-flight adapter first; preserve only verified steps whose
+   * exact tool inputs and dependencies are unchanged. Replan everything else. */
+  async revise(missionId: string, instruction: string) {
+    const addition = instruction.trim();
+    if (!addition || addition.length > 2000) throw new Error("A short instruction is required.");
+    const prior = this.store.get(missionId);
+    if (!prior) return null;
+    if (["COMPLETED", "FAILED", "CANCELLED"].includes(prior.state)) throw new Error("This task has already ended. Start a follow-up task instead.");
+    const active = this.active.get(missionId);
+    if (active) {
+      this.pause(missionId);
+      const job = this.jobs.get(missionId);
+      if (job) {
+        // Never resume a second runtime while a previous adapter may still write.
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            job,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(() => reject(new Error("The current action is still stopping. Try that correction again.")), 10_000);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+    }
+    const saved = this.store.get(missionId);
+    if (!saved) return null;
+    if (["COMPLETED", "FAILED", "CANCELLED"].includes(saved.state)) throw new Error("This task completed before it could be changed.");
+    const objective = `${saved.plan.objective}\nFollow-up instruction: ${addition}`;
+    if (objective.length > 8_000) throw new Error("This mission has reached its instruction limit. Finish it and start a follow-up.");
+    const planned = this.plan(objective);
+    if (!planned) throw new Error("The available tools cannot safely replan this instruction.");
+    const revised = replanVoiceMission(saved, planned, addition);
+    this.store.save(revised);
+    return this.resumeBackground({ missionId });
+  }
+
   get(missionId: string) { return this.store.get(missionId); }
   pause(missionId: string) {
     const runtime = this.active.get(missionId);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AppWindow, Bug, Folder, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
+import { AppWindow, Blocks, Bug, Folder, FolderOpen, LibraryBig, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { GENERATED_APPS_EVENT, readGeneratedApps, setGeneratedApp } from "../../lib/userGeneratedApps";
 import { api } from "./api";
@@ -19,6 +19,8 @@ import { AppRail, APP_RAIL_WIDTH, type WorkspaceMode } from "./ModeTabs";
 import { DesignPicker } from "./DesignPicker";
 import { OpenDesignPanel } from "./OpenDesignPanel";
 import { TemplateLibrary } from "./TemplateLibrary";
+import { ComponentLibraryPanel } from "./ComponentLibraryPanel";
+import type { ComponentCatalogItem } from "./api";
 import { WelcomeProjectPicker, formatRecentTime } from "./WelcomeProjectPicker";
 import { designDirective, type DesignSystemSummary, type DesignTemplateSummary } from "../../../lib/clyra-design/directive";
 
@@ -153,6 +155,7 @@ export default function ClyraCodeWorkspace({
     window.addEventListener(GENERATED_APPS_EVENT, update);
     return () => window.removeEventListener(GENERATED_APPS_EVENT, update);
   }, []);
+  const [componentLibraryOpen, setComponentLibraryOpen] = useState(false);
   // True while a design project is being handed back to the Code workspace:
   // the design surface fades out before the switch, so the handoff reads as
   // one continuous motion instead of a hard cut.
@@ -625,6 +628,14 @@ export default function ClyraCodeWorkspace({
     }
   }, [undoLastCheckpoint]);
 
+  const referenceComponent = useCallback((item: ComponentCatalogItem) => {
+    setContexts((existing) => existing.some(context => context.id === "component:" + item.id) ? existing : [...existing, {
+      id: "component:" + item.id,
+      label: item.title,
+      detail: (item.source === "shadcn" ? "shadcn/ui" : "21st.dev") + " · " + item.registryId,
+    }]);
+  }, []);
+
   const submitPrompt = useCallback(
     async (
       text: string,
@@ -715,7 +726,11 @@ export default function ClyraCodeWorkspace({
               template: catalog.templates.find((template) => template.id === designTemplateId) ?? null,
             })
           : "";
-        void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + attachmentContext + text, command === "plan" ? "plan" : undefined, {
+        const componentReferences = mode === "code" ? contexts.filter(context => context.id.startsWith("component:")) : [];
+        const componentInstruction = componentReferences.length
+          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nUse the locally bundled official component sources in external/shadcn-ui and external/21st-agent-elements, or source files already installed into this project via the Clyra Component Library. Do not use remote MCP tools or paid component APIs. Verify framework and dependency compatibility, then reuse the actual checked-in source rather than inventing a substitute. Never claim source was installed without checking project files.\n\n"
+          : "";
+        void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + componentInstruction + attachmentContext + text, command === "plan" ? "plan" : undefined, {
           ...options,
           userText: options?.userText ?? trimmed,
           effort,
@@ -727,19 +742,14 @@ export default function ClyraCodeWorkspace({
         return false;
       }
     },
-    [activeProject, beginOptimisticPrompt, catalog, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
+    [activeProject, beginOptimisticPrompt, catalog, contexts, createProject, designSystemId, designTemplateId, effort, failOptimisticPrompt, loadProjects, mode, startRun, state.activeProjectId, state.sessionId],
   );
 
-  // "Open in Clyra Code" from the Library: select the installed project, bring up
-  // the live preview (usePreview starts the dev server for the active project),
-  // then send one setup prompt once that project is actually active so the
-  // message can never land in a different project.
-  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
-  // Library hand-off: the shell fades out (same pure fade as first entering
-  // Vibe Coder), the project lands with the sidebar and preview open, then the
-  // shell fades back in while the dev server's build animation runs.
+  // Library Open selects the cloned project; usePreview manages its real dev
+  // server. No AI prompt or generated edits are involved in source opening.
   const [handoffFading, setHandoffFading] = useState(false);
   // The installed app's thread gets a quiet welcome prompt once setup is done.
+  const [autoStart, setAutoStart] = useState<{ projectId: string; name: string; repositoryUrl: string } | null>(null);
   const [libraryWelcome, setLibraryWelcome] = useState<{ name: string; sessionId: string | null } | null>(null);
   useEffect(() => {
     if (!libraryWelcome || libraryWelcome.sessionId || !state.sessionId || !running) return;
@@ -1122,6 +1132,12 @@ export default function ClyraCodeWorkspace({
                   <span className="hidden xl:inline">{launcherAppIds.has(activeProject.id) ? "In launcher" : "Add app"}</span>
                 </button>
               ) : null}
+              {mode === "code" ? (
+                <button type="button" onClick={() => setComponentLibraryOpen(true)} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                  <Blocks className="h-[14px] w-[14px]" strokeWidth={1.7} />
+                  <span className="hidden xl:inline">Components</span>
+                </button>
+              ) : null}
               {mode === "code" && activeProject ? (
                 <GitHubPopover projectId={activeProject.id} projectName={activeProject.name} />
               ) : null}
@@ -1361,6 +1377,13 @@ export default function ClyraCodeWorkspace({
       </motion.div>
       </div>
 
+      <ComponentLibraryPanel
+        open={componentLibraryOpen && mode === "code"}
+        onClose={() => setComponentLibraryOpen(false)}
+        onReference={referenceComponent}
+        referencedIds={contexts.map(context => context.id)}
+        projectId={activeProject?.id ?? null}
+      />
       <TemplateLibrary
         open={libraryOpen && mode === "code"}
         projectId={state.activeProjectId}
@@ -1369,7 +1392,8 @@ export default function ClyraCodeWorkspace({
           setLibraryOpen(false);
           void loadProjects().then(() => selectProject(projectId));
         }}
-        existingProjectIds={state.projects.map((project) => project.id)}
+        existingProjects={state.projects}
+        onInstalled={() => { void loadProjects(); }}
         onOpenInstalled={(projectId, entry) => {
           // Downloading source is safe; installing dependencies and running scripts is a
           // separate, explicit trust decision. Cancel still opens the files for review.

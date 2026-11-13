@@ -1,0 +1,57 @@
+name: Clyra offline component library
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/clyra-code/offline-component-library.ts"
+      - "src/components/clyra-code/ComponentLibraryPanel.tsx"
+      - "src/components/clyra-code/api.ts"
+      - "src/components/clyra-code/ClyraCodeWorkspace.tsx"
+      - "tools/component-library-unit-tests.ts"
+      - ".gitmodules"
+      - "package.json"
+      - ".github/workflows/clyra-offline-components.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-source-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Offline component catalogue + installation tests
+        run: npm run test:component-library
+      - name: React typecheck
+        run: npm run lint
+      - name: Web and server production build
+        run: npm run build
+      - name: Clone official public source Git submodules
+        run: npm run setup:component-sources
+      - name: Verify checked-out components and licences
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, existsSync, readdirSync } from "node:fs";
+            import assert from "node:assert/strict";
+            assert(existsSync("external/shadcn-ui/apps/v4/registry/new-york-v4/ui/button.tsx"));
+            assert(existsSync("external/shadcn-ui/LICENSE.md"));
+            const index = JSON.parse(readFileSync("external/21st-agent-elements/public/r/index.json", "utf8"));
+            assert(index.items.length > 20);
+            assert(existsSync("external/21st-agent-elements/LICENSE"));
+            for (const {name} of index.items) {
+              assert(existsSync("external/21st-agent-elements/public/r/" + name + ".json"));
+            }
+            console.log("Official source checkouts verified:", readdirSync("external/shadcn-ui/apps/v4/registry/new-york-v4/ui").length, "shadcn files and", index.items.length, "21st Agent Elements");
+          '

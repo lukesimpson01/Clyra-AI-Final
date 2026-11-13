@@ -124,6 +124,7 @@ import {
   MORPH_SHELL_DELAY_MS,
 } from "./components/chat/SpotifyNotch";
 import { SpotifyWorkspace } from "./components/spotify/SpotifyWorkspace";
+import { ClyraMailHost } from "./components/mail/ClyraMailWorkspace";
 import type { SpotifyTrack } from "./lib/electron-runtime";
 import { SpotifyRunTimeline, type SpotifyRun, type SpotifyRunStep } from "./components/chat/SpotifyRunTimeline";
 import ClyraComposerShell, {
@@ -7899,10 +7900,31 @@ Please analyze the code you just wrote and fix this error.`;
         if (googleTool) {
           const desktop = getElectronDesktop();
           if (!desktop?.google) return;
+          if (googleTool === "gmail" && /^(?:open|show|switch to|go to)\s+(?:my\s+)?(?:clyra\s+)?(?:gmail|mail|inbox|emails?)(?:\s+app)?[.!]?$/i.test(userText.trim())) {
+            window.dispatchEvent(new CustomEvent("clyra:mail:open"));
+            setMessages((current) => current.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: "Opened **Clyra Mail**, connected to your existing Gmail account.",
+              isThinking: false, isStreaming: false, thinkingMode: "google",
+              googleAction: "Opened Mail workspace", googleDetail: "Showing your connected inbox",
+            } : message));
+            return;
+          }
           const result = await desktop.google.execute({ tool: googleTool, prompt: userText, runId: googleRunId });
           if (result.needsAuth) {
             void desktop.google.signIn();
             setMessages((current) => current.map((message) => message.id === aiMsgId ? { ...message, content: "**Connect Google to continue**\n\nI opened a secure Google sign-in window. Once you’ve approved access, return to Clyra and send this request again.", isThinking:false, isStreaming:false, thinkingMode:"google" } : message));
+            return;
+          }
+          if (googleTool === "gmail" && result.needsInput && /\b(?:send|draft|compose|write|reply|message|email)\b/i.test(userText)) {
+            window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true, instruction: userText } }));
+            setMessages((current) => current.map((message) => message.id === aiMsgId ? {
+              ...message,
+              content: "Opened **Clyra Mail** to prepare an editable email draft. I’ll search your connected inbox when relevant and format the message for you. **Nothing is sent until you review the final recipient, message, attachments, and confirm sending.**",
+              isThinking: false, isStreaming: false, thinkingMode: "google",
+              googleAction: "Preparing email draft",
+              googleDetail: "Reviewing context, drafting the message, and waiting for your approval",
+            } : message));
             return;
           }
           setMessages((current) => current.map((message) => message.id === aiMsgId ? { ...message, content: result.text, isThinking:false, isStreaming:false, thinkingMode:"google", googleAction:result.action || googleAction, googleDetail:result.detail || googleDetail, ...(result.gmailResults ? { gmailResults:result.gmailResults as GmailResultsPayload } : {}), ...(result.workspaceResult ? { workspaceResult:result.workspaceResult as WorkspaceResult } : {}) } : message));
@@ -10622,6 +10644,7 @@ Please analyze the code you just wrote and fix this error.`;
   return (
     <TerminalRunnerProvider>
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
+      <ClyraMailHost />
       <VoiceCallHost
         call={voiceCall}
         testMode={voiceTestMode}

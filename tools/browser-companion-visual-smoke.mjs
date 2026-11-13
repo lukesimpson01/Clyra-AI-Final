@@ -56,8 +56,8 @@ async function shot(name) {
 
 try {
   // AI Browser tour
-  await page.goto(`${BASE}/?embedTool=browser`, { waitUntil: "networkidle", timeout: 60_000 });
-  await page.waitForTimeout(800);
+  await page.goto(`${BASE}/?embedTool=browser`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.locator('[data-browser-omnibox="true"], input[aria-label*="Address" i], input[placeholder*="Search or enter" i]').first().waitFor({ state: "visible", timeout: 45_000 });
   await shot("browser-01-shell");
 
   // Atlas omnibox is often readonly until clicked / focused for edit.
@@ -125,7 +125,8 @@ try {
   }
 
   // Companion OpenCluely UI
-  await page.goto(`${BASE}/?embedTool=companion`, { waitUntil: "networkidle", timeout: 60_000 });
+  await page.goto(`${BASE}/?embedTool=companion`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.locator("#root").waitFor({ state: "visible", timeout: 45_000 });
   await page.waitForTimeout(700);
   await shot("companion-web-01-shell");
 

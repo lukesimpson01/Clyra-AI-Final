@@ -11612,3 +11612,385 @@ body,
 .clyra-dstrip__cancel { flex: none; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: rgba(16,18,24,.06); color: #3a3d44; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color .15s; }
 .clyra-dstrip__cancel:hover { background: rgba(16,18,24,.11); }
 @media (prefers-reduced-motion: reduce) { .clyra-dstrip__label i { animation: none !important; } }
+/* Voice call: existing native React surface, now connected directly to the
+   live session instead of a detached HTML frame. Keep the Clyra face clear. */
+.clyra-voice-call-host .clyra-voice-call {
+  position: absolute;
+  z-index: 1;
+  min-height: 0;
+  background: #fff;
+}
+.clyra-voice-call__header { min-height: 52px; }
+.clyra-voice-call__media-actions {
+  position: absolute;
+  right: clamp(12px, 3vw, 36px);
+  top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.clyra-voice-call__media-actions button,
+.clyra-voice-media__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #686d78;
+  font: 500 12px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 180ms cubic-bezier(.22,1,.36,1);
+}
+.clyra-voice-call__media-actions button:hover,
+.clyra-voice-media__actions button:hover { background: rgba(40,65,95,.06); color: #1e293b; }
+.clyra-voice-call__media-actions button[data-active="true"],
+.clyra-voice-media__actions button[data-active="true"] { color: #1e6fff; background: rgba(30,111,255,.08); }
+.clyra-voice-call__media-actions button:active,
+.clyra-voice-media__actions button:active { transform: scale(.96); }
+.clyra-voice-call__media-actions button:disabled { opacity: .4; cursor: default; }
+.clyra-voice-call :is(button, input):focus-visible {
+  outline: 2px solid #1e6fff;
+  outline-offset: 3px;
+}
+.clyra-voice-call__main--activity {
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 0;
+  padding: 0 16px 6px;
+}
+.clyra-voice-call__main--activity .clyra-voice-activity,
+.clyra-voice-call__main--activity .clyra-voice-media {
+  order: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.clyra-voice-call__main--activity .clyra-voice-call__fly {
+  order: 3;
+  margin-top: auto;
+  margin-bottom: 4px;
+}
+.clyra-voice-call__main--activity .clyra-voice-presence--compact {
+  width: clamp(72px, 10vh, 104px);
+}
+.clyra-voice-call__main--activity .clyra-voice-live-subtitle { order: 2; }
+.clyra-voice-call__main--activity .clyra-voice-call__copy { order: 2; }
+.clyra-voice-media {
+  display: flex;
+  flex-direction: column;
+  width: min(940px, 100%);
+  max-height: min(65vh, 650px);
+  overflow: hidden;
+  border: 1px solid rgba(20,22,27,.09);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(20,22,27,.035);
+}
+.clyra-voice-media__header {
+  display: flex;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px 6px 16px;
+}
+.clyra-voice-media__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #343b47;
+  font-size: 12px;
+  font-weight: 600;
+}
+.clyra-voice-media__live { width: 7px; height: 7px; border-radius: 50%; background: #1e6fff; }
+.clyra-voice-media__actions { display: flex; align-items: center; gap: 4px; }
+.clyra-voice-media__viewport {
+  position: relative;
+  min-height: 130px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #10141a;
+}
+.clyra-voice-media__viewport video,
+.clyra-voice-media__viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  object-fit: contain;
+}
+.clyra-voice-media__viewport--mirror video,
+.clyra-voice-media__viewport--mirror canvas { transform: scaleX(-1); }
+.clyra-voice-media__viewport canvas { pointer-events: none; }
+.clyra-voice-media__message {
+  position: relative;
+  z-index: 2;
+  max-width: min(430px, 90%);
+  padding: 10px 16px;
+  color: #e5eaf2;
+  font-size: 13px;
+  text-align: center;
+}
+.clyra-voice-media__scan-message {
+  position: absolute;
+  z-index: 2;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  max-width: 90%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: rgba(12,18,25,.78);
+  color: #f4f7fa;
+  font-size: 11px;
+}
+.clyra-voice-media__privacy {
+  flex: 0 0 auto;
+  padding: 8px 14px 10px;
+  margin: 0;
+  color: #858b94;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+@media (max-width: 680px) {
+  .clyra-voice-call__header { justify-content: flex-start; padding: 17px 16px 0; }
+  .clyra-voice-call__media-actions { right: 8px; top: 15px; }
+  .clyra-voice-call__media-actions button { gap: 4px; min-width: 36px; padding: 0 7px; }
+  .clyra-voice-call__media-actions button span { display: none; }
+  .clyra-voice-call__main--activity .clyra-voice-presence--compact { width: 72px; }
+  .clyra-voice-media { border-radius: 14px; }
+  .clyra-voice-media__header { padding-left: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-voice-call__media-actions button,
+  .clyra-voice-media__actions button { transition: none; }
+}
+
+
+/* Voice presence energy: direct readout of the existing microphone RMS
+   meter. No fake oscillator or extra animation loop. */
+.clyra-voice-presence { position: relative; }
+.clyra-voice-presence::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: 50%;
+  border: 2px solid rgba(30, 111, 255, .65);
+  pointer-events: none;
+  opacity: var(--voice-energy-opacity, 0);
+  transform: scale(var(--voice-energy-scale, 1.04));
+  transition: opacity 105ms linear, transform 125ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .clyra-voice-presence::after { transition: none; }
+}
+
+/* Voice call media layout: natural laptop framing for browser/email work;
+   immersive edge-to-edge camera feed. This is intentionally scoped to the
+   live VoiceCallScreen, not the separate Vibe Coder or Mail apps. */
+.clyra-voice-call__main--activity .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(1040px, calc(100vw - 32px), max(220px, calc(160dvh - 496px)));
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  overflow: hidden;
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"] {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 12px 42px rgba(20, 22, 27, .08);
+}
+/* The webpage itself is the only browser chrome; no animated blue ring. */
+.clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"]::after {
+  display: none;
+}
+.clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"] .clyra-voice-activity__body {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+}
+.clyra-voice-browser-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #fff;
+}
+.clyra-voice-browser-viewport .clyra-voice-activity__preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* no crop: preserves real website click coordinates */
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="email"] .clyra-voice-activity__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="email"] .clyra-voice-activity__preview {
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Expanded browser/email surfaces fill their available area intentionally,
+   rather than retaining the compact laptop card's aspect constraint. */
+.clyra-voice-call .clyra-voice-activity--expanded:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+}
+/* The compact side-by-side agent rule has higher specificity; immersive
+   camera must still win when browser/email agents are active. */
+.clyra-voice-call[data-media-mode="camera"][data-agent-kind]:not([data-agent-kind="none"]) .clyra-voice-media-stage {
+  max-height: none;
+}
+.clyra-voice-call[data-agent-kind]:not([data-agent-kind="none"]):not([data-media-mode="none"]) .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  max-height: none;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #10141a;
+  box-shadow: none;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport video,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport canvas {
+  object-fit: cover;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__header {
+  position: absolute;
+  z-index: 5;
+  top: 76px;
+  right: clamp(12px, 3vw, 36px);
+  left: auto;
+  min-height: 42px;
+  width: auto;
+  border-radius: 13px;
+  padding: 5px 7px 5px 13px;
+  gap: 10px;
+  background: rgba(13, 19, 29, .58);
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__title {
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__actions button {
+  color: rgba(255, 255, 255, .9);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__actions button:is(:hover, [data-active="true"]) {
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__privacy {
+  position: absolute;
+  z-index: 3;
+  bottom: 10px;
+  left: clamp(12px, 2vw, 24px);
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 6px 10px;
+  margin: 0;
+  border-radius: 9px;
+  background: rgba(13, 19, 29, .46);
+  color: rgba(255, 255, 255, .84);
+  text-align: left;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__header,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__footer {
+  z-index: 12;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-mode-readout,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__header time {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .32);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button {
+  color: #fff;
+  background: rgba(13, 19, 29, .4);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button:hover,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button[data-active="true"] {
+  color: #fff;
+  background: rgba(30, 111, 255, .64);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-side-control__label,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-type-label {
+  color: #fff;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, .35);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-round-btn:not(.clyra-voice-round-btn--end),
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph__btn {
+  color: #fff;
+  background: rgba(13, 19, 29, .48) !important;
+  border-color: rgba(255, 255, 255, .08);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-morph__btn {
+  background: rgba(255, 255, 255, .94) !important;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-composer-v2__input,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-composer-v2__close {
+  color: #1a1a19;
+}
+@media (max-width: 680px) {
+  .clyra-voice-call__main--activity .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+    width: min(calc(100vw - 24px), max(220px, calc(160dvh - 324px)));
+    border-radius: 14px;
+  }
+  .clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__header {
+    top: 91px;
+    right: 10px;
+    max-width: calc(100vw - 20px);
+  }
+  .clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__privacy {
+    bottom: 6px;
+    max-width: min(280px, calc(100vw - 20px));
+    font-size: 9px;
+  }
+}

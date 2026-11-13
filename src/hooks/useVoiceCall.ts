@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { getElectronDesktop } from "../lib/electron-runtime";
 import { VoicePcmCapturer } from "../lib/voicePcmCapture";
-import { VOICE_SPEECH_LEVEL } from "../lib/voiceTurnDetection";
+import { VoiceSpeechPlayer } from "../lib/voiceSpeechPlayer";
+import { TranscriptStabilizer } from "../speech/transcriptStabilizer";
+import { personalDictionary, applyDictionary } from "../speech/personalDictionary";
+import { VoiceActivityGate } from "../lib/voiceActivityGate";
+import { shouldEndVoiceUtterance } from "../lib/voiceEndpoint";
+import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
+import { asksToInspectSharedView } from "../lib/voiceVisualIntent";
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -26,7 +32,7 @@ export type UseVoiceCallOptions = {
   onTurn?: (turn: { userText: string; assistantText: string }) => void;
 };
 
-type MissionStep = { id?: string; description?: string; status?: string };
+type MissionStep = { id?: string; description?: string; status?: string; toolId?: string };
 type MissionRecord = {
   id: string;
   state: string;
@@ -106,11 +112,9 @@ function missionResult(mission: MissionRecord) {
 }
 
 
-/** Spoken-reply style: this is read as subtitles, not heard, so keep it tight. */
-const VOICE_REPLY_STYLE = "You are in a live voice conversation and your reply appears as on-screen subtitles. Answer in one to three short, natural sentences. No markdown, lists, headings, code blocks or emoji. If the user asks for something long, give the key point and offer to continue.";
-const TURN_SILENCE_MS = 820;
-const MIN_SPEECH_MS = 320;
-const PARTIAL_EVERY_MS = 1100;
+/** Compact sentence-first spoken replies so speech can begin while tokens stream. */
+const VOICE_REPLY_STYLE = "You are Clyra in a real-time spoken conversation. Respond naturally and directly in one to three short sentences. Your words are spoken aloud as they stream. Do not use markdown, lists, code blocks or emoji. Remember and incorporate the full conversation; acknowledge corrections without restarting work. If asked for something complex, briefly explain what you are doing.";
+const PARTIAL_EVERY_MS = 620;
 const PRE_ROLL_CHUNKS = 12;
 export function useVoiceCall(options: UseVoiceCallOptions) {
   const optionsRef = useRef(options);
@@ -126,14 +130,34 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const bargeInsRef = useRef(0);
   const activeRunRef = useRef<ActiveRun | null>(null);
   const pendingApprovalRef = useRef<PendingApproval | null>(null);
+  const transcriptRef = useRef(new TranscriptStabilizer());
   const taskAbortRef = useRef<AbortController | null>(null);
   const lastSideEffectRef = useRef({ text: "", at: 0 });
   const endSequenceRef = useRef(0);
+  const startSequenceRef = useRef(0);
+  const voiceGateRef = useRef(new VoiceActivityGate());
   const restTimerRef = useRef<number | null>(null);
   // Local engine: Parakeet STT over the dictation socket + a streamed LLM reply.
   const socketRef = useRef<WebSocket | null>(null);
   const captureRef = useRef<VoicePcmCapturer | null>(null);
   const replyAbortRef = useRef<AbortController | null>(null);
+  const speechRef = useRef<VoiceSpeechPlayer | null>(null);
+  const playbackTimerRef = useRef<number | null>(null);
+  const onNativeSpeechEvent = useCallback((event: "start" | "word" | "stop") => {
+    if (playbackTimerRef.current !== null) window.clearTimeout(playbackTimerRef.current);
+    playbackTimerRef.current = null;
+    if (event === "stop") { dispatch({ type: "SET_LEVEL", source: "bot", level: 0 }); return; }
+    // Native voice boundaries, not a simulated waveform or costly audio FFT.
+    dispatch({ type: "SET_LEVEL", source: "bot", level: event === "word" ? 0.82 : 0.54 });
+    playbackTimerRef.current = window.setTimeout(() => {
+      playbackTimerRef.current = null;
+      dispatch({ type: "SET_LEVEL", source: "bot", level: 0.17 });
+    }, 140);
+  }, []);
+  const mediaCaptureRef = useRef<(() => { mode: "camera" | "screen"; image: string } | null) | null>(null);
+  const registerMediaCapture = useCallback((capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => {
+    mediaCaptureRef.current = capture;
+  }, []);
   const engine = useRef({
     speaking: false,
     loudFrames: 0,
@@ -169,11 +193,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const commitTurn = useCallback(() => {
     const userText = pendingUserTextRef.current.trim();
     const assistantText = pendingAssistantTextRef.current.trim();
-    if (userText && assistantText) {
-      const next = [...turnsRef.current, { role: "user" as const, content: userText }, { role: "assistant" as const, content: assistantText }];
+    if (userText || assistantText) {
+      const next: VoiceTurn[] = [...turnsRef.current];
+      if (userText) next.push({ role: "user", content: userText });
+      if (assistantText) next.push({ role: "assistant", content: assistantText });
       turnsRef.current = next;
       dispatch({ type: "SET_TURNS", turns: next });
-      optionsRef.current.onTurn?.({ userText, assistantText });
+      if (userText && assistantText) optionsRef.current.onTurn?.({ userText, assistantText });
     }
     pendingUserTextRef.current = "";
     pendingAssistantTextRef.current = "";
@@ -188,8 +214,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     e.turnBusy = false;
     e.finalPending = false;
     e.preRoll = [];
+    voiceGateRef.current.reset();
     replyAbortRef.current?.abort();
     replyAbortRef.current = null;
+    speechRef.current?.interrupt();
+    if (playbackTimerRef.current !== null) window.clearTimeout(playbackTimerRef.current);
+    playbackTimerRef.current = null;
+    mediaCaptureRef.current = null;
     captureRef.current?.stop();
     captureRef.current = null;
     const socket = socketRef.current;
@@ -203,7 +234,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
 
   const pollMission = useCallback(async (missionId: string, signal: AbortSignal) => {
     for (let attempt = 0; attempt < 900 && !signal.aborted; attempt += 1) {
-      await delay(850);
+      await delay(650);
       if (signal.aborted) return;
       const response = await fetch(`/api/agent/missions/${encodeURIComponent(missionId)}`, { signal });
       const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
@@ -224,22 +255,31 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       if (TERMINAL_MISSION_STATES.has(mission.state)) {
         activeRunRef.current = null;
         const result = missionResult(mission);
-        if (mission.state === "COMPLETED") dispatch({ type: "TOOL_FINISHED", result, responseText: result.text });
-        else dispatch({ type: "ERROR", error: { code: "VOICE_TASK_FAILED", message: result.text, retryable: mission.state === "FAILED" } });
+        if (mission.state === "COMPLETED") {
+          dispatch({ type: "TOOL_FINISHED", result, responseText: result.text });
+          const next = [...turnsRef.current, { role: "assistant" as const, content: result.text }];
+          turnsRef.current = next;
+          dispatch({ type: "SET_TURNS", turns: next });
+          // Don't talk over a new utterance or a different conversational answer.
+          if (!engine.current.speaking && !engine.current.finalPending && !replyAbortRef.current) {
+            const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+              dispatch({ type: "RESPONSE_FINISHED" });
+              touchActivity();
+            }, onNativeSpeechEvent));
+            player.interrupt();
+            player.append(result.text);
+            player.complete();
+          }
+        } else dispatch({ type: "ERROR", error: { code: "VOICE_TASK_FAILED", message: result.text, retryable: mission.state === "FAILED" } });
         return;
       }
       if (PAUSED_MISSION_STATES.has(mission.state)) return;
     }
-  }, [updateMission]);
+  }, [onNativeSpeechEvent, touchActivity, updateMission]);
 
   const startMission = useCallback(async (text: string) => {
-    const routeResponse = await fetch("/api/agent/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: text }),
-    });
-    const routePayload = await routeResponse.json().catch(() => null) as { decision?: { kind?: string; category?: string } } | null;
-    if (!routeResponse.ok || !routePayload?.decision || routePayload.decision.kind === "DIRECT_RESPONSE") return false;
+    // The mission endpoint already plans and categorizes the request. Avoid
+    // a sequential /route round-trip before every spoken action.
     const taskId = `voice-${crypto.randomUUID?.() || Date.now()}`;
     const response = await fetch("/api/agent/missions/start", {
       method: "POST",
@@ -247,9 +287,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       body: JSON.stringify({ missionId: taskId, projectId: optionsRef.current.conversationId || undefined, prompt: text, background: true }),
     });
     const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!response.ok || !payload?.mission?.id) return false;
+    if (response.status === 422) return false; // Conversational question, no supported action
+    if (!response.ok) throw new Error("Clyra couldn't start this action.");
+    if (!payload?.mission?.id) throw new Error("The agent returned no active task.");
     const mission = payload.mission;
-    const isBrowser = routePayload.decision.category === "browser";
+    const isBrowser = Boolean(mission.plan?.steps?.some((step) => step.toolId?.startsWith("browser.")));
     activeRunRef.current = { kind: "mission", id: mission.id };
     taskAbortRef.current?.abort();
     const controller = new AbortController();
@@ -320,11 +362,15 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const resumeTask = useCallback(async () => {
     const active = activeRunRef.current;
     if (!active || active.kind !== "mission") return;
+    const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ background: true }) });
+    const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+    if (!response.ok || !payload?.mission) {
+      dispatch({ type: "ERROR", error: { code: "VOICE_RESUME_FAILED", message: payload?.error || "Clyra couldn't resume that task.", retryable: true } });
+      return;
+    }
     dispatch({ type: "RESUME_AGENT" });
-    const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!payload?.mission) return;
     updateMission(payload.mission);
+    taskAbortRef.current?.abort();
     const controller = new AbortController();
     taskAbortRef.current = controller;
     void pollMission(active.id, controller.signal).catch(() => undefined);
@@ -342,37 +388,175 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     dispatch({ type: "TOOL_FINISHED", result: { stopped: true }, responseText: "Stopped. I kept the work that had already completed." });
   }, [cancelActiveRun]);
 
+  /** Speak short task receipts immediately, without an extra model round-trip. */
+  const acknowledge = useCallback((text: string) => {
+    const player = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+      dispatch({ type: "RESPONSE_FINISHED" });
+      touchActivity();
+    }, onNativeSpeechEvent));
+    player.interrupt();
+    pendingAssistantTextRef.current = text;
+    dispatch({ type: "TOKEN", text });
+    commitTurn();
+    player.append(text);
+    player.complete();
+  }, [commitTurn, onNativeSpeechEvent, touchActivity]);
+
   /** Routes a spoken/typed request to Clyra's agent tools. Returns true when
    * an agent task owns the turn, so the plain conversational reply is skipped. */
   const runSideEffect = useCallback(async (text: string): Promise<boolean> => {
     const clean = text.trim();
     if (!clean) return false;
+    const active = activeRunRef.current;
     const duplicate = lastSideEffectRef.current.text === clean && Date.now() - lastSideEffectRef.current.at < 4_000;
-    if (duplicate) return false;
+    if (duplicate) return Boolean(active);
     lastSideEffectRef.current = { text: clean, at: Date.now() };
-    if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && activeRunRef.current) { await stopTask(); return true; }
-    if (/\b(?:let me do|i(?:’|'| a)m taking over|give me control)\b/i.test(clean) && activeRunRef.current) { await takeControl(); return true; }
-    if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && activeRunRef.current) { await resumeTask(); return true; }
+    // No passive camera uploads: inspect ONE compressed frame on an
+    // explicit spoken/typed visual question or user-initiated Inspect.
+    if (mediaCaptureRef.current && asksToInspectSharedView(clean)) {
+      const frame = mediaCaptureRef.current();
+      if (!frame) {
+        acknowledge("The camera or screen is not ready yet. Try again in a moment.");
+        return true;
+      }
+      const controller = new AbortController();
+      replyAbortRef.current?.abort();
+      replyAbortRef.current = controller;
+      try {
+        const response = await fetch("/api/companion/vision-frame", {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: frame.image,
+            question: "Inspect this user-shared " + frame.mode + " frame. Answer the user's spoken question briefly, using only visible evidence: " + clean,
+          }),
+        });
+        const payload = await response.json().catch(() => null) as { ok?: boolean; text?: string; summary?: string; error?: string } | null;
+        if (controller.signal.aborted) return true;
+        if (!response.ok || !payload?.ok || !(payload.text || payload.summary)) throw new Error(payload?.error || "The frame could not be examined.");
+        acknowledge(String(payload.text || payload.summary).slice(0, 1800));
+      } catch (error) {
+        if (controller.signal.aborted) return true;
+        acknowledge("I couldn't inspect the " + frame.mode + " image: " + (error instanceof Error ? error.message : "please try again."));
+      } finally {
+        if (replyAbortRef.current === controller) replyAbortRef.current = null;
+      }
+      return true;
+    }
+    if (/^(?:stop|cancel|stop now)[.!]?$/i.test(clean) && active) {
+      await stopTask();
+      acknowledge("Stopped that task.");
+      return true;
+    }
+    if (/^(?:pause|hold on|wait)[.!]?$/i.test(clean) && active?.kind === "mission") {
+      await pauseTask();
+      acknowledge("Paused. I'm listening.");
+      return true;
+    }
+    if (/\b(?:let me do|i(?:’|'| a)m taking over|give me control)\b/i.test(clean) && active) {
+      await takeControl();
+      acknowledge("You have control.");
+      return true;
+    }
+    if (/^(?:continue|resume|go ahead)[.!]?$/i.test(clean) && active?.kind === "mission") {
+      await resumeTask();
+      acknowledge("Continuing from where I left off.");
+      return true;
+    }
+    if (active?.kind === "mission") {
+      // A direct question can be answered conversationally without altering
+      // the running work; a correction updates that SAME mission and checkpoint.
+      const clearlyChangesTask = /\b(?:also|instead|change|add|remove|exclude|include|focus|make sure|switch|replace|prioriti[sz]e|don't|do not|budget|rather|actually|adjust|update)\b/i.test(clean);
+      const conversationalAside = /^(?:hi|hello|hey|thanks|thank you|nice|cool|okay|ok)[.!]?$/i.test(clean)
+        || (/\?$/.test(clean) && !clearlyChangesTask);
+      if (conversationalAside) return false;
+      taskAbortRef.current?.abort();
+      const response = await fetch(`/api/agent/missions/${encodeURIComponent(active.id)}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: clean }),
+      });
+      const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+      if (!response.ok || !payload?.mission) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_REVISION_FAILED", message: payload?.error || "I couldn't update that task safely.", retryable: true } });
+        acknowledge("I couldn't update the running task safely. Please try that instruction again.");
+        return true;
+      }
+      updateMission(payload.mission);
+      dispatch({ type: "RESUME_AGENT" });
+      const controller = new AbortController();
+      taskAbortRef.current = controller;
+      void pollMission(active.id, controller.signal).catch(() => undefined);
+      acknowledge("Got it. I've added that to the same task.");
+      return true;
+    }
+    if (/^(?:open|show|switch to|go to)\s+(?:my\s+)?(?:gmail|mail|inbox|emails?)(?:\s+app)?[.!]?$/i.test(clean)) {
+      window.dispatchEvent(new CustomEvent("clyra:mail:open"));
+      acknowledge("Opening your connected inbox. I can still hear you.");
+      return true;
+    }
+    const emailComposition = /\b(?:compose|write|draft|send|reply|new|prepare)\b[\s\S]{0,110}\b(?:email|gmail|mail)\b|\b(?:email|gmail|mail)\b[\s\S]{0,110}\b(?:compose|write|draft|send|reply|prepare)\b/i.test(clean);
+    const websiteDeliveryMission = /\b(?:build|code|publish|deploy|create (?:a|the) (?:website|site)|vibe coder)\b/i.test(clean);
+    if (emailComposition && !websiteDeliveryMission) {
+      window.dispatchEvent(new CustomEvent("clyra:mail:open", { detail: { compose: true, instruction: clean } }));
+      acknowledge("I’m preparing an editable email. You’ll review the recipient, content and attachments before anything is sent.");
+      return true;
+    }
     const google = detectGoogleService(clean);
-    if (google && await executeGoogle(google, clean)) return true;
-    return startMission(clean);
-  }, [executeGoogle, resumeTask, startMission, stopTask, takeControl]);
+    if (google && await executeGoogle(google, clean)) {
+      acknowledge("I've handled that Google Workspace request.");
+      return true;
+    }
+    const launched = await startMission(clean);
+    if (launched) acknowledge("I'm on it.");
+    return launched;
+  }, [acknowledge, executeGoogle, pauseTask, pollMission, resumeTask, startMission, stopTask, takeControl, updateMission]);
 
-  /** Streams the conversational answer straight into the subtitle (no TTS). */
+  /** Token streaming and interruptible speech share the same turn lifecycle. */
   const streamReply = useCallback(async (userText: string) => {
     const controller = new AbortController();
     replyAbortRef.current?.abort();
     replyAbortRef.current = controller;
     const o = optionsRef.current;
-    const history = turnsRef.current.slice(-12).map((turn) => ({ role: turn.role, content: turn.content }));
+    // Preserve the user's opening goal plus their recent corrections. We
+    // bound the text to avoid excessive context-cost on long open calls.
+    const conversation = [...o.chatHistory.slice(-8), ...turnsRef.current];
+    const opening = conversation.findIndex((turn) => turn.role === "user");
+    const indices = new Set<number>();
+    if (opening >= 0) indices.add(opening);
+    for (let index = Math.max(0, conversation.length - 44); index < conversation.length; index += 1) indices.add(index);
+    let budget = 12_000;
+    const history = [...indices].sort((a, b) => b - a)
+      .map((index) => ({ index, turn: conversation[index]! }))
+      .filter(({ turn }) => {
+        if (!budget) return false;
+        budget -= Math.min(budget, turn.content.length);
+        return true;
+      })
+      .sort((a, b) => a.index - b.index)
+      .map(({ turn }) => ({ role: turn.role, content: turn.content.slice(0, 2_000) }));
     const messages = [
       { role: "system", content: `${o.systemPrompt}\n\n${VOICE_REPLY_STYLE}` },
-      ...o.chatHistory.slice(-6).map((turn) => ({ role: turn.role, content: turn.content })),
       ...history,
       { role: "user", content: userText },
     ];
     pendingAssistantTextRef.current = "";
+    const speaker = speechRef.current || (speechRef.current = new VoiceSpeechPlayer(() => {
+      dispatch({ type: "RESPONSE_FINISHED" });
+      touchActivity();
+    }, onNativeSpeechEvent));
+    speaker.interrupt();
     let gotToken = false;
+    let captionBuffer = "";
+    let captionFrame: number | null = null;
+    const flushCaption = () => {
+      captionFrame = null;
+      if (captionBuffer && !controller.signal.aborted) {
+        dispatch({ type: "TOKEN", text: captionBuffer });
+        captionBuffer = "";
+      }
+    };
     try {
       const response = await fetch("/api/deepseek/chat", {
         method: "POST",
@@ -399,77 +583,110 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           if (line === "data: [DONE]") continue;
           try {
             const delta = JSON.parse(line.slice(6))?.choices?.[0]?.delta?.content as string | undefined;
-            if (delta) {
+            if (delta && !controller.signal.aborted) {
               gotToken = true;
               pendingAssistantTextRef.current += delta;
-              dispatch({ type: "TOKEN", text: delta });
+              captionBuffer += delta;
+              if (captionFrame === null) captionFrame = window.requestAnimationFrame(flushCaption);
+              speaker.append(delta);
             }
           } catch { /* partial SSE frame */ }
         }
       }
       if (controller.signal.aborted) return;
       if (!gotToken) throw new Error("Clyra didn’t get a reply. Try again.");
+      if (captionFrame !== null) window.cancelAnimationFrame(captionFrame);
+      flushCaption();
       commitTurn();
-      dispatch({ type: "RESPONSE_FINISHED" });
-      touchActivity();
+      speaker.complete();
     } catch (error) {
       if (controller.signal.aborted) return;
+      speaker.interrupt();
       dispatch({ type: "ERROR", error: { code: "VOICE_REPLY_FAILED", message: error instanceof Error ? error.message : "Clyra couldn’t answer that.", retryable: true } });
     } finally {
+      if (captionFrame !== null) window.cancelAnimationFrame(captionFrame);
       if (replyAbortRef.current === controller) replyAbortRef.current = null;
-      engine.current.turnBusy = false;
+      if (replyAbortRef.current === null) engine.current.turnBusy = false;
     }
-  }, [commitTurn, touchActivity]);
+  }, [commitTurn, onNativeSpeechEvent, touchActivity]);
 
   /** One full turn once the words are known: agent tools first, else a reply. */
   const handleUserText = useCallback(async (text: string) => {
     const clean = text.trim();
     const e = engine.current;
     if (!clean) { e.turnBusy = false; dispatch({ type: "MIC_READY" }); touchActivity(); return; }
+    commitTurn();
     pendingUserTextRef.current = clean;
     pendingAssistantTextRef.current = "";
     dispatch({ type: "STT_FINAL", text: clean });
     e.turnBusy = true;
     try {
       if (await runSideEffect(clean)) { e.turnBusy = false; return; }
-    } catch { /* fall through to a normal reply */ }
+    } catch (error) {
+      // A failed tool request is not a reason to hallucinate success through
+      // the conversational model. Keep the user text for a safe retry.
+      if (activeRunRef.current) {
+        dispatch({ type: "ERROR", error: { code: "VOICE_ACTION_FAILED", message: error instanceof Error ? error.message : "The active task needs attention.", retryable: true } });
+        e.turnBusy = false;
+        return;
+      }
+    }
     await streamReply(clean);
-  }, [runSideEffect, streamReply, touchActivity]);
+  }, [commitTurn, runSideEffect, streamReply, touchActivity]);
 
   const endUtterance = useCallback(() => {
     const e = engine.current;
     if (!e.speaking) return;
     e.speaking = false;
+    voiceGateRef.current.setSpeaking(false);
     window.clearInterval(e.partialTimer);
     e.partialTimer = 0;
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     e.finalPending = true;
     e.turnBusy = true;
-    // "Thinking" starts the instant you stop talking; the transcript lands
-    // ~0.5s later and fills the subtitle.
-    dispatch({ type: "THINK_STARTED" });
-    socket.send(JSON.stringify({ type: "flush", sessionId: sessionIdRef.current }));
+    // The microphone is silent, but the final transcript has not arrived.
+    // Show that distinct state rather than falsely claiming model reasoning.
+    dispatch({ type: "VOICE_STOPPED" });
+    socket.send(JSON.stringify({
+      type: "flush",
+      sessionId: sessionIdRef.current,
+      dictionary: personalDictionary().slice(0, 40),
+      profile: sessionRef.current.lowPowerMode ? "tiny" : "base",
+    }));
   }, []);
 
   const onMicLevel = useCallback((level: number) => {
     const e = engine.current;
     const now = performance.now();
+    // Throttle the live mic meter so the face gets real audio energy without
+    // driving a React render for every audio callback.
+    if (now - e.lastLevelDispatch >= (sessionRef.current.lowPowerMode ? 150 : 90)) {
+      e.lastLevelDispatch = now;
+      dispatch({ type: "SET_LEVEL", source: "mic", level: sessionRef.current.muted ? 0 : Math.min(1, Math.max(0, level)) });
+    }
     if (!e.ready || sessionRef.current.muted || sessionRef.current.state === "ending") return;
-    const loud = level >= VOICE_SPEECH_LEVEL;
+    // Soft spoken words must wake VAD too; the native speaker's echo is
+    // suppressed more conservatively while output audio is playing.
+    const loud = voiceGateRef.current.test(level, e.speaking, Boolean(speechRef.current?.speaking));
     if (loud) {
       e.loudFrames += 1;
       e.lastSpeechAt = now;
-      if (!e.speaking && e.loudFrames >= 2 && !e.finalPending) {
+      if (!e.speaking && e.loudFrames >= (speechRef.current?.speaking ? 3 : 2) && !e.finalPending) {
         // Barge-in: speaking over a reply interrupts it immediately.
         const state = sessionRef.current.state;
-        if (state === "responding" || state === "thinking") {
+        if (shouldInterruptVoiceReply(state, Boolean(speechRef.current?.speaking))) {
           bargeInsRef.current += 1;
           replyAbortRef.current?.abort();
+          speechRef.current?.interrupt();
+          commitTurn();
           e.turnBusy = false;
         }
-        if (state === "acting_browser" || state === "acting_computer" || state === "acting_clyra" || state === "paused" || state === "awaiting_approval" || state === "user_takeover") return;
+        // Keep the mic live while tools run, an approval is open, or the
+        // user has taken over. The next utterance can refine that same task.
         e.speaking = true;
+        voiceGateRef.current.setSpeaking(true);
+        transcriptRef.current.reset();
         e.speechStartedAt = now;
         touchActivity();
         dispatch({ type: "VOICE_STARTED" });
@@ -491,8 +708,11 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     } else {
       e.loudFrames = 0;
     }
-    if (e.speaking && !loud && now - e.lastSpeechAt >= TURN_SILENCE_MS && now - e.speechStartedAt >= MIN_SPEECH_MS) endUtterance();
-  }, [endUtterance, touchActivity]);
+    if (e.speaking && shouldEndVoiceUtterance({
+      now, speechStartedAt: e.speechStartedAt, lastSpeechAt: e.lastSpeechAt,
+      partialTranscript: sessionRef.current.partialTranscript, loud,
+    })) endUtterance();
+  }, [commitTurn, endUtterance, touchActivity]);
 
   const onMicChunk = useCallback((data: string, seq: number) => {
     const e = engine.current;
@@ -501,7 +721,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       socket.send(JSON.stringify({ type: "audio", sessionId: sessionIdRef.current, codec: "pcm16", data, seq }));
       return;
     }
-    // Pre-roll: the ~0.5s before speech was detected, so the first word is never clipped.
+    // Pre-roll preserves the opening phonemes even with a soft-spoken start.
     e.preRoll.push({ data, seq });
     if (e.preRoll.length > PRE_ROLL_CHUNKS) e.preRoll.shift();
   }, []);
@@ -515,6 +735,9 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     bargeInsRef.current = 0;
     const e = engine.current;
     e.speaking = false; e.ready = false; e.finalPending = false; e.turnBusy = false; e.preRoll = []; e.loudFrames = 0;
+    transcriptRef.current.reset();
+    voiceGateRef.current.reset();
+    const startSequence = ++startSequenceRef.current;
     try {
       const desktop = getElectronDesktop();
       const permissions = await desktop?.dictation?.ensurePermissions?.().catch(() => null);
@@ -529,9 +752,21 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       sessionIdRef.current = created.sessionId;
       dispatch({ type: "SET_SESSION_ID", sessionId: created.sessionId });
 
+      let transportReady = false;
+      let captureReady = false;
+      let announcedReady = false;
+      const announceReady = () => {
+        if (announcedReady || !transportReady || !captureReady || startSequence !== startSequenceRef.current) return;
+        announcedReady = true;
+        engine.current.ready = true;
+        dispatch({ type: "MIC_READY" });
+        touchActivity();
+      };
       const socket = new WebSocket(created.websocketUrl);
       socketRef.current = socket;
+      let rejectOpening: ((error: Error) => void) | null = null;
       const opened = new Promise<void>((resolve, reject) => {
+        rejectOpening = reject;
         socket.onopen = () => resolve();
         socket.onerror = () => reject(new Error("Clyra’s speech engine isn’t reachable."));
       });
@@ -540,16 +775,19 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         try { message = JSON.parse(String(event.data)); } catch { return; }
         if (socketRef.current !== socket) return;
         if (message.type === "pipeline_mode") {
-          engine.current.ready = true;
-          dispatch({ type: "MIC_READY" });
-          touchActivity();
+          transportReady = true;
+          announceReady();
         } else if (message.type === "partial_done") {
           engine.current.partialInFlight = false;
         } else if (message.type === "transcript_partial") {
-          if (engine.current.speaking) dispatch({ type: "STT_PARTIAL", text: String(message.text || "") });
+          if (engine.current.speaking) {
+            const stable = transcriptRef.current.update(String(message.text || ""));
+            dispatch({ type: "STT_PARTIAL", text: stable });
+          }
         } else if (message.type === "dictation_final") {
           engine.current.finalPending = false;
-          void handleUserText(String(message.text || ""));
+          const finalText = applyDictionary(transcriptRef.current.finalize(String(message.text || "")));
+          void handleUserText(finalText);
         } else if (message.type === "error") {
           engine.current.finalPending = false;
           engine.current.turnBusy = false;
@@ -558,17 +796,26 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       };
       socket.onclose = () => {
         if (socketRef.current === socket) {
+          if (!transportReady) rejectOpening?.(new Error("The speech connection closed before it was ready."));
+          engine.current.ready = false;
           socketRef.current = null;
           if (sessionRef.current.active && sessionRef.current.state !== "ending") dispatch({ type: "ERROR", error: { code: "VOICE_DISCONNECTED", message: "I lost the speech connection. End the call and try again.", retryable: true } });
         }
       };
-      await opened;
-
       const capture = new VoicePcmCapturer(onMicChunk, 16_000, onMicLevel);
       captureRef.current = capture;
-      await capture.start();
+      // Microphone permission/capture and websocket opening overlap. A call
+      // cannot be ready until both sides are connected.
+      await Promise.all([opened, capture.start()]);
+      if (startSequence !== startSequenceRef.current) {
+        await teardownEngine();
+        return;
+      }
       capture.setMuted(sessionRef.current.muted);
+      captureReady = true;
+      announceReady();
     } catch (error) {
+      if (startSequence !== startSequenceRef.current) return;
       await teardownEngine();
       dispatch({ type: "ERROR", error: { code: "VOICE_START_FAILED", message: error instanceof Error ? error.message : "Voice call failed to start.", retryable: true } });
     }
@@ -577,6 +824,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
   const endCall = useCallback(async () => {
     if (!sessionRef.current.active || sessionRef.current.state === "ending") return;
     const sequence = ++endSequenceRef.current;
+    ++startSequenceRef.current;
     clearRestTimer();
     dispatch({ type: "END" });
     commitTurn();
@@ -604,6 +852,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (muted && engine.current.speaking) {
       // Muting mid-sentence discards the partial utterance rather than sending it.
       engine.current.speaking = false;
+      voiceGateRef.current.setSpeaking(false);
       window.clearInterval(engine.current.partialTimer);
       engine.current.partialTimer = 0;
       dispatch({ type: "MIC_READY" });
@@ -620,6 +869,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     }
     touchActivity();
     replyAbortRef.current?.abort();
+    speechRef.current?.interrupt();
     await handleUserText(clean);
   }, [handleUserText, touchActivity]);
 
@@ -631,10 +881,13 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     if (approval.kind === "google") { await executeGoogle(approval.service, approval.prompt, true); return; }
     dispatch({ type: "RESUME_AGENT" });
     const response = await fetch(`/api/agent/missions/${encodeURIComponent(approval.id)}/resume`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvedStepIds: [approval.stepId] }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvedStepIds: [approval.stepId], background: true }),
     });
-    const payload = await response.json().catch(() => null) as { mission?: MissionRecord } | null;
-    if (!payload?.mission) return;
+    const payload = await response.json().catch(() => null) as { mission?: MissionRecord; error?: string } | null;
+    if (!response.ok || !payload?.mission) {
+      dispatch({ type: "ERROR", error: { code: "VOICE_APPROVAL_FAILED", message: payload?.error || "I couldn't resume that approved task.", retryable: true } });
+      return;
+    }
     updateMission(payload.mission);
     const controller = new AbortController();
     taskAbortRef.current = controller;
@@ -697,5 +950,6 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     confirmApproval: () => void confirmApproval(),
     rejectApproval: () => void rejectApproval(),
     toggleSurfaceExpanded: () => dispatch({ type: "SET_SURFACE_EXPANDED", expanded: !sessionRef.current.activeSurface?.expanded }),
+    registerMediaCapture,
   };
 }

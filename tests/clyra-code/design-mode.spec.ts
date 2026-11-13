@@ -49,7 +49,7 @@ test("the Code and Design tabs switch the workspace, and Design shows the OpenDe
   // The Design tab is either the live OpenDesign UI or its setup fallback —
   // never the Code welcome and never a blank pane.
   await expect(
-    page.locator('iframe[title="OpenDesign"], :text("Clyra Design is not running"), :text("Starting Clyra Design…")').first(),
+    page.locator('iframe[title="OpenDesign"], :text("Clyra Design couldn’t start"), :text("Starting Clyra Design…")').first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "What do you want to build?" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "What are we designing?" })).toHaveCount(0);

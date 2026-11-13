@@ -11,7 +11,10 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
-import { ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square } from "lucide-react";
+import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
+import { VoiceMediaSurface } from "./VoiceMediaSurface";
+import { AgentCursor } from "../vibe-coder/preview/AgentCursor";
+import "./voiceMotion.css";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -103,6 +106,7 @@ export type VoiceCallScreenCall = {
   confirmApproval: () => void;
   rejectApproval: () => void;
   toggleSurfaceExpanded: () => void;
+  registerMediaCapture?: (capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => void;
 };
 
 export type VoiceCallScreenProps = {
@@ -110,6 +114,9 @@ export type VoiceCallScreenProps = {
   testMode: boolean;
   avatarColor?: string;
   onOpenSettings?: () => void;
+  mediaMode?: "camera" | "screen" | null;
+  onMediaModeChange?: (mode: "camera" | "screen" | null) => void;
+  screenRequest?: Promise<MediaStream> | null;
 };
 
 /* ------------------------------------------------------------------ */
@@ -254,6 +261,7 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
 
   useEffect(() => {
     let raf = 0;
+    let timer: number | undefined;
     let disposed = false;
     let last = performance.now();
     const cur: EyeTarget = { ...MOODS.rest };
@@ -261,9 +269,24 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
     let blinkStartedAt = -Infinity;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    let lastPaint = 0;
+    // Schedule low-power and hidden frames at their actual rate instead of
+    // running a 60-fps callback that throws most of its work away.
+    const schedule = () => {
+      if (disposed) return;
+      const interval = document.hidden ? 250 : inputRef.current.lowPower ? 34 : reducedMotion ? 78 : 0;
+      if (interval) timer = window.setTimeout(() => {
+        if (!disposed) raf = requestAnimationFrame(render);
+      }, interval);
+      else raf = requestAnimationFrame(render);
+    };
     const render = (now: number) => {
       if (disposed) return;
-      raf = requestAnimationFrame(render);
+      schedule();
+      if (document.hidden) { last = now; return; }
+      const frameInterval = inputRef.current.lowPower ? 42 : reducedMotion ? 85 : 0;
+      if (now - lastPaint < frameInterval) return;
+      lastPaint = now;
       const dt = Math.min(48, Math.max(8, now - last));
       last = now;
 
@@ -351,6 +374,7 @@ const ClyraFace = forwardRef<HomeFaceHandle, FaceProps>(function ClyraFace(
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, []);
 
@@ -391,7 +415,7 @@ ClyraFace.displayName = "ClyraFace";
 /* VoicePresence (inlined from src/voice/VoicePresence.tsx)            */
 /* ------------------------------------------------------------------ */
 
-function VoicePresence({ state, muted, resting = false, typing = false, compact = false, lowPower = false }: {
+function VoicePresence({ state, micLevel, botLevel, muted, resting = false, typing = false, compact = false, lowPower = false }: {
   state: VoiceCallState;
   micLevel: number;
   botLevel: number;
@@ -401,9 +425,16 @@ function VoicePresence({ state, muted, resting = false, typing = false, compact 
   compact?: boolean;
   lowPower?: boolean;
 }) {
+  // RMS drives the microphone ring; native synthesis events drive spoken pulses.
+  const isListening = state === "listening" || state === "transcribing";
+  const energy = isListening ? (muted ? 0 : micLevel) : botLevel * 0.68;
   return (
     <div
       className={`clyra-voice-presence${compact ? " clyra-voice-presence--compact" : ""}`}
+      style={{
+        "--voice-energy-opacity": String(energy * 0.55),
+        "--voice-energy-scale": String(1.04 + energy * 0.075),
+      } as React.CSSProperties}
       data-state={state}
       data-low-power={lowPower || undefined}
       role="img"
@@ -475,7 +506,11 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
   };
 
   return (
-    <div className="clyra-voice-controls" aria-label="Voice call controls">
+    <motion.div className="clyra-voice-controls" aria-label="Voice call controls"
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.99 }}
+      transition={{ duration: reduced ? 0.08 : 0.22, ease: E }}>
       <div className="clyra-voice-controls-v2">
         <div className="clyra-voice-side-control clyra-voice-side-control--mute" style={{ opacity: open ? 0 : 1, transform: open ? "translateX(14px) scale(.84)" : "none", pointerEvents: open ? "none" : "auto" }}>
           <button
@@ -494,7 +529,7 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
         </div>
 
         <div className="clyra-voice-side-control clyra-voice-side-control--end" style={{ opacity: open ? 0 : 1, transform: open ? "scale(.84)" : "none", pointerEvents: open ? "none" : "auto" }}>
-          <button type="button" className="clyra-voice-round-btn clyra-voice-round-btn--end" aria-label="End" title="End call" onClick={onEnd} tabIndex={open ? -1 : 0}>
+          <button type="button" className="clyra-voice-round-btn clyra-voice-round-btn--end" aria-label="End call" title="End call" onClick={onEnd} tabIndex={open ? -1 : 0}>
             <svg data-ico="x" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6 6 18" />
               <path d="m6 6 12 12" />
@@ -580,7 +615,7 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
           ) : null}
         </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -600,18 +635,22 @@ function VoiceControlBar({ state, task, onPause, onResume, onTakeControl, onStop
   const paused = state === "paused";
   const takeover = state === "user_takeover";
   return (
-    <div className="clyra-voice-agent-bar" aria-label="Agent controls">
-      {task.canPause || takeover ? <button type="button" onClick={paused || takeover ? onResume : onPause}>
+    <motion.div className="clyra-voice-agent-bar" aria-label="Agent controls" data-mode={state}
+      initial={{ opacity: 0, y: 10, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 6, scale: 0.99 }}
+      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}>
+      {task.canPause || takeover ? <button type="button" aria-label={takeover ? "Resume Clyra" : paused ? "Resume" : "Pause"} onClick={paused || takeover ? onResume : onPause}>
           {paused || takeover ? <Play size={16} /> : <Pause size={16} />}
           <span>{takeover ? "Resume Clyra" : paused ? "Resume" : "Pause"}</span>
         </button> : <span aria-hidden />}
       <p>{takeover ? "You’re controlling" : paused ? "Paused" : task.label}</p>
       <div>
-        {task.canTakeControl && !takeover ? <button type="button" onClick={onTakeControl}><Hand size={16} /><span>Take Control</span></button> : null}
-        <button type="button" onClick={onChat}><MessageSquareText size={16} /><span>Chat</span></button>
+        {task.canTakeControl && !takeover ? <button type="button" aria-label="Take Control" onClick={onTakeControl}><Hand size={16} /><span>Take Control</span></button> : null}
+        <button type="button" aria-label="Chat" onClick={onChat}><MessageSquareText size={16} /><span>Chat</span></button>
         {task.canStop ? <button type="button" onClick={onStop} aria-label="Stop task"><Square size={14} fill="currentColor" /></button> : null}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -652,6 +691,83 @@ function ResultContent({ content }: { content: unknown }) {
   );
 }
 
+
+/** Reflect ONLY timestamped, observed browser input in the voice-call preview. */
+function VoiceBrowserPreview({ preview, active }: { preview: string; active: boolean }) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  // The captured page may not match the window aspect ratio. Cursor
+  // coordinates must follow the *painted image*, not its letterboxed element.
+  const [size, setSize] = useState({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
+  const [pointer, setPointer] = useState<{
+    x: number; y: number; kind?: string; at?: number;
+  } | null>(null);
+  const [viewport, setViewport] = useState({ width: 1440, height: 900 });
+  const measurePreview = () => {
+    const image = imageRef.current;
+    if (!image) return;
+    const width = image.clientWidth;
+    const height = image.clientHeight;
+    const naturalWidth = image.naturalWidth || 1440;
+    const naturalHeight = image.naturalHeight || 900;
+    const scale = Math.min(width / naturalWidth, height / naturalHeight);
+    const paintedWidth = naturalWidth * scale;
+    const paintedHeight = naturalHeight * scale;
+    setSize({
+      width: paintedWidth,
+      height: paintedHeight,
+      offsetX: (width - paintedWidth) / 2,
+      offsetY: (height - paintedHeight) / 2,
+    });
+  };
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+    const observer = new ResizeObserver(measurePreview);
+    observer.observe(image);
+    measurePreview();
+    return () => observer.disconnect();
+    // The preview URL changes when the actual browser screenshot updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview]);
+  useEffect(() => {
+    if (!active) { setPointer(null); return; }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/openbrowser/state", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { state?: {
+          cursor?: { x: number; y: number; kind?: string; at?: number };
+          viewport?: { width: number; height: number };
+        } };
+        if (!mounted || !data.state) return;
+        setPointer(data.state.cursor ?? null);
+        if (data.state.viewport) setViewport(data.state.viewport);
+      } catch { /* Do not animate a guessed position during reconnects. */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 400);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, [active]);
+  const fresh = pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y) &&
+    Date.now() - Number(pointer.at || 0) < 1500 &&
+    pointer.x >= 0 && pointer.y >= 0 &&
+    pointer.x <= viewport.width && pointer.y <= viewport.height;
+  return (
+    <div className="clyra-voice-browser-viewport relative overflow-hidden">
+      <img ref={imageRef} src={preview} alt="Live browser page" className="clyra-voice-activity__preview" onLoad={measurePreview} />
+      {active && fresh && pointer && size.width > 0 && size.height > 0 ? (
+        <AgentCursor
+          x={size.offsetX + pointer.x * size.width / Math.max(1, viewport.width)}
+          y={size.offsetY + pointer.y * size.height / Math.max(1, viewport.height)}
+          isClicking={pointer.kind === "click" || pointer.kind === "double_click" || pointer.kind === "right_click"}
+          isActive
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: {
   task: AgentTask;
   surface?: AgentSurface;
@@ -665,6 +781,81 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
     title: task.kind === "browser" ? "Web research" : "Clyra task",
     subtitle: task.detail,
   };
+  // Prefer the task's supplied capture. Otherwise show the real managed
+  // browser frame ONLY when its active session matches this voice task.
+  // Never show an unrelated browsing session or invent a website screenshot.
+  const [managedFrame, setManagedFrame] = useState<string | null>(null);
+  useEffect(() => {
+    if (resolved.kind !== "browser" || resolved.preview || !["running", "paused", "waiting"].includes(task.status)) {
+      setManagedFrame(null);
+      return;
+    }
+    const expected = (resolved.subtitle || task.detail || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (!expected) return;
+    const controller = new AbortController();
+    let disposed = false;
+    let inFlight = false;
+    let currentUrl: string | null = null;
+    const refresh = async () => {
+      if (disposed || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const response = await fetch("/api/openbrowser/session", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        const payload = await response.json() as { session?: { task?: string; status?: string; updatedAt?: string } | null };
+        const session = payload.session;
+        const actual = (session?.task || "").trim().toLowerCase().replace(/\s+/g, " ");
+        const live = ["planning", "observing", "executing", "verifying", "recovering", "paused", "waiting_for_user"].includes(session?.status || "");
+        const recent = session?.updatedAt && Date.now() - new Date(session.updatedAt).getTime() < 120_000;
+        if (!live || !recent || actual !== expected) {
+          if (currentUrl) {
+            URL.revokeObjectURL(currentUrl);
+            currentUrl = null;
+            if (!disposed) setManagedFrame(null);
+          }
+          return;
+        }
+        const frameResponse = await fetch("/api/openbrowser/frame?fresh=1", { cache: "no-store", signal: controller.signal });
+        if (!frameResponse.ok || !frameResponse.headers.get("content-type")?.startsWith("image/")) return;
+        const blob = await frameResponse.blob();
+        if (disposed) return;
+        const url = URL.createObjectURL(blob);
+        const previous = currentUrl;
+        currentUrl = url;
+        setManagedFrame(url);
+        if (previous) URL.revokeObjectURL(previous);
+      } catch {
+        // The managed browser may not exist. Keep the honest task activity
+        // surface rather than displaying someone else's stale page.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1_250);
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearInterval(timer);
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      setManagedFrame(null);
+    };
+  }, [resolved.id, resolved.kind, resolved.preview, resolved.subtitle, task.detail, task.status]);
+  const visiblePreview = resolved.preview || managedFrame;
+  // No duplicated URL/header/status UI over a live webpage: the agent's
+  // controls remain available in the separate, existing call control bar.
+  const showWebsiteOnly = resolved.kind === "browser" && Boolean(visiblePreview);
+  useEffect(() => {
+    if (!resolved.expanded) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onToggleExpanded();
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [resolved.expanded, onToggleExpanded]);
   return (
     <motion.section
       layout
@@ -673,23 +864,31 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
       exit={{ opacity: 0, y: reduced ? 0 : 8, scale: reduced ? 1 : 0.985 }}
       transition={{ duration: reduced ? 0.1 : 0.3, ease: [0.22, 1, 0.36, 1] }}
       className={`clyra-voice-activity${resolved.expanded ? " clyra-voice-activity--expanded" : ""}${controlling ? " clyra-voice-activity--controlled" : ""}`}
+      data-surface-kind={resolved.kind}
+      data-has-preview={Boolean(visiblePreview)}
       aria-label={`${resolved.title} activity surface`}
     >
-      <header className="clyra-voice-activity__header">
-        <div className="clyra-voice-activity__identity"><SurfaceIcon kind={resolved.kind} /><div><h2>{resolved.title}</h2><p>{resolved.subtitle || task.label}</p></div></div>
-        <button type="button" className="clyra-voice-activity__expand" aria-label={resolved.expanded ? "Exit full screen" : "Full screen"} onClick={onToggleExpanded}>
-          {resolved.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-        </button>
-      </header>
+      {!showWebsiteOnly ? (
+        <header className="clyra-voice-activity__header">
+          <div className="clyra-voice-activity__identity"><SurfaceIcon kind={resolved.kind} /><div><h2>{resolved.title}</h2><p>{resolved.subtitle || task.label}</p></div></div>
+          <button type="button" className="clyra-voice-activity__expand" aria-label={resolved.expanded ? "Exit full screen" : "Full screen"} onClick={onToggleExpanded}>
+            {resolved.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+          </button>
+        </header>
+      ) : null}
       <div className="clyra-voice-activity__body">
-        {resolved.preview ? <img src={resolved.preview} alt="Live task preview" className="clyra-voice-activity__preview" /> : null}
-        {!resolved.preview && task.steps?.length ? (
+        {visiblePreview ? <VoiceBrowserPreview preview={visiblePreview} active={controlling && task.kind === "browser"} /> : null}
+        {!visiblePreview && task.steps?.length ? (
           <ol className="clyra-voice-activity__steps">
             {task.steps.map((step) => <li key={step.id} data-status={step.status}><span aria-hidden /><p>{step.label}</p></li>)}
           </ol>
         ) : null}
-        <AnimatePresence mode="wait"><motion.div key={task.label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="clyra-voice-activity__status">{task.label}</motion.div></AnimatePresence>
-        <ResultContent content={resolved.content} />
+        {!showWebsiteOnly ? (
+          <>
+            <AnimatePresence mode="wait"><motion.div key={task.label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="clyra-voice-activity__status">{task.label}</motion.div></AnimatePresence>
+            <ResultContent content={resolved.content} />
+          </>
+        ) : null}
       </div>
     </motion.section>
   );
@@ -723,6 +922,9 @@ function primaryLine(call: VoiceCallScreenCall): { kind: "muted" | "listening" |
   if (call.muted && (call.state === "ready" || call.state === "listening" || call.state === "transcribing")) {
     return { kind: "muted", text: "Microphone off" };
   }
+  if (call.state === "transcribing" && call.actionLabel === "Finishing your words") {
+    return { kind: "aux", text: "Finishing your words…" };
+  }
   if (call.state === "listening" || call.state === "transcribing") {
     return { kind: "listening", text: "Listening" };
   }
@@ -755,10 +957,10 @@ function ApprovalPanel({ approval, onConfirm, onCancel }: { approval: ApprovalRe
   );
 }
 
-export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
+export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, screenRequest }: VoiceCallScreenProps) {
   const reduced = useReducedMotion();
   const duration = useMemo(() => time(call.elapsedSeconds), [call.elapsedSeconds]);
-  const hasActivity = Boolean(call.activeTask && call.activeSurface);
+  const hasActivity = Boolean(call.activeTask) || Boolean(mediaMode);
   const response = call.error || call.responseText;
   const [lastTypeAt, setLastTypeAt] = useState(0);
   const [now, setNow] = useState(0);
@@ -781,6 +983,23 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
       : "";
 
   const phase: "entering" | "live" | "ending" = call.state === "entering" ? "entering" : call.state === "ending" ? "ending" : "live";
+  const modeStatus = {
+    entering: "Connecting",
+    idle: "Idle",
+    ready: call.muted ? "Microphone off" : "Ready",
+    listening: "Listening",
+    transcribing: call.actionLabel === "Finishing your words" ? "Finishing" : "Transcribing",
+    thinking: "Thinking",
+    responding: "Speaking",
+    acting_browser: "Browsing",
+    acting_computer: "Using computer",
+    acting_clyra: "Working",
+    awaiting_approval: "Needs approval",
+    user_takeover: "Your control",
+    paused: "Paused",
+    error: "Attention needed",
+    ending: "Ending",
+  }[call.state];
 
   const flyRef = useRef<HTMLDivElement | null>(null);
   const flight = useAnimationControls();
@@ -835,18 +1054,43 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
           className="clyra-voice-call"
           data-state={call.state}
           data-low-power={call.lowPowerMode || undefined}
+          data-media-mode={mediaMode || "none"}
+          data-agent-kind={call.activeTask?.kind || "none"}
           aria-label="Clyra voice call"
         >
           <motion.header className="clyra-voice-call__header" animate={headerGroup.animate} transition={headerGroup.transition}>
+            <div className="clyra-voice-mode-readout" role="status" aria-live="polite" aria-atomic="true">
+              <span className="clyra-voice-mode-readout__dot" aria-hidden="true" />
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span key={modeStatus}
+                  initial={{ opacity: 0, y: reduced ? 0 : 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: reduced ? 0 : -4 }}
+                  transition={{ duration: reduced ? 0.06 : 0.18, ease: EASE }}
+                >{modeStatus}</motion.span>
+              </AnimatePresence>
+            </div>
             <time aria-label={`Call duration ${duration}`}>{duration}</time>
+            <div className="clyra-voice-call__media-actions" aria-label="Live media controls">
+              <button type="button" aria-label={mediaMode === "camera" ? "Stop camera" : "Start camera"} aria-pressed={mediaMode === "camera"} data-active={mediaMode === "camera"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "camera" ? null : "camera")}><Camera size={17} strokeWidth={1.8} /><span>Camera</span></button>
+              <button type="button" aria-label={mediaMode === "screen" ? "Stop screen sharing" : "Start screen sharing"} aria-pressed={mediaMode === "screen"} data-active={mediaMode === "screen"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "screen" ? null : "screen")}><Monitor size={17} strokeWidth={1.8} /><span>Screen</span></button>
+              {(call.requiresApproval || (call.activeTask && !call.composerOpen)) ? (
+                <>
+                  <button type="button" aria-label={call.muted ? "Unmute microphone" : "Mute microphone"} aria-pressed={call.muted} title={call.muted ? "Unmute microphone" : "Mute microphone"} data-active={call.muted} disabled={call.state === "ending"} onClick={call.toggleMute}><MicIcon muted={call.muted} /></button>
+                  <button type="button" aria-label="End call" title="End call" disabled={call.state === "ending"} onClick={() => void call.endCall()}><PhoneOff size={17} strokeWidth={1.8} /></button>
+                </>
+              ) : null}
+            </div>
           </motion.header>
 
           <main className={`clyra-voice-call__main${hasActivity ? " clyra-voice-call__main--activity" : ""}`}>
             <motion.div
               ref={flyRef}
               className="clyra-voice-call__fly"
+              layout="position"
               animate={flight}
               initial={{ opacity: 0 }}
+              transition={{ layout: { duration: reduced ? 0.01 : 0.42, ease: EASE } }}
               style={{ willChange: "transform" }}
             >
             <motion.div
@@ -862,7 +1106,7 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
             <AnimatePresence initial={false}>
               {liveSubtitle ? (
                 <motion.p
-                  key={liveSubtitle}
+                  key="live-caption"
                   data-testid="voice-live-subtitle"
                   className="clyra-voice-live-subtitle"
                   initial={reduced ? { opacity: 0 } : { opacity: 0, y: -4, filter: "blur(3px)" }}
@@ -877,8 +1121,27 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
               ) : null}
             </AnimatePresence>
 
+            <AnimatePresence mode="wait" initial={false}>
+              {mediaMode ? (
+                <motion.div
+                  key={mediaMode}
+                  className="clyra-voice-media-stage"
+                  data-mode={mediaMode}
+                  initial={{ opacity: 0, y: reduced ? 0 : 16, scale: reduced ? 1 : 0.975 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: reduced ? 0 : -10, scale: reduced ? 1 : 0.985 }}
+                  transition={{ duration: reduced ? 0.06 : 0.29, ease: EASE }}
+                >
+                  <VoiceMediaSurface mode={mediaMode} lowPower={call.lowPowerMode} screenRequest={screenRequest}
+                    onStop={() => onMediaModeChange?.(null)}
+                    onCaptureChange={call.registerMediaCapture}
+                    onAsk={() => void call.sendText("What can you see in this view?")}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
             <AnimatePresence mode="popLayout">
-              {hasActivity && call.activeTask ? (
+              {call.activeTask ? (
                 <VoiceActivitySurface key={call.activeTask.id} task={call.activeTask} surface={call.activeSurface} controlling={activeState(call.state) && call.state !== "paused" && call.state !== "user_takeover"} onToggleExpanded={call.toggleSurfaceExpanded} />
               ) : (
                 <motion.div className="clyra-voice-call__copy" aria-live="polite" animate={headerGroup.animate} transition={headerGroup.transition}>
@@ -950,7 +1213,7 @@ export function VoiceCallScreen({ call }: VoiceCallScreenProps) {
 
           <motion.footer className="clyra-voice-call__footer" animate={controlsGroup.animate} transition={controlsGroup.transition} style={{ pointerEvents: phase === "ending" ? "none" : "auto" }}>
             <AnimatePresence mode="wait">
-              {call.requiresApproval ? <ApprovalPanel key={call.requiresApproval.id} approval={call.requiresApproval} onConfirm={call.confirmApproval} onCancel={call.rejectApproval} /> : call.activeTask && activeState(call.state) && !call.composerOpen ? (
+              {call.requiresApproval ? <ApprovalPanel key={call.requiresApproval.id} approval={call.requiresApproval} onConfirm={call.confirmApproval} onCancel={call.rejectApproval} /> : call.activeTask && call.activeTask.status !== "complete" && call.activeTask.status !== "failed" && !call.composerOpen ? (
                 <VoiceControlBar key="agent-controls" state={call.state} task={call.activeTask} onPause={call.pauseTask} onResume={call.resumeTask} onTakeControl={call.takeControl} onStop={call.stopTask} onChat={call.openComposer} />
               ) : (
                 <VoiceComposer key="voice-controls" open={call.composerOpen} muted={call.muted} disabled={call.state === "entering" || call.state === "ending"} onOpen={call.openComposer} onClose={call.closeComposer} onMute={call.toggleMute} onEnd={() => void call.endCall()} onSend={call.sendText} onActivity={() => setLastTypeAt(Date.now())} />

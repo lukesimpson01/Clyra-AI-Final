@@ -1100,3 +1100,54 @@ button.dsh-leading { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .cw-row, .cw-more, .cw-action, .cw-link, .cw-menu-item { transition: none; } }
 .pl-fold-inner { display: flex; flex-direction: column; justify-content: flex-end; }
 .pl:not([data-open]) .pl-toggle { border-radius: 12px; }
+.dsh-todo {
+  background: #fff;
+  border: 1px solid #e9e9e9;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: border-radius 320ms cubic-bezier(.22, 1, .36, 1), box-shadow 220ms ease;
+}
+.dsh-todo[data-collapsed="true"] { border-radius: 999px; }
+.dsh-todo[data-collapsed="true"] .dsh-todo-body { padding: 5px 16px; }
+.dsh-todo[data-collapsed="false"], .dsh-todo:not([data-collapsed]) { border-radius: 18px; }
+.dsh-glyph-completed { color: #3f9f67; fill: none; }
+.dsh-glyph-completed circle, .dsh-glyph-completed path { fill: none; }
+.dsh-glyph-pending { color: #b5b5b5; }
+.dsh-glyph-progress { color: #3977e8; }
+.dsh-todo-item[data-status="completed"] .dsh-todo-content { color: #9a9a9a; text-decoration-color: #c4c4c4; }
+
+
+/* Two independently travelling glow beams, one along each composer edge.
+   Both move on the welcome screen and throughout working/thinking states. */
+.cc-composer::before, .cc-composer::after {
+  content: ""; position: absolute; z-index: 3; left: 14px; right: 14px;
+  height: 2px; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, rgba(30,111,255,.08) 22%, rgba(68,149,255,.95) 47%, #d1e7ff 52%, rgba(30,111,255,.65) 59%, transparent 100%);
+  background-size: 42% 100%; background-repeat: no-repeat;
+  filter: drop-shadow(0 0 5px rgba(30,111,255,.8));
+  animation: cc-composer-beam 4.2s ease-in-out infinite alternate;
+  opacity: .65;
+}
+.cc-composer::before { top: -1px; }
+.cc-composer::after { bottom: -1px; animation-direction: alternate-reverse; animation-delay: -1.7s; }
+.cc-composer[data-welcome]::before, .cc-composer[data-welcome]::after { opacity: .85; }
+.cc-composer[data-running]::before, .cc-composer[data-running]::after { animation-duration: 2.5s; opacity: 1; filter: drop-shadow(0 0 8px rgba(30,111,255,.95)); }
+.cc-composer[data-running] { box-shadow: 0 0 0 1px rgba(30,111,255,.11), 0 9px 34px -15px rgba(30,111,255,.26); }
+@keyframes cc-composer-beam {
+  0% { background-position: -75% 0; opacity: .45; }
+  50% { opacity: 1; }
+  100% { background-position: 170% 0; opacity: .75; }
+}
+.cxr { margin-bottom: 8px; }
+.cxr-step { min-width: 0; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #86868b; font-size: 12px; }
+.cxr[data-phase="running"] .cxr-label { color: #303236; font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .cc-composer::before, .cc-composer::after { animation: none; opacity: .18; background-position: center; } }
+
+
+/* Each fake preview transforms its existing blocks into a new screen rather
+   than blanking the page and replaying the same initial construction. */
+.cc-pb-block {
+  transition: left .85s cubic-bezier(.22,1,.36,1), top .85s cubic-bezier(.22,1,.36,1),
+    width .85s cubic-bezier(.22,1,.36,1), height .85s cubic-bezier(.22,1,.36,1),
+    opacity .42s cubic-bezier(.22,1,.36,1), transform .42s cubic-bezier(.22,1,.36,1);
+}
+@media (prefers-reduced-motion: reduce) { .cc-pb-block { transition: none; } }

@@ -1,0 +1,93 @@
+/**
+ * Real, unedited screenshot tour of the Clyra Code template store.
+ *
+ * Usage:
+ *   npm run dev
+ *   npx playwright test -c playwright.clyra-code.config.ts library-visual.spec.ts
+ *
+ * Screenshots are saved under qa-screenshots/clyra-code-template-store/.
+ * Captures only a running app; never generates decorative mock screenshots.
+ */
+import { expect, test, type Page } from "@playwright/test";
+import path from "node:path";
+
+const root = path.join(process.cwd(), "qa-screenshots", "clyra-code-template-store");
+const API = process.env.CLYRA_URL || "http://localhost:3000";
+
+async function openLibrary(page: Page) {
+  await page.goto(API + "/");
+  await page.getByText("Vibe Coder", { exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "What do you want to build?" })).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Clyra Library" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
+  // The Clyra boot overlay remains visible after the underlying app becomes interactive.
+  // Wait for its actual disappearance; otherwise every screenshot is a loading bar.
+  await expect(page.locator(".clyra-boot-overlay")).toBeHidden({ timeout: 45_000 });
+  return dialog;
+}
+
+test("capture real Discover scroll states and app detail on desktop and mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const dialog = await openLibrary(page);
+  const shot = async (name: string) => {
+    await expect(page.locator(".clyra-boot-overlay")).toBeHidden();
+    await page.screenshot({ path: path.join(root, name + ".png"), fullPage: false });
+  };
+
+  await shot("01-discover-top-desktop");
+  const main = dialog.locator("main > .cc-scroll").first();
+  await main.evaluate((element) => { element.scrollTop = 560; });
+  await shot("02-discover-mid-desktop");
+  await main.evaluate((element) => { element.scrollTop = 1360; });
+  await shot("03-discover-lower-desktop");
+  await main.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await shot("04-discover-bottom-desktop");
+
+  await dialog.getByRole("textbox", { name: "Search the library" }).fill("Excalidraw");
+  await expect(dialog.getByRole("button", { name: /Excalidraw/ }).first()).toBeVisible();
+  await shot("05-search-results-desktop");
+  await dialog.getByRole("button", { name: /Excalidraw/ }).first().click();
+  await expect(dialog.getByRole("heading", { name: "Excalidraw", exact: true })).toBeVisible();
+  await shot("06-app-detail-header-desktop");
+
+  const detail = dialog.locator("main > .cc-scroll").first();
+  await detail.getByRole("heading", { name: "Features", exact: true }).scrollIntoViewIfNeeded();
+  await shot("07-app-detail-features-desktop");
+  await detail.getByRole("heading", { name: "Technical requirements" }).scrollIntoViewIfNeeded();
+  await shot("08-app-detail-technical-desktop");
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await expect(dialog.getByText("3 illustrative sample ratings")).toBeVisible();
+  await shot("09-app-detail-sample-ratings-reviews-desktop");
+  await expect(dialog.getByRole("button", { name: "Write a Review" })).toHaveCount(0);
+
+  // Mock only the checkout response. The UI still exercises the real Get button,
+  // loading ring and installed-state transition, without untrusted source execution.
+  await page.route("**/api/clyra-code/library/excalidraw/import-plan", async (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ plan: { verification: { commit: "a".repeat(40), verifiedAt: new Date().toISOString() } } }) }));
+  await page.route("**/api/clyra-code/library/excalidraw/import", async (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: { id: "qa-screenshot-excalidraw", name: "Excalidraw" }, sourcePath: "/qa/excalidraw", importedIntoExisting: false, message: "QA simulated source import" }) }));
+  await dialog.getByRole("button", { name: "Get", exact: true }).first().click();
+  await expect(dialog.getByRole("button", { name: "Open", exact: true }).first()).toBeVisible({ timeout: 20000 });
+  await expect(dialog.getByRole("button", { name: "Rate Excalidraw" })).toBeVisible();
+  await shot("10-app-detail-after-get-desktop");
+
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await dialog.getByRole("button", { name: "Write a Review" }).click();
+  await dialog.getByPlaceholder("Summarise your experience").scrollIntoViewIfNeeded();
+  await shot("11-app-detail-review-editor-desktop");
+  await dialog.getByRole("button", { name: "Rate 5 stars" }).click();
+  await dialog.getByPlaceholder("Summarise your experience").fill("QA example — personal rating");
+  await dialog.getByPlaceholder("What worked well? What would you improve?").fill("Saved locally by an automated visual test, not a real customer review.");
+  await dialog.getByRole("button", { name: "Save review" }).click();
+  await shot("12-app-detail-own-rating-desktop");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await detail.getByRole("heading", { name: "Ratings & Reviews" }).evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await shot("13-app-detail-ratings-mobile");
+  await dialog.getByRole("button", { name: /Discover/ }).first().click();
+  await dialog.getByRole("textbox", { name: "Search the library" }).fill("");
+  await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
+  await shot("14-discover-mobile");
+});

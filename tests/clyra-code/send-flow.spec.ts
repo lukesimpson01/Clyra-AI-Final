@@ -27,8 +27,8 @@ test.beforeAll(async ({ request }) => {
   const created = await request.post(`${API}/api/vibe/projects`, { data: { name: PROJECT_NAME, prompt: "send test" } });
   expect(created.ok()).toBeTruthy();
   projectId = ((await created.json()) as { project: { id: string } }).project.id;
-  const runtime = await request.post(`${API}/api/opencode/runtime/start`, { data: { projectId } });
-  expect(runtime.ok()).toBeTruthy();
+  // Project and session navigation must work even if the model runtime has not
+  // been installed; actual model execution is covered by separate runtime tests.
   const session = await request.post(`${API}/api/opencode/sessions`, { data: { projectId, title: THREAD_TITLE } });
   expect(session.ok()).toBeTruthy();
 });

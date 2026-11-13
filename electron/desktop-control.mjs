@@ -5,7 +5,11 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { BrowserWindow, screen } from "electron";
+import { app, BrowserWindow, screen } from "electron";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { planCursorMotion } from "./ai-cursor-motion.mjs";
 
 const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,8 +29,20 @@ using System;
 using System.Runtime.InteropServices;
 public static class ClyraWindowsInput {
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
-  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public KEYBDINPUT ki;
+    [FieldOffset(0)] public MOUSEINPUT mi;
+    [FieldOffset(0)] public HARDWAREINPUT hi;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT {
+    public uint uMsg; public ushort wParamL; public ushort wParamH;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll", SetLastError=true)] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
@@ -94,18 +110,50 @@ export class DesktopControlService {
     this.guideOnly = false;
     this.xdotool = null;
     this.lastPoint = { x: 0, y: 0 };
+    this.macPointerPromise = null;
+    this.hasMoved = false;
+    this.positionTrackingTimer = null;
   }
 
   async initialize() {
-    this.xdotool = await which("xdotool");
-    const driver = this.xdotool
-      ? "xdotool"
-      : process.platform === "darwin"
-        ? "applescript"
-        : process.platform === "win32"
-          ? "powershell-sendinput"
-          : "none";
+    this.xdotool = process.platform === "linux" ? await which("xdotool") : null;
+    const driver = process.platform === "darwin" ? "coregraphics"
+      : process.platform === "win32" ? "powershell-sendinput"
+        : this.xdotool ? "xdotool" : "none";
     return { ok: true, driver };
+  }
+
+  // Build once on demand; compiling at startup would block the launcher.
+  // The binary is local to this user account and is rebuilt when source changes.
+  async macPointerBinary() {
+    if (process.platform !== "darwin") throw new Error("CoreGraphics input requires macOS.");
+    if (!this.macPointerPromise) {
+      this.macPointerPromise = (async () => {
+        // Packaged apps ship an executable in app.asar.unpacked; end users do
+        // not need Xcode, a network download or an on-device compiler.
+        if (app.isPackaged) {
+          const shipped = path.join(process.resourcesPath, "app.asar.unpacked", "electron", "native-pointer-darwin");
+          await fs.access(shipped);
+          return shipped;
+        }
+        const source = await fs.readFile(new URL("./native-pointer.swift", import.meta.url), "utf8");
+        const folder = path.join(app.getPath("userData"), "native-input");
+        const hash = crypto.createHash("sha256").update(source).digest("hex").slice(0, 14);
+        const binary = path.join(folder, "clyra-pointer-" + hash);
+        try { await fs.access(binary); return binary; } catch { /* compile once */ }
+        await fs.mkdir(folder, { recursive: true });
+        const sourcePath = path.join(folder, "clyra-pointer-" + hash + ".swift");
+        await fs.writeFile(sourcePath, source, { mode: 0o600 });
+        await execFileAsync("xcrun", ["swiftc", sourcePath, "-O", "-o", binary], { timeout: 90_000 });
+        return binary;
+      })().catch((error) => { this.macPointerPromise = null; throw new Error("macOS pointer backend unavailable: " + (error?.message || error)); });
+    }
+    return this.macPointerPromise;
+  }
+
+  async macInput(...args) {
+    const binary = await this.macPointerBinary();
+    await execFileAsync(binary, args.map(String), { timeout: 15_000 });
   }
 
   async ensureCursorOverlay(display = screen.getPrimaryDisplay()) {
@@ -113,7 +161,11 @@ export class DesktopControlService {
       // Screen coordinates can be negative on a left-hand monitor. Keeping
       // the transparent overlay on the display that owns the target avoids
       // mixing physical and device-independent coordinates.
-      this.cursorWindow.setBounds(display.bounds, false);
+      const current = this.cursorWindow.getBounds();
+      if (current.x !== display.bounds.x || current.y !== display.bounds.y
+        || current.width !== display.bounds.width || current.height !== display.bounds.height) {
+        this.cursorWindow.setBounds(display.bounds, false);
+      }
       return this.cursorWindow;
     }
     const { width, height } = display.bounds;
@@ -176,10 +228,42 @@ export class DesktopControlService {
       kind: String(cursor.kind || "move"),
       guide: Boolean(cursor.guide),
       paused: this.paused,
+      durationMs: Math.max(0, Math.min(450, Number(cursor.durationMs) || 0)),
     };
-    win.showInactive();
+    if (!win.isVisible()) win.showInactive();
     await win.webContents.executeJavaScript(`window.__setAIPresence(${JSON.stringify(payload)}); true`, true);
     return { ok: true };
+  }
+
+  /** Follow the REAL OS cursor rather than animating to an unconfirmed target.
+   * A single in-flight paint limits IPC work on lower-powered hardware. */
+  trackPhysicalPointer(label) {
+    if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+    let painting = false;
+    let stopped = false;
+    let last = null;
+    const sample = async (force = false) => {
+      if (stopped || painting || this.paused || this.manualControl) return;
+      const current = screen.getCursorScreenPoint();
+      if (!force && last && current.x === last.x && current.y === last.y) return;
+      last = current;
+      painting = true;
+      try { await this.setCursor({ ...current, label, kind: "move", durationMs: 0 }); }
+      finally { painting = false; }
+    };
+    void sample().catch(() => {});
+    this.positionTrackingTimer = setInterval(() => { void sample().catch(() => {}); }, 16);
+    return async () => {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      // Do not permit a late stale frame to paint over the landed point.
+      stopped = true;
+      while (painting) await wait(4);
+      if (!this.paused && !this.manualControl) {
+        const current = screen.getCursorScreenPoint();
+        await this.setCursor({ ...current, label, kind: "move", durationMs: 0 });
+      }
+    };
   }
 
   /**
@@ -195,18 +279,63 @@ export class DesktopControlService {
   }
 
   async move(x, y, label = "Moving") {
-    const point = { x: Math.round(x), y: Math.round(y) };
-    await this.setCursor({ ...point, label, kind: "move", guide: this.guideOnly });
-    if (this.paused || this.manualControl || this.guideOnly) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl", point };
-    if (this.xdotool) {
-      await execFileAsync(this.xdotool, ["mousemove", "--sync", String(point.x), String(point.y)], { timeout: 3_000 });
-    } else if (process.platform === "darwin") {
-      await execFileAsync("osascript", ["-e", `tell application "System Events" to set position of mouse to {${point.x}, ${point.y}}`], { timeout: 3_000 }).catch(() => undefined);
-    } else if (process.platform === "win32") {
-      await runWindowsPowerShell(`${WINDOWS_INPUT}\n[ClyraWindowsInput]::SetCursorPos(${point.x}, ${point.y}) | Out-Null`);
+    const point = { x: Math.round(Number(x)), y: Math.round(Number(y)) };
+    if (![point.x, point.y].every(Number.isFinite)) throw new Error("Desktop coordinates must be finite.");
+    if (!screen.getAllDisplays().some((display) => point.x >= display.bounds.x && point.y >= display.bounds.y && point.x < display.bounds.x + display.bounds.width && point.y < display.bounds.y + display.bounds.height)) {
+      throw new Error("Desktop target is outside the connected displays.");
     }
-    this.lastPoint = point;
-    return { ok: true, point };
+    if (this.guideOnly) return this.point(point.x, point.y, label);
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl", point };
+    if (process.platform === "darwin") await this.macPointerBinary();
+    if (!this.xdotool && !["darwin", "win32"].includes(process.platform)) throw new Error("Native desktop mouse input is unavailable (xdotool required).");
+    const previous = screen.getCursorScreenPoint();
+    const motion = planCursorMotion(previous, point);
+    const stopTracking = this.trackPhysicalPointer(label);
+    try {
+      if (process.platform === "darwin") {
+        await this.macInput("move", point.x, point.y, motion.durationMs);
+      } else if (process.platform === "win32") {
+        // One native process moves the real OS pointer at 16 ms intervals.
+        // Spawning PowerShell once PER frame would make this visibly lag.
+        const script = `${WINDOWS_INPUT}
+$p = New-Object ClyraWindowsInput+POINT
+if (-not [ClyraWindowsInput]::GetCursorPos([ref]$p)) { throw 'GetCursorPos failed' }
+$fromX = $p.X; $fromY = $p.Y
+$toX = ${(typeof screen.dipToScreenPoint === "function" ? screen.dipToScreenPoint(point) : point).x}; $toY = ${(typeof screen.dipToScreenPoint === "function" ? screen.dipToScreenPoint(point) : point).y}; $duration = ${motion.durationMs}
+$count = [Math]::Max(1, [Math]::Min(26, [Math]::Ceiling($duration / 16.0)))
+for ($i=1; $i -le $count; $i++) {
+  $t = $i / [double]$count
+  if ($t -lt 0.5) { $ease = 4 * $t * $t * $t } else { $ease = 1 - [Math]::Pow(-2*$t+2,3)/2 }
+  $mx = [int][Math]::Round($fromX + ($toX-$fromX)*$ease)
+  $my = [int][Math]::Round($fromY + ($toY-$fromY)*$ease)
+  if (-not [ClyraWindowsInput]::SetCursorPos($mx, $my)) { throw 'SetCursorPos failed' }
+  if ($i -lt $count -and $duration -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Max(1, $duration / $count)) }
+}`;
+        await runWindowsPowerShell(script, 10_000);
+      } else {
+        const chain = [];
+        for (const [index, frame] of motion.frames.entries()) {
+          chain.push("mousemove", "--sync", String(frame.x), String(frame.y));
+          const next = motion.frames[index + 1];
+          if (next) chain.push("sleep", String(Math.max(0.002, (next.atMs - frame.atMs) / 1000)));
+        }
+        // One xdotool process prevents per-frame process spawn latency.
+        await execFileAsync(this.xdotool, chain, { timeout: 10_000 });
+      }
+    } catch (error) {
+      await stopTracking();
+      await this.setCursor(null);
+      throw error; // Never report a simulated move as a successful OS action.
+    }
+    await stopTracking();
+    const actual = screen.getCursorScreenPoint();
+    if (Math.hypot(actual.x - point.x, actual.y - point.y) > 4) {
+      await this.setCursor(null);
+      throw new Error("The OS cursor did not reach the intended coordinate; click cancelled.");
+    }
+    this.hasMoved = true;
+    this.lastPoint = actual;
+    return { ok: true, point: actual, durationMs: motion.durationMs };
   }
 
   async click(x, y, button = "left", label = "Clicking") {
@@ -214,14 +343,14 @@ export class DesktopControlService {
       return this.point(x ?? this.lastPoint.x, y ?? this.lastPoint.y, label || "Click here");
     }
     const point = { x: Math.round(x ?? this.lastPoint.x), y: Math.round(y ?? this.lastPoint.y) };
-    await this.move(point.x, point.y, label);
-    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl", point };
-    if (this.xdotool) {
+    const moved = await this.move(point.x, point.y, label);
+    if (!moved.ok) return moved;
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl", point };
+    if (process.platform === "darwin") {
+      await this.macInput("click", point.x, point.y, button === "right" ? "right" : button === "middle" ? "middle" : "left");
+    } else if (this.xdotool) {
       const btn = button === "right" ? "3" : button === "middle" ? "2" : "1";
       await execFileAsync(this.xdotool, ["click", btn], { timeout: 3_000 });
-    } else if (process.platform === "darwin") {
-      const script = `tell application "System Events" to click at {${point.x}, ${point.y}}`;
-      await execFileAsync("osascript", ["-e", script], { timeout: 3_000 });
     } else if (process.platform === "win32") {
       const flags = button === "right"
         ? ["0x0008", "0x0010"]
@@ -239,10 +368,10 @@ export class DesktopControlService {
       await this.setCursor({ ...this.lastPoint, label: `Type: ${String(text || "").slice(0, 40)}`, kind: "point", guide: true });
       return { ok: true, skipped: "guide" };
     }
-    await this.setCursor({ ...this.lastPoint, label, kind: "type" });
-    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
     const value = String(text || "");
     if (!value) return { ok: true };
+    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "type" });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["type", "--clearmodifiers", "--delay", "12", "--", value], { timeout: 20_000 });
     } else if (process.platform === "darwin") {
@@ -260,8 +389,8 @@ export class DesktopControlService {
       await this.setCursor({ ...this.lastPoint, label: `Press ${key}`, kind: "point", guide: true });
       return { ok: true, skipped: "guide" };
     }
-    await this.setCursor({ ...this.lastPoint, label, kind: "key" });
-    if (this.paused || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : "manualControl" };
+    if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
+    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "key" });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
     } else if (process.platform === "darwin") {
@@ -280,7 +409,11 @@ export class DesktopControlService {
 
   setManualControl(enabled) {
     this.manualControl = Boolean(enabled);
-    if (this.manualControl) void this.setCursor(null);
+    if (this.manualControl) {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      void this.setCursor(null);
+    }
     return { ok: true, manualControl: this.manualControl };
   }
 
@@ -289,7 +422,11 @@ export class DesktopControlService {
    * (no held mouse buttons); the next queued action is therefore fenced. */
   async setPaused(enabled) {
     this.paused = Boolean(enabled);
-    if (this.paused) await this.setCursor(null);
+    if (this.paused) {
+      if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+      this.positionTrackingTimer = null;
+      await this.setCursor(null);
+    }
     return { ok: true, paused: this.paused };
   }
 
@@ -315,18 +452,25 @@ export class DesktopControlService {
         case "key":
           return this.key(action.key, action.label || "Key");
         case "scroll": {
-          if (this.paused || this.guideOnly || this.manualControl) return { ok: true, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
+          if (this.paused || this.guideOnly || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : this.guideOnly ? "guide" : "manualControl" };
+          // Positive deltaY means down, matching browser wheel semantics.
           const amount = Math.max(-20, Math.min(20, Number(action.deltaY ?? action.amount) || 0));
+          if (!amount) return { ok: true, deltaY: 0 };
           if (process.platform === "win32") {
-            const wheel = Math.round(amount >= 0 ? 120 : -120);
+            const wheel = Math.round(amount > 0 ? -120 : 120);
             const repeats = Math.max(1, Math.round(Math.abs(amount)));
             await runWindowsPowerShell(`${WINDOWS_INPUT}\nfor ($i = 0; $i -lt ${repeats}; $i++) { [ClyraWindowsInput]::mouse_event(0x0800, 0, 0, ${wheel}, [UIntPtr]::Zero) }`);
+          } else if (process.platform === "darwin") {
+            const point = screen.getCursorScreenPoint();
+            await this.macInput("scroll", point.x, point.y, -Math.round(amount));
           } else if (this.xdotool) {
-            const button = amount >= 0 ? "4" : "5";
+            const button = amount > 0 ? "5" : "4";
             await execFileAsync(this.xdotool, ["click", "--repeat", String(Math.max(1, Math.round(Math.abs(amount)))), button], { timeout: 3_000 });
           } else {
             return { ok: false, error: "Scrolling is unavailable on this platform" };
           }
+          const actual = screen.getCursorScreenPoint();
+          await this.setCursor({ ...actual, label: "Scrolling", kind: "scroll" });
           return { ok: true, deltaY: amount };
         }
         case "wait":
@@ -341,6 +485,8 @@ export class DesktopControlService {
   }
 
   destroy() {
+    if (this.positionTrackingTimer) clearInterval(this.positionTrackingTimer);
+    this.positionTrackingTimer = null;
     try {
       if (this.cursorWindow && !this.cursorWindow.isDestroyed()) this.cursorWindow.destroy();
     } catch {
@@ -350,17 +496,45 @@ export class DesktopControlService {
   }
 }
 
-const AI_PRESENCE_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
-  *{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none;user-select:none;-webkit-user-select:none}
-  #edge{position:fixed;inset:0;opacity:0;transition:opacity 120ms ease;background:linear-gradient(90deg,rgba(47,129,255,.34),transparent 7%,transparent 93%,rgba(47,129,255,.34)),linear-gradient(0deg,rgba(47,129,255,.20),transparent 8%,transparent 92%,rgba(47,129,255,.20));box-shadow:inset 0 0 32px rgba(62,141,255,.28)}
-  #cursor{position:fixed;left:0;top:0;width:22px;height:22px;border-radius:50%;transform:translate(-50%,-50%);background:radial-gradient(circle at 36% 30%,#fff 0 8%,#9ed1ff 10% 22%,#297eff 45%,#1260d9 100%);box-shadow:0 0 0 3px rgba(91,165,255,.24),0 4px 16px rgba(13,93,220,.48);opacity:0;transition:left 95ms cubic-bezier(.2,.8,.2,1),top 95ms cubic-bezier(.2,.8,.2,1),opacity 100ms ease}
-  #cursor.guide{background:radial-gradient(circle at 36% 30%,#fff 0 8%,#c6e7ff 10% 22%,#50a4ff 45%,#2678dd 100%)}
-  #pulse{position:fixed;left:0;top:0;width:42px;height:42px;border:2px solid rgba(93,173,255,.86);border-radius:50%;transform:translate(-50%,-50%) scale(.35);opacity:0}
-  #pulse.click{animation:ripple 430ms ease-out}@keyframes ripple{0%{opacity:.92;transform:translate(-50%,-50%) scale(.35)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.25)}}
-  #label{position:fixed;left:0;top:0;transform:translate(16px,14px);padding:5px 8px;border-radius:7px;background:rgba(8,30,72,.86);color:#fff;font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.01em;white-space:nowrap;opacity:0;transition:opacity 100ms ease}
-  body.active #cursor,body.active #label{opacity:1}body.controlling #edge{opacity:1}
-</style></head><body><div id="edge"></div><div id="pulse"></div><div id="cursor"></div><div id="label"></div><script>
-  const cursor=document.getElementById('cursor'), pulse=document.getElementById('pulse'), label=document.getElementById('label');
-  window.__setAIPresence=(value)=>{const on=Boolean(value);document.body.classList.toggle('active',on);if(!on)return;const x=Math.round(value.x||0),y=Math.round(value.y||0);cursor.style.left=pulse.style.left=label.style.left=x+'px';cursor.style.top=pulse.style.top=label.style.top=y+'px';cursor.classList.toggle('guide',Boolean(value.guide));document.body.classList.toggle('controlling',!value.guide&&!value.paused);label.textContent=value.label||'Clyra';pulse.classList.remove('click');if(value.kind==='click'){void pulse.offsetWidth;pulse.classList.add('click')}};
-  window.__openCluelySetAICursor=window.__setAIPresence;
+const AI_PRESENCE_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;background:transparent;overflow:hidden;pointer-events:none;user-select:none;-webkit-user-select:none}
+  #cursor{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;will-change:left,top;transition:opacity 100ms ease}
+  #arrow{position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;transform-origin:4px 3px;filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18))}
+  #pulse{position:fixed;left:0;top:0;width:32px;height:32px;border:2px solid rgba(30,111,255,.6);border-radius:50%;transform:translate(-50%,-50%) scale(.2);opacity:0;pointer-events:none}
+  #pulse.is-click{animation:impact 390ms cubic-bezier(.16,1,.3,1)}
+  @keyframes impact{0%{opacity:.82;transform:translate(-50%,-50%) scale(.2)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.45)}}
+  @keyframes press{0%,100%{transform:scale(1)}35%{transform:scale(.88) translate(1px,1px)}}
+  #arrow.is-press{animation:press 250ms cubic-bezier(.22,1,.36,1)}
+  #label{position:fixed;left:0;top:0;opacity:0;padding:6px 9px;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);color:#252a35;box-shadow:0 4px 14px rgba(20,32,52,.13);font:500 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+  body.active #cursor{opacity:1}body.active #label{opacity:1}
+  @media(prefers-reduced-motion:reduce){#pulse.is-click,#arrow.is-press{animation:none}}
+</style></head><body>
+<div id="cursor"><svg id="arrow" viewBox="0 0 34 38" aria-hidden="true"><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#1e6fff" stroke="#1e6fff" stroke-width="5.4" stroke-linejoin="round"/><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#fff" stroke="#252a35" stroke-width="2.45" stroke-linejoin="round"/></svg></div>
+<div id="pulse"></div><div id="label"></div>
+<script>
+const cursor=document.getElementById("cursor"), arrow=document.getElementById("arrow");
+const pulse=document.getElementById("pulse"), label=document.getElementById("label");
+let prior=null;
+window.__setAIPresence=(value)=>{
+  const active=!!value;
+  document.body.classList.toggle("active", active);
+  if(!active){prior=null;return;}
+  const x=Math.round(value.x), y=Math.round(value.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return;
+  cursor.style.left=x+"px";cursor.style.top=y+"px";
+  pulse.style.left=x+"px";pulse.style.top=y+"px";
+  label.style.left=(x+23)+"px";label.style.top=(y+27)+"px";
+  label.textContent=String(value.label||"Clyra");
+  label.style.display=value.showLabel===false?"none":"block";
+  const click=value.kind==="click"||value.kind==="double_click"||value.kind==="right_click";
+  if(click){
+    pulse.classList.remove("is-click");arrow.classList.remove("is-press");
+    void pulse.offsetWidth;
+    pulse.classList.add("is-click");arrow.classList.add("is-press");
+  }else if(prior==="click") arrow.classList.remove("is-press");
+  prior=click?"click":"move";
+};
+window.__openCluelySetAICursor=window.__setAIPresence;
 </script></body></html>`;

@@ -1,0 +1,58 @@
+name: Clyra Code template-store UI
+
+on:
+  push:
+    branches:
+      - feature/clyra-template-app-store-details-20261112
+  pull_request:
+    paths:
+      - "src/components/clyra-code/**"
+      - "tests/clyra-code/**"
+      - "lib/clyra-code/library/**"
+      - ".github/workflows/clyra-code-template-store.yml"
+
+jobs:
+  template-store:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install project dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+      - name: Unit-test Clyra Code catalogue
+        run: npm run test:clyra-code-library
+      - name: Start Clyra app
+        run: |
+          npm run dev:source > /tmp/clyra-dev.log 2>&1 &
+          echo $! > /tmp/clyra-dev.pid
+          for n in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:3000/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -150 /tmp/clyra-dev.log
+          exit 1
+      - name: Capture real catalogue and detail screenshots
+        run: npx playwright test -c playwright.clyra-code.config.ts library.spec.ts library-visual.spec.ts
+        env:
+          CLYRA_URL: http://127.0.0.1:3000
+      - name: Upload real screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clyra-template-store-screenshots
+          path: |
+            qa-screenshots/clyra-code-template-store/*.png
+            /tmp/clyra-code-playwright/
+            /tmp/clyra-dev.log
+          if-no-files-found: warn

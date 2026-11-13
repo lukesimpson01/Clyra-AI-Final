@@ -111,8 +111,9 @@ await test("real capture entries reference existing screenshots with alt text an
   assert.equal(TEMPLATE_LIBRARY.filter((item) => item.category === "Landing Pages" && item.sourceScreenshots.length === 4).length, 75);
   for (const item of TEMPLATE_LIBRARY) {
     for (const shot of item.sourceScreenshots) {
-      assert.match(shot.url, /^\/library-shots\/[a-z0-9-]+\.jpg$/);
+      assert.match(shot.url, item.category === "Landing Pages" ? /^\/library-shots\/[a-z0-9-]+\.jpg$/ : /^(?:\/library-shots\/[a-z0-9-]+\.jpg|https:\/\/\S+)$/);
       assert.ok(shot.alt.trim().length > 8);
+      if (shot.url.startsWith("https://")) { assert.match(shot.provenance, /upstream/i); continue; }
       if (item.category === "Landing Pages") {
         assert.match(shot.provenance, /Author-provided screenshot\.png|Real Chromium screenshot/);
         assert.ok(!shot.provenance.includes("local run"));

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { dialog, Menu, session, WebContentsView } from "electron";
 import { agentChromeScript } from "./agent-chrome-script.mjs";
+import { planCursorMotion, isPointerAction } from "./ai-cursor-motion.mjs";
 
 const HOME_URL = "https://www.google.com/";
 
@@ -282,6 +283,10 @@ export class ChromiumBrowserManager {
     this.lastFrameVersion = -1;
     this.saveTimer = null;
     this.agent = { status: "idle", paused: false, manualControl: false };
+    this.cursor = null;
+    this.cursorsByTab = new Map();
+    this.cursorSequence = 0;
+    this.agentCursorPoint = null;
     // The in-page status pill reports clicks through a console token. A fresh
     // random token per app session keeps it from colliding with page logs.
     this.agentChromeToken = `__clyra_agent_control_${crypto.randomBytes(9).toString("hex")}`;
@@ -627,13 +632,21 @@ export class ChromiumBrowserManager {
   activateTab(id, { persist = true } = {}) {
     const next = this.tabs.get(id);
     if (!next) throw new Error("That browser tab no longer exists.");
-    if (this.activeTabId && this.activeTabId !== id) this.cancelSnip(this.activeTabId);
+    if (this.activeTabId && this.activeTabId !== id) {
+      this.cancelSnip(this.activeTabId);
+      const previous = this.tabs.get(this.activeTabId)?.view?.webContents;
+      if (previous && !previous.isDestroyed()) {
+        void previous.executeJavaScript("document.getElementById('__clyra_native_agent_cursor__')?.remove(); true", true).catch(() => {});
+      }
+      this.agentCursorPoint = null;
+    }
     for (const [tabId, tab] of this.tabs) {
       const show = tabId === id && this.surface.visible;
       tab.view.setVisible(show);
       tab.view.webContents.setBackgroundThrottling(!show);
     }
     this.activeTabId = id;
+    this.cursor = this.cursorsByTab.get(id) || null;
     next.lastActiveAt = Date.now();
     if (this.surface.visible) {
       next.view.setBounds(this.surface.bounds);
@@ -660,6 +673,7 @@ export class ChromiumBrowserManager {
     this.window.contentView.removeChildView(tab.view);
     tab.view.webContents.close({ waitForBeforeUnload: false });
     this.tabs.delete(id);
+    this.cursorsByTab.delete(id);
     if (this.activeTabId === id) this.activateTab(ids[index - 1] || ids[index + 1], { persist: false });
     this.scheduleSave();
     this.emitState();
@@ -889,7 +903,7 @@ export class ChromiumBrowserManager {
       : target?.elementId
         ? elements.find((element) => element.id === target.elementId)
         : target && elements.find((element) => (!target.role || element.role === target.role) && (!target.name || element.name.toLowerCase().includes(String(target.name).toLowerCase())) && (!target.label || element.label.toLowerCase().includes(String(target.label).toLowerCase())) && (!target.placeholder || element.placeholder.toLowerCase().includes(String(target.placeholder).toLowerCase())) && (!target.text || element.text.toLowerCase().includes(String(target.text).toLowerCase())) && (!target.testId || element.testId === target.testId));
-    const point = resolved?.center || (typeof target === "object" ? target.coordinates : null);
+    let point = resolved?.center || (typeof target === "object" ? target.coordinates : null);
     const withDebugger = async (operation) => {
       const attachedHere = !contents.debugger.isAttached();
       if (attachedHere) contents.debugger.attach("1.3");
@@ -899,13 +913,92 @@ export class ChromiumBrowserManager {
         if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach();
       }
     };
+    // Re-resolve immediately before clicking; an observation may be stale.
+    if (isPointerAction(action?.type) && resolved?.id) {
+      const selector = JSON.stringify('[data-clyra-browser-id="' + resolved.id + '"]');
+      const live = await contents.executeJavaScript(`(() => {
+        const node = document.querySelector(${selector});
+        if (!node || !node.isConnected) return null;
+        const r = node.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        if (r.width < 2 || r.height < 2 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+        const hit = document.elementFromPoint(x, y);
+        if (hit !== node && !node.contains(hit) && !hit?.contains(node)) return null;
+        return { x, y };
+      })()`, true);
+      if (!live) throw new Error("The target moved or is covered. Observe the page again.");
+      point = live;
+    }
+    if (action?.type === "click_at") {
+      const x = Number(action.x), y = Number(action.y);
+      const viewport = await contents.executeJavaScript("({ width: innerWidth, height: innerHeight })", true);
+      if (![x, y].every(Number.isFinite) || x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) {
+        throw new Error("Click coordinates are outside the live browser viewport.");
+      }
+      point = { x: Math.round(x), y: Math.round(y) };
+    }
+    if (action?.type === "scroll" && !point && tabIsVisible) {
+      point = await contents.executeJavaScript("({ x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) })", true);
+    }
+    // Every animation frame dispatches an actual Chromium mouseMoved event
+    // BEFORE the visual marker is advanced to its confirmed coordinates.
+    const movePointer = async (destination) => {
+      if (!tabIsVisible || !destination) return;
+      const motion = planCursorMotion(this.agentCursorPoint || destination, destination, {
+        speed: this.settings.aiCursorSpeed, reducedMotion: this.settings.reducedMotion,
+      });
+      await withDebugger(async (send) => {
+        const started = Date.now();
+        for (const [index, frame] of motion.frames.entries()) {
+          if (this.agent.manualControl || this.agent.paused || this.destroyed) throw new Error("Browser control was interrupted.");
+          await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: frame.x, y: frame.y });
+          this.agentCursorPoint = { x: frame.x, y: frame.y };
+          if (this.settings.showAiCursor) {
+            await this.setCursor({ x: frame.x, y: frame.y, kind: "move", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+          }
+          const next = motion.frames[index + 1];
+          if (next) await new Promise((resolve) => setTimeout(resolve, Math.max(0, next.atMs - (Date.now() - started))));
+        }
+      });
+    };
+    if ((isPointerAction(action?.type) || action?.type === "type") && point) await movePointer(point);
+
     const click = async (clickCount = 1, button = "left") => {
+      if (this.agent.paused || this.agent.manualControl) throw new Error("Control was taken over before the click.");
       if (!point) throw new Error("The requested target is no longer visible.");
+      if (resolved?.id && tabIsVisible) {
+        // Hover may open a menu or shift layout while our mouse is traveling.
+        // Never press the old coordinate if the hit target moved or changed.
+        const selector = JSON.stringify('[data-clyra-browser-id="' + resolved.id + '"]');
+        const live = await contents.executeJavaScript(`(() => {
+          const node = document.querySelector(${selector});
+          if (!node || !node.isConnected) return null;
+          const r = node.getBoundingClientRect();
+          const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+          if (!r.width || !r.height || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+          const hit = document.elementFromPoint(x, y);
+          if (hit !== node && !node.contains(hit) && !hit?.contains(node)) return null;
+          return { x, y };
+        })()`, true);
+        if (!live) throw new Error("The target is no longer under the cursor. Observe again before clicking.");
+        if (Math.hypot(live.x - point.x, live.y - point.y) > 3) {
+          await movePointer(live);
+          point = live;
+        }
+      }
       // A hidden native view has no compositor target for dispatchMouseEvent.
       // Use the actual page node in that same WebContents until the user opens
       // Browser again; visible browser actions always retain CDP coordinates.
       if (!tabIsVisible && resolved) {
-        await contents.executeJavaScript(`document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)})?.click()`, true);
+        if (button !== "left") throw new Error("Right-click requires a visible browser compositor.");
+        const clicked = await contents.executeJavaScript(`(() => {
+          const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)});
+          if (!node || !node.isConnected) return false;
+          node.click();
+          return true;
+        })()`, true);
+        if (!clicked) throw new Error("The target disappeared before clicking.");
+        if (this.settings.showAiCursor) await this.setCursor({ ...point, kind: clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         return;
       }
       await withDebugger(async (send) => {
@@ -913,6 +1006,7 @@ export class ChromiumBrowserManager {
         await send("Input.dispatchMouseEvent", { type: "mousePressed", ...params });
         await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...params });
       });
+      if (tabIsVisible && this.settings.showAiCursor) await this.setCursor({ ...point, kind: button === "right" ? "right_click" : clickCount === 2 ? "double_click" : "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
     };
     const focus = async () => {
       if (!resolved) return;
@@ -943,11 +1037,7 @@ export class ChromiumBrowserManager {
       case "double_click": await click(2); break;
       case "right_click": await click(1, "right"); break;
       case "hover": break;
-      case "click_at": await withDebugger(async (send) => {
-        const params = { x: Math.round(action.x), y: Math.round(action.y), button: "left", clickCount: 1 };
-        await send("Input.dispatchMouseEvent", { type: "mousePressed", ...params });
-        await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...params });
-      }); break;
+      case "click_at": await click(); break;
       case "type": {
         await focus();
         if (!tabIsVisible && resolved) {
@@ -961,6 +1051,7 @@ export class ChromiumBrowserManager {
             node.dispatchEvent(new Event("change", { bubbles: true }));
           })()`, true);
           if (action.submit) await contents.executeJavaScript(`document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)})?.form?.requestSubmit?.()`, true);
+          if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "type", label: "Typing", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
           break;
         }
         if (action.clearFirst !== false) {
@@ -972,13 +1063,16 @@ export class ChromiumBrowserManager {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         }
         if (action.submit) await key("Enter");
+        if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "type", label: "Typing", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         break;
       }
       case "check":
       case "uncheck": {
         if (!resolved) throw new Error("The requested control is no longer visible.");
         const desired = action.type === "check";
-        await contents.executeJavaScript(`(() => { const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)}); if (node && node.checked !== ${desired}) node.click(); })()`, true);
+        const changed = await contents.executeJavaScript(`(() => { const node = document.querySelector(${JSON.stringify(`[data-clyra-browser-id="${resolved.id}"]`)}); if (!node) return false; if (node.checked !== ${desired}) node.click(); return true; })()`, true);
+        if (!changed) throw new Error("Checkbox disappeared before clicking.");
+        if (point && this.settings.showAiCursor) await this.setCursor({ ...point, kind: "click", label: action.label || "Clyra", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
         break;
       }
       case "select_option": {
@@ -1019,7 +1113,35 @@ export class ChromiumBrowserManager {
       case "scroll_to_top": await contents.executeJavaScript("window.scrollTo({top:0,behavior:'smooth'})", true); break;
       case "scroll_to_bottom": await contents.executeJavaScript("window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})", true); break;
       case "scroll_to": await contents.executeJavaScript(`document.querySelector(${JSON.stringify(resolved ? `[data-clyra-browser-id="${resolved.id}"]` : "")})?.scrollIntoView({block:'center',behavior:'smooth'})`, true); break;
-      case "drag": case "wait": case "read_page": case "extract": case "inspect_element": case "find_text": case "ask_user": case "done": break;
+      case "drag": {
+        if (!point || !tabIsVisible) throw new Error("Dragging requires a visible target in the foreground browser.");
+        const endpoint = action.to || action.end || (Number.isFinite(Number(action.endX)) && Number.isFinite(Number(action.endY))
+          ? { x: Number(action.endX), y: Number(action.endY) } : null);
+        if (!endpoint || !Number.isFinite(Number(endpoint.x)) || !Number.isFinite(Number(endpoint.y))) throw new Error("Drag destination coordinates are missing.");
+        const dest = { x: Math.round(Number(endpoint.x)), y: Math.round(Number(endpoint.y)) };
+        const viewport = await contents.executeJavaScript("({ width: innerWidth, height: innerHeight })", true);
+        if (dest.x < 0 || dest.y < 0 || dest.x >= viewport.width || dest.y >= viewport.height) throw new Error("Drag destination is outside the page.");
+        await withDebugger(async (send) => {
+          await send("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+          const motion = planCursorMotion(point, dest, { speed: this.settings.aiCursorSpeed, reducedMotion: this.settings.reducedMotion });
+          try {
+            const started = Date.now();
+            for (const [index, frame] of motion.frames.entries()) {
+              if (this.agent.paused || this.agent.manualControl) throw new Error("Drag interrupted by user takeover.");
+              await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: frame.x, y: frame.y, button: "left", buttons: 1 });
+              this.agentCursorPoint = { x: frame.x, y: frame.y };
+              if (this.settings.showAiCursor) await this.setCursor({ ...frame, kind: "move", label: "Dragging", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+              const next = motion.frames[index + 1];
+              if (next) await new Promise((resolve) => setTimeout(resolve, Math.max(0, next.atMs - (Date.now() - started))));
+            }
+          } finally {
+            await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: dest.x, y: dest.y, button: "left", clickCount: 1 });
+          }
+        });
+        if (this.settings.showAiCursor) await this.setCursor({ ...dest, kind: "click", label: "Dropped", reducedMotion: true, showLabel: this.settings.showAiActionLabels }, tabId);
+        break;
+      }
+      case "wait": case "read_page": case "extract": case "inspect_element": case "find_text": case "ask_user": case "done": break;
       default: break;
     }
     await new Promise((resolve) => setTimeout(resolve, action?.type === "navigate" || action?.type === "search" ? 350 : 90));
@@ -1036,6 +1158,22 @@ export class ChromiumBrowserManager {
   }
 
   async setCursor(cursor, tabId = this.activeTabId) {
+    if (!cursor) {
+      if (tabId) this.cursorsByTab.delete(tabId);
+      if (!tabId || tabId === this.activeTabId) {
+        this.cursor = null;
+        this.agentCursorPoint = null;
+      }
+    } else if ([cursor.x, cursor.y].every(Number.isFinite)) {
+      const event = { id: ++this.cursorSequence, at: Date.now(), x: Math.round(cursor.x), y: Math.round(cursor.y), kind: String(cursor.kind || "move"), label: String(cursor.label || "Clyra") };
+      if (tabId) this.cursorsByTab.set(tabId, event);
+      if (!tabId || tabId === this.activeTabId) {
+        this.cursor = event;
+        // The Playwright fallback also supplies this method, but only after
+        // real mouse dispatch. Keep the next native CDP path continuous.
+        this.agentCursorPoint = { x: event.x, y: event.y };
+      }
+    }
     // Keep the human's visible tab undisturbed while an agent continues in a
     // different tab. The cursor becomes visible automatically when that tab
     // is brought back to the foreground on the next agent event.
@@ -1060,25 +1198,38 @@ export class ChromiumBrowserManager {
       const root = existing || Object.assign(document.createElement("div"), { id });
       if (!existing) {
         root.setAttribute("aria-hidden", "true");
-        root.style.cssText = "position:fixed;left:0;top:0;width:26px;height:26px;z-index:2147483647;pointer-events:none;will-change:transform;contain:layout style paint;transition:opacity 120ms ease;";
+        root.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;z-index:2147483647;pointer-events:none;will-change:transform;contain:layout style paint;transition:opacity 90ms ease;";
         const glow = document.createElement("div");
         glow.dataset.part = "glow";
-        glow.style.cssText = "position:absolute;left:-13px;top:-13px;width:52px;height:52px;border-radius:999px;background:radial-gradient(circle,rgba(59,130,246,.34),rgba(59,130,246,.14) 40%,transparent 71%);filter:blur(3px);";
+        glow.style.cssText = "position:absolute;left:-14px;top:-14px;width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,rgba(30,111,255,.14),transparent 68%);filter:blur(4px);";
         // A tailless Clyra control point is less visually intrusive than a
         // traditional arrow and makes movement, click and type states clear
         // without obscuring the page the agent is operating.
-        const core = document.createElement("div");
+        const core = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         core.dataset.part = "core";
-        core.style.cssText = "position:absolute;left:7px;top:7px;width:12px;height:12px;border:2px solid rgba(255,255,255,.94);border-radius:999px;background:#2778ff;box-shadow:0 1px 5px rgba(15,23,42,.3),0 0 12px rgba(39,120,255,.7);transform-origin:center;";
+        core.setAttribute("viewBox", "0 0 34 38");
+        core.setAttribute("width", "34");
+        core.setAttribute("height", "38");
+        core.style.cssText = "position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;pointer-events:none;transform-origin:4px 3px;filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18));";
+        const shape = "M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z";
+        for (const [fill, stroke, thickness] of [["#1E6FFF", "#1E6FFF", "5.4"], ["#FFFFFF", "#252A35", "2.45"]]) {
+          const segment = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          segment.setAttribute("d", shape);
+          segment.setAttribute("fill", fill);
+          segment.setAttribute("stroke", stroke);
+          segment.setAttribute("stroke-width", thickness);
+          segment.setAttribute("stroke-linejoin", "round");
+          core.append(segment);
+        }
         const caret = document.createElement("div");
         caret.dataset.part = "caret";
-        caret.style.cssText = "display:none;position:absolute;left:12px;top:1px;width:2px;height:24px;border-radius:999px;background:#2778ff;box-shadow:0 0 0 1px rgba(255,255,255,.94),0 0 9px rgba(39,120,255,.56);";
+        caret.style.cssText = "display:none;position:absolute;left:2px;top:0;width:2px;height:24px;border-radius:999px;background:#1e6fff;box-shadow:0 0 0 1px white,0 0 8px rgba(30,111,255,.34);";
         const click = document.createElement("div");
         click.dataset.part = "click";
-        click.style.cssText = "display:none;position:absolute;left:0;top:0;width:26px;height:26px;border:1.5px solid rgba(83,145,255,.82);border-radius:999px;box-shadow:0 0 0 3px rgba(79,124,255,.11);";
+        click.style.cssText = "display:none;position:absolute;left:-16px;top:-16px;width:32px;height:32px;border:1.8px solid rgba(30,111,255,.64);border-radius:999px;box-shadow:0 0 0 3px rgba(30,111,255,.08);";
         const label = document.createElement("span");
         label.dataset.part = "label";
-        label.style.cssText = "position:absolute;left:29px;top:1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid rgba(36,42,52,.12);border-radius:8px;background:rgba(255,255,255,.93);padding:5px 9px 5px 18px;color:#252a33;font:650 10.5px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:-.01em;box-shadow:0 5px 16px rgba(20,32,52,.16),inset 0 1px 0 rgba(255,255,255,.72);";
+        label.style.cssText = "position:absolute;left:24px;top:23px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);padding:6px 10px 6px 18px;color:#252a33;font:500 11px/1.25 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:-.01em;box-shadow:0 4px 14px rgba(20,32,52,.13);";
         const labelDot = document.createElement("i");
         labelDot.style.cssText = "position:absolute;left:8px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:999px;background:#4f7cff;box-shadow:0 0 0 2px rgba(79,124,255,.12);";
         label.append(labelDot);
@@ -1092,8 +1243,8 @@ export class ChromiumBrowserManager {
         if (!text.parentNode) label.append(text);
         label.style.display = data.showLabel ? "block" : "none";
       }
-      root.style.transition = data.reducedMotion ? "none" : "transform 280ms cubic-bezier(.16,1,.3,1), opacity 120ms ease";
-      root.style.transform = "translate3d(" + (data.x - 13) + "px," + (data.y - 13) + "px,0)";
+      root.style.transition = "none"; // Input and artwork update in lockstep.
+      root.style.transform = "translate3d(" + data.x + "px," + data.y + "px,0)";
       root.style.opacity = "1";
       const core = root.querySelector('[data-part="core"]');
       const caret = root.querySelector('[data-part="caret"]');
@@ -1102,14 +1253,14 @@ export class ChromiumBrowserManager {
         caret.style.display = data.kind === "type" ? "block" : "none";
         caret.animate?.([{ opacity: 1 }, { opacity: .2 }, { opacity: 1 }], { duration: 880, iterations: data.kind === "type" ? Infinity : 1, easing: "steps(2,end)" });
       }
-      if (core) core.style.opacity = data.kind === "type" ? ".34" : "1";
+      if (core) core.style.opacity = data.kind === "type" ? ".55" : "1";
       if (click) {
         click.style.display = data.kind.includes("click") ? "block" : "none";
         if (data.kind.includes("click")) click.animate?.([{ transform: "scale(.42)", opacity: .88 }, { transform: "scale(1.52)", opacity: 0 }], { duration: 520, easing: "cubic-bezier(.16,1,.3,1)" });
       }
       if (core) {
         core.animate?.(
-          data.kind.includes("click") ? [{ transform: "scale(1)" }, { transform: "scale(.82)" }, { transform: "scale(1)" }] : [{ opacity: 1 }, { opacity: 1 }],
+          data.kind.includes("click") ? [{ transform: "scale(1)" }, { transform: "scale(.88) translate(1px,1px)" }, { transform: "scale(1)" }] : [{ opacity: 1 }, { opacity: 1 }],
           { duration: data.kind.includes("click") ? 190 : 1, easing: "ease-out" },
         );
       }
@@ -1233,6 +1384,9 @@ export class ChromiumBrowserManager {
 
   setAgentState(agent) {
     this.agent = { ...this.agent, ...(agent || {}) };
+    if (this.agent.manualControl || this.agent.paused || ["idle", "completed", "failed", "cancelled", "paused", "waiting_for_user"].includes(this.agent.status)) {
+      void this.setCursor(null).catch(() => {});
+    }
     void this.syncAgentChrome();
     this.emitState();
     return this.agent;
@@ -1307,6 +1461,8 @@ export class ChromiumBrowserManager {
         }
       }),
       activeTabId: this.activeTabId,
+      cursor: this.cursor,
+      surfaceVisible: this.surface.visible,
       canGoBack: Boolean(readableContents?.navigationHistory.canGoBack()),
       canGoForward: Boolean(readableContents?.navigationHistory.canGoForward()),
       secure: url.startsWith("https://"),
@@ -1477,7 +1633,10 @@ export class ChromiumBrowserManager {
       }
     }
     this.tabs.clear();
+    this.cursorsByTab.clear();
     this.activeTabId = null;
+    this.cursor = null;
+    this.agentCursorPoint = null;
   }
 }
 

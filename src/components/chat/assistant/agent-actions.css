@@ -681,3 +681,54 @@
 @keyframes clyra-pointer-breathe { from { transform: scale(.82); opacity: .65; } to { transform: scale(1.1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .clyra-bf::after, .clyra-pointer__halo, .clyra-pointer__arrow, .clyra-pointer__ripple, .clyra-pointer__flash { animation: none !important; opacity: 0; } .clyra-bf { transition: none; } }
 .clyra-bf--still::after { animation: none !important; }
+
+
+/* A completed tool run folds to one understated line; the person can inspect every real call. */
+.clyra-agent-run__summary {
+  display: flex; align-items: center; gap: 8px; align-self: flex-start;
+  max-width: 100%; min-height: 26px; padding: 2px 1px; border: 0; background: transparent;
+  color: #777; font: 400 12.5px/20px var(--chat-font); cursor: pointer; text-align: left;
+}
+.clyra-agent-run__summary:hover { color: #242424; }
+.clyra-agent-run__summary:focus-visible { outline: 2px solid #1e6fff; outline-offset: 3px; border-radius: 4px; }
+.clyra-agent-run__summary-icon { display: grid; place-items: center; color: #777; }
+.clyra-agent-run__summary > svg:last-child { transition: transform 270ms var(--act-ease); }
+.clyra-agent-run__summary > svg.is-open:last-child { transform: rotate(180deg); }
+.clyra-agent-run .clyra-ai-activity { animation: clyra-act-enter 260ms var(--act-ease) both; }
+.clyra-agent-run .clyra-research-results { animation: clyra-act-enter 330ms var(--act-ease) both; }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-agent-run__summary > svg:last-child { transition: none; }
+  .clyra-agent-run .clyra-ai-activity, .clyra-agent-run .clyra-research-results { animation: none; }
+}
+
+/* Single Clyra AI pointer across browser previews, chat and Vibe.
+   Always tailless; the centre is the coordinate the automation reported. */
+.clyra-pointer__core {
+  position: absolute; left: -8px; top: -8px; z-index: 3;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid #fff; background: #1e6fff;
+  box-shadow: 0 0 0 2px rgba(30,111,255,.13), 0 3px 9px rgba(16,77,172,.26);
+  transform-origin: center;
+}
+.clyra-pointer__core.is-press { animation: clyra-pointer-press 260ms cubic-bezier(.2,.8,.2,1) both; }
+.clyra-pointer__halo { left:-18px; top:-18px; width:36px; height:36px; background:radial-gradient(circle,rgba(30,111,255,.17),transparent 66%); }
+.clyra-pointer__ripple { border-width:2px; border-color:rgba(30,111,255,.55); box-shadow:none; animation-duration:480ms; animation-delay:calc(var(--n,0) * 65ms); }
+.clyra-pointer__flash { width:28px; height:28px; left:-14px; top:-14px; opacity:.7; animation-duration:270ms; }
+@media (prefers-reduced-motion: reduce) {
+  .clyra-pointer__core.is-press { animation:none!important; }
+  .clyra-pointer__halo { animation:none!important; opacity:.65; }
+}
+
+/* AI pointer matches the native desktop and Chromium cursor; its SVG tip is
+   fixed at input coordinate 0,0, so clicks do not visually drift. */
+.clyra-ai-cursor-glyph {
+  position:absolute;left:-4px;top:-3px;width:34px;height:38px;
+  overflow:visible;pointer-events:none;transform-origin:4px 3px;
+  filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18));
+}
+.clyra-ai-cursor-glyph.is-pressed {animation:clyra-ai-press .26s cubic-bezier(.22,1,.36,1) both}
+@keyframes clyra-ai-press {
+  0%,100%{transform:scale(1)}
+  32%{transform:scale(.87) translate(1px,1px)}
+}
+@media(prefers-reduced-motion:reduce){.clyra-ai-cursor-glyph.is-pressed{animation:none!important}}
