@@ -153,6 +153,14 @@ try {
     return video instanceof HTMLVideoElement && video.readyState >= 2;
   }, { timeout: 15_000 });
   assert.equal(await call.getByRole("button", { name: "Ask Clyra about this view" }).isEnabled(), true);
+  await page.waitForFunction(() => {
+    const videoStage = document.querySelector('.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media-stage');
+    if (!(videoStage instanceof HTMLElement)) return false;
+    const rect = videoStage.getBoundingClientRect();
+    return Math.abs(rect.left) < 2 && Math.abs(rect.top) < 2 &&
+      Math.abs(rect.width - window.innerWidth) < 3 && Math.abs(rect.height - window.innerHeight) < 3;
+  }, undefined, { timeout: 8_000 });
+  assert.equal(await stage.locator("video").evaluate((video) => getComputedStyle(video).objectFit), "cover", "camera fills the call window without letterboxing");
   await call.getByRole("button", { name: "3D pose" }).click();
   assert.equal(await call.getByRole("button", { name: "3D pose" }).getAttribute("aria-pressed"), "true");
   await call.getByRole("button", { name: "3D pose" }).click();
@@ -171,6 +179,7 @@ try {
   await call.getByRole("button", { name: "Ask Clyra about this view" }).click();
   await page.waitForFunction(() => document.querySelector('.clyra-voice-response-line')?.textContent?.includes("I can see the shared view."), { timeout: 12_000 });
   assert.equal(visionRequests.length, 2, "camera and screen each support real one-frame vision requests");
+  assert.equal(await stage.locator("video").evaluate((video) => getComputedStyle(video).objectFit), "contain", "screen sharing must preserve every edge");
   await page.screenshot({ path: "qa-screenshots/voice-call/screen-share.png" });
   await call.getByRole("button", { name: "Stop media sharing" }).click();
   await stage.waitFor({ state: "detached", timeout: 12_000 });
@@ -185,6 +194,27 @@ try {
   await call.getByRole("button", { name: "Exit full screen" }).waitFor();
   await call.getByRole("button", { name: "Exit full screen" }).click();
   await call.getByRole("button", { name: "Full screen" }).waitFor();
+
+  // The live voice preview must show only the REAL browser image and cursor.
+  // Simulate the existing managed-browser endpoints with a screenshot rendered
+  // by Chromium, never with a manually styled Clyra UI mock.
+  const sourcePage = await context.newPage();
+  await sourcePage.setViewportSize({ width: 1440, height: 900 });
+  await sourcePage.setContent('<!doctype html><html><body style="font:24px system-ui;background:white;color:#111;padding:72px"><h1>Live research page</h1><p>A browser screenshot, not an app frame.</p></body></html>');
+  const browserImage = await sourcePage.screenshot({ type: "jpeg", quality: 75 });
+  await sourcePage.close();
+  await page.route("**/api/openbrowser/session", (route) => route.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ ok: true, session: { task: "Research competitors", status: "executing", updatedAt: new Date().toISOString() } }),
+  }));
+  await page.route("**/api/openbrowser/frame?fresh=1", (route) => route.fulfill({ status: 200, contentType: "image/jpeg", body: browserImage }));
+  const browserActivity = call.locator('.clyra-voice-activity[data-surface-kind="browser"]');
+  await browserActivity.locator(".clyra-voice-browser-viewport img").waitFor({ timeout: 12_000 });
+  await browserActivity.locator('.clyra-voice-activity__header').waitFor({ state: "detached" });
+  assert.equal(await browserActivity.locator(".clyra-voice-activity__status").count(), 0, "browser screenshots must have no app status overlay");
+  const browserBounds = await browserActivity.boundingBox();
+  assert.ok(browserBounds && Math.abs(browserBounds.width / browserBounds.height - 1.6) < 0.04, "browser frame must keep the 16:10 laptop aspect ratio");
+
   await call.getByRole("button", { name: "Pause" }).click();
   await call.locator('[data-mode="paused"]').waitFor({ timeout: 8_000 });
   await call.getByRole("button", { name: "Resume", exact: true }).click();
