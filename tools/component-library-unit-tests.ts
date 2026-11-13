@@ -54,6 +54,14 @@ try {
   await writeFile(path.join(other, "package.json"), JSON.stringify({ name: "other", dependencies: { react: "^19.0.0" } }));
   assert.equal((await library.installLocalComponent("other", "21st", "banner")).ok, true);
 
+  // Full-page blocks install with their own components and data files.
+  const blockProject = path.join(data, "projects", "blk", "files");
+  await mkdir(blockProject, { recursive: true });
+  await writeFile(path.join(blockProject, "package.json"), JSON.stringify({ name: "blk", dependencies: { react: "^19.0.0" } }));
+  const block = await library.installLocalComponent("blk", "shadcn", "block-dashboard-01");
+  assert.ok(block.files.some((file) => file === "blocks/dashboard-01/page.tsx") && block.files.some((file) => file.endsWith("data.json")), "dashboard block brings its page and data");
+  assert.ok(all.filter((item) => item.source === "21st").length >= 30, "21st catalogue is the full set of reusable components");
+  assert.ok(all.filter((item) => item.name.startsWith("block-")).length >= 25, "shadcn blocks are included");
   await assert.rejects(() => library.installLocalComponent("../escape", "shadcn", "button"));
   await assert.rejects(() => library.readLocalComponent("shadcn", "../../etc/passwd"));
   console.log("component library: real clones, categories, live frames and add PASS");

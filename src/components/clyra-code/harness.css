@@ -1156,3 +1156,32 @@ button.dsh-leading { cursor: pointer; }
 .cc-shimmer { background: linear-gradient(100deg, #f3f2f0 30%, #fbfaf9 50%, #f3f2f0 70%) 100% 0 / 220% 100%; animation: cc-skeleton 1.6s linear infinite; }
 @keyframes cc-skeleton { to { background-position: -120% 0; } }
 @media (prefers-reduced-motion: reduce) { .cc-shimmer { animation: none; } }
+
+/* Composer border beam: a blue comet on one rounded-rect path, so its speed never changes at the corners. */
+.pbeam__ring, .pbeam__halo { position: absolute; inset: 0; z-index: 5; border-radius: var(--pb-r); pointer-events: none; }
+.pbeam__ring {
+  padding: 2px;
+  box-shadow: inset 0 0 0 1.2px rgb(57 119 246 / 0.14);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  overflow: hidden;
+}
+.pbeam__halo { z-index: 4; opacity: 0.55; }
+.pbeam__ring > i, .pbeam__halo > i {
+  position: absolute; left: 0; top: 0; width: var(--pb-s); height: var(--pb-s); border-radius: 50%;
+  offset-rotate: 0deg; offset-anchor: 50% 50%; offset-distance: 0%;
+  animation: pbeam-run var(--pb-lap) linear infinite;
+  animation-delay: calc(var(--pb-lap) * var(--pb-behind));
+  will-change: offset-distance;
+}
+.pbeam__ring > i {
+  offset-path: inset(1px round calc(var(--pb-r) - 1px)); opacity: var(--pb-o);
+  background: radial-gradient(closest-side, rgb(205 224 255) 0%, rgb(57 119 246) 38%, rgb(30 111 255 / 0) 100%);
+}
+.pbeam__halo > i {
+  offset-path: inset(0 round var(--pb-r)); opacity: calc(var(--pb-o) * 0.5);
+  background: radial-gradient(closest-side, rgb(57 119 246 / 0.9), rgb(57 119 246 / 0) 100%);
+}
+@keyframes pbeam-run { to { offset-distance: 100%; } }
+@media (prefers-reduced-motion: reduce) { .pbeam__ring > i, .pbeam__halo > i { animation: none; display: none; } .pbeam__ring { box-shadow: inset 0 0 0 1.4px rgb(57 119 246 / 0.5); } }

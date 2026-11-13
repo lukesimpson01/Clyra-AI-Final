@@ -14,7 +14,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { clyraDataPath } from "../runtime-paths";
-import { frameHtml, SHADCN_ROOT, TWENTYFIRST_ROOT } from "./component-frames";
+import { frameHtml, FRAME_VERSION, SHADCN_ROOT, TWENTYFIRST_ROOT, warmFrames } from "./component-frames";
 
 const run = promisify(execFile);
 const REPO = process.cwd();
@@ -42,6 +42,8 @@ export type LocalComponent = {
   docsUrl: string; origin: string; offline: true;
   /** Frame URL of the real, running component. */
   previewUrl: string;
+  /** Size of the page the preview is rendered at before it is scaled down. */
+  frame: { width: number; height: number };
   /** Additional real examples (variants) of the same component. */
   examples: Array<{ name: string; title: string; previewUrl: string }>;
 };
@@ -79,7 +81,37 @@ const CATEGORY_OF: Record<string, ComponentCategory> = {
   "aurora-background": "Effects & Backgrounds", "shimmer-button": "Buttons", "hero-pill": "Sections", mockup: "Sections",
 };
 
+function inferCategory(name: string): ComponentCategory {
+  if (CATEGORY_OF[name]) return CATEGORY_OF[name];
+  if (/^block-(login|signup)/.test(name) || /^block-(dashboard|sidebar)/.test(name) || /^(hero|pricing|footer|header|banner|mockup)/.test(name)) return "Sections";
+  if (/button/.test(name)) return "Buttons";
+  if (/input|select|checkbox|radio|switch|slider|form|field|textarea|calendar|date|picker|otp/.test(name)) return "Forms & Inputs";
+  if (/dialog|sheet|drawer|popover|tooltip|hover/.test(name)) return "Overlays";
+  if (/menu|tabs|breadcrumb|pagination|command|sidebar|nav/.test(name)) return "Navigation & Menus";
+  if (/alert|toast|sonner|progress|spinner|skeleton|badge|loading/.test(name)) return "Feedback";
+  if (/table|card|avatar|carousel|accordion|collapsible|chart/.test(name)) return name.startsWith("chart") ? "Charts" : "Data Display";
+  if (/text|typography|kbd|label|tag/.test(name)) return "Text";
+  if (/aurora|shimmer|background|gradient|glow/.test(name)) return "Effects & Backgrounds";
+  return "Layout";
+}
+
+const BLOCK_DESCRIPTIONS: Array<[RegExp, string]> = [
+  [/^login/, "A complete login page."], [/^signup/, "A complete sign-up page."],
+  [/^sidebar/, "An application shell with a sidebar layout."], [/^dashboard/, "A dashboard page with charts, data table and navigation."],
+];
+/** Examples that have no matching ui file: [catalogue name, example file]. */
+const EXAMPLE_ONLY: Record<string, string> = {
+  typography: "typography-demo", "data-table": "data-table-demo", "date-picker": "date-picker-demo", "mode-toggle": "mode-toggle",
+};
+/** 21st files that are tied to the 21st product, or whose API differs from the shared demo. */
+const SKIP_21ST = new Set(["card"]);
+const BLOCK_FRAME = { width: 1280, height: 800 };
+const SMALL_FRAME = { width: 480, height: 360 };
+
 const DESCRIPTIONS: Record<string, string> = {
+  "data-table": "A sortable, filterable data table built on TanStack Table.",
+  "date-picker": "A date picker with a popover calendar.",
+  "mode-toggle": "A light and dark mode switcher.",
   accordion: "Vertically stacked sections that expand to reveal content.",
   alert: "A callout that draws attention to important information.",
   "alert-dialog": "A modal that interrupts the user and needs a response.",
@@ -161,7 +193,7 @@ function describe(name: string, source: LocalSource, category: ComponentCategory
 
 let cleanupCatalogue: LocalComponent[] | undefined;
 
-const frameUrl = (source: LocalSource, entry: string) => `/api/clyra-code/components/frame/${source}/${entry}`;
+const frameUrl = (source: LocalSource, entry: string) => `/api/clyra-code/components/frame/${source}/${entry}?v=${FRAME_VERSION}`;
 
 async function listDir(directory: string, extension = ".tsx") {
   return (await fs.readdir(directory).catch(() => [] as string[])).filter(file => file.endsWith(extension)).map(file => file.slice(0, -extension.length));
@@ -183,39 +215,54 @@ async function buildCatalogue(): Promise<LocalComponent[]> {
         id: "shadcn:" + name, source: "shadcn", name, registryId: name, title: pretty(name),
         description: describe(name, "shadcn", category), category,
         docsUrl: "https://ui.shadcn.com/docs/components/" + name, origin: "shadcn-ui/ui", offline: true,
-        previewUrl: frameUrl("shadcn", demo),
+        previewUrl: frameUrl("shadcn", demo), frame: SMALL_FRAME,
         examples: mine.filter(example => example !== demo).slice(0, 24).map(example => ({
           name: example, title: pretty(example.slice(name.length + 1) || example), previewUrl: frameUrl("shadcn", example),
         })),
       });
     }
-    // Typography has examples but no ui file.
-    const typography = examples.filter(example => example.startsWith("typography-"));
-    if (typography.length) items.push({
-      id: "shadcn:typography", source: "shadcn", name: "typography", registryId: "typography", title: "Typography",
-      description: describe("typography", "shadcn", "Text"), category: "Text", docsUrl: "https://ui.shadcn.com/docs/components/typography",
-      origin: "shadcn-ui/ui", offline: true, previewUrl: frameUrl("shadcn", "typography-demo"),
-      examples: typography.filter(example => example !== "typography-demo").map(example => ({
-        name: example, title: pretty(example.slice("typography-".length)), previewUrl: frameUrl("shadcn", example),
-      })),
-    });
+    // Examples that have no ui file of their own.
+    for (const [name, demo] of Object.entries(EXAMPLE_ONLY)) {
+      if (!examples.includes(demo)) continue;
+      const mine = examples.filter(example => example.startsWith(name + "-") && example !== demo);
+      const category = inferCategory(name);
+      items.push({
+        id: "shadcn:" + name, source: "shadcn", name, registryId: name, title: pretty(name),
+        description: describe(name, "shadcn", category), category, docsUrl: "https://ui.shadcn.com/docs/components/" + name,
+        origin: "shadcn-ui/ui", offline: true, previewUrl: frameUrl("shadcn", demo), frame: SMALL_FRAME,
+        examples: mine.map(example => ({ name: example, title: pretty(example.slice(name.length + 1)), previewUrl: frameUrl("shadcn", example) })),
+      });
+    }
     for (const chart of (await listDir(SHADCN_CHARTS)).filter(name => name.startsWith("chart-") && SAFE.test(name))) {
       items.push({
         id: "shadcn:" + chart, source: "shadcn", name: chart, registryId: chart, title: pretty(chart.replace(/^chart-/, "")) + " chart",
         description: describe(chart, "shadcn", "Charts"), category: "Charts",
         docsUrl: "https://ui.shadcn.com/charts", origin: "shadcn-ui/ui", offline: true,
-        previewUrl: frameUrl("shadcn", chart), examples: [],
+        previewUrl: frameUrl("shadcn", chart), frame: SMALL_FRAME, examples: [],
+      });
+    }
+  }
+  if (await exists(path.join(SHADCN_ROOT, "blocks"))) {
+    for (const block of (await fs.readdir(path.join(SHADCN_ROOT, "blocks")).catch(() => [] as string[])).sort()) {
+      if (!SAFE.test(block) || !await exists(path.join(SHADCN_ROOT, "blocks", block, "page.tsx"))) continue;
+      items.push({
+        id: "shadcn:block-" + block, source: "shadcn", name: "block-" + block, registryId: block, title: pretty(block),
+        description: BLOCK_DESCRIPTIONS.find(([pattern]) => pattern.test(block))?.[1] ?? "A full page block.",
+        category: "Sections", docsUrl: "https://ui.shadcn.com/blocks", origin: "shadcn-ui/ui", offline: true,
+        previewUrl: frameUrl("shadcn", "block-" + block), frame: BLOCK_FRAME, examples: [],
       });
     }
   }
   if (await exists(TWENTYFIRST_UI)) {
-    for (const name of await listDir(path.join(CUSTOM_DEMOS, "21st"))) {
-      if (!SAFE.test(name) || !await exists(path.join(TWENTYFIRST_UI, name + ".tsx"))) continue;
-      const category = CATEGORY_OF[name] ?? "Effects & Backgrounds";
+    const custom = new Set(await listDir(path.join(CUSTOM_DEMOS, "21st")));
+    for (const name of await listDir(TWENTYFIRST_UI)) {
+      if (!SAFE.test(name) || SKIP_21ST.has(name)) continue;
+      if (!custom.has(name) && !existsSync(path.join(SHADCN_EXAMPLES, name + "-demo.tsx"))) continue;
+      const category = inferCategory(name);
       items.push({
         id: "21st:" + name, source: "21st", name, registryId: name, title: pretty(name),
         description: describe(name, "21st", category), category, docsUrl: "https://21st.dev",
-        origin: "serafimcloud/21st", offline: true, previewUrl: frameUrl("21st", name), examples: [],
+        origin: "serafimcloud/21st", offline: true, previewUrl: frameUrl("21st", name), frame: SMALL_FRAME, examples: [],
       });
     }
   }
@@ -223,7 +270,13 @@ async function buildCatalogue(): Promise<LocalComponent[]> {
 }
 
 export async function listLocalComponents(): Promise<LocalComponent[]> {
-  if (!cleanupCatalogue || !cleanupCatalogue.length) cleanupCatalogue = await buildCatalogue();
+  if (!cleanupCatalogue || !cleanupCatalogue.length) {
+    cleanupCatalogue = await buildCatalogue();
+    // Build every preview in the background, cards first, so the library never waits on one.
+    const entryOf = (url: string) => url.replace(/\?.*$/, "").split("/").slice(-2);
+    warmFrames(cleanupCatalogue.flatMap(item => [item.previewUrl, ...item.examples.map(example => example.previewUrl)])
+      .map(url => { const [source, entry] = entryOf(url); return { source: source as LocalSource, entry }; }));
+  }
   return cleanupCatalogue;
 }
 
@@ -275,8 +328,9 @@ async function collectSource(source: LocalSource, name: string): Promise<{ files
   const queue: Array<{ file: string; target: string }> = [];
   const root = source === "shadcn" ? SHADCN_ROOT : TWENTYFIRST_ROOT;
   const first = source === "shadcn"
-    ? (name.startsWith("chart-") && name !== "chart" ? { file: path.join(SHADCN_CHARTS, name + ".tsx"), target: "components/" + name + ".tsx" }
-        : name === "typography" ? { file: path.join(SHADCN_EXAMPLES, "typography-demo.tsx"), target: "components/typography.tsx" }
+    ? (name.startsWith("block-") ? { file: path.join(SHADCN_ROOT, "blocks", name.slice(6), "page.tsx"), target: "blocks/" + name.slice(6) + "/page.tsx" }
+        : name.startsWith("chart-") && name !== "chart" ? { file: path.join(SHADCN_CHARTS, name + ".tsx"), target: "components/" + name + ".tsx" }
+        : EXAMPLE_ONLY[name] ? { file: path.join(SHADCN_EXAMPLES, EXAMPLE_ONLY[name] + ".tsx"), target: "components/" + name + ".tsx" }
         : { file: path.join(SHADCN_UI, name + ".tsx"), target: "components/ui/" + name + ".tsx" })
     : { file: path.join(TWENTYFIRST_UI, name + ".tsx"), target: "components/ui/" + name + ".tsx" };
   queue.push(first);
@@ -298,8 +352,8 @@ async function collectSource(source: LocalSource, name: string): Promise<{ files
       if (target.startsWith("..")) return null;
       if (source === "shadcn" && target.startsWith("ui/")) target = "components/" + target;
     }
-    for (const candidate of [base + ".tsx", base + ".ts", path.join(base, "index.tsx")]) {
-      if (await exists(candidate)) return { file: candidate, target: target.replace(/\.(tsx?|jsx?)$/, "") + path.extname(candidate) };
+    for (const candidate of [base, base + ".tsx", base + ".ts", path.join(base, "index.tsx")]) {
+      if (await fs.stat(candidate).then((entry) => entry.isFile()).catch(() => false)) return { file: candidate, target: candidate === base ? target : target + path.extname(candidate) };
     }
     return null;
   };
@@ -310,6 +364,7 @@ async function collectSource(source: LocalSource, name: string): Promise<{ files
     if (files.size >= MAX_FILES) throw new Error("Component dependency graph exceeds the safety limit.");
     const content = await fs.readFile(file, "utf8");
     files.set(target, { target, content, origin: file });
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
     const mapping = new Map<string, string>();
     resolved.set(target, mapping);
     for (const match of content.matchAll(LOCAL_IMPORT)) {
@@ -414,6 +469,41 @@ export async function installLocalComponent(projectId: string, source: LocalSour
       : "Added to your project. Run your preview to see it." };
 }
 
+const TWENTY_FIRST_MCP = "https://21st.dev/api/mcp";
+const asObject = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const twentyFirstKey = () => (process.env.API_KEY_21ST || process.env.TWENTY_FIRST_API_KEY || "").trim();
+
+/**
+ * Connects the project's agent to the official component MCP servers: shadcn's
+ * local `shadcn mcp` (no key) and 21st.dev's Magic MCP (needs API_KEY_21ST, so it
+ * stays disabled until a key exists). The key is read from the environment and is
+ * never written to disk. Invalid user-authored settings are left untouched.
+ */
+export async function ensureComponentMcpConfig(projectPath: string): Promise<void> {
+  const destination = path.join(projectPath, "opencode.json");
+  const content = await fs.readFile(destination, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "{}";
+    throw error;
+  });
+  const config = asObject(JSON.parse(content));
+  const mcp = asObject(config.mcp);
+  const servers = asObject(mcp.servers);
+  config.$schema ??= "https://opencode.ai/config.json";
+  config.mcp = {
+    ...mcp,
+    servers: {
+      ...servers,
+      shadcn: { type: "local", command: ["npx", "-y", "shadcn@latest", "mcp"], timeout: 20_000, codemode: false },
+      "21st": {
+        type: "remote", url: TWENTY_FIRST_MCP, oauth: false, headers: { "x-api-key": "{env:API_KEY_21ST}" },
+        disabled: !twentyFirstKey(), timeout: 20_000, codemode: false,
+      },
+    },
+  };
+  const next = JSON.stringify(config, null, 2) + "\n";
+  if (content !== next) await fs.writeFile(destination, next, "utf8");
+}
+
 /** Remove only Clyra's previously injected remote component MCP settings. */
 export async function removeLegacyComponentMcpConfig(projectPath: string): Promise<void> {
   const configFile = path.join(projectPath, "opencode.json");
@@ -438,7 +528,7 @@ export async function removeLegacyComponentMcpConfig(projectPath: string): Promi
 function problem(error: unknown) { return error instanceof Error ? error.message : "Component action failed."; }
 const FRAME_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
-  "Cache-Control": "private, max-age=300",
+  "Cache-Control": "private, max-age=86400",
   "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data: https:; connect-src 'none'; frame-ancestors 'self' http://localhost:* http://127.0.0.1:*",
 };
 

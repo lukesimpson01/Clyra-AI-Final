@@ -1,23 +1,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Check, CircleAlert, Copy, ExternalLink, Play, Plus, RotateCw, Search, X } from "lucide-react";
+import {
+  ArrowLeft, BarChart3, BellRing, Check, CircleAlert, Copy, ExternalLink, LayoutGrid, LayoutTemplate, Layers, Menu,
+  MessagesSquare, MousePointerClick, PanelsTopLeft, Play, Plus, RotateCw, Search, Sparkles, Table2, TextCursorInput, Type, X,
+  type LucideIcon,
+} from "lucide-react";
 import { api, type ComponentCatalogItem, type ComponentDetails } from "./api";
 import { cn } from "../../lib/utils";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
-export const COMPONENT_PANEL_WIDTH = 420;
+export const COMPONENT_PANEL_WIDTH = 640;
+const CATEGORY_RAIL = 192;
+/** The same timing as the workspace panes, so the sidebar and the workspace move as one. */
+const SLIDE = { duration: 0.4, ease: [0.3, 0.8, 0.3, 1] as const };
+const CATEGORY_ICON: Record<string, LucideIcon> = {
+  "": LayoutGrid, Buttons: MousePointerClick, "Forms & Inputs": TextCursorInput, Text: Type, "Navigation & Menus": Menu,
+  Overlays: Layers, Feedback: BellRing, "Data Display": Table2, Charts: BarChart3, Layout: PanelsTopLeft,
+  "Chat & Composer": MessagesSquare, "Effects & Backgrounds": Sparkles, Sections: LayoutTemplate,
+};
 const SOURCE_LABEL = { shadcn: "shadcn/ui", "21st": "21st.dev" } as const;
 
 const frameCache = new Map<string, Promise<string>>();
-/** Frame documents are fetched once and handed to the sandbox as srcdoc. */
+/** Frame documents are fetched once and handed to the sandbox as srcdoc. Oldest entries are dropped past a cap. */
 function loadFrame(src: string) {
   let existing = frameCache.get(src);
   if (!existing) {
     existing = fetch(src).then((response) => { if (!response.ok) throw new Error("preview"); return response.text(); });
     frameCache.set(src, existing);
     existing.catch(() => frameCache.delete(src));
+    if (frameCache.size > 90) frameCache.delete(frameCache.keys().next().value as string);
+  } else {
+    frameCache.delete(src); frameCache.set(src, existing);
   }
   return existing;
+}
+/** Quietly fetch the first screenful of previews while the panel slides open. */
+function prefetchFrames(urls: string[]) {
+  const queue = urls.slice(0, 18);
+  const next = () => { const url = queue.shift(); if (url) void loadFrame(url).catch(() => undefined).finally(() => window.setTimeout(next, 30)); };
+  next(); next();
 }
 
 /** The real component, running in a sandboxed frame and scaled to fit its box. */
@@ -44,7 +65,7 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
     measure();
     const resize = new ResizeObserver(measure);
     resize.observe(element);
-    const watch = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), { rootMargin: "320px 0px" });
+    const watch = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), { rootMargin: "900px 0px" });
     watch.observe(element);
     return () => { resize.disconnect(); watch.disconnect(); };
   }, [frameWidth]);
@@ -116,14 +137,14 @@ function Card({ item, state, onOpen, onAdd }: { item: ComponentCatalogItem; stat
         type="button" onClick={onOpen} aria-label={"Open " + item.title}
         className="relative block w-full overflow-hidden rounded-[14px] text-left outline-none ring-1 ring-inset ring-black/[0.07] transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-14px_rgba(20,24,32,0.35)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/50"
       >
-        <LivePreview src={item.previewUrl} active={hover} />
+        <LivePreview src={item.previewUrl} active={hover} frameWidth={item.frame.width} frameHeight={item.frame.height} />
         <span className={cn("pointer-events-none absolute right-2 top-2 inline-flex h-[22px] items-center gap-1 rounded-full bg-white/90 px-2 text-[10.5px] font-medium text-[#5F5E59] shadow-sm backdrop-blur transition-opacity duration-200", hover ? "opacity-100" : "opacity-0")}>
           <Play className="h-2.5 w-2.5 fill-current" aria-hidden /> Live
         </span>
       </button>
       <div className="mt-2 flex items-center gap-2 px-0.5">
         <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left outline-none">
-          <span className="block truncate text-[13px] font-semibold tracking-[-0.01em] text-[#2C2C2B] group-hover:text-[#3977F6]">{item.title}</span>
+          <span className="flex items-center gap-1.5"><span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[#2C2C2B] group-hover:text-[#3977F6]">{item.title}</span>{item.source === "21st" ? <span className="shrink-0 rounded-[5px] bg-[#2C2C2B] px-1 text-[9px] font-semibold leading-[14px] text-white">21st</span> : null}</span>
           <span className="block truncate text-[11.5px] text-[#8A8884]">{item.category}</span>
         </button>
         <AddButton state={state} onClick={onAdd} />
@@ -154,7 +175,7 @@ function Detail({ item, state, onAdd, onBack, referenced }: { item: ComponentCat
       </div>
       <div className="cc-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-8">
         <div className="overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.07]">
-          <LivePreview src={variant} interactive frameWidth={560} frameHeight={380} replayKey={replay} />
+          <LivePreview src={variant} interactive frameWidth={item.frame.width > 600 ? item.frame.width : 560} frameHeight={item.frame.height > 400 ? item.frame.height : 380} replayKey={replay} />
         </div>
         <div className="mt-2 flex items-center justify-between text-[11.5px] text-[#8A8884]">
           <span>Live component · interact with it</span>
@@ -229,6 +250,9 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
   docked?: boolean;
 }) {
   const reduced = useReducedMotion();
+  // Build the hidden panel shortly after the workspace settles, so the first open is only a slide.
+  const [warm, setWarm] = useState(false);
+  useEffect(() => { const timer = window.setTimeout(() => setWarm(true), 2500); return () => window.clearTimeout(timer); }, []);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [items, setItems] = useState<ComponentCatalogItem[]>([]);
@@ -249,7 +273,7 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
   }, [active, onClose, open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !warm) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true); setError("");
@@ -264,7 +288,7 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
         .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }, query ? 180 : 0);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [open, query, category]);
+  }, [open, warm, query, category]);
 
   useEffect(() => { if (open && !active) window.setTimeout(() => search.current?.focus({ preventScroll: true }), 380); }, [open, active]);
   useEffect(() => { if (!toast) return; const id = window.setTimeout(() => setToast(null), 4800); return () => window.clearTimeout(id); }, [toast]);
@@ -289,42 +313,78 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
   const stateOf = (item: ComponentCatalogItem): "idle" | "busy" | "added" => busy === item.id ? "busy" : added.has(item.id) ? "added" : "idle";
   const total = useMemo(() => categories.reduce((sum, entry) => sum + entry.count, 0), [categories]);
   const cloning = error && /not cloned/i.test(error) && !items.length;
+  const opened = useRef(false);
+  if (open) opened.current = true;
+
+  // Hidden only after the slide-out finishes, so closing animates and a closed panel never takes focus.
+  const [parked, setParked] = useState(!open);
+  useEffect(() => {
+    if (open) { setParked(false); return; }
+    const timer = window.setTimeout(() => setParked(true), reduced ? 0 : SLIDE.duration * 1000 + 40);
+    return () => window.clearTimeout(timer);
+  }, [open, reduced]);
+  useEffect(() => { if (open && items.length) prefetchFrames(items.map((item) => item.previewUrl)); }, [open, items]);
+  const rail = [{ name: "", label: "All", count: total }, ...categories.map((entry) => ({ name: entry.name, label: entry.name, count: entry.count }))];
+  const heading = category || "All components";
 
   return (
-    <AnimatePresence>
-      {open ? (
-        <motion.aside
-          key="component-panel" role="complementary" aria-label="Component library"
-          initial={docked ? { width: 0, opacity: 0.6 } : { x: -16, opacity: 0 }}
-          animate={docked ? { width: COMPONENT_PANEL_WIDTH, opacity: 1 } : { x: 0, opacity: 1 }}
-          exit={docked ? { width: 0, opacity: 0 } : { x: -16, opacity: 0 }}
-          transition={{ duration: reduced ? 0 : 0.42, ease: EASE }}
-          className={cn("relative z-[60] flex h-full min-h-0 shrink-0 overflow-hidden border-r border-black/[0.08] bg-white", docked ? "" : "absolute inset-y-0 left-0 w-[min(100%,420px)] shadow-[8px_0_32px_-20px_rgba(20,24,32,0.4)]")}
-        >
-          <div className="relative flex h-full min-h-0 flex-col bg-white" style={{ width: docked ? COMPONENT_PANEL_WIDTH : "100%" }}>
-            <header className="shrink-0 px-4 pb-2 pt-3">
-              <div className="flex h-8 items-center justify-between">
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-[#2C2C2B]">Components</h2>
-                  {total ? <span className="text-[12px] tabular-nums text-[#A19E99]">{total}</span> : null}
-                </div>
-                <button type="button" onClick={onClose} aria-label="Close components" className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"><X className="h-4 w-4" /></button>
+    <motion.aside
+      role="complementary" aria-label="Component library" aria-hidden={!open} inert={!open ? true : undefined}
+      initial={false}
+      animate={docked ? { width: open ? COMPONENT_PANEL_WIDTH : 0, x: 0, opacity: 1 } : { width: "min(100%, 440px)", x: open ? 0 : -28, opacity: open ? 1 : 0 }}
+      transition={reduced ? { duration: 0 } : SLIDE}
+      style={parked ? { visibility: "hidden" } : undefined}
+      className={cn("z-[60] h-full min-h-0 shrink-0 overflow-hidden bg-white", docked ? "relative" : "absolute inset-y-0 left-0 w-[min(100%,440px)] shadow-[8px_0_32px_-20px_rgba(20,24,32,0.4)]")}
+    >
+      {opened.current || warm ? (
+        <div className={cn("relative flex h-full min-h-0 border-r border-black/[0.08] bg-white", docked ? "" : "w-full")} style={{ width: docked ? COMPONENT_PANEL_WIDTH : "100%" }}>
+          {docked ? (
+            <nav aria-label="Component categories" className="flex shrink-0 flex-col border-r border-black/[0.06] bg-[#FAFAF9]" style={{ width: CATEGORY_RAIL }}>
+              <div className="px-4 pb-2 pt-4">
+                <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-[#2C2C2B]">Components</h2>
+                <p className="mt-0.5 text-[11.5px] text-[#8A8884]">shadcn/ui · 21st.dev</p>
               </div>
-              <label className="mt-2 flex h-[38px] items-center gap-2 rounded-[12px] bg-[rgba(55,53,47,0.055)] px-3 transition-shadow focus-within:bg-white focus-within:shadow-[0_0_0_2px_rgba(57,119,246,0.3)]">
-                <Search className="h-3.5 w-3.5 shrink-0 text-[#8A8884]" aria-hidden />
-                <input ref={search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search components" aria-label="Search components"
-                  className="min-w-0 flex-1 bg-transparent text-[13px] text-[#2C2C2B] outline-none placeholder:text-[#A19E99]" />
-                {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-[#A19E99] hover:text-[#2C2C2B]"><X className="h-3.5 w-3.5" /></button> : null}
-              </label>
-              <div role="tablist" aria-label="Categories" className="cc-scroll -mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
-                {[{ name: "", label: "All", count: total }, ...categories.map((entry) => ({ name: entry.name, label: entry.name, count: entry.count }))].map((entry) => (
-                  <button key={entry.name || "all"} type="button" role="tab" aria-selected={category === entry.name} onClick={() => setCategory(entry.name)}
-                    className={cn("inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#3977F6]/40",
-                      category === entry.name ? "bg-[#2C2C2B] text-white" : "bg-[rgba(55,53,47,0.06)] text-[#5F5E59] hover:bg-[rgba(55,53,47,0.1)]")}>
-                    {entry.label}
-                    {entry.count ? <span className={cn("text-[10.5px] tabular-nums", category === entry.name ? "text-white/60" : "text-[#A19E99]")}>{entry.count}</span> : null}
-                  </button>
-                ))}
+              <div className="cc-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-3 pt-1">
+                {rail.map((entry) => {
+                  const Icon = CATEGORY_ICON[entry.name] ?? LayoutGrid;
+                  const selected = category === entry.name;
+                  return (
+                    <button key={entry.name || "all"} type="button" aria-current={selected ? "true" : undefined} onClick={() => { setCategory(entry.name); setActive(null); }}
+                      className="relative mb-0.5 flex h-[34px] w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left text-[12.5px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#3977F6]/40">
+                      {selected ? <motion.span layoutId="component-category-pill" transition={reduced ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 40 }} className="absolute inset-0 rounded-[10px] bg-white shadow-[0_1px_2px_rgba(20,24,32,0.08),0_0_0_1px_rgba(20,24,32,0.06)]" /> : null}
+                      <Icon className={cn("relative h-[15px] w-[15px] shrink-0 transition-colors", selected ? "text-[#3977F6]" : "text-[#8A8884]")} strokeWidth={1.7} aria-hidden />
+                      <span className={cn("relative min-w-0 flex-1 truncate", selected ? "font-semibold text-[#2C2C2B]" : "font-medium text-[#5F5E59]")}>{entry.label}</span>
+                      {entry.count ? <span className="relative text-[11px] tabular-nums text-[#A19E99]">{entry.count}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
+          ) : null}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <header className="shrink-0 px-4 pb-1 pt-3">
+              <div className="flex items-center gap-2">
+                <label className="flex h-[38px] min-w-0 flex-1 items-center gap-2 rounded-[12px] bg-[rgba(55,53,47,0.055)] px-3 transition-shadow focus-within:bg-white focus-within:shadow-[0_0_0_2px_rgba(57,119,246,0.3)]">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-[#8A8884]" aria-hidden />
+                  <input ref={search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search components" aria-label="Search components"
+                    className="min-w-0 flex-1 bg-transparent text-[13px] text-[#2C2C2B] outline-none placeholder:text-[#A19E99]" />
+                  {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-[#A19E99] hover:text-[#2C2C2B]"><X className="h-3.5 w-3.5" /></button> : null}
+                </label>
+                <button type="button" onClick={onClose} aria-label="Close components" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"><X className="h-4 w-4" /></button>
+              </div>
+              {!docked ? (
+                <div role="tablist" aria-label="Categories" className="cc-scroll -mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+                  {rail.map((entry) => (
+                    <button key={entry.name || "all"} type="button" role="tab" aria-selected={category === entry.name} onClick={() => setCategory(entry.name)}
+                      className={cn("inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium outline-none transition-colors", category === entry.name ? "bg-[#2C2C2B] text-white" : "bg-[rgba(55,53,47,0.06)] text-[#5F5E59] hover:bg-[rgba(55,53,47,0.1)]")}>
+                      {entry.name || "All"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-3 flex items-baseline justify-between px-0.5">
+                <h3 className="text-[15px] font-semibold tracking-[-0.015em] text-[#2C2C2B]">{query ? "Results" : heading}</h3>
+                <span className="text-[11.5px] tabular-nums text-[#A19E99]" aria-live="polite">{loading && !items.length ? "Loading…" : items.length + (items.length === 1 ? " component" : " components")}</span>
               </div>
             </header>
             <div className="cc-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-10 pt-2">
@@ -342,9 +402,9 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
               ) : null}
               {error && !cloning ? <p className="mb-3 flex items-start gap-2 rounded-[10px] bg-[#C0463F]/[0.07] px-3 py-2 text-[12px] leading-[1.5] text-[#A33A34]"><CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />{error}</p> : null}
               {items.length ? (
-                <div className="grid grid-cols-2 gap-x-3 gap-y-5">
+                <motion.div key={category + "|" + query} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.32, ease: EASE }} className="grid grid-cols-2 gap-x-3 gap-y-5">
                   {items.map((item) => <Card key={item.id} item={item} state={stateOf(item)} onOpen={() => setActive(item)} onAdd={() => void add(item)} />)}
-                </div>
+                </motion.div>
               ) : null}
             </div>
             <AnimatePresence>
@@ -360,8 +420,8 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
               ) : null}
             </AnimatePresence>
           </div>
-        </motion.aside>
+        </div>
       ) : null}
-    </AnimatePresence>
+    </motion.aside>
   );
 }

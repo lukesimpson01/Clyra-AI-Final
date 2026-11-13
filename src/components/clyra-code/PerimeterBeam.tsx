@@ -1,14 +1,19 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { beamDurationSeconds, roundedRectPerimeter } from "./beamGeometry";
 
-type BoxSize = { width: number; height: number };
+/** Comet particles trailing the head: [distance behind the head as a fraction of the lap, opacity, size px]. */
+const TRAIL: ReadonlyArray<readonly [number, number, number]> = [
+  [0, 1, 24], [0.008, 0.95, 24], [0.018, 0.75, 22], [0.03, 0.55, 20], [0.044, 0.34, 18], [0.06, 0.16, 16],
+];
+const HALO: ReadonlyArray<readonly [number, number, number]> = [[0, 0.5, 64], [0.02, 0.32, 56], [0.045, 0.16, 48]];
 
 /**
- * A rounded-rect stroke moving at a fixed number of on-screen pixels per
- * second. Unlike a spinning conic gradient, a single SVG dash follows the
- * perimeter linearly on both long straight edges and short curved corners.
- * All measures and animations are compositor-friendly; no per-frame JS.
+ * A blue comet that travels the composer border at a constant speed. Each
+ * particle rides the same rounded-rect `offset-path`, so it keeps the same
+ * on-screen velocity on straight edges and around corners (a rotating conic
+ * gradient would not). The lap time comes from the real perimeter, measured
+ * once per resize straight into a CSS variable: no React state, no per-frame
+ * script, only a few tiny elements animating a single property.
  */
 export function PerimeterBeam({
   active,
@@ -22,71 +27,38 @@ export function PerimeterBeam({
   radius?: number;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState<BoxSize>({ width: 0, height: 0 });
-  const reduceMotion = useReducedMotion();
 
   useLayoutEffect(() => {
     const node = wrapperRef.current;
     if (!node) return;
     const update = () => {
-      const bounds = node.getBoundingClientRect();
-      const width = Math.round(bounds.width * 10) / 10;
-      const height = Math.round(bounds.height * 10) / 10;
-      if (width <= 0 || height <= 0) return;
-      setSize((old) => old.width === width && old.height === height ? old : { width, height });
+      const { width, height } = node.getBoundingClientRect();
+      const lap = beamDurationSeconds(roundedRectPerimeter(width, height, radius));
+      if (lap > 0) node.style.setProperty("--pb-lap", `${lap.toFixed(2)}s`);
     };
     update();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", update, { passive: true });
-      return () => window.removeEventListener("resize", update);
-    }
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
-
-  const width = Math.max(0, size.width - 2.4);
-  const height = Math.max(0, size.height - 2.4);
-  const pxRadius = Math.max(0, Math.min(radius - 1.2, width / 2, height / 2));
-  const perimeter = roundedRectPerimeter(width, height, pxRadius);
-  const dash = Math.min(84, perimeter * 0.16);
-  const duration = beamDurationSeconds(perimeter);
-  const drawBeam = active && width > 60 && height > 40 && perimeter > dash;
+  }, [radius]);
 
   return (
-    <div ref={wrapperRef} className={`relative mx-auto w-full ${className}`}>
+    <div ref={wrapperRef} className={`pbeam relative mx-auto w-full ${className}`} style={{ "--pb-r": `${radius}px`, "--pb-lap": "6s" } as CSSProperties}>
       {children}
-      {drawBeam ? (
-        <svg className="pointer-events-none absolute inset-0 z-[5] h-full w-full overflow-visible"
-          viewBox={`0 0 ${size.width} ${size.height}`}
-          preserveAspectRatio="none" aria-hidden="true" focusable="false">
-          <rect x={1.2} y={1.2} width={width} height={height} rx={pxRadius}
-            fill="none" stroke="#3977F6" strokeWidth={1.15} opacity={0.12} />
-          {reduceMotion ? (
-            <rect x={1.2} y={1.2} width={width} height={height} rx={pxRadius}
-              fill="none" stroke="#3977F6" strokeWidth={1.6} opacity={0.55} />
-          ) : (
-            <>
-              <motion.rect key={`trail-${width}-${height}`}
-                x={1.2} y={1.2} width={width} height={height} rx={pxRadius}
-                fill="none" stroke="#3977F6" strokeWidth={2} strokeLinecap="round"
-                strokeDasharray={`${dash} ${perimeter - dash}`}
-                initial={{ strokeDashoffset: 0 }}
-                animate={{ strokeDashoffset: -perimeter }}
-                transition={{ duration, repeat: Infinity, ease: "linear" }}
-                opacity={0.72}
-              />
-              <motion.rect key={`highlight-${width}-${height}`}
-                x={1.2} y={1.2} width={width} height={height} rx={pxRadius}
-                fill="none" stroke="#1E6FFF" strokeWidth={2.45} strokeLinecap="round"
-                strokeDasharray={`${Math.min(25, dash * 0.45)} ${perimeter - Math.min(25, dash * 0.45)}`}
-                initial={{ strokeDashoffset: 0 }}
-                animate={{ strokeDashoffset: -perimeter }}
-                transition={{ duration, repeat: Infinity, ease: "linear" }}
-              />
-            </>
-          )}
-        </svg>
+      {active ? (
+        <>
+          <span aria-hidden className="pbeam__halo">
+            {HALO.map(([behind, opacity, size]) => (
+              <i key={behind} style={{ "--pb-behind": behind, "--pb-o": opacity, "--pb-s": `${size}px` } as CSSProperties} />
+            ))}
+          </span>
+          <span aria-hidden className="pbeam__ring">
+            {TRAIL.map(([behind, opacity, size]) => (
+              <i key={behind} style={{ "--pb-behind": behind, "--pb-o": opacity, "--pb-s": `${size}px` } as CSSProperties} />
+            ))}
+          </span>
+        </>
       ) : null}
     </div>
   );

@@ -21,6 +21,7 @@ export type ComponentCatalogItem = {
   description: string;
   category: string;
   previewUrl: string;
+  frame: { width: number; height: number };
   examples: Array<{ name: string; title: string; previewUrl: string }>;
   docsUrl?: string;
   registryId: string;

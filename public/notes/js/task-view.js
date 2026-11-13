@@ -156,9 +156,9 @@ export class TaskView {
         const now = target.getBoundingClientRect();
         const dx = before.left - now.left; const dy = before.top - now.top;
         if (Math.abs(dx) + Math.abs(dy) < 2) continue;
-        target.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 360, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+        target.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 560, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
       }
-    }, 170);
+    }, 240);
   }
 
   keys(event) {
@@ -199,7 +199,7 @@ export class TaskView {
     if (prior.splitSidebar || prior.splitRail) root.classList.add("split-panels-dimmed");
     root.classList.remove("task-view-open");
     this.app.tabstrip?.syncRailToggle?.();
-    setTimeout(() => { node.remove(); }, 320);
+    setTimeout(() => { node.remove(); }, 440);
     this.node = null;
   }
 }

@@ -373,7 +373,9 @@ export default function ClyraCodeWorkspace({
   const [shellWidth, setShellWidth] = useState(0);
   const narrow = shellWidth > 0 && shellWidth < NARROW_BREAKPOINT;
   // Below the breakpoint the rail leaves the layout; it returns as an overlay drawer.
-  const componentPanelDocked = componentLibraryOpen && mode === "code" && !narrow;
+  // Wide windows dock the library beside the rail and push the workspace; smaller ones overlay it.
+  const componentDockable = !narrow && shellWidth >= 1080;
+  const componentPanelDocked = componentLibraryOpen && mode === "code" && componentDockable;
   const sidebarWidth = narrow ? 0 : componentPanelDocked ? COMPONENT_PANEL_WIDTH : sidebarCollapsed ? 0 : railWidth;
   const [dragging, setDragging] = useState(false);
   const [conversationWidth, setConversationWidth] = useState(() => {
@@ -628,6 +630,17 @@ export default function ClyraCodeWorkspace({
       setBuildVersion((version) => version + 1);
     }
   }, [undoLastCheckpoint]);
+
+  // Warm the agent runtime as soon as a project is open, so pressing Enter finds it ready
+  // instead of waiting on the runtime to boot after the message is sent.
+  const warmedRuntimes = useRef(new Set<string>());
+  useEffect(() => {
+    const projectId = state.activeProjectId;
+    if (!projectId || mode !== "code" || warmedRuntimes.current.has(projectId)) return;
+    warmedRuntimes.current.add(projectId);
+    const timer = window.setTimeout(() => { void api.startRuntime(projectId).catch(() => warmedRuntimes.current.delete(projectId)); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [mode, state.activeProjectId]);
 
   const componentHint = useMemo(() => {
     const names = contexts.filter(context => context.id.startsWith("component:")).map(context => context.label);
@@ -1045,7 +1058,7 @@ export default function ClyraCodeWorkspace({
 
       <ComponentLibraryPanel
         open={componentLibraryOpen && mode === "code"}
-        docked={!narrow}
+        docked={componentDockable}
         onClose={() => setComponentLibraryOpen(false)}
         onReference={referenceComponent}
         referencedIds={contexts.map(context => context.id)}

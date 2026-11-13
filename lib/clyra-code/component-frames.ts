@@ -7,9 +7,10 @@
  * document for an iframe. Nothing is mocked.
  */
 import path from "node:path";
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, statSync, promises as fs } from "node:fs";
 import { build, type Plugin } from "esbuild";
 import { compile } from "@tailwindcss/node";
+import { clyraDataPath } from "../runtime-paths";
 
 const REPO = process.cwd();
 export const SHADCN_ROOT = path.join(REPO, "external", "shadcn-library", "apps", "v4", "registry", "new-york-v4");
@@ -68,6 +69,8 @@ button { font: inherit; cursor: pointer; }
 body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 28px; }
 #root { width: 100%; max-width: 720px; display: flex; justify-content: center; }
 /* Idle previews rest on their settled frame; hovering replays them. */
+html.bleed body { display: block; padding: 0; }
+html.bleed #root { display: block; max-width: none; }
 html.idle *, html.idle *::before, html.idle *::after { animation-play-state: paused !important; }
 `;
 
@@ -86,7 +89,7 @@ const CSS_21ST = `
 :root { --white: #fff; --black: #000; --transparent: transparent; --blue-400: #60a5fa; --blue-500: #3b82f6; --blue-600: #2563eb; --primary-gradient-start: 217 91% 60%; --primary-gradient-end: 263 70% 62%; }
 `;
 
-function entrySource(demoPath: string) {
+function entrySource(demoPath: string, bleed: boolean) {
   return `
 import * as React from "react";
 import { createRoot } from "react-dom/client";
@@ -113,6 +116,7 @@ function App() {
 }
 createRoot(document.getElementById("root")!).render(<App />);
 window.setTimeout(() => document.documentElement.classList.add("idle"), 1100);
+${bleed ? 'document.documentElement.classList.add("bleed");' : ""}
 parent.postMessage({ type: "clyra-frame-ready" }, "*");
 `;
 }
@@ -148,6 +152,11 @@ function aliasPlugin(source: FrameTarget["source"]): Plugin {
     setup(builder) {
       builder.onResolve({ filter: /^(cn|next\/[a-z/]+|@\/.+)$/ }, async (args) => {
         if (fixed[args.path]) return { path: fixed[args.path] };
+        if (source === "21st" && args.path.startsWith("@/registry/new-york-v4/ui/")) {
+          const own = path.join(TWENTYFIRST_ROOT, "components", "ui", args.path.slice("@/registry/new-york-v4/ui/".length));
+          const ownFile = await firstExisting(own);
+          if (ownFile) return { path: ownFile };
+        }
         if (args.path.startsWith("@/registry/new-york-v4/")) {
           const found = await firstExisting(path.join(SHADCN_ROOT, args.path.slice("@/registry/new-york-v4/".length)));
           return found ? { path: found } : undefined;
@@ -167,8 +176,16 @@ function aliasPlugin(source: FrameTarget["source"]): Plugin {
 }
 
 const DEMOS_SHADCN = path.join(REPO, "lib", "clyra-code", "component-demos", "shadcn");
+const isBlock = (entry: string) => entry.startsWith("block-");
+/** Page-sized blocks render edge to edge instead of centred. */
+export const frameIsBleed = (target: FrameTarget) => target.source === "shadcn" && isBlock(target.entry);
 export function demoPathFor(target: FrameTarget): string {
-  if (target.source === "21st") return path.join(DEMOS_21ST, target.entry + ".tsx");
+  if (target.source === "21st") {
+    const own = path.join(DEMOS_21ST, target.entry + ".tsx");
+    // 21st's primitives share shadcn's API, so shadcn's own demo exercises 21st's file.
+    return existsSync(own) ? own : path.join(SHADCN_ROOT, "examples", target.entry + "-demo.tsx");
+  }
+  if (isBlock(target.entry)) return path.join(SHADCN_ROOT, "blocks", target.entry.slice("block-".length), "page.tsx");
   for (const root of [path.join(SHADCN_ROOT, "examples"), path.join(SHADCN_ROOT, "charts"), DEMOS_SHADCN]) {
     const candidate = path.join(root, target.entry + ".tsx");
     if (existsSync(candidate)) return candidate;
@@ -179,7 +196,7 @@ export function demoPathFor(target: FrameTarget): string {
 async function buildFrame(target: FrameTarget): Promise<string> {
   const demo = demoPathFor(target);
   const result = await build({
-    stdin: { contents: entrySource(demo), resolveDir: path.dirname(demo), loader: "tsx", sourcefile: "frame-entry.tsx" },
+    stdin: { contents: entrySource(demo, frameIsBleed(target)), resolveDir: path.dirname(demo), loader: "tsx", sourcefile: "frame-entry.tsx" },
     bundle: true, write: false, metafile: true, format: "iife", platform: "browser", target: "es2020",
     jsx: "automatic", minify: true, logLevel: "silent",
     define: { "process.env.NODE_ENV": '"production"' },
@@ -210,14 +227,50 @@ async function slot<T>(job: () => Promise<T>): Promise<T> {
   try { return await job(); } finally { active -= 1; waiting.shift()?.(); }
 }
 
-/** Cached per server run. A failed build is forgotten so it can be retried after a fix. */
+/** Built frames persist across restarts; a changed renderer or demo rebuilds only what it touches. */
+const DISK = clyraDataPath(".clyra", "component-frames");
+const RENDERER_VERSION = (() => {
+  try { return String(Math.floor(statSync(path.join(REPO, "lib", "clyra-code", "component-frames.ts")).mtimeMs)); } catch { return "0"; }
+})();
+export const FRAME_VERSION = RENDERER_VERSION;
+const diskFile = (target: FrameTarget) => path.join(DISK, `${target.source}__${target.entry}.${RENDERER_VERSION}.html`);
+
+async function fromDisk(target: FrameTarget): Promise<string | null> {
+  const file = diskFile(target);
+  const [built, demo] = await Promise.all([fs.stat(file).catch(() => null), fs.stat(demoPathFor(target)).catch(() => null)]);
+  if (!built || (demo && demo.mtimeMs > built.mtimeMs)) return null;
+  return fs.readFile(file, "utf8").catch(() => null);
+}
+
+/** Cached in memory and on disk. A failed build is forgotten so it can be retried after a fix. */
 export function frameHtml(target: FrameTarget): Promise<string> {
   const key = target.source + "/" + target.entry;
   let existing = cache.get(key);
   if (!existing) {
-    existing = slot(() => buildFrame(target));
+    existing = fromDisk(target).then(async (stored) => {
+      if (stored) return stored;
+      const html = await slot(() => buildFrame(target));
+      void fs.mkdir(DISK, { recursive: true }).then(() => fs.writeFile(diskFile(target), html, "utf8")).catch(() => undefined);
+      return html;
+    });
     cache.set(key, existing);
     existing.catch(() => cache.delete(key));
   }
   return existing;
+}
+
+let warming = false;
+/** Builds every preview in the background (two at a time) so scrolling the library never waits on a build. */
+export function warmFrames(targets: FrameTarget[]): void {
+  if (warming) return;
+  warming = true;
+  const queue = [...targets];
+  const worker = async () => {
+    while (queue.length) {
+      const target = queue.shift()!;
+      await frameHtml(target).catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  void Promise.all([worker(), worker()]).finally(() => { warming = false; });
 }
