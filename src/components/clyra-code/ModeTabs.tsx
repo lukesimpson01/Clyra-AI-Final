@@ -81,8 +81,8 @@ export function AppRail({ mode, onChange, onOpenLibrary, onOpenComponents }: { m
       {item("Code", <SquareTerminal className="h-[18px] w-[18px]" strokeWidth={1.7} />, mode === "code", () => onChange("code"))}
       {item("Design", <PenTool className="h-[17px] w-[17px]" strokeWidth={1.7} />, mode === "design", () => onChange("design"))}
       <span className="my-1 h-px w-5 bg-black/[0.07]" aria-hidden />
-      {item("Library", <LibraryBig className="h-[17px] w-[17px]" strokeWidth={1.7} />, false, onOpenLibrary)}
       {onOpenComponents ? item("Components", <Blocks className="h-[17px] w-[17px]" strokeWidth={1.7} />, false, onOpenComponents) : null}
+      {item("Library", <LibraryBig className="h-[17px] w-[17px]" strokeWidth={1.7} />, false, onOpenLibrary)}
     </nav>
   );
 }
