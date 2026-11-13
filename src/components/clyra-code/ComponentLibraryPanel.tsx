@@ -1,310 +1,367 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  ArrowLeft, Blocks, Check, CircleAlert,
-  Code2, ExternalLink, Search, X,
-} from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, Copy, ExternalLink, Play, Plus, RotateCw, Search, X } from "lucide-react";
 import { api, type ComponentCatalogItem, type ComponentDetails } from "./api";
 import { cn } from "../../lib/utils";
-import { ComponentPreview } from "./ComponentPreview";
 
-type SourceFilter = "all" | "shadcn" | "21st";
-type LocalStatus = { id: "shadcn" | "21st"; available: boolean; detail: string };
 const EASE = [0.22, 1, 0.36, 1] as const;
-const SOURCE_NAMES = { shadcn: "shadcn/ui", "21st": "21st · Agent Elements" };
+export const COMPONENT_PANEL_WIDTH = 420;
+const SOURCE_LABEL = { shadcn: "shadcn/ui", "21st": "21st.dev" } as const;
 
-const CATEGORY_NAMES = [
-  "Inputs & Controls", "Overlays & Menus", "Navigation",
-  "Data & Feedback", "AI & Chat", "Agent Tools", "Layout & Content",
-] as const;
-function categoryOf(item: ComponentCatalogItem): string {
-  const name = item.name;
-  if (/button|input|form|field|textarea|select|checkbox|switch|radio|toggle|picker|otp|label/.test(name)) return "Inputs & Controls";
-  if (/dialog|drawer|sheet|popover|tooltip|menu|command|alert/.test(name)) return "Overlays & Menus";
-  if (/sidebar|tabs|breadcrumb|navigation|pagination|resizable|scroll-area/.test(name)) return "Navigation";
-  if (/chart|table|calendar|progress|slider|skeleton|spinner|badge|toast/.test(name)) return "Data & Feedback";
-  if (/agent-chat|message|markdown|shimmer|question|thinking|input-bar/.test(name)) return "AI & Chat";
-  if (item.source === "21st" && /tool|subagent/.test(name)) return "Agent Tools";
-  return "Layout & Content";
+const frameCache = new Map<string, Promise<string>>();
+/** Frame documents are fetched once and handed to the sandbox as srcdoc. */
+function loadFrame(src: string) {
+  let existing = frameCache.get(src);
+  if (!existing) {
+    existing = fetch(src).then((response) => { if (!response.ok) throw new Error("preview"); return response.text(); });
+    frameCache.set(src, existing);
+    existing.catch(() => frameCache.delete(src));
+  }
+  return existing;
 }
 
-const GROUPS = [
-  { label: "All components", id: "all" as const },
-  { label: "shadcn/ui", id: "shadcn" as const },
-  { label: "21st · Agent Elements", id: "21st" as const },
-];
-
-function GetButton({ label, loading, onClick, disabled = false }: {
-  label: string; loading?: boolean; disabled?: boolean; onClick: () => void;
+/** The real component, running in a sandboxed frame and scaled to fit its box. */
+function LivePreview({ src, active = false, interactive = false, frameWidth = 480, frameHeight = 360, className, replayKey = 0 }: {
+  src: string; active?: boolean; interactive?: boolean; frameWidth?: number; frameHeight?: number; className?: string; replayKey?: number;
 }) {
-  return <motion.button type="button" onClick={(event) => { event.stopPropagation(); onClick(); }}
-    disabled={loading || disabled} whileTap={loading ? undefined : { scale: 0.97 }}
-    className="inline-flex h-[30px] min-w-[64px] items-center justify-center gap-1.5 rounded-full bg-[rgba(55,53,47,0.06)] px-3.5 text-[12.5px] font-semibold text-[#3977F6] transition-colors hover:bg-[rgba(55,53,47,0.1)] disabled:cursor-not-allowed disabled:opacity-55">
-    {loading ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#3977F6]/20 border-t-[#3977F6]" /> : label}
-  </motion.button>;
-}
-
-function SourceCard({ item, onOpen, onGet, onReference, busy, installed, referenced }: {
-  item: ComponentCatalogItem; onOpen: () => void; onGet: () => void;
-  onReference: () => void; busy: boolean; installed: boolean; referenced: boolean;
-}) {
-  return <div className="group min-w-0 max-w-full">
-    <button type="button" onClick={onOpen}
-      className="block w-full rounded-[15px] text-left outline-none transition-transform duration-200 group-hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"
-      aria-label={"View " + item.title + " source and details"}>
-      <ComponentPreview item={item} compact/>
-    </button>
-    <div className="mt-3 flex items-center gap-2.5 px-0.5">
-      <span className="flex h-[37px] w-[37px] shrink-0 items-center justify-center rounded-[11px] bg-[#3977F6]/[0.08] text-[#3977F6]">
-        {item.source === "21st" ? <Code2 className="h-[18px] w-[18px]" strokeWidth={1.6}/> : <Blocks className="h-[18px] w-[18px]" strokeWidth={1.6}/>}
-      </span>
-      <div className="min-w-0 flex-1">
-        <button onClick={onOpen} className="block w-full truncate text-left text-[14px] font-semibold tracking-[-0.012em] text-[#2C2C2B] outline-none hover:text-[#3977F6] focus-visible:text-[#3977F6]">{item.title}</button>
-        <div className="truncate text-[12px] text-[#78766F]">{SOURCE_NAMES[item.source]}</div>
-      </div>
-      <GetButton label={installed ? "Added" : "Get"} loading={busy} disabled={installed} onClick={onGet}/>
+  const box = useRef<HTMLDivElement | null>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const [scale, setScale] = useState(0.4);
+  const [near, setNear] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [doc, setDoc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!near) return;
+    let live = true;
+    void loadFrame(src).then((html) => { if (live) setDoc(html); }).catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, [near, src]);
+  useEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    const measure = () => setScale(element.clientWidth / frameWidth || 0.4);
+    measure();
+    const resize = new ResizeObserver(measure);
+    resize.observe(element);
+    const watch = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), { rootMargin: "320px 0px" });
+    watch.observe(element);
+    return () => { resize.disconnect(); watch.disconnect(); };
+  }, [frameWidth]);
+  useEffect(() => { setLoaded(false); setFailed(false); setDoc(null); }, [src]);
+  const post = useCallback((type: "clyra-play" | "clyra-idle") => frame.current?.contentWindow?.postMessage({ type }, "*"), []);
+  useEffect(() => { if (loaded) post(active ? "clyra-play" : "clyra-idle"); }, [active, loaded, post]);
+  useEffect(() => { if (loaded && replayKey) post("clyra-play"); }, [replayKey, loaded, post]);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow) return;
+      if (event.data?.type === "clyra-frame-ready") setLoaded(true);
+      if (event.data?.type === "clyra-frame-error") setFailed(true);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  return (
+    <div ref={box} className={cn("relative isolate overflow-hidden bg-[#FAFAF9]", className)} style={{ aspectRatio: `${frameWidth} / ${frameHeight}` }}>
+      <div aria-hidden className="absolute inset-0 -z-10 [background-image:radial-gradient(rgba(55,53,47,0.09)_1px,transparent_1px)] [background-size:14px_14px]" />
+      {near && doc && !failed ? (
+        <iframe
+          ref={frame}
+          srcDoc={doc}
+          title="Live component preview"
+          sandbox="allow-scripts"
+          tabIndex={interactive ? 0 : -1}
+          aria-hidden={interactive ? undefined : true}
+          style={{ width: frameWidth, height: frameHeight, transform: `scale(${scale})`, transformOrigin: "0 0", opacity: loaded ? 1 : 0, transition: "opacity 320ms ease" }}
+          className={cn("absolute left-0 top-0 border-0 bg-transparent", interactive ? "" : "pointer-events-none")}
+        />
+      ) : null}
+      {!loaded && !failed ? <div aria-hidden className="cc-shimmer absolute inset-0" /> : null}
+      {failed ? <div className="absolute inset-0 flex items-center justify-center text-[11.5px] text-[#A19E99]">Preview unavailable</div> : null}
     </div>
-    <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5">
-      <span className="min-w-0 truncate text-[11px] text-[#A19E99]">{categoryOf(item)}</span>
-      <button type="button" onClick={onReference} aria-label={"Reference " + item.title + " in chat"}
-        className={cn("shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-[#3977F6] transition-[opacity,background-color] hover:bg-[#3977F6]/[0.07] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3977F6]/40 group-hover:opacity-100",
-          referenced ? "opacity-100" : "opacity-0")}>
-        {referenced ? "✓ Referenced" : "+ Reference"}
+  );
+}
+
+function AddButton({ state, onClick, large = false }: { state: "idle" | "busy" | "added"; onClick: () => void; large?: boolean }) {
+  const added = state === "added";
+  return (
+    <motion.button
+      type="button"
+      onClick={(event) => { event.stopPropagation(); if (state === "idle") onClick(); }}
+      whileTap={state === "idle" ? { scale: 0.96 } : undefined}
+      aria-label={added ? "Added" : "Add to project"}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#3977F6]/40",
+        large ? "h-[34px] px-4 text-[13px]" : "h-[28px] px-3 text-[12px]",
+        added ? "bg-[#3977F6]/[0.09] text-[#3977F6]" : "bg-[#3977F6] text-white hover:bg-[#2F6BE6]",
+        state === "busy" && "opacity-70",
+      )}
+    >
+      {state === "busy" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+        : added ? <Check className="h-3.5 w-3.5" strokeWidth={2.4} aria-hidden /> : <Plus className="h-3.5 w-3.5" strokeWidth={2.4} aria-hidden />}
+      {added ? "Added" : "Add"}
+    </motion.button>
+  );
+}
+
+function Card({ item, state, onOpen, onAdd }: { item: ComponentCatalogItem; state: "idle" | "busy" | "added"; onOpen: () => void; onAdd: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      className="group min-w-0"
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)} onBlur={() => setHover(false)}
+    >
+      <button
+        type="button" onClick={onOpen} aria-label={"Open " + item.title}
+        className="relative block w-full overflow-hidden rounded-[14px] text-left outline-none ring-1 ring-inset ring-black/[0.07] transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-14px_rgba(20,24,32,0.35)] focus-visible:ring-2 focus-visible:ring-[#3977F6]/50"
+      >
+        <LivePreview src={item.previewUrl} active={hover} />
+        <span className={cn("pointer-events-none absolute right-2 top-2 inline-flex h-[22px] items-center gap-1 rounded-full bg-white/90 px-2 text-[10.5px] font-medium text-[#5F5E59] shadow-sm backdrop-blur transition-opacity duration-200", hover ? "opacity-100" : "opacity-0")}>
+          <Play className="h-2.5 w-2.5 fill-current" aria-hidden /> Live
+        </span>
       </button>
+      <div className="mt-2 flex items-center gap-2 px-0.5">
+        <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left outline-none">
+          <span className="block truncate text-[13px] font-semibold tracking-[-0.01em] text-[#2C2C2B] group-hover:text-[#3977F6]">{item.title}</span>
+          <span className="block truncate text-[11.5px] text-[#8A8884]">{item.category}</span>
+        </button>
+        <AddButton state={state} onClick={onAdd} />
+      </div>
     </div>
-  </div>;
+  );
 }
 
-export function ComponentLibraryPanel({
-  open, onClose, onReference, referencedIds, projectId,
-}: {
+function Detail({ item, state, onAdd, onBack, referenced }: { item: ComponentCatalogItem; state: "idle" | "busy" | "added"; onAdd: () => void; onBack: () => void; referenced: boolean }) {
+  const [variant, setVariant] = useState(item.previewUrl);
+  const [replay, setReplay] = useState(0);
+  const [tab, setTab] = useState<"preview" | "code">("preview");
+  const [detail, setDetail] = useState<ComponentDetails | null>(null);
+  const [copied, setCopied] = useState("");
+  useEffect(() => { setVariant(item.previewUrl); setTab("preview"); }, [item]);
+  useEffect(() => {
+    let live = true;
+    setDetail(null);
+    void api.componentDetails(item.source, item.name).then((data) => { if (live) setDetail(data); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [item]);
+  const variants = [{ name: "default", title: "Default", previewUrl: item.previewUrl }, ...item.examples];
+  return (
+    <motion.div initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }} transition={{ duration: 0.32, ease: EASE }} className="absolute inset-0 flex flex-col bg-white">
+      <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
+        <button type="button" onClick={onBack} aria-label="Back to components" className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"><ArrowLeft className="h-4 w-4" /></button>
+        <span className="text-[13px] font-medium text-[#78766F]">{item.category}</span>
+      </div>
+      <div className="cc-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-8">
+        <div className="overflow-hidden rounded-[16px] ring-1 ring-inset ring-black/[0.07]">
+          <LivePreview src={variant} interactive frameWidth={560} frameHeight={380} replayKey={replay} />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[11.5px] text-[#8A8884]">
+          <span>Live component · interact with it</span>
+          <button type="button" onClick={() => setReplay((value) => value + 1)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 font-medium text-[#3977F6] hover:bg-[#3977F6]/[0.07]"><RotateCw className="h-3 w-3" aria-hidden /> Replay</button>
+        </div>
+        <div className="mt-4 flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[22px] font-semibold leading-tight tracking-[-0.028em] text-[#2C2C2B]">{item.title}</h2>
+            <p className="mt-1 text-[13px] leading-[1.5] text-[#78766F]">{item.description}</p>
+          </div>
+          <AddButton state={state} onClick={onAdd} large />
+        </div>
+        {referenced ? <p className="mt-3 rounded-[10px] bg-[#3977F6]/[0.06] px-3 py-2 text-[12px] leading-[1.5] text-[#2F5FC4]">Referenced in your composer. Tell Clyra what to do with it and where to add it.</p> : null}
+        {variants.length > 1 ? (
+          <section className="mt-6" aria-label="Variants">
+            <h3 className="text-[13px] font-semibold text-[#2C2C2B]">Variants</h3>
+            <div className="cc-scroll mt-2 flex gap-2.5 overflow-x-auto pb-2 [scrollbar-width:none]">
+              {variants.map((entry) => (
+                <button key={entry.name} type="button" onClick={() => setVariant(entry.previewUrl)} aria-pressed={variant === entry.previewUrl}
+                  className={cn("w-[132px] shrink-0 overflow-hidden rounded-[11px] text-left outline-none ring-1 ring-inset transition-shadow focus-visible:ring-2 focus-visible:ring-[#3977F6]/50", variant === entry.previewUrl ? "ring-2 ring-[#3977F6]" : "ring-black/[0.08] hover:ring-black/[0.2]")}>
+                  <LivePreview src={entry.previewUrl} frameWidth={480} frameHeight={360} />
+                  <span className="block truncate bg-white px-2 py-1.5 text-[11px] text-[#5F5E59]">{entry.title}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        <div className="mt-6 flex items-center gap-1 border-b border-black/[0.07]" role="tablist">
+          {(["preview", "code"] as const).map((name) => (
+            <button key={name} type="button" role="tab" aria-selected={tab === name} onClick={() => setTab(name)}
+              className={cn("-mb-px border-b-2 px-2.5 pb-2 pt-1 text-[12.5px] font-medium transition-colors", tab === name ? "border-[#2C2C2B] text-[#2C2C2B]" : "border-transparent text-[#8A8884] hover:text-[#2C2C2B]")}>
+              {name === "preview" ? "About" : "Source"}
+            </button>
+          ))}
+        </div>
+        {tab === "preview" ? (
+          <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2.5 text-[12.5px]">
+            <dt className="text-[#8A8884]">Library</dt><dd className="text-[#2C2C2B]">{SOURCE_LABEL[item.source]} · MIT</dd>
+            <dt className="text-[#8A8884]">Packages</dt><dd className="text-[#2C2C2B]">{detail ? (detail.dependencies.join(", ") || "None") : "…"}</dd>
+            <dt className="text-[#8A8884]">Files added</dt><dd className="text-[#2C2C2B]">{detail ? detail.files.length : "…"}</dd>
+            <dt className="text-[#8A8884]">Origin</dt>
+            <dd><a href={item.docsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#3977F6] hover:underline">{item.origin} <ExternalLink className="h-3 w-3" aria-hidden /></a></dd>
+          </dl>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {!detail ? <div className="h-[160px] animate-pulse rounded-[12px] bg-[#F7F6F5]" /> : null}
+            {detail?.files.map((file) => (
+              <div key={file.path} className="overflow-hidden rounded-[12px] ring-1 ring-inset ring-black/[0.07]">
+                <div className="flex items-center justify-between bg-[#F7F6F5] px-3 py-2 text-[11.5px] text-[#5F5E59]">
+                  <span className="truncate">{file.path}</span>
+                  <button type="button" onClick={() => { void navigator.clipboard?.writeText(file.content); setCopied(file.path); window.setTimeout(() => setCopied(""), 1400); }}
+                    className="ml-2 inline-flex shrink-0 items-center gap-1 font-medium text-[#3977F6] hover:underline">{copied === file.path ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copied === file.path ? "Copied" : "Copy"}</button>
+                </div>
+                <pre className="cc-scroll max-h-[300px] overflow-auto px-3 py-2.5 text-[11px] leading-[1.65] text-[#363A44]"><code>{file.content}</code></pre>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+export function ComponentLibraryPanel({ open, onClose, onReference, referencedIds, projectId, projectName, docked = true }: {
   open: boolean;
   onClose: () => void;
   onReference: (item: ComponentCatalogItem) => void;
   referencedIds: string[];
   projectId?: string | null;
+  projectName?: string | null;
+  /** Docked beside the rail (pushes the workspace); otherwise it overlays it. */
+  docked?: boolean;
 }) {
-  const reducedMotion = useReducedMotion();
-  const [source, setSource] = useState<SourceFilter>("all");
-  const [category, setCategory] = useState("");
+  const reduced = useReducedMotion();
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
   const [items, setItems] = useState<ComponentCatalogItem[]>([]);
-  const [statuses, setStatuses] = useState<LocalStatus[]>([]);
-  const [active, setActive] = useState<ComponentCatalogItem | null>(null);
-  const [detail, setDetail] = useState<ComponentDetails | null>(null);
+  const [categories, setCategories] = useState<Array<{ name: string; count: number }>>([]);
   const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [installed, setInstalled] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [active, setActive] = useState<ComponentCatalogItem | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [added, setAdded] = useState<Set<string>>(() => new Set());
+  const [toast, setToast] = useState<{ tone: "ok" | "info" | "error"; text: string } | null>(null);
+  const search = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     if (!open) return;
-    const handler = (event: KeyboardEvent) => { if (event.key === "Escape") active ? setActive(null) : onClose(); };
+    const handler = (event: KeyboardEvent) => { if (event.key === "Escape") { if (active) setActive(null); else onClose(); } };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [active, onClose, open]);
-  useEffect(() => {
-    if (!open) return;
-    let mounted = true;
-    void api.componentLibraryStatus().then(result => { if (mounted) setStatuses(result.sources); });
-    return () => { mounted = false; };
-  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true); setError("");
-      void api.componentCatalog({ source, q: query.trim() })
-        .then(result => {
+      void api.componentCatalog({ q: query.trim(), category })
+        .then((result) => {
           if (controller.signal.aborted) return;
           setItems(result.items);
-          setError(result.errors.map(e => e.message).join(" "));
+          if (!query.trim() && !category) setCategories(result.categories);
+          setError(result.errors.map((entry) => entry.message).join(" "));
         })
-        .catch(e => { if (!controller.signal.aborted) { setItems([]); setError(e instanceof Error ? e.message : "Local catalogue unavailable."); } })
+        .catch((reason) => { if (!controller.signal.aborted) { setItems([]); setError(reason instanceof Error ? reason.message : "The component library could not be read."); } })
         .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    }, 180);
+    }, query ? 180 : 0);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [open, source, query]);
-  useEffect(() => {
-    if (!active) { setDetail(null); return; }
-    let mounted = true;
-    setDetail(null); setDetailLoading(true); setError("");
-    void api.componentDetails(active.source, active.name)
-      .then(data => { if (mounted) setDetail(data); })
-      .catch(e => { if (mounted) setError(e instanceof Error ? e.message : "Could not read source."); })
-      .finally(() => { if (mounted) setDetailLoading(false); });
-    return () => { mounted = false; };
-  }, [active]);
-  const visibleItems = useMemo(
-    () => category ? items.filter(item => categoryOf(item) === category) : items,
-    [category, items],
-  );
-  const grouped = useMemo(() => {
-    const groups = new Map<string, ComponentCatalogItem[]>();
-    for (const item of visibleItems) groups.set(item.source, [...(groups.get(item.source) ?? []), item]);
-    return [...groups.entries()];
-  }, [visibleItems]);
-  const install = async (item: ComponentCatalogItem) => {
-    setNotice(""); setError("");
-    if (!projectId) { setError("Open or create a project before adding components."); return; }
+  }, [open, query, category]);
+
+  useEffect(() => { if (open && !active) window.setTimeout(() => search.current?.focus({ preventScroll: true }), 380); }, [open, active]);
+  useEffect(() => { if (!toast) return; const id = window.setTimeout(() => setToast(null), 4800); return () => window.clearTimeout(id); }, [toast]);
+
+  const add = useCallback(async (item: ComponentCatalogItem) => {
     setBusy(item.id);
-    try {
-      const result = await api.installComponent(projectId, item.source, item.name);
-      setInstalled(prev => new Set([...prev, item.id]));
-      onReference(item);
-      setNotice(result.note + (result.dependenciesToInstall.length ?
-        " Packages: " + result.dependenciesToInstall.join(", ") : ""));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Component installation failed.");
-    } finally { setBusy(null); }
-  };
-  const reference = (item: ComponentCatalogItem) => {
     onReference(item);
-    setNotice(item.title + " added to your prompt references.");
-  };
-  const missing = statuses.filter(s => !s.available);
+    try {
+      if (!projectId) throw new Error("NO_PROJECT");
+      const result = await api.installComponent(projectId, item.source, item.name);
+      setAdded((previous) => new Set(previous).add(item.id));
+      setToast({ tone: "ok", text: item.title + " added" + (projectName ? " to " + projectName : "") + ". " + (result.dependenciesToInstall.length ? "Install " + result.dependenciesToInstall.join(", ") + " to finish." : "Tell Clyra where to use it.") });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "";
+      if (message === "NO_PROJECT" || /needs a React|require a React|Open or create/.test(message)) {
+        setAdded((previous) => new Set(previous).add(item.id));
+        setToast({ tone: "info", text: item.title + " is referenced. Say where to add it and Clyra will bring the source in." });
+      } else setToast({ tone: "error", text: message || "That component could not be added." });
+    } finally { setBusy(null); }
+  }, [onReference, projectId, projectName]);
+
+  const stateOf = (item: ComponentCatalogItem): "idle" | "busy" | "added" => busy === item.id ? "busy" : added.has(item.id) ? "added" : "idle";
+  const total = useMemo(() => categories.reduce((sum, entry) => sum + entry.count, 0), [categories]);
+  const cloning = error && /not cloned/i.test(error) && !items.length;
+
   return (
     <AnimatePresence>
-      {open ? <div className="absolute inset-0 z-[90] flex min-h-0 overflow-hidden bg-white" role="presentation">
-        <motion.aside role="dialog" aria-modal="true" aria-label="Clyra component library"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          transition={{ duration: reducedMotion ? 0 : 0.4, ease: EASE }}
-          className="relative flex h-full w-full min-w-0 flex-row bg-white">
-          <aside className="hidden min-h-0 w-[232px] shrink-0 flex-col border-r border-black/[0.07] bg-[#F7F6F5]/95 px-2.5 pb-4 pt-3.5 backdrop-blur-xl md:flex" aria-label="Component navigation">
-            <label className="relative mb-3 block px-1">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8E8E93]" />
-              <input value={query} onChange={event => { setQuery(event.target.value); setActive(null); }}
-                placeholder="Search" aria-label="Search component library"
-                className="h-[30px] w-full rounded-[8px] border-0 bg-black/[0.055] pl-8 pr-3 text-[13px] text-[#1D1D1F] outline-none placeholder:text-[#8E8E93] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20"/>
-            </label>
-            <nav className="cc-scroll min-h-0 flex-1 space-y-px overflow-y-auto pr-0.5" aria-label="Component categories">
-              {GROUPS.map(group => <button type="button" key={group.id}
-                onClick={() => { setSource(group.id); setCategory(""); setActive(null); }}
-                aria-current={source === group.id && !category ? "page" : undefined}
-                className={cn("flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors",
-                  source === group.id && !category ? "bg-black/[0.06] font-medium text-[#2C2C2B]" : "text-[#5F5E59] hover:bg-black/[0.04]")}>
-                {group.id === "21st" ? <Code2 className="h-4 w-4 shrink-0 text-[#007AFF]"/> : <Blocks className="h-4 w-4 shrink-0 text-[#007AFF]"/>}
-                <span className="truncate">{group.label}</span>
-              </button>)}
-              <p className="px-2 pb-1 pt-5 text-[11px] font-semibold text-[#8A8884]">Categories</p>
-              {CATEGORY_NAMES.map(name => {
-                const count = items.filter(item => categoryOf(item) === name).length;
-                return <button type="button" key={name} onClick={() => { setCategory(category === name ? "" : name); setActive(null); }}
-                  className={cn("flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] transition-colors",
-                    category === name ? "bg-black/[0.075] font-medium text-[#1D1D1F]" : "text-[#555860] hover:bg-black/[0.04]")}>
-                  <Blocks className="h-3.5 w-3.5 shrink-0 text-[#007AFF]"/>
-                  <span className="min-w-0 flex-1 truncate">{name}</span>
-                  <span className="text-[10px] tabular-nums text-[#9c9da4]">{count}</span>
-                </button>;
-              })}
-            </nav>
-            <p className="px-2 pt-3 text-[11px] leading-relaxed text-[#8A8884]">
-              Official source, bundled locally. Works offline.
-            </p>
-          </aside>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="flex h-[60px] shrink-0 items-center justify-between px-5 sm:px-8">
-            <div className="flex items-center gap-3">
-              {active ? <button onClick={() => setActive(null)} className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#777] hover:bg-[#F4F4F5]" aria-label="Back to components"><ArrowLeft className="h-4 w-4"/></button> : <Blocks className="h-[18px] w-[18px] text-[#3977F6]" strokeWidth={1.6}/>}
-              <span className="text-[14px] font-medium text-[#24262B]">{active ? "Component details" : category || "Components"}</span>
-              {!active && <span className="text-[11px] text-[#999BA2]">Local</span>}
-            </div>
-            <button onClick={onClose} aria-label="Close component library"
-              className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#777] hover:bg-[#F4F4F5]"><X className="h-4 w-4"/></button>
-          </header>
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
-            {active ? <div className="mx-auto max-w-[1100px] px-5 pb-12 sm:px-8">
-              <div className="mt-3 grid min-w-0 gap-6 sm:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-                <ComponentPreview item={active}/>
-                <div className="flex flex-col justify-center">
-                  <span className="text-[11px] font-medium text-[#8D8F95]">{SOURCE_NAMES[active.source]} · MIT</span>
-                  <h2 className="mt-1.5 text-[27px] font-semibold tracking-[-0.03em] text-[#1D1D1F]">{active.title}</h2>
-                  <p className="mt-2 text-[13px] leading-[1.6] text-[#77797F]">{active.description}</p>
-                  <div className="mt-5 flex flex-wrap items-center gap-2">
-                    <GetButton label={installed.has(active.id) ? "Added" : "Get"} loading={busy === active.id}
-                      disabled={installed.has(active.id)} onClick={() => void install(active)} />
-                    <button type="button" onClick={() => reference(active)}
-                      className="rounded-full px-3 py-1.5 text-[12.5px] font-medium text-[#3977F6] hover:bg-[#3977F6]/[0.06]">
-                      {referencedIds.includes("component:" + active.id) ? "Referenced" : "Reference in chat"}
-                    </button>
-                  </div>
+      {open ? (
+        <motion.aside
+          key="component-panel" role="complementary" aria-label="Component library"
+          initial={docked ? { width: 0, opacity: 0.6 } : { x: -16, opacity: 0 }}
+          animate={docked ? { width: COMPONENT_PANEL_WIDTH, opacity: 1 } : { x: 0, opacity: 1 }}
+          exit={docked ? { width: 0, opacity: 0 } : { x: -16, opacity: 0 }}
+          transition={{ duration: reduced ? 0 : 0.42, ease: EASE }}
+          className={cn("relative z-[60] flex h-full min-h-0 shrink-0 overflow-hidden border-r border-black/[0.08] bg-white", docked ? "" : "absolute inset-y-0 left-0 w-[min(100%,420px)] shadow-[8px_0_32px_-20px_rgba(20,24,32,0.4)]")}
+        >
+          <div className="relative flex h-full min-h-0 flex-col bg-white" style={{ width: docked ? COMPONENT_PANEL_WIDTH : "100%" }}>
+            <header className="shrink-0 px-4 pb-2 pt-3">
+              <div className="flex h-8 items-center justify-between">
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-[#2C2C2B]">Components</h2>
+                  {total ? <span className="text-[12px] tabular-nums text-[#A19E99]">{total}</span> : null}
                 </div>
+                <button type="button" onClick={onClose} aria-label="Close components" className="flex h-8 w-8 items-center justify-center rounded-[9px] text-[#78766F] transition-colors hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-[#3977F6]/40"><X className="h-4 w-4" /></button>
               </div>
-              <section className="mt-9 border-t border-black/[0.07] pt-5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="text-[18px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">Source code</h3>
-                  <span className="text-[11px] text-[#8C8F97]">Official files · bundled locally</span>
-                </div>
-                {detailLoading ? <div className="mt-4 h-[180px] animate-pulse rounded-[13px] bg-[#F7F7F8]" /> : null}
-                {detail?.files.map(file => <div key={file.path} className="mt-3 overflow-hidden rounded-[13px] border border-black/[0.07]">
-                  <div className="flex items-center justify-between bg-[#F9F9FA] px-4 py-2.5 text-[11.5px] text-[#62656C]">
-                    <span className="truncate">{file.path}</span>
-                    <button type="button" className="ml-2 shrink-0 text-[#3977F6] hover:underline" onClick={() => navigator.clipboard.writeText(file.content)}>Copy</button>
-                  </div>
-                  <pre className="max-h-[310px] overflow-auto px-4 py-3 text-[11px] leading-[1.7] text-[#363A44]"><code>{file.content}</code></pre>
-                </div>)}
-              </section>
-              {detail ? <section className="mt-7 border-t border-black/[0.07] pt-5">
-                <h3 className="text-[18px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">Requirements</h3>
-                <p className="mt-2 text-[12.5px] leading-[1.7] text-[#77797F]">
-                  {detail.requirements.join(" · ")}. Installation copies real source files into your project. Some projects need additional npm packages.
-                </p>
-                <p className="mt-2 text-[11.5px] text-[#93959B]">Packages: {detail.dependencies.join(", ") || "None declared"}</p>
-                <a href={active.docsUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-[#3977F6]">
-                  Official documentation <ExternalLink className="h-3.5 w-3.5"/>
-                </a>
-              </section> : null}
-            </div> : <div className="mx-auto max-w-[1100px] px-5 pb-12 sm:px-8">
-              <div className="pt-4">
-                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#3977F6]">The Clyra Library</div>
-                <h1 className="mt-1 text-[29px] font-semibold leading-[1.15] tracking-[-0.035em] text-[#2C2C2B]">Build with components.</h1>
-                <p className="mt-1.5 text-[14px] text-[#78766F]">Official shadcn/ui and 21st Agent Elements. Add editable source straight into your project.</p>
-              </div>
-              <label className="mt-6 flex h-[42px] items-center gap-2.5 rounded-[11px] bg-[#F6F6F8] px-3.5 focus-within:ring-2 focus-within:ring-[#3977F6]/20">
-                <Search className="h-4 w-4 shrink-0 text-[#9A9CA4]"/>
-                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search components"
-                  aria-label="Search gallery components" className="min-w-0 flex-1 bg-transparent text-[13px] text-[#24262A] outline-none placeholder:text-[#A2A4AB]"/>
-                {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search"><X className="h-3.5 w-3.5 text-[#92949B]"/></button>}
+              <label className="mt-2 flex h-[38px] items-center gap-2 rounded-[12px] bg-[rgba(55,53,47,0.055)] px-3 transition-shadow focus-within:bg-white focus-within:shadow-[0_0_0_2px_rgba(57,119,246,0.3)]">
+                <Search className="h-3.5 w-3.5 shrink-0 text-[#8A8884]" aria-hidden />
+                <input ref={search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search components" aria-label="Search components"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-[#2C2C2B] outline-none placeholder:text-[#A19E99]" />
+                {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-[#A19E99] hover:text-[#2C2C2B]"><X className="h-3.5 w-3.5" /></button> : null}
               </label>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                {GROUPS.map(group => <button key={group.id} type="button" onClick={() => { setSource(group.id); setCategory(""); }} aria-pressed={source === group.id && !category}
-                  className={cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", source === group.id
-                    ? "bg-[#EAF1FF] font-medium text-[#3977F6]" : "text-[#777A82] hover:bg-[#F4F5F6]")}>{group.label}</button>)}
+              <div role="tablist" aria-label="Categories" className="cc-scroll -mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+                {[{ name: "", label: "All", count: total }, ...categories.map((entry) => ({ name: entry.name, label: entry.name, count: entry.count }))].map((entry) => (
+                  <button key={entry.name || "all"} type="button" role="tab" aria-selected={category === entry.name} onClick={() => setCategory(entry.name)}
+                    className={cn("inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#3977F6]/40",
+                      category === entry.name ? "bg-[#2C2C2B] text-white" : "bg-[rgba(55,53,47,0.06)] text-[#5F5E59] hover:bg-[rgba(55,53,47,0.1)]")}>
+                    {entry.label}
+                    {entry.count ? <span className={cn("text-[10.5px] tabular-nums", category === entry.name ? "text-white/60" : "text-[#A19E99]")}>{entry.count}</span> : null}
+                  </button>
+                ))}
               </div>
-              <div className="mt-6 flex items-center justify-between text-[11.5px] text-[#999BA1]">
-                <span role="status">{loading ? "Reading local sources…" : visibleItems.length + " components"}</span>
-                <span className="inline-flex items-center gap-1"><Check className="h-3 w-3"/> Offline after setup</span>
-              </div>
-              {loading ? <div className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))] gap-5">{Array.from({length:6},(_,i)=><div key={i} className="aspect-[13/10] animate-pulse rounded-[14px] bg-[#F5F5F7]"/>)}</div> : null}
-              {!loading && !visibleItems.length ? <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 text-center text-[12px] text-[#8C8F96]">
-                <Search className="h-5 w-5"/><span>No components found in the local sources.</span>
-              </div> : null}
-              {grouped.map(([group, components]) => <section key={group} className="mt-6 border-t border-black/[0.07] pt-5">
-                <div className="mb-4 flex items-baseline justify-between gap-2">
-                  <h2 className="text-[20px] font-semibold tracking-[-0.025em] text-[#1D1D1F]">{SOURCE_NAMES[group as "shadcn" | "21st"]}</h2>
-                  <span className="text-[11px] text-[#999BA1]">{components.length} components</span>
+            </header>
+            <div className="cc-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-10 pt-2">
+              {cloning ? (
+                <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-black/10 border-t-[#3977F6]" aria-hidden />
+                  <p className="max-w-[280px] text-[12.5px] leading-[1.55] text-[#78766F]">Getting the shadcn/ui and 21st libraries from GitHub. This only happens the first time.</p>
                 </div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))] gap-x-4 gap-y-7">
-                  {components.map(item => <SourceCard key={item.id} item={item} onOpen={() => setActive(item)}
-                    onGet={() => void install(item)} onReference={() => reference(item)}
-                    referenced={referencedIds.includes("component:" + item.id)}
-                    busy={busy === item.id} installed={installed.has(item.id)}/>)}
+              ) : null}
+              {loading && !items.length && !cloning ? (
+                <div className="grid grid-cols-2 gap-3">{Array.from({ length: 8 }, (_, index) => <div key={index} className="cc-shimmer aspect-[4/3] rounded-[14px]" />)}</div>
+              ) : null}
+              {!loading && !items.length && !cloning ? (
+                <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-center text-[12.5px] text-[#8A8884]"><Search className="h-5 w-5" aria-hidden />No components match “{query}”.</div>
+              ) : null}
+              {error && !cloning ? <p className="mb-3 flex items-start gap-2 rounded-[10px] bg-[#C0463F]/[0.07] px-3 py-2 text-[12px] leading-[1.5] text-[#A33A34]"><CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />{error}</p> : null}
+              {items.length ? (
+                <div className="grid grid-cols-2 gap-x-3 gap-y-5">
+                  {items.map((item) => <Card key={item.id} item={item} state={stateOf(item)} onOpen={() => setActive(item)} onAdd={() => void add(item)} />)}
                 </div>
-              </section>)}
-              <p className="mt-9 max-w-[620px] text-[11.5px] leading-relaxed text-[#A19E99]">
-                Previews are illustrative. Open a component to read its real source before adding it.
-              </p>
-            </div>}
-          </div>
-          {(error || notice || missing.length > 0) ? <div role="status" className="shrink-0 border-t border-black/[0.06] px-5 py-3 text-[11.5px] leading-[1.5] sm:px-8">
-            {error && <p className="flex items-start gap-2 text-[#A16140]"><CircleAlert className="mt-[1px] h-3.5 w-3.5 shrink-0"/>{error}</p>}
-            {notice && <p className="flex items-start gap-2 text-[#407752]"><Check className="mt-[1px] h-3.5 w-3.5 shrink-0"/>{notice}</p>}
-            {missing.length ? <p className="mt-1 text-[#777A80]">Set up local sources with <code className="text-[#50525A]">npm run setup:component-sources</code>. No API key required.</p> : null}
-          </div> : null}
+              ) : null}
+            </div>
+            <AnimatePresence>
+              {active ? <Detail key={active.id} item={active} state={stateOf(active)} onAdd={() => void add(active)} onBack={() => setActive(null)} referenced={referencedIds.includes("component:" + active.id)} /> : null}
+            </AnimatePresence>
+            <AnimatePresence>
+              {toast ? (
+                <motion.div role="status" aria-live="polite" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} transition={{ duration: 0.24, ease: EASE }}
+                  className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex items-start gap-2.5 rounded-[14px] bg-[#2C2C2B] px-3.5 py-2.5 text-[12.5px] leading-[1.45] text-white shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]">
+                  {toast.tone === "error" ? <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#FF9C94]" aria-hidden /> : <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#7FB0FF]" aria-hidden />}
+                  <span>{toast.text}</span>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </div>
         </motion.aside>
-      </div> : null}
+      ) : null}
     </AnimatePresence>
   );
 }

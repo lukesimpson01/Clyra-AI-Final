@@ -1151,3 +1151,8 @@ button.dsh-leading { cursor: pointer; }
     opacity .42s cubic-bezier(.22,1,.36,1), transform .42s cubic-bezier(.22,1,.36,1);
 }
 @media (prefers-reduced-motion: reduce) { .cc-pb-block { transition: none; } }
+
+/* Skeleton for live component previews while their frame loads. */
+.cc-shimmer { background: linear-gradient(100deg, #f3f2f0 30%, #fbfaf9 50%, #f3f2f0 70%) 100% 0 / 220% 100%; animation: cc-skeleton 1.6s linear infinite; }
+@keyframes cc-skeleton { to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) { .cc-shimmer { animation: none; } }

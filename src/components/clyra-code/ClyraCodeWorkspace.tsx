@@ -19,7 +19,7 @@ import { AppRail, APP_RAIL_WIDTH, type WorkspaceMode } from "./ModeTabs";
 import { DesignPicker } from "./DesignPicker";
 import { OpenDesignPanel } from "./OpenDesignPanel";
 import { TemplateLibrary } from "./TemplateLibrary";
-import { ComponentLibraryPanel } from "./ComponentLibraryPanel";
+import { ComponentLibraryPanel, COMPONENT_PANEL_WIDTH } from "./ComponentLibraryPanel";
 import type { ComponentCatalogItem } from "./api";
 import { WelcomeProjectPicker, formatRecentTime } from "./WelcomeProjectPicker";
 import { designDirective, type DesignSystemSummary, type DesignTemplateSummary } from "../../../lib/clyra-design/directive";
@@ -373,7 +373,8 @@ export default function ClyraCodeWorkspace({
   const [shellWidth, setShellWidth] = useState(0);
   const narrow = shellWidth > 0 && shellWidth < NARROW_BREAKPOINT;
   // Below the breakpoint the rail leaves the layout; it returns as an overlay drawer.
-  const sidebarWidth = narrow || sidebarCollapsed ? 0 : railWidth;
+  const componentPanelDocked = componentLibraryOpen && mode === "code" && !narrow;
+  const sidebarWidth = narrow ? 0 : componentPanelDocked ? COMPONENT_PANEL_WIDTH : sidebarCollapsed ? 0 : railWidth;
   const [dragging, setDragging] = useState(false);
   const [conversationWidth, setConversationWidth] = useState(() => {
     const raw = Number(localStorage.getItem(WIDTH_KEY));
@@ -628,6 +629,13 @@ export default function ClyraCodeWorkspace({
     }
   }, [undoLastCheckpoint]);
 
+  const componentHint = useMemo(() => {
+    const names = contexts.filter(context => context.id.startsWith("component:")).map(context => context.label);
+    if (!names.length) return null;
+    const label = names.length > 2 ? names.slice(0, 2).join(", ") + " +" + (names.length - 2) : names.join(" and ");
+    return "Say what to do with " + label + " and where to add it…";
+  }, [contexts]);
+
   const referenceComponent = useCallback((item: ComponentCatalogItem) => {
     setContexts((existing) => existing.some(context => context.id === "component:" + item.id) ? existing : [...existing, {
       id: "component:" + item.id,
@@ -728,7 +736,7 @@ export default function ClyraCodeWorkspace({
           : "";
         const componentReferences = mode === "code" ? contexts.filter(context => context.id.startsWith("component:")) : [];
         const componentInstruction = componentReferences.length
-          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nUse the locally bundled official component sources in external/shadcn-ui and external/21st-agent-elements, or source files already installed into this project via the Clyra Component Library. Do not use remote MCP tools or paid component APIs. Verify framework and dependency compatibility, then reuse the actual checked-in source rather than inventing a substitute. Never claim source was installed without checking project files.\n\n"
+          ? "[Referenced component library items]\n" + componentReferences.map(context => "- " + context.detail + " (" + context.label + ")").join("\n") + "\nThese come from the Clyra component library (real source cloned from shadcn-ui/ui in external/shadcn-library and serafimcloud/21st in external/21st-library). If a component is not yet in this project, copy its source from there and adapt it to the project's structure. Follow the user's instruction below about what to do with it and where to place it."
           : "";
         void startRun(designInstruction + platformInstruction + (command ? commandInstruction[command] : "") + componentInstruction + attachmentContext + text, command === "plan" ? "plan" : undefined, {
           ...options,
@@ -954,7 +962,7 @@ export default function ClyraCodeWorkspace({
       {/* The rail and the workspace sit side by side; the terminal docks under both. */}
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">
       {/* The app rail, as in Codex: surfaces and the Library as icons on the far left. */}
-      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(true); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen(true); }} />
+      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(true); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen((open) => mode !== "code" ? true : !open); }} />
       <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
       {/* OpenDesign embed. Mounted once so the Design tab switches instantly
           (the iframe stays loaded in the background) and never reloads. */}
@@ -989,7 +997,7 @@ export default function ClyraCodeWorkspace({
         failedSessionId={state.runState === "failed" ? state.sessionId : null}
         waitingSessionId={questionSet && state.sessionId ? state.sessionId : null}
         variant={narrow ? "drawer" : "rail"}
-        collapsed={narrow ? !drawerOpen : sidebarCollapsed}
+        collapsed={narrow ? !drawerOpen : sidebarCollapsed || componentPanelDocked}
         width={railWidth}
         onResizeWidth={updateRailWidth}
         macInset={macInset}
@@ -1033,6 +1041,16 @@ export default function ClyraCodeWorkspace({
             console.error("Could not open the project folder:", error);
           });
         }}
+      />
+
+      <ComponentLibraryPanel
+        open={componentLibraryOpen && mode === "code"}
+        docked={!narrow}
+        onClose={() => setComponentLibraryOpen(false)}
+        onReference={referenceComponent}
+        referencedIds={contexts.map(context => context.id)}
+        projectId={activeProject?.id ?? null}
+        projectName={activeProject?.displayName || activeProject?.name || null}
       />
 
       {/* -------- centre: agent conversation -------- */}
@@ -1133,7 +1151,7 @@ export default function ClyraCodeWorkspace({
                 </button>
               ) : null}
               {mode === "code" ? (
-                <button type="button" onClick={() => setComponentLibraryOpen(true)} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                <button type="button" onClick={() => setComponentLibraryOpen((open) => !open)} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
                   <Blocks className="h-[14px] w-[14px]" strokeWidth={1.7} />
                   <span className="hidden xl:inline">Components</span>
                 </button>
@@ -1211,7 +1229,7 @@ export default function ClyraCodeWorkspace({
                       onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                       onSubmit={submitFromWelcome}
                       onStop={cancelRun}
-                      placeholder={mode === "design" ? "Describe the screen to design…" : "Ask Clyra to build, fix, or change something…"}
+                      placeholder={mode === "design" ? "Describe the screen to design…" : componentHint ?? "Ask Clyra to build, fix, or change something…"}
                       welcome
                       brief={mode === "design" ? null : briefPlatform}
                       onBriefClear={() => setBriefPlatform(null)}
@@ -1323,6 +1341,7 @@ export default function ClyraCodeWorkspace({
                   onRemoveContext={(id) => setContexts((prev) => prev.filter((c) => c.id !== id))}
                   onSubmit={submitPrompt}
                   onStop={() => void cancelRun()}
+                  placeholder={componentHint ?? undefined}
                   question={questionSet}
                   questionSubmitting={questionSubmitting}
                   onQuestionSubmit={handleQuestionSubmit}
@@ -1377,13 +1396,7 @@ export default function ClyraCodeWorkspace({
       </motion.div>
       </div>
 
-      <ComponentLibraryPanel
-        open={componentLibraryOpen && mode === "code"}
-        onClose={() => setComponentLibraryOpen(false)}
-        onReference={referenceComponent}
-        referencedIds={contexts.map(context => context.id)}
-        projectId={activeProject?.id ?? null}
-      />
+
       <TemplateLibrary
         open={libraryOpen && mode === "code"}
         projectId={state.activeProjectId}

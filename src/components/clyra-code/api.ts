@@ -20,7 +20,8 @@ export type ComponentCatalogItem = {
   title: string;
   description: string;
   category: string;
-  previewUrl?: string;
+  previewUrl: string;
+  examples: Array<{ name: string; title: string; previewUrl: string }>;
   docsUrl?: string;
   registryId: string;
   origin?: string;
@@ -171,11 +172,11 @@ const enc = encodeURIComponent;
 export const api = {
   componentLibraryStatus: () =>
     json<{ sources: Array<{ id: "shadcn" | "21st"; available: boolean; detail: string }> }>("/api/clyra-code/components/status"),
-  componentCatalog: (filters: { q?: string; source?: "all" | "shadcn" | "21st" } = {}) => {
+  componentCatalog: (filters: { q?: string; category?: string } = {}) => {
     const query = new URLSearchParams();
     if (filters.q) query.set("q", filters.q);
-    if (filters.source) query.set("source", filters.source);
-    return json<{ items: ComponentCatalogItem[]; errors: Array<{ source: string; message: string }> }>("/api/clyra-code/components?" + query.toString());
+    if (filters.category) query.set("category", filters.category);
+    return json<{ items: ComponentCatalogItem[]; errors: Array<{ source: string; message: string }>; categories: Array<{ name: string; count: number }> }>("/api/clyra-code/components?" + query.toString());
   },
   componentDetails: (source: "shadcn" | "21st", name: string) =>
     json<ComponentDetails>("/api/clyra-code/components/" + enc(source) + "/" + enc(name)),
