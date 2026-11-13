@@ -11763,7 +11763,7 @@ body,
   box-sizing: border-box;
   flex: 0 1 auto;
   align-self: center;
-  width: min(1040px, calc(100vw - 32px), max(220px, calc(160dvh - 352px)));
+  width: min(1040px, calc(100vw - 32px), max(220px, calc(160dvh - 496px)));
   height: auto;
   min-height: 0;
   max-height: none;
