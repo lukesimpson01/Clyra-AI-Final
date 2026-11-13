@@ -45,13 +45,17 @@ export function verifyProjectAiToken(token: string, env: NodeJS.ProcessEnv = pro
 }
 
 /** Merge entries into `.env.local`, keeping every other line. Values are written verbatim and never logged. */
-export async function writeProjectEnv(filesDir: string, entries: Record<string, string>): Promise<void> {
+export async function writeProjectEnv(filesDir: string, entries: Record<string, string>, removeKeys: readonly string[] = []): Promise<void> {
   const target = path.join(filesDir, ".env.local");
   let existing = "";
   try { existing = await fs.readFile(target, "utf8"); } catch { existing = ""; }
   const lines = existing.split(/\r?\n/);
   const remaining = new Map(Object.entries(entries));
-  const out = lines.map((line) => {
+  const drop = new Set(removeKeys);
+  const out = lines.filter((line) => {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+    return !(match && drop.has(match[1]) && !remaining.has(match[1]));
+  }).map((line) => {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
     if (match && remaining.has(match[1])) {
       const value = remaining.get(match[1])!;

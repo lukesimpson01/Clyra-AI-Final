@@ -48,6 +48,21 @@ await test("the project env file gets the proxy address and token, merged with e
   }
 });
 
+await test("switching to the user's own key drops the Clyra proxy address so the key is never sent to it", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "clyra-ai-test-"));
+  try {
+    const token = createProjectAiToken("proj-1", env)!;
+    await writeProjectEnv(dir, { FOO: "bar", CLYRA_AI_BASE_URL: "http://localhost:3000/api/clyra-ai/v1", OPENAI_BASE_URL: "http://localhost:3000/api/clyra-ai/v1", OPENAI_API_BASE: "http://localhost:3000/api/clyra-ai/v1", OPENAI_API_KEY: token, CLYRA_AI_MODEL: "m" });
+    await writeProjectEnv(dir, { OPENAI_API_KEY: "sk-user-own-key-123456" }, ["CLYRA_AI_BASE_URL", "CLYRA_AI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_BASE"]);
+    const text = await readFile(path.join(dir, ".env.local"), "utf8");
+    assert.match(text, /^FOO=bar$/m);
+    assert.match(text, /^OPENAI_API_KEY=sk-user-own-key-123456$/m);
+    assert.ok(!/CLYRA_AI_|OPENAI_BASE_URL|OPENAI_API_BASE|clyra-ai/.test(text));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 await test("env files shown in the Files workbench are masked, including the user's own key and the model key", () => {
   const shown = sanitizeToolOutputForModel(`OPENAI_API_KEY=sk-user-own-key-123456\nCLYRA_AI_BASE_URL=http://localhost:3000/api/clyra-ai/v1\nNOTE=${SECRET_KEY}\n`, env);
   assert.ok(!shown.includes("sk-user-own-key-123456"));

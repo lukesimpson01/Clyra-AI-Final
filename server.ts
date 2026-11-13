@@ -5305,7 +5305,8 @@ Do NOT wrap the JSON in Markdown code blocks like \`\`\`json. Return JUST the ra
       if (apiKey.length < 8 || apiKey.length > 400 || /\s/.test(apiKey)) return res.status(400).json({ error: "That does not look like an API key." });
       const baseUrl = String(req.body?.baseUrl ?? "").trim();
       if (baseUrl && !/^https:\/\/[^\s]+$/i.test(baseUrl)) return res.status(400).json({ error: "The base URL must start with https://." });
-      await writeProjectEnv(filesDir, { OPENAI_API_KEY: apiKey, ...(baseUrl ? { OPENAI_BASE_URL: baseUrl, OPENAI_API_BASE: baseUrl } : {}) });
+      // Switching from Clyra AI: drop the proxy address so the user's key is never sent to it.
+      await writeProjectEnv(filesDir, { OPENAI_API_KEY: apiKey, ...(baseUrl ? { OPENAI_BASE_URL: baseUrl, OPENAI_API_BASE: baseUrl } : {}) }, baseUrl ? ["CLYRA_AI_BASE_URL", "CLYRA_AI_MODEL"] : ["CLYRA_AI_BASE_URL", "CLYRA_AI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_BASE"]);
       return res.json({ ok: true, mode: "own" });
     }
     res.status(400).json({ error: "mode must be clyra or own." });
