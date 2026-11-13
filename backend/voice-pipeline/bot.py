@@ -41,9 +41,10 @@ def _build_llm(config: VoiceConfig, test_mode: bool, llm_model: str | None) -> O
             base_url=f"http://127.0.0.1:{config.port}/echo/v1",
             model=ECHO_MODEL,
         )
+    # Always through this process's gateway, which falls back to a local model when the cloud one cannot answer.
     return OpenAILLMService(
-        api_key=config.llm_api_key,
-        base_url=config.llm_base_url,
+        api_key="gateway",
+        base_url=f"http://127.0.0.1:{config.port}/llm/v1",
         model=llm_model or config.llm_model,
     )
 

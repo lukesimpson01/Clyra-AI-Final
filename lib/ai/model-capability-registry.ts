@@ -21,6 +21,8 @@ export type ModelCapability =
   | "long-context"
   | "tool-calling";
 
+import { detectedLocalModel } from "./local-model";
+
 export type ProviderId = "deepseek" | "gemini" | "ollama";
 
 export interface ProviderConfig {
@@ -101,12 +103,12 @@ function geminiConfig(): ProviderConfig | null {
 }
 
 /**
- * Opt-in local model support. Requiring an explicit model name avoids a
- * misleading "local fallback" that fails because no model was ever pulled.
+ * Local model support. A model named in the environment wins; otherwise a running
+ * Ollama is probed for a small instruct model, so the fallback only exists when it can answer.
  * Ollama's native API needs no API key and keeps prompts on this machine.
  */
 function ollamaConfig(): ProviderConfig | null {
-  const model = String(process.env.CLYRA_OLLAMA_MODEL || process.env.CLYRA_LOCAL_MODEL || "").trim();
+  const model = String(process.env.CLYRA_OLLAMA_MODEL || process.env.CLYRA_LOCAL_MODEL || "").trim() || detectedLocalModel() || "";
   if (!model || process.env.CLYRA_LOCAL_LLM_ENABLED === "false") return null;
   return {
     provider: "ollama",

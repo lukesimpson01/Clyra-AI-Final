@@ -273,7 +273,7 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
   }, [active, onClose, open]);
 
   useEffect(() => {
-    if (!open && !warm) return;
+    if (!open) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true); setError("");
@@ -288,7 +288,7 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
         .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }, query ? 180 : 0);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [open, warm, query, category]);
+  }, [open, query, category]);
 
   useEffect(() => { if (open && !active) window.setTimeout(() => search.current?.focus({ preventScroll: true }), 380); }, [open, active]);
   useEffect(() => { if (!toast) return; const id = window.setTimeout(() => setToast(null), 4800); return () => window.clearTimeout(id); }, [toast]);
@@ -334,7 +334,7 @@ export function ComponentLibraryPanel({ open, onClose, onReference, referencedId
       animate={docked ? { width: open ? COMPONENT_PANEL_WIDTH : 0, x: 0, opacity: 1 } : { width: "min(100%, 440px)", x: open ? 0 : -28, opacity: open ? 1 : 0 }}
       transition={reduced ? { duration: 0 } : SLIDE}
       style={parked ? { visibility: "hidden" } : undefined}
-      className={cn("z-[60] h-full min-h-0 shrink-0 overflow-hidden bg-white", docked ? "relative" : "absolute inset-y-0 left-0 w-[min(100%,440px)] shadow-[8px_0_32px_-20px_rgba(20,24,32,0.4)]")}
+      className={cn("z-[60] h-full min-h-0 shrink-0 overflow-hidden bg-white [contain:layout_paint_style]", docked ? "relative" : "absolute inset-y-0 left-0 w-[min(100%,440px)] shadow-[8px_0_32px_-20px_rgba(20,24,32,0.4)]")}
     >
       {opened.current || warm ? (
         <div className={cn("relative flex h-full min-h-0 border-r border-black/[0.08] bg-white", docked ? "" : "w-full")} style={{ width: docked ? COMPONENT_PANEL_WIDTH : "100%" }}>

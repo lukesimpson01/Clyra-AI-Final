@@ -108,6 +108,7 @@ import { TaskGroupPlanner } from "./lib/vibe-coder/harness/task-group-planner";
 import { FileSpecPlanner } from "./lib/vibe-coder/harness/file-spec-planner";
 import { registerClineRoutes } from "./lib/cline/cline-routes";
 import { registerOpenCodeRoutes } from "./lib/opencode/opencode-routes";
+import { registerLibraryIconRoute } from "./lib/clyra-code/library/icons";
 import { registerComponentLibraryRoutes } from "./lib/clyra-code/offline-component-library";
 import { registerClyraCodePlatformRoutes } from "./lib/clyra-code/routes";
 import { registerVoiceRoutes, attachDictationWebSocket } from "./backend/voice";
@@ -2193,6 +2194,7 @@ async function startServer() {
   // Clyra Code's source library is separate from the agent loop.  Listing and
   // inspecting sources never execute upstream code; importing is the one
   // explicit write action and is restricted to isolated Clyra project folders.
+  registerLibraryIconRoute(app);
   app.get("/api/clyra-code/library", (req, res) => {
     const rawStatus = typeof req.query.status === "string" ? req.query.status : undefined;
     const allowedStatuses: TemplateStatus[] = ["unverified", "runnable-now", "requires-setup", "integration-sdk", "reference-only", "unavailable"];

@@ -638,7 +638,7 @@ export default function ClyraCodeWorkspace({
     const projectId = state.activeProjectId;
     if (!projectId || mode !== "code" || warmedRuntimes.current.has(projectId)) return;
     warmedRuntimes.current.add(projectId);
-    const timer = window.setTimeout(() => { void api.startRuntime(projectId).catch(() => warmedRuntimes.current.delete(projectId)); }, 250);
+    const timer = window.setTimeout(() => { if (!document.hidden) void api.startRuntime(projectId).catch(() => warmedRuntimes.current.delete(projectId)); }, 1500);
     return () => window.clearTimeout(timer);
   }, [mode, state.activeProjectId]);
 
@@ -975,7 +975,7 @@ export default function ClyraCodeWorkspace({
       {/* The rail and the workspace sit side by side; the terminal docks under both. */}
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">
       {/* The app rail, as in Codex: surfaces and the Library as icons on the far left. */}
-      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(true); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen((open) => mode !== "code" ? true : !open); }} />
+      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen(false); setLibraryOpen((open) => mode !== "code" ? true : !open); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(false); setComponentLibraryOpen((open) => mode !== "code" ? true : !open); }} />
       <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
       {/* OpenDesign embed. Mounted once so the Design tab switches instantly
           (the iframe stays loaded in the background) and never reloads. */}
@@ -1164,7 +1164,7 @@ export default function ClyraCodeWorkspace({
                 </button>
               ) : null}
               {mode === "code" ? (
-                <button type="button" onClick={() => setComponentLibraryOpen((open) => !open)} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
+                <button type="button" onClick={() => { setLibraryOpen(false); setComponentLibraryOpen((open) => !open); }} title="Browse components from shadcn and 21st.dev" className="cc-thread-chip flex shrink-0 items-center gap-1.5">
                   <Blocks className="h-[14px] w-[14px]" strokeWidth={1.7} />
                   <span className="hidden xl:inline">Components</span>
                 </button>

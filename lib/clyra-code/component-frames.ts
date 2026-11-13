@@ -260,7 +260,7 @@ export function frameHtml(target: FrameTarget): Promise<string> {
 }
 
 let warming = false;
-/** Builds every preview in the background (two at a time) so scrolling the library never waits on a build. */
+/** Builds every preview in the background (one at a time) so scrolling the library never waits on a build. */
 export function warmFrames(targets: FrameTarget[]): void {
   if (warming) return;
   warming = true;
@@ -269,8 +269,9 @@ export function warmFrames(targets: FrameTarget[]): void {
     while (queue.length) {
       const target = queue.shift()!;
       await frameHtml(target).catch(() => undefined);
-      await new Promise((resolve) => setImmediate(resolve));
+      // Gentle on the machine: one build at a time with a breather, so the app and the agent stay responsive.
+      await new Promise((resolve) => setTimeout(resolve, 120));
     }
   };
-  void Promise.all([worker(), worker()]).finally(() => { warming = false; });
+  void worker().finally(() => { warming = false; });
 }

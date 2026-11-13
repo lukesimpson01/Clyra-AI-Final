@@ -179,7 +179,7 @@ function IconWash({ entry, opacity = 0.5 }: { entry: TemplateManifest; opacity?:
   const [failed, setFailed] = useState(true);
   if (failed) return null;
   return (
-    <img src={`https://github.com/${repoSlug(entry).split("/")[0]}.png?size=40`} alt="" aria-hidden loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
+    <img src={`/api/clyra-code/library/icon/${entry.id}`} alt="" aria-hidden loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
       className="pointer-events-none absolute left-1/2 top-1/2 h-[140%] w-[140%] -translate-x-1/2 -translate-y-1/2 object-cover blur-[34px] saturate-[1.35]" style={{ opacity }} />
   );
 }
@@ -245,7 +245,7 @@ function AppIcon({ entry, size = 44, round = false, lifted = false }: { entry: T
       style={{ width: size, height: size, background: meta.tint, color: meta.accent }}
     >
       <Icon className="h-[46%] w-[46%]" />
-      {failed ? null : <img src={`https://github.com/${repoSlug(entry).split("/")[0]}.png?size=${Math.min(460, Math.max(96, size * 2))}`} alt="" loading="lazy" referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={cn("absolute inset-0 h-full w-full bg-white object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")} />}
+      {failed ? null : <img src={`/api/clyra-code/library/icon/${entry.id}`} alt="" loading="lazy" referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={cn("absolute inset-0 h-full w-full bg-white object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")} />}
     </span>
   );
 }

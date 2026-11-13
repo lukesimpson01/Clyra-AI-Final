@@ -95,6 +95,15 @@ export const defaultModelCall: ModelCall = async ({ messages, tools, model, sign
       if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
     }
     if (!response) continue;
+    if (response && !response.ok && !isDeepseek && response.status === 400) {
+      /* Small local models often have no tool support: answer in plain chat instead of failing. */
+      const text = await response.clone().text().catch(() => "");
+      if (/does not support tools/i.test(text)) {
+        const { tools: _unused, tool_choice: _choice, ...plain } = body as Record<string, unknown>;
+        response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(plain), signal }).catch((error) => { lastError = error; return null; });
+        if (!response) continue;
+      }
+    }
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       if (response.status === 402 || CREDIT_PATTERN.test(detail)) { sawCredits += 1; lastError = new CreditsError("credits"); continue; }

@@ -3,9 +3,9 @@ import { beamDurationSeconds, roundedRectPerimeter } from "./beamGeometry";
 
 /** Comet particles trailing the head: [distance behind the head as a fraction of the lap, opacity, size px]. */
 const TRAIL: ReadonlyArray<readonly [number, number, number]> = [
-  [0, 1, 24], [0.008, 0.95, 24], [0.018, 0.75, 22], [0.03, 0.55, 20], [0.044, 0.34, 18], [0.06, 0.16, 16],
+  [0, 1, 18], [0.006, 0.92, 18], [0.013, 0.8, 17], [0.021, 0.66, 16], [0.03, 0.52, 15],
+  [0.04, 0.4, 14], [0.051, 0.29, 13], [0.063, 0.19, 12], [0.076, 0.1, 11], [0.09, 0.04, 10],
 ];
-const HALO: ReadonlyArray<readonly [number, number, number]> = [[0, 0.5, 64], [0.02, 0.32, 56], [0.045, 0.16, 48]];
 
 /**
  * A blue comet that travels the composer border at a constant speed. Each
@@ -48,11 +48,6 @@ export function PerimeterBeam({
       {children}
       {active ? (
         <>
-          <span aria-hidden className="pbeam__halo">
-            {HALO.map(([behind, opacity, size]) => (
-              <i key={behind} style={{ "--pb-behind": behind, "--pb-o": opacity, "--pb-s": `${size}px` } as CSSProperties} />
-            ))}
-          </span>
           <span aria-hidden className="pbeam__ring">
             {TRAIL.map(([behind, opacity, size]) => (
               <i key={behind} style={{ "--pb-behind": behind, "--pb-o": opacity, "--pb-s": `${size}px` } as CSSProperties} />
