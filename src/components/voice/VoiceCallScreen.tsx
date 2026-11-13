@@ -790,7 +790,7 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
       setManagedFrame(null);
       return;
     }
-    const expected = (resolved.subtitle || task.detail || "").trim().toLowerCase().replace(/\\s+/g, " ");
+    const expected = (resolved.subtitle || task.detail || "").trim().toLowerCase().replace(/\s+/g, " ");
     if (!expected) return;
     const controller = new AbortController();
     let disposed = false;
@@ -804,7 +804,7 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
         if (!response.ok) return;
         const payload = await response.json() as { session?: { task?: string; status?: string; updatedAt?: string } | null };
         const session = payload.session;
-        const actual = (session?.task || "").trim().toLowerCase().replace(/\\s+/g, " ");
+        const actual = (session?.task || "").trim().toLowerCase().replace(/\s+/g, " ");
         const live = ["planning", "observing", "executing", "verifying", "recovering", "paused", "waiting_for_user"].includes(session?.status || "");
         const recent = session?.updatedAt && Date.now() - new Date(session.updatedAt).getTime() < 120_000;
         if (!live || !recent || actual !== expected) {
