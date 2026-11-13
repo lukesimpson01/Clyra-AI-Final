@@ -43,7 +43,7 @@ test("source library has featured carousel arrows, real previews and honest miss
   await expect(dialog.getByRole("heading", { name: "Discover", exact: true })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Templates with previews" })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Explore source projects" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "View Astrofy details" }).first()).toBeVisible();
+  await expect(dialog.getByRole("tab", { name: "Show Astrofy" })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "View LibreChat details" }).first()).toBeVisible();
   // Screenshotless records are text-and-icon rows; the home page must never
   // be 47 giant repeated empty grey image panels.
@@ -115,7 +115,7 @@ test("Landing Pages has 75 real preview cards and 17 business-type filters", asy
   await expect(dialog.getByText("8 SaaS & AI designs")).toBeVisible();
 
   await dialog.getByRole("button", { name: "View KORVA — AI Studio details" }).first().click();
-  await expect(dialog.getByRole("heading", { name: "KORVA — AI Studio" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "KORVA — AI Studio", exact: true })).toBeVisible();
   await expect(dialog.getByRole("link", { name: "Live demo" })).toHaveAttribute("href", "https://uiuxlabz.github.io/ai-studio-html-template/");
   await expect(dialog.getByText(/Original homepage preview from uiuxlabz\/ai-studio-html-template/)).toBeVisible();
   await expect(dialog.locator('img[src^="/library-shots/landing-ai-studio"]')).toHaveCount(4);
@@ -153,7 +153,7 @@ test("Featured Apps highlights OpenCluely, OpenHands, OpenFilm and Adobe alterna
   await expect(featured.getByRole("button", { name: "Get", exact: true })).toHaveCount(9);
   await featured.getByRole("button", { name: "View OpenFilm details" }).click();
   await expect(dialog.getByRole("heading", { name: "OpenFilm", exact: true })).toBeVisible();
-  await expect(dialog.getByText(/Requires Node 22, pnpm, FFmpeg/)).toBeVisible();
+  await expect(dialog.getByText(/Requires Node 22, pnpm, FFmpeg/).first()).toBeVisible();
   await expect(dialog.locator('img[src^="/library-shots/app-openfilm-source-"]')).toHaveCount(3);
   await expect(dialog.getByText("source downloaded", { exact: false })).toHaveCount(0);
 });

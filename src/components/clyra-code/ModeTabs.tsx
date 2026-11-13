@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { LibraryBig, PenTool, SquareTerminal } from "lucide-react";
+import { Blocks, LibraryBig, PenTool, SquareTerminal } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { AGENT_EASE } from "./motion";
 
@@ -59,7 +59,7 @@ export function ModeTabs({ mode, onChange }: { mode: WorkspaceMode; onChange: (m
 /** Width of the app rail, which the workspace subtracts when it sizes its panes. */
 export const APP_RAIL_WIDTH = 52;
 
-export function AppRail({ mode, onChange, onOpenLibrary }: { mode: WorkspaceMode; onChange: (mode: WorkspaceMode) => void; onOpenLibrary: () => void }) {
+export function AppRail({ mode, onChange, onOpenLibrary, onOpenComponents }: { mode: WorkspaceMode; onChange: (mode: WorkspaceMode) => void; onOpenLibrary: () => void; onOpenComponents?: () => void }) {
   const item = (label: string, icon: ReactNode, selected: boolean, onClick: () => void) => (
     <button
       key={label}
@@ -82,6 +82,7 @@ export function AppRail({ mode, onChange, onOpenLibrary }: { mode: WorkspaceMode
       {item("Design", <PenTool className="h-[17px] w-[17px]" strokeWidth={1.7} />, mode === "design", () => onChange("design"))}
       <span className="my-1 h-px w-5 bg-black/[0.07]" aria-hidden />
       {item("Library", <LibraryBig className="h-[17px] w-[17px]" strokeWidth={1.7} />, false, onOpenLibrary)}
+      {onOpenComponents ? item("Components", <Blocks className="h-[17px] w-[17px]" strokeWidth={1.7} />, false, onOpenComponents) : null}
     </nav>
   );
 }

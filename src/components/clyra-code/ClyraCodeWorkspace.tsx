@@ -954,7 +954,7 @@ export default function ClyraCodeWorkspace({
       {/* The rail and the workspace sit side by side; the terminal docks under both. */}
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">
       {/* The app rail, as in Codex: surfaces and the Library as icons on the far left. */}
-      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(true); }} />
+      <AppRail mode={mode} onChange={changeMode} onOpenLibrary={() => { if (mode !== "code") changeMode("code"); setLibraryOpen(true); }} onOpenComponents={() => { if (mode !== "code") changeMode("code"); setComponentLibraryOpen(true); }} />
       <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
       {/* OpenDesign embed. Mounted once so the Design tab switches instantly
           (the iframe stays loaded in the background) and never reloads. */}
