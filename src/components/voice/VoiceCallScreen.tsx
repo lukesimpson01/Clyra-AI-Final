@@ -695,19 +695,39 @@ function ResultContent({ content }: { content: unknown }) {
 /** Reflect ONLY timestamped, observed browser input in the voice-call preview. */
 function VoiceBrowserPreview({ preview, active }: { preview: string; active: boolean }) {
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
+  // The captured page may not match the window aspect ratio. Cursor
+  // coordinates must follow the *painted image*, not its letterboxed element.
+  const [size, setSize] = useState({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
   const [pointer, setPointer] = useState<{
     x: number; y: number; kind?: string; at?: number;
   } | null>(null);
   const [viewport, setViewport] = useState({ width: 1440, height: 900 });
+  const measurePreview = () => {
+    const image = imageRef.current;
+    if (!image) return;
+    const width = image.clientWidth;
+    const height = image.clientHeight;
+    const naturalWidth = image.naturalWidth || 1440;
+    const naturalHeight = image.naturalHeight || 900;
+    const scale = Math.min(width / naturalWidth, height / naturalHeight);
+    const paintedWidth = naturalWidth * scale;
+    const paintedHeight = naturalHeight * scale;
+    setSize({
+      width: paintedWidth,
+      height: paintedHeight,
+      offsetX: (width - paintedWidth) / 2,
+      offsetY: (height - paintedHeight) / 2,
+    });
+  };
   useEffect(() => {
     const image = imageRef.current;
     if (!image) return;
-    const measure = () => setSize({ width: image.clientWidth, height: image.clientHeight });
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(measurePreview);
     observer.observe(image);
-    measure();
+    measurePreview();
     return () => observer.disconnect();
+    // The preview URL changes when the actual browser screenshot updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview]);
   useEffect(() => {
     if (!active) { setPointer(null); return; }
@@ -734,12 +754,12 @@ function VoiceBrowserPreview({ preview, active }: { preview: string; active: boo
     pointer.x >= 0 && pointer.y >= 0 &&
     pointer.x <= viewport.width && pointer.y <= viewport.height;
   return (
-    <div className="relative overflow-hidden">
-      <img ref={imageRef} src={preview} alt="Live task preview" className="clyra-voice-activity__preview" />
+    <div className="clyra-voice-browser-viewport relative overflow-hidden">
+      <img ref={imageRef} src={preview} alt="Live browser page" className="clyra-voice-activity__preview" onLoad={measurePreview} />
       {active && fresh && pointer && size.width > 0 && size.height > 0 ? (
         <AgentCursor
-          x={pointer.x * size.width / Math.max(1, viewport.width)}
-          y={pointer.y * size.height / Math.max(1, viewport.height)}
+          x={size.offsetX + pointer.x * size.width / Math.max(1, viewport.width)}
+          y={size.offsetY + pointer.y * size.height / Math.max(1, viewport.height)}
           isClicking={pointer.kind === "click" || pointer.kind === "double_click" || pointer.kind === "right_click"}
           isActive
         />
@@ -761,6 +781,9 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
     title: task.kind === "browser" ? "Web research" : "Clyra task",
     subtitle: task.detail,
   };
+  // No duplicated URL/header/status UI over a live webpage: the agent's
+  // controls remain available in the separate, existing call control bar.
+  const showWebsiteOnly = resolved.kind === "browser" && Boolean(resolved.preview);
   useEffect(() => {
     if (!resolved.expanded) return;
     const onEscape = (event: KeyboardEvent) => {
@@ -780,14 +803,18 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
       exit={{ opacity: 0, y: reduced ? 0 : 8, scale: reduced ? 1 : 0.985 }}
       transition={{ duration: reduced ? 0.1 : 0.3, ease: [0.22, 1, 0.36, 1] }}
       className={`clyra-voice-activity${resolved.expanded ? " clyra-voice-activity--expanded" : ""}${controlling ? " clyra-voice-activity--controlled" : ""}`}
+      data-surface-kind={resolved.kind}
+      data-has-preview={Boolean(resolved.preview)}
       aria-label={`${resolved.title} activity surface`}
     >
-      <header className="clyra-voice-activity__header">
-        <div className="clyra-voice-activity__identity"><SurfaceIcon kind={resolved.kind} /><div><h2>{resolved.title}</h2><p>{resolved.subtitle || task.label}</p></div></div>
-        <button type="button" className="clyra-voice-activity__expand" aria-label={resolved.expanded ? "Exit full screen" : "Full screen"} onClick={onToggleExpanded}>
-          {resolved.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-        </button>
-      </header>
+      {!showWebsiteOnly ? (
+        <header className="clyra-voice-activity__header">
+          <div className="clyra-voice-activity__identity"><SurfaceIcon kind={resolved.kind} /><div><h2>{resolved.title}</h2><p>{resolved.subtitle || task.label}</p></div></div>
+          <button type="button" className="clyra-voice-activity__expand" aria-label={resolved.expanded ? "Exit full screen" : "Full screen"} onClick={onToggleExpanded}>
+            {resolved.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+          </button>
+        </header>
+      ) : null}
       <div className="clyra-voice-activity__body">
         {resolved.preview ? <VoiceBrowserPreview preview={resolved.preview} active={controlling && task.kind === "browser"} /> : null}
         {!resolved.preview && task.steps?.length ? (
@@ -795,8 +822,12 @@ function VoiceActivitySurface({ task, surface, controlling, onToggleExpanded }: 
             {task.steps.map((step) => <li key={step.id} data-status={step.status}><span aria-hidden /><p>{step.label}</p></li>)}
           </ol>
         ) : null}
-        <AnimatePresence mode="wait"><motion.div key={task.label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="clyra-voice-activity__status">{task.label}</motion.div></AnimatePresence>
-        <ResultContent content={resolved.content} />
+        {!showWebsiteOnly ? (
+          <>
+            <AnimatePresence mode="wait"><motion.div key={task.label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="clyra-voice-activity__status">{task.label}</motion.div></AnimatePresence>
+            <ResultContent content={resolved.content} />
+          </>
+        ) : null}
       </div>
     </motion.section>
   );
