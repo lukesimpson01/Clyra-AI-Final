@@ -11755,3 +11755,188 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .clyra-voice-presence::after { transition: none; }
 }
+
+/* Voice call media layout: natural laptop framing for browser/email work;
+   immersive edge-to-edge camera feed. This is intentionally scoped to the
+   live VoiceCallScreen, not the separate Vibe Coder or Mail apps. */
+.clyra-voice-call__main--activity .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(1040px, calc(100vw - 32px), max(220px, calc(160dvh - 352px)));
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  overflow: hidden;
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"] {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 12px 42px rgba(20, 22, 27, .08);
+}
+.clyra-voice-activity[data-surface-kind="browser"][data-has-preview="true"] .clyra-voice-activity__body {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+}
+.clyra-voice-browser-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #fff;
+}
+.clyra-voice-browser-viewport .clyra-voice-activity__preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* no crop: preserves real website click coordinates */
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="email"] .clyra-voice-activity__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.clyra-voice-call__main--activity .clyra-voice-activity[data-surface-kind="email"] .clyra-voice-activity__preview {
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Expanded browser/email surfaces fill their available area intentionally,
+   rather than retaining the compact laptop card's aspect constraint. */
+.clyra-voice-call .clyra-voice-activity--expanded:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #10141a;
+  box-shadow: none;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport video,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__viewport canvas {
+  object-fit: cover;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__header {
+  position: absolute;
+  z-index: 5;
+  top: 76px;
+  right: clamp(12px, 3vw, 36px);
+  left: auto;
+  min-height: 42px;
+  width: auto;
+  border-radius: 13px;
+  padding: 5px 7px 5px 13px;
+  gap: 10px;
+  background: rgba(13, 19, 29, .58);
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__title {
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__actions button {
+  color: rgba(255, 255, 255, .9);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__actions button:is(:hover, [data-active="true"]) {
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__privacy {
+  position: absolute;
+  z-index: 3;
+  bottom: 10px;
+  left: clamp(12px, 2vw, 24px);
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 6px 10px;
+  margin: 0;
+  border-radius: 9px;
+  background: rgba(13, 19, 29, .46);
+  color: rgba(255, 255, 255, .84);
+  text-align: left;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__header,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__footer {
+  z-index: 12;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-mode-readout,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__header time {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .32);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button {
+  color: #fff;
+  background: rgba(13, 19, 29, .4);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button:hover,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-call__media-actions button[data-active="true"] {
+  color: #fff;
+  background: rgba(30, 111, 255, .64);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-side-control__label,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-type-label {
+  color: #fff;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, .35);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-round-btn:not(.clyra-voice-round-btn--end),
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph__btn {
+  color: #fff;
+  background: rgba(13, 19, 29, .48) !important;
+  border-color: rgba(255, 255, 255, .08);
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-morph__btn {
+  background: rgba(255, 255, 255, .94) !important;
+}
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-composer-v2__input,
+.clyra-voice-call[data-media-mode="camera"] .clyra-voice-morph--open .clyra-voice-composer-v2__close {
+  color: #1a1a19;
+}
+@media (max-width: 680px) {
+  .clyra-voice-call__main--activity .clyra-voice-activity:is([data-surface-kind="browser"], [data-surface-kind="email"]) {
+    width: min(calc(100vw - 24px), max(220px, calc(160dvh - 324px)));
+    border-radius: 14px;
+  }
+  .clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__header {
+    top: 91px;
+    right: 10px;
+    max-width: calc(100vw - 20px);
+  }
+  .clyra-voice-call[data-media-mode="camera"] .clyra-voice-media__privacy {
+    bottom: 6px;
+    max-width: min(280px, calc(100vw - 20px));
+    font-size: 9px;
+  }
+}
