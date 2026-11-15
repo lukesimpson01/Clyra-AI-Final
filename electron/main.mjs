@@ -830,7 +830,7 @@ function startNotchMediaLink() {
       if (!status?.connected) { bridge.send({ t: "spotify", connected: false }); return; }
       bridge.send({ t: "spotify", connected: true, state: summary(await spotifyManager.getPlaybackState()) });
     } catch {
-      bridge.send({ t: "spotify", connected: false });
+      // a failed poll says nothing about whether Spotify is connected; the Notch keeps the last state meanwhile
     }
   };
   bridge.onMessage = async (message) => {

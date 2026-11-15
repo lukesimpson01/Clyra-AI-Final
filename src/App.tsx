@@ -9,6 +9,8 @@ import { AgentTodo, ChatAgentRunView } from "./components/chat/ChatAgentRun";
 import { ChatMapCard } from "./components/chat/ChatMapCard";
 import { ChatCodeRun } from "./components/chat/ChatCodeRun";
 import { useChatSync } from "./hooks/useChatSync";
+import { collectImages, parseContentBlocks } from "./lib/contentBlocks";
+import { InlineImageBlock } from "./components/chat/InlineImages";
 import { shouldUseBrowserUse, shouldUseChatAgent, streamChatAgent, type ChatAgentRun } from "./lib/chatAgentClient";
 import { ChatBrowserRunView, type ChatBrowserRunState } from "./components/chat/ChatBrowserRun";
 import { reduceRunItems, type RunEvent, type RunItem } from "./lib/browserRunFeed";
@@ -1909,6 +1911,12 @@ export const AnimatedMessage = ({
     ? <GmailEmailResults results={gmailResults} onRefresh={onGmailRefresh} onSummarize={onGmailSummarize} onGenerateReply={onGmailGenerateReply} onSaveReply={onGmailSaveReply} onSendReply={onGmailSendReply} onModify={onGmailModify} onThread={onGmailThread} onFollowUp={onGmailFollowUp} onCancelFollowUp={onGmailCancelFollowUp} />
     : null;
 
+  /* pictures the agent found are placed inside the answer, where it wrote them, not appended after it */
+  const runImages = useMemo(() => collectImages(agentRun?.steps), [agentRun]);
+  const inlineBlocks = useMemo(
+    () => (!isVibe && runImages.length && showAnswer ? parseContentBlocks(content, runImages, { streaming: !!isStreaming }) : null),
+    [isVibe, runImages, showAnswer, content, isStreaming],
+  );
   const answerNode = !showAnswer ? null : isVibe ? (
     <div className="clyra-ai-vibe" data-invert-ignore>
       <VibeAgentMessageBody
@@ -1953,14 +1961,20 @@ export const AnimatedMessage = ({
     </div>
   ) : (
     <>
-      <AssistantResponse
-        enter={responseEnter}
-        streaming={!!isStreaming}
-        error={softFailure}
-        delay={answerDelay}
-      >
-        {bodyContent(content)}
-      </AssistantResponse>
+      {inlineBlocks ? inlineBlocks.map((block, index) => block.type === "text" ? (
+        <AssistantResponse key={`t${index}`} enter={responseEnter} streaming={!!isStreaming && index === inlineBlocks.length - 1} error={softFailure} delay={index === 0 ? answerDelay : 0}>
+          {bodyContent(block.text)}
+        </AssistantResponse>
+      ) : <InlineImageBlock key={`b${index}`} block={block} />) : (
+        <AssistantResponse
+          enter={responseEnter}
+          streaming={!!isStreaming}
+          error={softFailure}
+          delay={answerDelay}
+        >
+          {bodyContent(content)}
+        </AssistantResponse>
+      )}
       {gmailCard}
       {workspaceResult ? <WorkspaceResultCard result={workspaceResult} /> : null}
     </>
@@ -2025,7 +2039,7 @@ export const AnimatedMessage = ({
       ) : null}
       {hasAgentRun ? (
         <>
-          <ChatAgentRunView run={agentRun!} live={live} showTodo={false} onOpenNote={(id) => window.location.assign(`/notes#${encodeURIComponent(id)}`)} />
+          <ChatAgentRunView run={agentRun!} live={live} showTodo={false} hideImages={runImages.length > 0} onOpenNote={(id) => window.location.assign(`/notes#${encodeURIComponent(id)}`)} />
           {/* between steps the model is composing its next move: that is real thinking, and it says so */}
           {live && content.length === 0 && agentRun!.steps.every((step) => step.state !== "running") ? <StatusLine key="agent-thinking" label="Thinking" icon={<Brain />} /> : null}
         </>

@@ -58,8 +58,9 @@ enum Metrics {
         if model.flowActive { return 336 }
         if model.banner != nil { return 338 }
         if model.working != nil || model.doneMessage != nil { return 392 }
-        if model.hasPlayingMedia { return model.secondaryActivities.isEmpty ? 382 : 522 }
-        return notchWidth + 2 * ear + (model.hasActivity ? 2 * wing : 0)
+        // Playing music keeps the notch exactly as wide as when nothing plays; only a running timer or alarm adds wings.
+        let wings = !model.secondaryActivities.isEmpty
+        return notchWidth + 2 * ear + (wings ? 2 * wing : 0)
     }
 
     static func panelHeight(_ m: NotchModel) -> CGFloat {
@@ -200,11 +201,15 @@ struct CollapsedContent: View {
                 }
                 .frame(maxWidth: 360)
             } else if let track = model.media.state, model.hasPlayingMedia {
-                HStack(spacing: 8) {
-                    PlayerIcon(track: track, size: 18)
-                    Text(track.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    PlaybackBars(reduceMotion: model.reduceMotion, meter: model.audioMeter)
-                }.frame(maxWidth: 280)
+                // Centred and fixed: the player's icon, the track's name, and a wave that follows the real loudness.
+                HStack(spacing: 7) {
+                    PlayerIcon(track: track, size: 16)
+                    Text(track.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    LevelBars(meter: model.audioMeter, reduceMotion: model.reduceMotion)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 6)
                 HStack {
                     if let left = model.secondaryActivities.dropFirst().first { indicator(left) }
                     Spacer()
@@ -530,25 +535,39 @@ struct WelcomeView: View {
     }
 }
 
+/// Clyra's welcome pill: grey wash on hover, a lift and slight grow on a long spring, the icon lifts and darkens, press settles it.
 struct ShortcutChip: View {
     let symbol: String
     let title: String
     let action: () -> Void
     @State private var hover = false
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 11, weight: .regular))
-                Text(title).font(.system(size: 12.5, weight: .medium))
+            HStack(spacing: 7) {
+                Image(systemName: symbol).font(.system(size: 12, weight: .regular))
+                    .offset(y: hover ? -1 : 0).scaleEffect(hover ? 1.06 : 1)
+                    .foregroundStyle(.white.opacity(hover ? 1 : 0.62))
+                Text(title).font(.system(size: 13, weight: .medium)).tracking(-0.1)
+                    .foregroundStyle(.white.opacity(hover ? 1 : 0.82))
             }
-            .foregroundStyle(.white.opacity(hover ? 1 : 0.78))
-            .padding(.horizontal, 12).frame(height: 28)
-            .background(Capsule().fill(Color.white.opacity(hover ? 0.1 : 0)))
+            .padding(.leading, 11).padding(.trailing, 13).frame(height: 32)
+            .background(Capsule().fill(Color.white.opacity(hover ? 0.08 : 0)))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PillPress())
         .onHover { hover = $0 }
-        .animation(.easeOut(duration: 0.15), value: hover)
+        .scaleEffect(hover ? 1.035 : 1)
+        .offset(y: hover ? -2 : 0)
+        .animation(.spring(response: 0.45, dampingFraction: 0.78), value: hover)
+    }
+}
+
+struct PillPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.spring(response: 0.16, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -1370,6 +1389,8 @@ struct MediaView: View {
     @ObservedObject var model: NotchModel
     var inline = false
     @State private var draftPosition: Double?
+    @State private var dragging = false
+    @State private var scrubHover = false
 
     var body: some View {
         VStack(spacing: 9) {
@@ -1404,6 +1425,15 @@ struct MediaView: View {
                     }
                     IconButton(symbol: "laptopcomputer", size: 17, label: "Open player") { model.media.openSource() }
                 }
+                if !model.audioMeter.status.isEmpty {
+                    // the live wave needs the system's permission to hear the player; say so and take them there
+                    Button {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+                    } label: {
+                        HStack(spacing: 5) { Image(systemName: "waveform"); Text("Allow audio access for the live wave") }
+                            .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                    }.buttonStyle(.plain)
+                }
             } else {
                 Text("Nothing playing").foregroundStyle(.secondary)
             }
@@ -1411,32 +1441,45 @@ struct MediaView: View {
     }
 
     private func scrubber(_ track: MediaState, duration: Double) -> some View {
-        TimelineView(.animation(minimumInterval: 0.05, paused: track.status != .playing || model.reduceMotion)) { frame in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: (track.status != .playing && !dragging) || model.reduceMotion)) { frame in
             let position = min(duration, max(0, draftPosition ?? track.position(at: model.reduceMotion ? model.now : frame.date) ?? 0))
             HStack(spacing: 7) {
                 Text(TimerEngine.clock(floor(position))).frame(minWidth: 27)
                 GeometryReader { geo in
                     let width = max(1, geo.size.width)
-                    Capsule().fill(.white.opacity(0.16)).frame(height: 5)
-                        .overlay(alignment: .leading) {
-                            Capsule().fill(Color(red: 0.42, green: 0.61, blue: 0.67))
-                                .frame(width: width * position / duration, height: 5)
-                        }
-                        .frame(height: 14)
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                    let fraction = CGFloat(position / duration)
+                    let active = dragging || scrubHover
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(active ? 0.22 : 0.16)).frame(height: active ? 6 : 5)
+                        Capsule().fill(Color(red: 0.42, green: 0.61, blue: 0.67)).frame(width: max(0, width * fraction), height: active ? 6 : 5)
+                        // the dot: easy to grab, grows under the pointer, follows the finger exactly while dragging
+                        Circle().fill(.white)
+                            .frame(width: active ? 13 : 9, height: active ? 13 : 9)
+                            .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                            .offset(x: width * fraction - (active ? 6.5 : 4.5))
+                    }
+                    .frame(height: 22)
+                    .contentShape(Rectangle())
+                    .onHover { scrubHover = $0 }
+                    .animation(dragging ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: active)
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            dragging = true
                             draftPosition = min(1, max(0, drag.location.x / width)) * duration
-                        }.onEnded { drag in
-                            model.media.seek(min(1, max(0, drag.location.x / width)) * duration, in: track)
-                            draftPosition = nil
-                        })
-                        .accessibilityLabel("Playback position")
-                        .accessibilityValue(TimerEngine.clock(position))
-                        .accessibilityAdjustableAction {
-                            if $0 == .increment { model.media.seek(position + 5, in: track) }
-                            if $0 == .decrement { model.media.seek(position - 5, in: track) }
                         }
-                }.frame(height: 14)
+                        .onEnded { drag in
+                            model.media.seek(min(1, max(0, drag.location.x / width)) * duration, in: track)
+                            dragging = false
+                            // hold the dragged position until the player reports it, so the dot never snaps back
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if !dragging { draftPosition = nil } }
+                        })
+                    .accessibilityLabel("Playback position")
+                    .accessibilityValue(TimerEngine.clock(position))
+                    .accessibilityAdjustableAction {
+                        if $0 == .increment { model.media.seek(position + 5, in: track) }
+                        if $0 == .decrement { model.media.seek(position - 5, in: track) }
+                    }
+                }.frame(height: 22)
                 Text("-" + TimerEngine.clock(duration - position)).frame(minWidth: 30)
             }.font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
         }

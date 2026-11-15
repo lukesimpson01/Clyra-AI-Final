@@ -45,7 +45,7 @@ final class NotchModel: ObservableObject {
     let audioMeter = AudioMeter()
     func updateAudioMeter() {
         let bundle = hasPlayingMedia ? media.state?.bundleID : nil
-        audioMeter.update(bundle: bundle, enabled: UserDefaults.standard.bool(forKey: "notchLiveAudioBars") && !reduceMotion)
+        audioMeter.update(bundle: bundle, enabled: (UserDefaults.standard.object(forKey: "notchLiveAudioBars") as? Bool ?? true) && !reduceMotion)
     }
     let bluetoothPanel = BluetoothPanelModel()
 
@@ -114,8 +114,8 @@ final class NotchModel: ObservableObject {
         media.onChange = { [weak self] in
             guard let self else { return }
             if self.followActivity, self.expanded, self.ringingAlarm == nil, !self.chatFocused {
-                let nextView = self.activityView ?? .home
-                if self.view != nextView { self.view = nextView }
+                // follow media that starts playing; never bounce the page back when it pauses or a poll drops out
+                if let nextView = self.activityView, self.view != nextView { self.view = nextView }
             }
             self.activityChanged()
             self.updateAudioMeter()

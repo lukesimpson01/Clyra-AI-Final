@@ -501,17 +501,20 @@ const AI_PRESENCE_HTML = `<!doctype html>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:100%;height:100%;background:transparent;overflow:hidden;pointer-events:none;user-select:none;-webkit-user-select:none}
   #cursor{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;will-change:left,top;transition:opacity 100ms ease}
-  #arrow{position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;transform-origin:4px 3px;filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18))}
-  #pulse{position:fixed;left:0;top:0;width:32px;height:32px;border:2px solid rgba(30,111,255,.6);border-radius:50%;transform:translate(-50%,-50%) scale(.2);opacity:0;pointer-events:none}
-  #pulse.is-click{animation:impact 390ms cubic-bezier(.16,1,.3,1)}
-  @keyframes impact{0%{opacity:.82;transform:translate(-50%,-50%) scale(.2)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.45)}}
-  @keyframes press{0%,100%{transform:scale(1)}35%{transform:scale(.88) translate(1px,1px)}}
-  #arrow.is-press{animation:press 250ms cubic-bezier(.22,1,.36,1)}
+  #arrow{position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;transform-origin:4px 3px;filter:drop-shadow(0 0 2px rgba(30,111,255,.30)) drop-shadow(0 2px 3px rgba(22,34,55,.20));transition:filter 140ms ease,transform 140ms ease}
+  #arrow.is-drag{transform:scale(.93);filter:drop-shadow(0 0 3px rgba(30,111,255,.42)) drop-shadow(0 4px 6px rgba(22,34,55,.26))}
+  #arrow .body{transition:fill 140ms ease,stroke 140ms ease}
+  #arrow.is-drag .body{fill:#1559d6;stroke:#1559d6}
+  #pulse{position:fixed;left:0;top:0;width:28px;height:28px;border:1.5px solid rgba(30,111,255,.55);border-radius:50%;background:radial-gradient(circle,rgba(30,111,255,.22),rgba(30,111,255,0) 70%);transform:translate(-50%,-50%) scale(.3);opacity:0;pointer-events:none}
+  #pulse.is-click{animation:impact 340ms cubic-bezier(.2,.8,.2,1)}
+  @keyframes impact{0%{opacity:.85;transform:translate(-50%,-50%) scale(.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.15)}}
+  @keyframes press{0%,100%{transform:scale(1)}38%{transform:scale(.84)}}
+  #arrow.is-press{animation:press 190ms cubic-bezier(.3,1.5,.5,1)}
   #label{position:fixed;left:0;top:0;opacity:0;padding:6px 9px;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);color:#252a35;box-shadow:0 4px 14px rgba(20,32,52,.13);font:500 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
   body.active #cursor{opacity:1}body.active #label{opacity:1}
   @media(prefers-reduced-motion:reduce){#pulse.is-click,#arrow.is-press{animation:none}}
 </style></head><body>
-<div id="cursor"><svg id="arrow" viewBox="0 0 34 38" aria-hidden="true"><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#1e6fff" stroke="#1e6fff" stroke-width="5.4" stroke-linejoin="round"/><path d="M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z" fill="#fff" stroke="#252a35" stroke-width="2.45" stroke-linejoin="round"/></svg></div>
+<div id="cursor"><svg id="arrow" viewBox="0 0 34 38" aria-hidden="true"><path d="M4 3 L4 28.5 L11 23.2 L23.5 22.5 Z" fill="#fff" stroke="#fff" stroke-width="5.2" stroke-linejoin="round"/><path class="body" d="M4 3 L4 28.5 L11 23.2 L23.5 22.5 Z" fill="#1e6fff" stroke="#1e6fff" stroke-width="2.6" stroke-linejoin="round"/></svg></div>
 <div id="pulse"></div><div id="label"></div>
 <script>
 const cursor=document.getElementById("cursor"), arrow=document.getElementById("arrow");
@@ -534,6 +537,7 @@ window.__setAIPresence=(value)=>{
     void pulse.offsetWidth;
     pulse.classList.add("is-click");arrow.classList.add("is-press");
   }else if(prior==="click") arrow.classList.remove("is-press");
+  arrow.classList.toggle("is-drag", value.kind==="drag");
   prior=click?"click":"move";
 };
 window.__openCluelySetAICursor=window.__setAIPresence;

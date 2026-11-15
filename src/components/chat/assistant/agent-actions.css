@@ -721,19 +721,56 @@
   .clyra-pointer__halo { animation:none!important; opacity:.65; }
 }
 
-/* AI pointer matches the native desktop and Chromium cursor; its SVG tip is
-   fixed at input coordinate 0,0, so clicks do not visually drift. */
+/* AI pointer: solid-blue dart with a hairline white edge. Its SVG tip is fixed
+   at input coordinate 0,0, so clicks and the pulse never visually drift. */
 .clyra-ai-cursor-glyph {
   position:absolute;left:-4px;top:-3px;width:34px;height:38px;
   overflow:visible;pointer-events:none;transform-origin:4px 3px;
-  filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18));
+  filter:drop-shadow(0 0 2px rgba(30,111,255,.30)) drop-shadow(0 2px 3px rgba(22,34,55,.20));
+  transition:filter 140ms ease;
 }
-.clyra-ai-cursor-glyph.is-pressed {animation:clyra-ai-press .26s cubic-bezier(.22,1,.36,1) both}
+.clyra-ai-cursor-glyph__body {transition:fill 140ms ease,stroke 140ms ease}
+.clyra-ai-cursor-glyph.is-pressed {animation:clyra-ai-press 190ms cubic-bezier(.3,1.5,.5,1) both}
+.clyra-ai-cursor-glyph.is-dragging {
+  transform:scale(.93);
+  filter:drop-shadow(0 0 3px rgba(30,111,255,.42)) drop-shadow(0 4px 6px rgba(22,34,55,.26));
+}
+.clyra-ai-cursor-glyph.is-dragging .clyra-ai-cursor-glyph__body {fill:#1559D6;stroke:#1559D6}
 @keyframes clyra-ai-press {
-  0%,100%{transform:scale(1)}
-  32%{transform:scale(.87) translate(1px,1px)}
+  0%{transform:scale(1)}
+  38%{transform:scale(.84)}
+  100%{transform:scale(1)}
 }
-@media(prefers-reduced-motion:reduce){.clyra-ai-cursor-glyph.is-pressed{animation:none!important}}
+.clyra-ai-cursor-pulse {
+  position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;
+}
+.clyra-ai-cursor-pulse::before,
+.clyra-ai-cursor-pulse i {
+  content:"";position:absolute;left:-14px;top:-14px;width:28px;height:28px;border-radius:50%;
+  opacity:0;will-change:transform,opacity;
+}
+.clyra-ai-cursor-pulse::before {
+  border:1.5px solid rgba(30,111,255,.55);
+  animation:clyra-ai-pulse-ring 340ms cubic-bezier(.2,.8,.2,1) both;
+}
+.clyra-ai-cursor-pulse i {
+  background:radial-gradient(circle,rgba(30,111,255,.30),rgba(30,111,255,0) 70%);
+  animation:clyra-ai-pulse-fill 260ms ease-out both;
+}
+@keyframes clyra-ai-pulse-ring {
+  0%{opacity:.85;transform:scale(.3)}
+  100%{opacity:0;transform:scale(1.15)}
+}
+@keyframes clyra-ai-pulse-fill {
+  0%{opacity:1;transform:scale(.35)}
+  100%{opacity:0;transform:scale(.9)}
+}
+@media(prefers-reduced-motion:reduce){
+  .clyra-ai-cursor-glyph.is-pressed{animation:none!important}
+  .clyra-ai-cursor-pulse::before{animation:clyra-ai-pulse-fade 200ms linear both}
+  .clyra-ai-cursor-pulse i{display:none}
+  @keyframes clyra-ai-pulse-fade{0%{opacity:.6;transform:scale(.7)}100%{opacity:0;transform:scale(.7)}}
+}
 
 
 /* ── Sources: one set of icons that overlaps when closed and slides apart into name pills when opened ── */

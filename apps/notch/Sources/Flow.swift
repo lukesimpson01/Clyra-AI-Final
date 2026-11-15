@@ -248,3 +248,54 @@ struct FlowStrip: View {
         .padding(.horizontal, 8)
     }
 }
+
+/// Five bars that follow the playing app's real loudness (from the audio meter). Fast attack, slower release, each bar on its own
+/// spring with a slightly different weight, so the wave breathes with the music instead of pulsing in lock-step.
+struct LevelBars: View {
+    @ObservedObject var meter: AudioMeter
+    var reduceMotion = false
+    @State private var engine = LevelEngine()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60)) { frame in
+            Canvas { context, size in
+                engine.step(frame.date, input: Double(meter.level), live: meter.status.isEmpty && !reduceMotion)
+                let n = engine.bars.count
+                let barW: CGFloat = 2.2, gap: CGFloat = 2
+                let total = CGFloat(n) * barW + CGFloat(n - 1) * gap
+                let x0 = (size.width - total) / 2
+                for i in 0..<n {
+                    let h = 3 + CGFloat(min(1, engine.bars[i])) * (size.height - 3)
+                    let rect = CGRect(x: x0 + CGFloat(i) * (barW + gap), y: (size.height - h) / 2, width: barW, height: h)
+                    context.fill(Path(roundedRect: rect, cornerRadius: barW / 2), with: .color(.white))
+                }
+            }
+        }
+        .frame(width: 18, height: 16)
+        .accessibilityHidden(true)
+    }
+}
+
+final class LevelEngine {
+    private(set) var bars = [Double](repeating: 0, count: 5)
+    private var vel = [Double](repeating: 0, count: 5)
+    private var env = 0.0
+    private var last = Date.distantPast
+    private let weights = [0.62, 0.9, 1.0, 0.82, 0.55]
+
+    func step(_ now: Date, input: Double, live: Bool) {
+        let dt = min(0.05, max(0.001, last == .distantPast ? 1.0 / 60 : now.timeIntervalSince(last)))
+        last = now
+        let t = now.timeIntervalSinceReferenceDate
+        // with no meter (no permission) the bars only breathe softly, so they never claim a loudness they do not know
+        let level = live ? input : 0.12 + 0.05 * sin(t * 2.1)
+        env += (level - env) * (1 - exp(-dt / (level > env ? 0.035 : 0.16)))
+        for i in 0..<bars.count {
+            let wobble = live ? 0.1 * sin(t * (5.0 + Double(i) * 1.3) + Double(i)) * env : 0
+            let target = max(0.08, min(1, env * weights[i] * (1.15 + wobble)))
+            var x = bars[i], v = vel[i]
+            for _ in 0..<3 { let h = dt / 3; v += (-480 * (x - target) - 38 * v) * h; x += v * h }
+            bars[i] = max(0, min(1.1, x)); vel[i] = v
+        }
+    }
+}

@@ -1210,9 +1210,9 @@ export class ChromiumBrowserManager {
         core.setAttribute("viewBox", "0 0 34 38");
         core.setAttribute("width", "34");
         core.setAttribute("height", "38");
-        core.style.cssText = "position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;pointer-events:none;transform-origin:4px 3px;filter:drop-shadow(0 0 2.5px rgba(30,111,255,.32)) drop-shadow(0 3px 3px rgba(22,34,55,.18));";
-        const shape = "M4 3 L4 29.2 Q4 30.5 5.4 30.5 L11.4 24.6 L16.9 34.3 Q17.5 35.4 18.6 34.9 L22 33.1 Q23 32.6 22.4 31.5 L16.9 21.8 L29.1 21.8 Q30.8 21.8 30 20.4 L5.9 2.2 Q4 0.9 4 3 Z";
-        for (const [fill, stroke, thickness] of [["#1E6FFF", "#1E6FFF", "5.4"], ["#FFFFFF", "#252A35", "2.45"]]) {
+        core.style.cssText = "position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;pointer-events:none;transform-origin:4px 3px;filter:drop-shadow(0 0 2px rgba(30,111,255,.30)) drop-shadow(0 2px 3px rgba(22,34,55,.20));transition:filter 140ms ease;";
+        const shape = "M4 3 L4 28.5 L11 23.2 L23.5 22.5 Z";
+        for (const [fill, stroke, thickness] of [["#FFFFFF", "#FFFFFF", "5.2"], ["#1E6FFF", "#1E6FFF", "2.6"]]) {
           const segment = document.createElementNS("http://www.w3.org/2000/svg", "path");
           segment.setAttribute("d", shape);
           segment.setAttribute("fill", fill);
@@ -1226,7 +1226,7 @@ export class ChromiumBrowserManager {
         caret.style.cssText = "display:none;position:absolute;left:2px;top:0;width:2px;height:24px;border-radius:999px;background:#1e6fff;box-shadow:0 0 0 1px white,0 0 8px rgba(30,111,255,.34);";
         const click = document.createElement("div");
         click.dataset.part = "click";
-        click.style.cssText = "display:none;position:absolute;left:-16px;top:-16px;width:32px;height:32px;border:1.8px solid rgba(30,111,255,.64);border-radius:999px;box-shadow:0 0 0 3px rgba(30,111,255,.08);";
+        click.style.cssText = "display:none;position:absolute;left:-14px;top:-14px;width:28px;height:28px;border:1.5px solid rgba(30,111,255,.55);border-radius:999px;background:radial-gradient(circle,rgba(30,111,255,.22),rgba(30,111,255,0) 70%);";
         const label = document.createElement("span");
         label.dataset.part = "label";
         label.style.cssText = "position:absolute;left:24px;top:23px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);padding:6px 10px 6px 18px;color:#252a33;font:500 11px/1.25 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:-.01em;box-shadow:0 4px 14px rgba(20,32,52,.13);";
@@ -1253,15 +1253,22 @@ export class ChromiumBrowserManager {
         caret.style.display = data.kind === "type" ? "block" : "none";
         caret.animate?.([{ opacity: 1 }, { opacity: .2 }, { opacity: 1 }], { duration: 880, iterations: data.kind === "type" ? Infinity : 1, easing: "steps(2,end)" });
       }
-      if (core) core.style.opacity = data.kind === "type" ? ".55" : "1";
+      if (core) {
+        core.style.opacity = data.kind === "type" ? ".55" : "1";
+        const held = data.kind === "drag";
+        core.style.transform = held ? "scale(.93)" : "";
+        core.style.filter = held ? "drop-shadow(0 0 3px rgba(30,111,255,.42)) drop-shadow(0 4px 6px rgba(22,34,55,.26))" : "drop-shadow(0 0 2px rgba(30,111,255,.30)) drop-shadow(0 2px 3px rgba(22,34,55,.20))";
+        core.lastChild?.setAttribute("fill", held ? "#1559D6" : "#1E6FFF");
+        core.lastChild?.setAttribute("stroke", held ? "#1559D6" : "#1E6FFF");
+      }
       if (click) {
         click.style.display = data.kind.includes("click") ? "block" : "none";
-        if (data.kind.includes("click")) click.animate?.([{ transform: "scale(.42)", opacity: .88 }, { transform: "scale(1.52)", opacity: 0 }], { duration: 520, easing: "cubic-bezier(.16,1,.3,1)" });
+        if (data.kind.includes("click")) click.animate?.([{ transform: "scale(.3)", opacity: .85 }, { transform: "scale(1.15)", opacity: 0 }], { duration: 340, easing: "cubic-bezier(.2,.8,.2,1)" });
       }
       if (core) {
         core.animate?.(
-          data.kind.includes("click") ? [{ transform: "scale(1)" }, { transform: "scale(.88) translate(1px,1px)" }, { transform: "scale(1)" }] : [{ opacity: 1 }, { opacity: 1 }],
-          { duration: data.kind.includes("click") ? 190 : 1, easing: "ease-out" },
+          data.kind.includes("click") ? [{ transform: "scale(1)" }, { transform: "scale(.84)", offset: .38 }, { transform: "scale(1)" }] : [{ opacity: 1 }, { opacity: 1 }],
+          { duration: data.kind.includes("click") ? 190 : 1, easing: "cubic-bezier(.3,1.5,.5,1)" },
         );
       }
     })()`, true).catch(() => undefined);

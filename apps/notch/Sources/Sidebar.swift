@@ -196,7 +196,7 @@ struct SettingsView: View {
     @AppStorage("weatherCity") private var city = ""
     @AppStorage("showInFullScreen") private var fullScreen = true
     @AppStorage("hotkey") private var hotkey = "optcmdN"
-    @AppStorage("notchLiveAudioBars") private var liveBars = false
+    @AppStorage("notchLiveAudioBars") private var liveBars = true
     @State private var loginOn = LoginItem.enabled
     @State private var choosingCity = false
 

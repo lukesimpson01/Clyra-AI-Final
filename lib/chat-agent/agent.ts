@@ -391,6 +391,8 @@ Design taste. Write like a careful editor and lay out like a good designer:
 Large jobs. When a task splits cleanly (several notes to write or reorganise, research alongside drafting) use delegate_agents to run up to four agents at once. Give each a self-contained goal and the note ids it owns so they never edit the same note; they coordinate through the shared board. Read their reports, check the results yourself, and reconcile anything that clashes before you answer.${templates}`;
 }
 
+const PLACEMENT_HELP = "Place pictures inside your answer, each on its own line, right after the sentence or heading that introduces what it shows (never all at the end, never between tightly connected paragraphs, never the same id twice): [[image: ID]] for one picture; [[carousel: ID, ID, ID]] for several pictures of one subject; [[grid: ID, ID]] for 2-4 pictures that compare or collect; [[image_text: ID | Title | one-line description]] for a small picture beside a product, person or place. For several subjects put each picture next to its own subject; in a tutorial put it right after the step it shows. Use only ids from this result, and only as many pictures as help. Do not use markdown image syntax or paste image addresses: always use these directives.";
+
 function systemPrompt(now: Date, notes?: NotesDeps) {
   const index = notes?.index?.length ? `\n\nEvery note in their workspace (title, id). Use notes_read with an id to open any of them, or notes_search to find by content:\n${notes.index.slice(0, 250).map((p) => `- ${p.icon ? `${p.icon} ` : ""}${p.title || "Untitled"}${p.parentTitle ? ` (in ${p.parentTitle})` : ""} — ${p.id}`).join("\n")}` : "";
   const inNotes = notes ? `\n\nYou are inside the person's Notes app and you have context from ALL of their notes. Their own pages are the first source of truth for questions about their material: use notes_search / notes_read, and say which note a fact came from. Never claim you added something unless the tool said it did.
@@ -594,7 +596,7 @@ export async function runChatAgent(
         try {
           const images = await searchResearchImages(query, { signal: options.signal, maxResults: args.max_results });
           step({ id, tool: "image_search", label: "Found " + images.length + " images", state: images.length ? "done" : "failed", detail: images.length ? "Openverse / Wikimedia Commons" : undefined, error: images.length ? undefined : "No matching licensed image previews were found.", query, images });
-          return JSON.stringify({ images, source: "Openverse / Wikimedia Commons", note: "These are visual previews; check each image's source page and licence before reuse." });
+          return JSON.stringify({ images, source: "Wikipedia / Openverse / Wikimedia Commons", note: "These are visual previews; check each image's source page and licence before reuse.", placement: PLACEMENT_HELP });
         } catch (error) {
           const reason = error instanceof Error ? error.message : "Image search failed.";
           step({ id, tool: "image_search", label: "Image search unavailable", state: "failed", error: reason, query });

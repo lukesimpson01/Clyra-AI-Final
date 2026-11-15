@@ -16,6 +16,7 @@ final class MediaHub {
     private let local = MediaMonitor()
     private weak var link: FlowBridge?
     private var spotifyState: MediaState?
+    private var spotifyMisses = 0
     private var spotifyArtwork: NSImage?
     private var spotifyArtworkURL: String?
     private(set) var sources: [MediaSource] = []
@@ -51,10 +52,12 @@ final class MediaHub {
 
     private func receiveSpotify(_ o: [String: Any]) {
         guard o["connected"] as? Bool == true, let s = o["state"] as? [String: Any], let title = s["title"] as? String else {
-            spotifyState = nil
-            recompute()
+            // One failed poll must not make the player vanish and reappear: keep the last state until three in a row fail.
+            spotifyMisses += 1
+            if spotifyMisses >= 3 || o["connected"] as? Bool == false && spotifyMisses >= 2 { spotifyState = nil; recompute() }
             return
         }
+        spotifyMisses = 0
         let duration = (s["durationMs"] as? NSNumber).map { $0.doubleValue / 1000 }
         let position = (s["progressMs"] as? NSNumber).map { $0.doubleValue / 1000 }
         let art = s["artwork"] as? String
@@ -76,10 +79,15 @@ final class MediaHub {
 
     private func recompute() {
         var list: [MediaSource] = []
-        if let s = spotifyState { list.append(MediaSource(id: "clyra-spotify", name: "Spotify", symbol: "dot.radiowaves.left.and.right", state: s, viaClyra: true)) }
-        if let l = local.state {
+        let l = local.state
+        let duplicate = l.map { $0.bundleID == "com.spotify.client" && spotifyState?.title == $0.title } ?? false
+        if var s = spotifyState {
+            // The app reports a pause or play the instant it happens; Clyra's connection hears of it a poll later. Trust the fresher.
+            if duplicate, let l, l.status != s.status { s.status = l.status; s.position = l.position; s.positionAt = l.positionAt }
+            list.append(MediaSource(id: "clyra-spotify", name: "Spotify", symbol: "dot.radiowaves.left.and.right", state: s, viaClyra: true))
+        }
+        if let l {
             // the Spotify app playing what Clyra's connection already shows is one source, not two
-            let duplicate = l.bundleID == "com.spotify.client" && spotifyState?.title == l.title
             if !duplicate { list.append(MediaSource(id: "local-\(l.bundleID)", name: l.source, symbol: l.bundleID == "com.apple.Music" ? "music.note" : "play.rectangle", state: l, viaClyra: false)) }
         }
         sources = list

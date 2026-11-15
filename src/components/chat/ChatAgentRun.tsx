@@ -109,7 +109,7 @@ function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: 
 }
 
 /** Every real step the agent took, in order, with the plan above it. Nothing here is decorative: each row is a tool call. */
-export function ChatAgentRunView({ run: fullRun, live, onOpenNote, showTodo = true }: { run: Run; live: boolean; onOpenNote?: (id: string) => void; showTodo?: boolean }) {
+export function ChatAgentRunView({ run: fullRun, live, onOpenNote, showTodo = true, hideImages = false }: { run: Run; live: boolean; onOpenNote?: (id: string) => void; showTodo?: boolean; hideImages?: boolean }) {
   const run = { ...fullRun, steps: visibleSteps(fullRun.steps) };
   const ref = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -139,7 +139,7 @@ export function ChatAgentRunView({ run: fullRun, live, onOpenNote, showTodo = tr
               {run.steps.map((step) => <StepRow key={step.id} step={step} onOpenNote={onOpenNote} />)}
             </ul>
           ) : null}
-          <ChatResearchResults steps={fullRun.steps} />
+          <ChatResearchResults steps={fullRun.steps} showImages={!hideImages} />
         </>
       ) : null}
     </div>

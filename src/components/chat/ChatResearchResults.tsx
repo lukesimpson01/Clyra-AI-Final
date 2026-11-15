@@ -10,7 +10,7 @@ const shortCount = (n: number) => n >= 1000
   : String(n);
 
 /** Live provider results, not fabricated Markdown cards. Rendered with the answer's real tool run. */
-export function ChatResearchResults({ steps }: { steps: AgentStepView[] }) {
+export function ChatResearchResults({ steps, showImages = true }: { steps: AgentStepView[]; showImages?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<ResearchImage | null>(null);
   const { images, repositories } = useMemo(() => {
@@ -37,10 +37,11 @@ export function ChatResearchResults({ steps }: { steps: AgentStepView[] }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [selected]);
 
-  if (!images.length && !repositories.length) return null;
+  const imageList = showImages ? images : [];
+  if (!imageList.length && !repositories.length) return null;
   return (
     <div className="clyra-research-results">
-      {images.length ? (
+      {imageList.length ? (
         <section className="clyra-research-section" aria-label="Real image search results">
           <div className="clyra-research-section__heading">
             <Images aria-hidden size={16} strokeWidth={1.7} />

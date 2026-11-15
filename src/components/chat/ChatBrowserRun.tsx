@@ -150,7 +150,7 @@ export function ChatBrowserRunView({ run, live, onStop, onOpenTool }: { run: Cha
                 aria-hidden
               >
                 <span className="clyra-pointer__halo" />
-                <AgentCursorGlyph pressed={run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click"} />
+                <AgentCursorGlyph dragging={run.cursor.kind === "drag"} pressed={run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click"} />
                 {run.cursor.kind === "click" || run.cursor.kind === "double_click" || run.cursor.kind === "right_click" ? <span key={`w${run.cursor.id}`} className="clyra-pointer__wave" aria-hidden><i className="clyra-pointer__flash" />{[0, 1].map((n) => <i key={n} className="clyra-pointer__ripple" style={{ "--n": n } as React.CSSProperties} />)}</span> : null}
               </motion.div>
             ) : null}

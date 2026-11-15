@@ -607,22 +607,40 @@ struct SourceStrip: View {
 
 // MARK: Thinking / shimmer
 
-/// Text with a light that travels across it.
+/// Clyra's shimmer: a soft band of light sweeps across the text at one constant pace, leaves the far edge completely, and
+/// only then starts again, so it never stalls, surges or lights a single letter on its own.
 struct ShimmerText: View {
     let text: String
     var reduceMotion = false
     var size: CGFloat = 12.5
+    var weight: Font.Weight = .medium
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduceMotion)) { frame in
-            let t = reduceMotion ? 0.5 : frame.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.7) / 1.7
-            Text(text)
-                .font(.system(size: size, weight: .medium))
-                .foregroundStyle(LinearGradient(stops: [
-                    .init(color: .white.opacity(0.42), location: max(0, t - 0.25)),
-                    .init(color: .white, location: t),
-                    .init(color: .white.opacity(0.42), location: min(1, t + 0.25)),
-                ], startPoint: .leading, endPoint: .trailing))
-        }
+        let label = Text(text).font(.system(size: size, weight: weight))
+        label.foregroundStyle(.white.opacity(0.42))
+            .fixedSize()
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { g in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { frame in
+                            let width = max(1, g.size.width)
+                            let band = max(44, width * 0.62)
+                            let pace: Double = 96  // points per second
+                            let travel = Double(width + band)
+                            let p = (frame.date.timeIntervalSinceReferenceDate * pace).truncatingRemainder(dividingBy: travel)
+                            label.foregroundStyle(.white).fixedSize()
+                                .frame(width: g.size.width, height: g.size.height, alignment: .leading)
+                                .mask(alignment: .leading) {
+                                    LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
+                                        .frame(width: band)
+                                        .offset(x: CGFloat(p) - band)
+                                        .frame(width: g.size.width, alignment: .leading)
+                                }
+                        }
+                    }
+                }
+            }
+            .lineLimit(1)
     }
 }
 
@@ -728,15 +746,16 @@ struct StepList: View {
 /// Real provider results (images, GitHub repositories) from the run's tool steps, as in Clyra's chat.
 struct ResearchResults: View {
     let steps: [StepItem]
+    var showImages = true
 
     var body: some View {
         let done = steps.filter { $0.state == "done" }
         var seenImages = Set<String>(), seenRepos = Set<String>()
         let images = done.flatMap(\.images).filter { seenImages.insert($0.sourceURL).inserted }.prefix(16)
         let repos = done.flatMap(\.repos).filter { seenRepos.insert($0.fullName.lowercased()).inserted }.prefix(12)
-        if !images.isEmpty || !repos.isEmpty {
+        if (!images.isEmpty && showImages) || !repos.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                if !images.isEmpty { ImageGrid(images: Array(images)) }
+                if !images.isEmpty && showImages { ImageGrid(images: Array(images)) }
                 if !repos.isEmpty { RepoList(repos: Array(repos)) }
             }
         }
@@ -1291,12 +1310,24 @@ struct ChatBubble: View {
                 if msg.streaming && msg.text.isEmpty && steps.allSatisfy({ $0.state != "running" }) {
                     ThinkingLine(reduceMotion: reduce)
                 }
+                let inlineImages = ContentBlocks.uniqueImages(msg.allSteps)
                 if !msg.text.isEmpty {
-                    MarkdownView(text: msg.text)
-                        .foregroundStyle(msg.failed ? Color.orange : .white)
+                    if inlineImages.isEmpty {
+                        MarkdownView(text: msg.text).foregroundStyle(msg.failed ? Color.orange : .white)
+                    } else {
+                        // pictures sit where the answer places them, between its paragraphs
+                        let blocks = ContentBlocks.parse(msg.text, images: inlineImages, streaming: msg.streaming)
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                                if case .text(let t) = block { MarkdownView(text: t).foregroundStyle(msg.failed ? Color.orange : .white) }
+                                else { InlineImageBlock(block: block).transition(.opacity.combined(with: .offset(y: 6))) }
+                            }
+                        }
+                        .animation(.spring(response: 0.45, dampingFraction: 0.86), value: blocks.count)
+                    }
                 }
                 if !msg.streaming {
-                    ResearchResults(steps: msg.allSteps)
+                    ResearchResults(steps: msg.allSteps, showImages: inlineImages.isEmpty)
                     SourcesInline(sources: allSources)
                 }
                 if msg.stopped { Text("Stopped").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)) }

@@ -24,6 +24,9 @@ struct ResearchImage: Identifiable, Equatable {
     let thumbnailURL: String
     let sourceURL: String
     let title: String
+    var imageURL = ""
+    /// The id image_search gave it, which the answer's placement directives refer to.
+    var providerID = ""
     var id: String { sourceURL }
 }
 
@@ -103,7 +106,7 @@ struct ChatMessage: Identifiable {
             }
             let images = (step["images"] as? [JSON] ?? []).compactMap { row -> ResearchImage? in
                 guard let thumb = row["thumbnailUrl"] as? String, let source = row["sourceUrl"] as? String else { return nil }
-                return ResearchImage(thumbnailURL: thumb, sourceURL: source, title: row["title"] as? String ?? "")
+                return ResearchImage(thumbnailURL: thumb, sourceURL: source, title: row["title"] as? String ?? "", imageURL: row["imageUrl"] as? String ?? "", providerID: (row["id"] as? String) ?? (row["id"] as? NSNumber)?.stringValue ?? "")
             }
             let repos = (step["repositories"] as? [JSON] ?? []).compactMap { row -> RepoCard? in
                 guard let name = row["fullName"] as? String, let url = row["url"] as? String else { return nil }

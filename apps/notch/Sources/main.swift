@@ -346,6 +346,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
     private var farRule = false
     private var outsideTicks = 0
     private var lastInteraction = Date.distantPast
+    // File drags: a drag that carries files toward the notch opens AirDrop before the pointer even reaches it.
+    private var dragWatch: Timer?
+    private var dragBaseline = 0
+    private var dragEngaged = false
     /// True while one of the panel's own menus (More, Weather location…) is open: the pointer is then over the menu, not
     /// the panel, and that must never read as "left the notch".
     private var menuTracking = false
@@ -397,6 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
             self?.menuTracking = false
             self?.menuEndedAt = Date()
         }
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in self?.startDragWatch() }
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in self?.stopDragWatch() }
         model.onFlowStart = { [weak self] in self?.collapse("flow") }
         model.onDone = { [weak self] in
             guard let self else { return }
@@ -437,6 +443,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
     @objc func draggingExited(_ sender: NSDraggingInfo?) { canvas.draggingExited(sender) }
     @objc func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { canvas.prepareForDragOperation(sender) }
     @objc func performDragOperation(_ sender: NSDraggingInfo) -> Bool { canvas.performDragOperation(sender) }
+
+    /// While a mouse button is held in any app, watch the system drag pasteboard: once it holds files and the pointer comes near the
+    /// notch, open the AirDrop page, so letting go drops the files there instead of into whatever lies under the notch.
+    private func startDragWatch() {
+        guard dragWatch == nil else { return }
+        dragBaseline = NSPasteboard(name: .drag).changeCount
+        dragEngaged = false
+        let t = Timer(timeInterval: 0.04, repeats: true) { [weak self] _ in self?.dragTick() }
+        t.tolerance = 0.01
+        RunLoop.main.add(t, forMode: .common)
+        dragWatch = t
+    }
+
+    private func stopDragWatch() {
+        dragWatch?.invalidate()
+        dragWatch = nil
+        // dropped or released somewhere else: give the notch back
+        if dragEngaged, !model.airDrop.isBusy, model.airDrop.files.isEmpty, model.expanded, model.view == .airdrop { endFileDrag(); collapse("drag-ended") }
+        dragEngaged = false
+    }
+
+    private func dragTick() {
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { stopDragWatch(); return }
+        let board = NSPasteboard(name: .drag)
+        guard board.changeCount != dragBaseline,
+              board.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) else { return }
+        let p = NSEvent.mouseLocation
+        let frame = screen.frame
+        let notch = NSRect(x: frame.midX - Metrics.notchWidth / 2, y: frame.maxY - 30, width: Metrics.notchWidth, height: 30)
+        let near = notch.insetBy(dx: -90, dy: -90).contains(p)
+        if near, !dragEngaged, canAcceptFileDrop {
+            dragEngaged = true
+            previewFileDrop()
+        } else if dragEngaged, !panelRect(margin: 40).contains(p), !near {
+            // dragged away again without dropping
+            dragEngaged = false
+            endFileDrag()
+            if model.expanded { collapse("drag-away") }
+        }
+    }
 
     private func previewFileDrop() -> Bool {
         guard canAcceptFileDrop else { return false }
@@ -479,6 +525,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         return size
     }
 
+    /// Every change of the panel's target size, with who asked for it, so an unexpected resize can be traced.
+    private func logLayout(_ size: CGSize) {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Notch")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("layout.log")
+        let who = Thread.callStackSymbols.dropFirst(2).prefix(4).map { String($0.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3).first ?? "?").prefix(60) }.joined(separator: " < ")
+        let line = "\(String(format: "%.3f", Date().timeIntervalSince1970)) \(Int(size.width))x\(Int(size.height)) expanded=\(model.expanded) view=\(model.view.rawValue) \(who)\n"
+        if let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+            if let size = try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int, size > 400_000 { try? "".write(to: file, atomically: true, encoding: .utf8) }
+        } else { try? line.write(to: file, atomically: true, encoding: .utf8) }
+    }
+
     func layout(animatedShrink animate: Bool = true) {
         let size = targetSize()
         let reveal: CGFloat = model.expanded ? 1 : 0
@@ -492,6 +551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
             return
         }
         if abs(size.width - widthSpring.target) < 0.5, abs(size.height - heightSpring.target) < 0.5, revealSpring.target == reveal { return }
+        logLayout(size)
         if model.expanded, revealSpring.target == 1 { reportResizeUnderPointer(to: size) }
         NotchMotion.tune(&widthSpring, toward: size.width, bounce: 1)
         NotchMotion.tune(&heightSpring, toward: size.height, bounce: 0.6)
@@ -728,7 +788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
                 if u.lastPathComponent == "disable" { LoginItem.set(false) }
             case "state":
                 let m = model
-                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
+                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) meterStatus=\(m.audioMeter.status) meterLevel=\(m.audioMeter.level) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
                 try? text.write(toFile: u.path, atomically: true, encoding: .utf8)
             case "open":
                 if let i = Int(u.lastPathComponent), model.chat.allChats.indices.contains(i) { expand(); model.chat.open(model.chat.allChats[i]); model.show(.chat) }
