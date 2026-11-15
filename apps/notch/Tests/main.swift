@@ -183,7 +183,12 @@ do {
     var peak: CGFloat = 0
     for _ in 0..<600 { grow.step(1.0 / 120); peak = max(peak, grow.value) }
     check(grow.settled && grow.value == 400, "spring settles on target")
-    check(peak > 400 && peak < 400 * 1.12, "growing overshoots a little")
+    check(peak <= 400.5, "a wide move never overshoots")
+    var short = Spring(100)
+    NotchMotion.tune(&short, toward: 160, bounce: 1)
+    var shortPeak: CGFloat = 0
+    for _ in 0..<600 { short.step(1.0 / 120); shortPeak = max(shortPeak, short.value) }
+    check(shortPeak > 160 && shortPeak < 160 * 1.12, "a short move keeps a little life")
     var shrink = Spring(400)
     NotchMotion.tune(&shrink, toward: 100, bounce: 1)
     var floor: CGFloat = 400

@@ -134,6 +134,49 @@ async function requestJson(url: string, signal?: AbortSignal, fetcher: Fetcher =
   return response.json();
 }
 
+/**
+ * Photographs from the encyclopedia articles themselves: the lead image of the page about a landmark, a person, a product or a
+ * character is usually the one picture that is right. Each card links to its article, where the file's licence is listed.
+ */
+export function parseWikipediaImages(data: unknown, maxResults = 8): ResearchImage[] {
+  const pages = (data as { query?: { pages?: unknown[] } })?.query?.pages;
+  if (!Array.isArray(pages)) return [];
+  const images: ResearchImage[] = [];
+  for (const page of pages as Array<Record<string, any>>) {
+    const thumbnail = validHttps(page?.thumbnail?.source, "wikimedia.org");
+    const original = validHttps(page?.original?.source, "wikimedia.org") || thumbnail;
+    const article = validHttps(page?.fullurl, "wikipedia.org");
+    if (!thumbnail || !article) continue;
+    if (/\.(?:svg|ogg|ogv|webm|pdf)(?:$|\?)/i.test(original)) continue;
+    images.push({
+      id: "wikipedia-" + String(page.pageid ?? images.length),
+      title: clean(page.title, 140) || "Wikipedia",
+      imageUrl: original,
+      thumbnailUrl: thumbnail,
+      sourceUrl: article,
+      creator: "Wikipedia",
+      licence: "See the article for the file's licence",
+    });
+    if (images.length >= maxResults) break;
+  }
+  return images;
+}
+
+export async function searchWikipediaImages(
+  query: string,
+  options: { signal?: AbortSignal; maxResults?: number; fetcher?: Fetcher } = {},
+): Promise<ResearchImage[]> {
+  const phrase = query.trim().slice(0, 160);
+  if (!phrase) return [];
+  const size = bounded(options.maxResults, 6);
+  const params = new URLSearchParams({
+    action: "query", generator: "search", gsrsearch: phrase, gsrlimit: String(Math.min(12, size * 2)),
+    prop: "pageimages|info", piprop: "thumbnail|original", pithumbsize: "920", inprop: "url", format: "json", formatversion: "2",
+  });
+  const payload = await requestJson("https://en.wikipedia.org/w/api.php?" + params, options.signal, options.fetcher);
+  return parseWikipediaImages(payload, size);
+}
+
 export async function searchResearchImages(
   query: string,
   options: { signal?: AbortSignal; maxResults?: number; fetcher?: Fetcher } = {},
@@ -146,6 +189,10 @@ export async function searchResearchImages(
     gsrlimit: String(Math.min(20, size * 2)), prop: "imageinfo",
     iiprop: "url|mime|extmetadata", iiurlwidth: "920", format: "json", formatversion: "2",
   });
+  // The article photograph comes first: for a named place, person or product it is the picture people expect.
+  let article: ResearchImage[] = [];
+  try { article = await searchWikipediaImages(phrase, { signal: options.signal, fetcher: options.fetcher, maxResults: Math.min(4, size) }); }
+  catch (error) { if (options.signal?.aborted) throw error; }
   // Openverse has a wider catalogue of openly licensed photographs. Commons is
   // a separate fallback, so a rate limit or one provider's sparse coverage
   // never silently turns into model-invented thumbnails.
@@ -157,14 +204,15 @@ export async function searchResearchImages(
   } catch (error) {
     if (options.signal?.aborted) throw error;
   }
-  if (openverse.length >= size) return openverse;
+  const lead = [...article, ...openverse];
+  if (lead.length >= size) return lead.slice(0, size);
   try {
     const payload = await requestJson("https://commons.wikimedia.org/w/api.php?" + params, options.signal, options.fetcher);
-    const seen = new Set(openverse.map((image) => image.sourceUrl));
-    return [...openverse, ...parseCommonsImages(payload, size).filter((image) => !seen.has(image.sourceUrl))].slice(0, size);
+    const seen = new Set(lead.map((image) => image.sourceUrl));
+    return [...lead, ...parseCommonsImages(payload, size).filter((image) => !seen.has(image.sourceUrl))].slice(0, size);
   } catch (error) {
-    if (options.signal?.aborted || !openverse.length) throw error;
-    return openverse;
+    if (options.signal?.aborted || !lead.length) throw error;
+    return lead;
   }
 }
 
@@ -203,6 +251,29 @@ export async function inspectGitHubRepository(
   return { repository, readme, files };
 }
 
+const NOT_GENERATION = /\b(?:generate|draw|create|edit|render|design|make)\s+(?:me\s+|an?\s+)?(?:image|picture|photo|art)\b/i;
+const IMAGE_CASES: Array<{ kind: "place" | "person" | "product" | "tutorial" | "design"; test: (t: string) => boolean; suffix?: string }> = [
+  { kind: "place", test: (t) => /\b(?:landmarks?|buildings?|skyscrapers?|towers?|bridges?|castles?|cathedrals?|temples?|monuments?|museums?|stadiums?|cit(?:y|ies)|destinations?|beaches?|mountains?|waterfalls?|islands?|national parks?|tallest|largest|famous|where is|visit|travel(?:ling)? to|trip to)\b/i.test(t) },
+  { kind: "person", test: (t) => /\b(?:who (?:is|was|are)|what does .{1,40} look like|looks? like|actor|actress|singer|rapper|athlete|footballer|character|founder|ceo|president|prime minister|scientist|artist)\b/i.test(t) },
+  { kind: "product", test: (t) => /\b(?:compare|comparison|vs\.?|versus|best|recommend|review|buy|which .{1,30} should)\b/i.test(t) && /\b(?:phones?|iphones?|laptops?|macbooks?|cameras?|headphones?|earbuds?|cars?|watch(?:es)?|sneakers?|shoes|products?|gadgets?|tvs?|monitors?|keyboards?|bikes?|consoles?)\b/i.test(t) },
+  { kind: "tutorial", test: (t) => /\b(?:how (?:do|to|can)|tutorial|step[- ]by[- ]step|guide|instructions)\b/i.test(t) && /\b(?:draw|paint|cook|bake|install|assemble|plant|knit|fold|tie|workout|exercise|stretch|yoga|set up|setup|repair|fix|build)\b/i.test(t), suffix: "step by step" },
+  // "Tell me about <Name>": a named thing (a landmark, person, product or character) is worth a picture
+  { kind: "person", test: (t) => /(?:tell me about|what (?:is|are|was)|about)\s+(?:the\s+)?[A-Z][\w'’-]+(?:\s+[A-Z0-9][\w'’-]*){0,4}/.test(t) },
+  { kind: "design", test: (t) => /\b(?:ui|ux|user interface|landing page|dashboard|layout|mockup|wireframe|app design|web ?design|design inspiration|screenshot of)\b/i.test(t), suffix: "interface design" },
+];
+
+/** What to look for when the request is visual: the subject itself, with the kind of picture that suits it. */
+export function imageQueryFor(text: string): string {
+  const t = text.trim();
+  const subject = t
+    .replace(/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|search(?:\s+for)?|look up|research|tell me about|what(?:'s| is| are)|who (?:is|was|are)|compare|recommend|how (?:do|to|can) (?:i|you|we)?)\s+(?:me\s+)?(?:some\s+)?(?:images?|photos?|pictures?|screenshots?|photographs?|visual references?)?\s*(?:of|for|about)?\s*/i, "")
+    .replace(/[?!.]+$/g, "")
+    .trim()
+    .slice(0, 110) || t.slice(0, 110);
+  const kind = IMAGE_CASES.find((entry) => entry.test(t) && entry.suffix);
+  return kind?.suffix && !subject.toLowerCase().includes(kind.suffix) ? `${subject} ${kind.suffix}`.slice(0, 145) : subject.slice(0, 145);
+}
+
 /** Strictly read-only helpers may run automatically without a slash command. */
 export function inferRichSearchIntent(text: string): { images: boolean; github: boolean; repository?: string } {
   const t = text.trim();
@@ -210,8 +281,10 @@ export function inferRichSearchIntent(text: string): { images: boolean; github: 
   const repository = match ? match[1] + "/" + match[2].replace(/\.git$/i, "") : undefined;
   const visualResearch = /\b(?:research|look up|compare|find out|tell me about|recommend)\b/i.test(t)
     && /\b(?:cars?|vehicles?|hotels?|beaches?|destinations?|landmarks?|monuments?|architecture|buildings?|animals?|birds?|plants?|flowers?|fashion|outfits?|clothes|sneakers?|shoes|paintings?|sculptures?|museums?|smartphones?|cameras?)\b/i.test(t);
-  const images = (/\b(?:images?|photos?|pictures?|screenshots?|photographs?|gallery|visual references?|what .{0,50} looks? like|show me .{0,30}(?:picture|photo))\b/i.test(t) || visualResearch)
-    && !/\b(?:generate|draw|create|edit|render|design|make)\s+(?:me\s+|an?\s+)?(?:image|picture|photo|art)\b/i.test(t);
+  const askedForImages = /\b(?:images?|photos?|pictures?|screenshots?|photographs?|gallery|visual references?|what .{0,50} looks? like|show me .{0,30}(?:picture|photo))\b/i.test(t);
+  // Places and buildings, people and characters, products, tutorials, and design or UI: pictures make these clearer, so they are fetched unasked.
+  const visualCase = t.length > 12 && IMAGE_CASES.some((entry) => entry.test(t));
+  const images = (askedForImages || visualResearch || visualCase) && !NOT_GENERATION.test(t);
   const github = !repository && /\b(?:github|git repositories|repositories|repos?|open.source projects?|cloneable projects?)\b/i.test(t)
     && /\b(?:find|show|list|search|recommend|best|top|compare|alternative|clone|discover|look|research)\b/i.test(t);
   return { images, github, repository };

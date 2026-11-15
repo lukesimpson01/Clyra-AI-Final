@@ -11,7 +11,7 @@
  *   error  credits | unavailable | failed
  */
 import { geocodePlace } from "../research/weather";
-import { inferRichSearchIntent, inspectGitHubRepository, searchGitHubRepositories, searchResearchImages } from "./rich-search";
+import { imageQueryFor, inferRichSearchIntent, inspectGitHubRepository, searchGitHubRepositories, searchResearchImages } from "./rich-search";
 import { selectProviders } from "../ai/model-capability-registry";
 import { prepareDeepseekChatBody } from "../deepseek-models";
 import {
@@ -403,7 +403,7 @@ You have tools. Use them for real: never say you searched, opened, read or wrote
 - For any task with two or more steps, your first action is update_todos with 3–8 concrete, verifiable steps in the person's own words ("Read the Biology notes", not "Research"), exactly one in_progress. Update it after each step finishes. Never mark a step completed until a tool has really done it.
 - You have the whole of Notes at your disposal: create notes and databases, edit and insert, link, duplicate, rename, move, favourite, trash, flashcards, and the web. Use whichever tools the task needs, in as many steps as it takes.
 - Search with 1–3 complementary queries, open the best pages, use web_find to pull the exact passage, and follow a news article to the original announcement when one exists.
-- For a visually useful topic (pictures, destinations, design, products or visual comparisons), use image_search when appropriate. Image results come from genuine open-licence media providers, not illustrations you invented; the UI includes source and licence links.
+- For a visually useful topic (pictures, destinations, design, products or visual comparisons), use image_search when appropriate. Do this unprompted for places, buildings and landmarks; people and characters (what they look like); products you compare or recommend; tutorials where a visual example clarifies a step; and design or UI questions where a layout or screenshot helps. Image results come from encyclopedia articles and open-licence media providers, not illustrations you invented; the UI includes source and licence links.
 - For GitHub recommendations, use github_repo_search, then github_repo_inspect on promising repositories to verify README/features and licence before suggesting redistribution. A missing licence is not permission to resell.
 - You may use image and GitHub tools automatically without a slash command. Don't ask the person to select the command palette first.
 - Every claim you took from a page you opened must carry its marker, [S1], [S2]… directly after the claim (in your reply and in any note). Cite only pages you opened. Never invent a source, quote or number. If sources disagree or are thin, say so plainly. A search that finds nothing is not proof something does not exist.
@@ -953,7 +953,7 @@ export async function runChatAgent(
       automaticCalls.push({ id: "auto-github-search", type: "function", function: { name: "github_repo_search", arguments: JSON.stringify({ query }) } });
     }
     if (intent.images) {
-      const query = latestUser.replace(/^(?:please\s+)?(?:find|show|search|look up|research)\s+(?:me\s+)?(?:some\s+)?(?:images?|photos?|pictures?|screenshots?|photographs?|visual references?)\s+(?:of|for|about)?\s*/i, "").trim().slice(0, 145) || latestUser.slice(0, 145);
+      const query = imageQueryFor(latestUser) || latestUser.slice(0, 145);
       automaticCalls.push({ id: "auto-image-search", type: "function", function: { name: "image_search", arguments: JSON.stringify({ query }) } });
     }
     if (automaticCalls.length) {

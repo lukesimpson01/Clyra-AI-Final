@@ -46,3 +46,20 @@
   .clyra-research-image img, .clyra-research-more svg, .clyra-research-repo { transition: none !important; }
   .clyra-research-repo:hover { transform: none; }
 }
+
+/* ── Images, v2: layouts that follow how many there are, soft rounded tiles, captions that earn their place ── */
+.clyra-research-image-grid { gap: 6px; border-radius: 0; overflow: visible; grid-auto-rows: minmax(92px, 118px); }
+.clyra-research-image { border-radius: 12px; background: #eff0f2; box-shadow: 0 0 0 1px rgba(16, 18, 24, 0.05); transition: box-shadow 220ms ease, transform 280ms cubic-bezier(.22,1,.36,1); animation: clyra-img-in 420ms cubic-bezier(.22,1,.36,1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+@keyframes clyra-img-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+.clyra-research-image:hover { box-shadow: 0 0 0 1px rgba(16, 18, 24, 0.1), 0 8px 24px -10px rgba(16, 18, 24, 0.28); }
+.clyra-research-image__caption { display: flex; flex-direction: column; gap: 1px; padding: 26px 11px 9px; white-space: normal; background: linear-gradient(transparent, rgba(10, 12, 18, 0.62)); }
+.clyra-research-image__caption b { font-weight: 550; font-size: 12px; line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clyra-research-image__caption i { font-style: normal; font-size: 10.5px; line-height: 14px; opacity: .72; }
+.clyra-research-image--hero .clyra-research-image__caption { opacity: 1; }
+.clyra-research-image-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); grid-auto-rows: 268px; }
+.clyra-research-image-grid[data-count="1"] .clyra-research-image--hero { grid-column: auto; grid-row: auto; }
+.clyra-research-image-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 206px; }
+.clyra-research-image-grid[data-count="2"] .clyra-research-image--hero { grid-column: auto; grid-row: auto; }
+.clyra-research-image-grid[data-count="3"] { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-auto-rows: 118px; }
+.clyra-research-image-grid[data-count="3"] .clyra-research-image--hero { grid-column: 1; grid-row: span 2; }
+@media (prefers-reduced-motion: reduce) { .clyra-research-image { animation: none; } }

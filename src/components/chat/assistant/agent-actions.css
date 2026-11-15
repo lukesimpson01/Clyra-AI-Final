@@ -190,7 +190,9 @@
 .clyra-sources-inline__trigger:focus-visible { outline: 2px solid #777; outline-offset: 2px; }
 .clyra-sources-inline__logos { display: inline-flex; align-items: center; }
 .clyra-sources-inline__logos .clyra-web-favicon { width: 18px; height: 18px; }
-.clyra-sources-inline__logos .clyra-web-favicon + .clyra-web-favicon { margin-left: -6px; }
+.clyra-sources-inline__logos .clyra-web-favicon { box-shadow: 0 0 0 1.5px #fff; position: relative; }
+.clyra-sources-inline__logos .clyra-web-favicon + .clyra-web-favicon { margin-left: -9px; }
+.clyra-sources-inline__more { margin-left: 5px; font-size: 11px; font-weight: 500; color: #8d8e95; font-variant-numeric: tabular-nums; }
 .clyra-sources-inline__count { font-size: 11px; color: #9b9ba1; font-variant-numeric: tabular-nums; }
 .clyra-sources-inline__chevron { width: 12px; height: 12px; color: #92939b; transition: transform 300ms var(--act-ease); }
 .clyra-sources-inline.is-open .clyra-sources-inline__chevron { transform: rotate(180deg); }
@@ -732,3 +734,30 @@
   32%{transform:scale(.87) translate(1px,1px)}
 }
 @media(prefers-reduced-motion:reduce){.clyra-ai-cursor-glyph.is-pressed{animation:none!important}}
+
+
+/* ── Sources: one set of icons that overlaps when closed and slides apart into name pills when opened ── */
+.clyra-sources-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clyra-sources-inline__trigger { order: 0; }
+.clyra-sources-stack { order: 1; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; min-width: 0; padding-left: 4px; cursor: pointer; }
+.clyra-source-chip {
+  --gap: -9px;
+  position: relative; display: inline-flex; align-items: center; flex: none; height: 26px;
+  padding: 0 0 0 4px; border-radius: 999px; box-sizing: border-box;
+  background: transparent; box-shadow: 0 0 0 1.5px transparent; color: #55565c; text-decoration: none; font: 400 12px/18px var(--chat-font);
+  margin-left: var(--gap);
+  transition: margin-left 480ms var(--act-ease), padding 480ms var(--act-ease), background 260ms ease, box-shadow 260ms ease, transform 260ms var(--act-ease);
+  transition-delay: calc(var(--i) * 22ms);
+}
+.clyra-source-chip:first-child { margin-left: 0; }
+.clyra-source-chip__icon { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; overflow: hidden; background: #fff; box-shadow: 0 0 0 1.5px #fff, 0 0 0 2.5px rgba(16, 18, 24, 0.08); flex: none; }
+.clyra-source-chip__icon img { width: 100%; height: 100%; object-fit: cover; }
+.clyra-source-chip__name { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width 480ms var(--act-ease), opacity 240ms ease, margin 480ms var(--act-ease); transition-delay: calc(var(--i) * 22ms); }
+.clyra-source-chip:hover { transform: translateY(-1px); }
+/* open: the same icons spread out and each takes its name */
+.clyra-sources-inline.is-open .clyra-source-chip { --gap: 6px; padding-right: 10px; background: #fff; box-shadow: 0 0 0 1px var(--act-card-line, #e6e6ea); }
+.clyra-sources-inline.is-open .clyra-source-chip:hover { background: #f6f6f8; }
+.clyra-sources-inline.is-open .clyra-source-chip__name { max-width: 150px; opacity: 1; margin-left: 6px; }
+.clyra-sources-inline.is-open .clyra-sources-stack { cursor: default; }
+.clyra-source-chip__more { margin-left: 8px; color: #8d8e95; font-size: 11px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .clyra-source-chip, .clyra-source-chip__name { transition-duration: 1ms; transition-delay: 0s; } }

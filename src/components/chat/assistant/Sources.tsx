@@ -75,21 +75,24 @@ export function SourceStrip({ sources }: { sources: SourceView[] }) {
 }
 
 /**
- * "Sources" under a finished answer: a white pill with the first favicons, the count and a chevron. Opening it
- * slides the real sources out sideways as circles; hovering or focusing one names the site, clicking opens its page.
+ * "Sources" under a finished answer. The pill on the left stays put. To its right every site consulted is one favicon, the icons
+ * overlapping like a stack; opening it slides the very same icons apart and each grows a pill with its site's name (nothing is
+ * cloned, so every icon travels from where it was to where it lands).
  */
 export function SourcesInline({ sources }: { sources: SourceView[] }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const list = safeSources(sources);
   const hosts = new Set<string>();
-  const stack = list.filter((s) => {
+  const unique = list.filter((s) => {
     const host = s.host.replace(/^www\./i, "");
     if (hosts.has(host)) return false;
     hosts.add(host);
     return true;
-  }).slice(0, 3);
-  if (!list.length) return null;
+  });
+  if (!unique.length) return null;
+  const shown = unique.slice(0, 12);
+  const hidden = unique.length - shown.length;
   return (
     <section className={`clyra-sources-inline${open ? " is-open" : ""}`} aria-label="Referenced sources">
       <button
@@ -100,27 +103,32 @@ export function SourcesInline({ sources }: { sources: SourceView[] }) {
         aria-label={open ? "Hide sources" : "Show sources"}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="clyra-sources-inline__logos" aria-hidden>
-          {stack.map((source) => <span key={source.id} className="clyra-web-favicon" style={{ animation: "none" }}><SourceFavicon host={source.host} /></span>)}
-        </span>
         <span className="clyra-sources-inline__heading">Sources</span>
-        <span className="clyra-sources-inline__count">{list.length}</span>
+        <span className="clyra-sources-inline__count">{unique.length}</span>
         <ChevronRight className="clyra-sources-inline__chevron" aria-hidden />
       </button>
-      <div className="clyra-sources-inline__clip" id={id} inert={!open} aria-hidden={!open}>
-        <div className="clyra-sources-inline__links">
-          {list.slice(0, 12).map((source, index) => {
-            const host = source.host.replace(/^www\./i, "");
-            return (
-              <span key={source.id} className="clyra-sources-inline__slot" style={{ ["--source-index" as string]: index }}>
-                <a className="clyra-sources-inline__link" href={source.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${source.title || host}`}>
-                  <span className="clyra-sources-inline__favicon" aria-hidden><SourceFavicon host={source.host} /></span>
-                  <span className="clyra-sources-inline__site">{host}</span>
-                </a>
-              </span>
-            );
-          })}
-        </div>
+      <div className="clyra-sources-stack" id={id}>
+        {shown.map((source, index) => {
+          const host = source.host.replace(/^www\./i, "");
+          return (
+            <a
+              key={source.id}
+              className="clyra-source-chip"
+              style={{ ["--i" as string]: index, zIndex: shown.length - index }}
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              tabIndex={open ? 0 : -1}
+              aria-label={`Open ${source.title || host}`}
+              title={source.title || host}
+              onClick={(event) => { if (!open) { event.preventDefault(); setOpen(true); } }}
+            >
+              <span className="clyra-source-chip__icon" aria-hidden><SourceFavicon host={source.host} /></span>
+              <span className="clyra-source-chip__name">{host}</span>
+            </a>
+          );
+        })}
+        {hidden > 0 ? <span className="clyra-source-chip__more" aria-hidden>+{hidden}</span> : null}
       </div>
     </section>
   );

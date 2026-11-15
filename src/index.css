@@ -12216,3 +12216,12 @@ body,
 /* danger: type and one quiet rule, not a pink box */
 .clys-window .clys-danger-zone { border: 0; border-top: 1px solid var(--clys-line); border-radius: 0; background: transparent; margin-top: 12px; padding: 20px 0 0; }
 
+
+/* settings search results: a row per setting, with where it lives */
+.clys-window .clys-nav-result { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; transition: background 120ms ease; }
+.clys-window .clys-nav-result:hover { background: var(--clys-hover-strong); }
+.clys-window .clys-nav-result__title { color: var(--clys-ink); font-size: 13px; font-weight: 500; }
+.clys-window .clys-nav-result__where { color: var(--clys-faint); font-size: 11.5px; }
+/* the row a search result points at lights up once, then settles */
+.clys-window [data-found="true"] { animation: clys-found 1.5s ease both; border-radius: 10px; }
+@keyframes clys-found { 0%, 55% { background: rgba(0, 102, 255, 0.1); } 100% { background: transparent; } }

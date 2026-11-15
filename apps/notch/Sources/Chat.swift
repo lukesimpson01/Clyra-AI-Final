@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // The Notch chat is a second window onto Clyra's own chat: the same conversations (shared store at /api/chat-sync),
 // the same agent (POST /api/chat/agent, Server-Sent Events), and messages kept in Clyra's own shape (agent run,
@@ -122,13 +123,20 @@ struct ChatMessage: Identifiable {
         }
     }
 
-    /// What the agent is doing right now, for the collapsed notch: the running tool, else "Thinking".
+    /// What the agent is doing right now, for the collapsed notch. Anything to do with the web, whether searching or reading a
+    /// page, reads as "Searching" with the sites it has reached sliding in beside it; other tools show their own line.
     var work: (symbol: String, label: String, sources: [SourceRef])? {
         guard !isUser, streaming else { return nil }
-        if let step = steps.last(where: { $0.state == "running" }) {
+        let all = allSteps
+        if let step = steps.last(where: { $0.state == "running" }), step.tool != "web_search" {
             return (ToolStyle.symbol(step.tool), ToolStyle.label(step), step.sources)
         }
-        if let search = steps.last(where: { $0.tool == "web_search" }), text.isEmpty { return (ToolStyle.symbol(search.tool), "Searching", search.sources) }
+        let web = all.filter { $0.tool == "web_search" || ToolStyle.quiet.contains($0.tool) }
+        if !web.isEmpty && text.isEmpty {
+            var seen = Set<String>()
+            let sites = web.flatMap(\.sources).filter { seen.insert($0.host.replacingOccurrences(of: "www.", with: "")).inserted }
+            return ("globe", "Searching", sites)
+        }
         return ("sparkle", "Thinking", [])
     }
 
@@ -473,6 +481,42 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
     func adoptWorking() {
         guard !isStreaming, let external, Date().timeIntervalSince(externalAt) < 30 else { return }
         chat = external
+    }
+
+    /// Tries a reply again: drops it and everything after, then asks the question before it once more.
+    func regenerate(at index: Int) {
+        guard !isStreaming, index < chat.messages.count, let user = chat.messages[..<index].lastIndex(where: { $0.isUser }) else { return }
+        let text = chat.messages[user].text
+        chat.messages.removeSubrange(user...)
+        send(text)
+    }
+
+    /// Edit: the question goes back into the composer and the conversation rewinds to just before it.
+    func edit(at index: Int) {
+        guard !isStreaming, index < chat.messages.count, chat.messages[index].isUser else { return }
+        let text = chat.messages[index].text
+        chat.messages.removeSubrange(index...)
+        pushNow()
+        pendingDraft = text
+        onChange?()
+    }
+    var pendingDraft: String?
+
+    /// "Continue in a new chat": a copy of the conversation up to and including this message.
+    func branch(through index: Int) {
+        guard index < chat.messages.count else { return }
+        var next = SyncedChat.new()
+        next.title = chat.title
+        next.messages = Array(chat.messages[...index])
+        chat = next
+        pushNow()
+        onChange?()
+    }
+
+    func exportToClipboard() {
+        let text = chat.messages.map { ($0.isUser ? "**You**\n\n" : "**Clyra**\n\n") + $0.text }.joined(separator: "\n\n---\n\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("# \(chat.title)\n\n" + text, forType: .string)
     }
 
     /// Asks the same question again, replacing the last answer.

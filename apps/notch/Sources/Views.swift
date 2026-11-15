@@ -70,7 +70,7 @@ enum Metrics {
         case .chat: return m.sidebarOpen ? maximumPanelHeight : 400
         case .weather: return 340
         case .more: return 232
-        case .media: return 210
+        case .media: return m.media.hasChoice ? 244 : 210
         case .alarm, .bluetooth, .airdrop: return 320
         case .browser: return 390
         case .widgets: return m.widgetsEditing ? maximumPanelHeight : min(maximumPanelHeight, CGFloat(max(1, m.widgetRows)) * 110 + 116)
@@ -109,20 +109,7 @@ struct NotchRoot: View {
         let shape = NotchShape(bottomRadius: model.expanded ? Metrics.expandedRadius : Metrics.collapsedRadius, ear: ear)
             ZStack(alignment: .top) {
                 if drawsSilhouette { Color.black }
-                if model.expanded {
-                    GeometryReader { geo in
-                        let s = Metrics.scale
-                        let contentH = max(0, geo.size.height - menuBarHeight - 2)
-                        PanelContent(model: model)
-                            .padding(.horizontal, Metrics.expandedEar + 12)
-                            .padding(.bottom, 12)
-                            .frame(width: geo.size.width / s, height: contentH / s, alignment: .top)
-                            .scaleEffect(s, anchor: .topLeading)
-                            .frame(width: geo.size.width, height: contentH, alignment: .topLeading)
-                            .offset(y: menuBarHeight + 2)
-                    }
-                    .transition(.opacity)
-                } else {
+                if !model.expanded {
                     CollapsedContent(model: model, height: h)
                         .padding(.horizontal, Metrics.ear)
                         .transition(.opacity)
@@ -143,6 +130,15 @@ struct NotchRoot: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // The open content stays mounted (hidden while closed) at its design size, so opening costs no view construction
+            // and no relayout. It is an overlay so its size can never push the closed notch's own content around.
+            .overlay(alignment: .topLeading) {
+                ExpandedLayer(model: model, menuBarHeight: menuBarHeight)
+                    .opacity(model.expanded && !model.contentHidden ? 1 : 0)
+                    .allowsHitTesting(model.expanded && !model.contentHidden)
+                    .animation(model.reduceMotion ? nil : .easeInOut(duration: model.expanded ? 0.22 : 0.1).delay(model.expanded && !model.contentHidden ? 0.05 : 0), value: model.expanded)
+                    .animation(model.reduceMotion ? nil : .easeInOut(duration: model.contentHidden ? 0.1 : 0.22), value: model.contentHidden)
+            }
             .clipShape(shape)
             .overlay(alignment: .top) {
                 if drawsSilhouette { Color.black.frame(height: 1).padding(.horizontal, ear).allowsHitTesting(false) }
@@ -154,6 +150,25 @@ struct NotchRoot: View {
         .animation(model.reduceMotion ? nil : .spring(response: model.expanded ? NotchMotion.openResponse : NotchMotion.closeResponse,
                                                       dampingFraction: model.expanded ? NotchMotion.openDamping : NotchMotion.closeDamping), value: model.expanded)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+/// The open notch's content at its design size, scaled to fit.
+struct ExpandedLayer: View {
+    @ObservedObject var model: NotchModel
+    let menuBarHeight: CGFloat
+    var body: some View {
+        let s = Metrics.scale
+        let w = Metrics.designWidth(model)
+        let h = max(0, Metrics.panelHeight(model) - Metrics.designTop)
+        PanelContent(model: model)
+            .padding(.horizontal, Metrics.expandedEar + 12)
+            .padding(.bottom, 12)
+            .frame(width: w, height: h, alignment: .top)
+            .scaleEffect(s, anchor: .topLeading)
+            .frame(width: w * s, height: h * s, alignment: .topLeading)
+            .offset(y: menuBarHeight + 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -767,9 +782,7 @@ struct ChatView: View {
         HStack(alignment: .top, spacing: 0) {
             if model.sidebarOpen {
                 ChatSidebar(model: model)
-                    .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
                 Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1).padding(.horizontal, 12)
-                    .transition(.opacity)
             }
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -814,7 +827,6 @@ struct ChatView: View {
             }
         }
         .animation(model.reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.82), value: todos.isEmpty)
-        .animation(model.reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.82), value: model.sidebarOpen)
     }
 }
 
@@ -1368,6 +1380,7 @@ struct MediaView: View {
                     IconButton(symbol: "square.grid.2x2", size: 11, label: "Widgets") { model.show(.widgets) }
                 }.frame(height: 16)
             }
+            if model.media.hasChoice { MediaSources(model: model) }
             if let track = model.media.state {
                 HStack(spacing: 12) {
                     Artwork(image: model.media.artwork, size: 52, radius: 10)
@@ -1427,6 +1440,38 @@ struct MediaView: View {
                 Text("-" + TimerEngine.clock(duration - position)).frame(minWidth: 30)
             }.font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// When more than one thing is playing (Clyra's Spotify, the Spotify app, a browser tab…), pick which one the notch follows.
+struct MediaSources: View {
+    @ObservedObject var model: NotchModel
+    var body: some View {
+        let active = model.media.active?.id
+        HStack(spacing: 6) {
+            ForEach(model.media.sources) { source in
+                let on = source.id == active
+                Button { model.media.select(source.id); model.objectWillChange.send() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: source.symbol).font(.system(size: 10, weight: .medium))
+                        Text(source.name).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                        if source.state.status == .playing {
+                            HStack(spacing: 1.5) { ForEach(0..<3, id: \.self) { i in Capsule().fill(Color.white).frame(width: 1.8, height: [5, 8, 6][i]) } }
+                                .opacity(0.8)
+                        }
+                    }
+                    .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
+                    .padding(.horizontal, 10).frame(height: 24)
+                    .background(Capsule().fill(Color.white.opacity(on ? 0.16 : 0.06)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(on ? 0.22 : 0.08), lineWidth: 1))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(source.viaClyra ? "Spotify, connected through Clyra" : source.name)
+            }
+            Spacer(minLength: 0)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: active)
     }
 }
 

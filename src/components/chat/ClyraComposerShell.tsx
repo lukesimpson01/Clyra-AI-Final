@@ -249,6 +249,9 @@ export interface ClyraComposerShellProps {
 
 const EASE = "cubic-bezier(.2,.8,.3,1)";
 const SHELL_EASE = "cubic-bezier(.32,.72,0,1)";
+/** Manage/Settings morph: one duration and one gently springy curve for the bar, the greeting and the sheet, so they move as a single object. */
+const MORPH_MS = 780;
+const MORPH_EASE = "linear(0, 0.041, 0.14, 0.271, 0.412, 0.55, 0.676, 0.783, 0.87, 0.937, 0.987, 1.02, 1.041, 1.051, 1.054, 1.052, 1.047, 1.04, 1.032, 1.025, 1.018, 1.012, 1.007, 1.003, 1.001, 0.999, 0.998, 0.997, 0.997, 0.997, 0.997, 0.998, 0.998, 0.999, 0.999, 0.999, 1)";
 /** The docked sidebar's slide, and the stillness kept on either side of Manage/Settings. */
 const SIDEBAR_SLIDE_MS = 460;
 const SEQUENCE_PAUSE_MS = 500;
@@ -657,7 +660,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           ? 292
           : 226
         : 118 + (files.length ? 68 : 0) + selectionRows * 36;
-  const backDelay = !morphOpen && collapsing ? ".7s" : "0s";
+  // Everything moves together on one curve: no staggered holds between the bar and its surroundings.
+  const backDelay = "0s";
 
   /** Opens Manage or Settings. A docked sidebar leaves first; the morph waits for it to be fully gone, plus a beat. */
   const openMorph = (kind: "manage" | "settings") => {
@@ -666,11 +670,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       setSettingsOpen(kind === "settings");
       setConnectionsStep(null);
     };
+    // The sidebar stays where it is; the composer reshapes in place.
     clearSequence();
-    if (morphOpen) { apply(); return; }
-    setSidebarHold(true);
-    if (!dockSidebar || reduceMotion) { apply(); return; }
-    sequenceTimerRef.current = window.setTimeout(apply, SIDEBAR_SLIDE_MS + SEQUENCE_PAUSE_MS);
+    apply();
   };
 
   const closeMorph = () => {
@@ -678,8 +680,6 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     setManageOpen(false);
     setSettingsOpen(false);
     setConnectionsStep(null);
-    // the sidebar comes back as the shell finishes collapsing: soon enough to feel connected, late enough not to compete
-    sequenceTimerRef.current = window.setTimeout(() => setSidebarHold(false), reduceMotion ? 0 : SIDEBAR_RETURN_MS);
     setCollapsing(true);
     if (collapseTimerRef.current != null)
       window.clearTimeout(collapseTimerRef.current);
@@ -729,13 +729,13 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       panelTimerRef.current = window.setTimeout(() => {
         setMountedPanel(targetPanel);
         setExitingPanel(null);
-      }, 950);
+      }, 240);
     } else {
       setExitingPanel(mountedPanel);
       panelTimerRef.current = window.setTimeout(() => {
         setMountedPanel(null);
         setExitingPanel(null);
-      }, 280);
+      }, 200);
     }
     return () => {
       if (panelTimerRef.current != null)
@@ -758,7 +758,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // On close the compose face waits for the bar to finish shrinking (the same
   // .7s pause + .7s move as the grow) before fading back in, so collapse is
   // the mirror of the open rather than a quick fade.
-  const faceDelay = morphOpen ? ".95s" : collapsing ? ".95s" : ".7s";
+  const faceDelay = morphOpen ? ".14s" : ".34s";
   const faceStyle = (
     on: boolean,
     y: number,
@@ -777,7 +777,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     overflow: on ? (hidden ? "hidden" : "visible") : "hidden",
     pointerEvents: on ? "auto" : "none",
     willChange: "opacity, transform",
-    transition: `opacity ${on ? `.3s ease ${faceDelay}` : ".2s ease"}, transform .5s ${SHELL_EASE}, height 0s linear ${on ? "0s" : ".24s"}`,
+    transition: `opacity ${on ? `.26s ease ${faceDelay}` : ".14s ease"}, transform .5s ${SHELL_EASE}, height 0s linear ${on ? "0s" : ".18s"}`,
   });
   const slideStyle = (on: boolean, x: number): CSSProperties => ({
     position: "absolute",
@@ -793,7 +793,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     overflow: "hidden",
     pointerEvents: on ? "auto" : "none",
     willChange: "opacity, transform",
-    transition: `opacity ${on ? `.28s ease ${faceDelay}` : ".18s ease"}, transform .48s ${SHELL_EASE}, height 0s linear ${on ? "0s" : ".24s"}`,
+    transition: `opacity ${on ? `.26s ease ${faceDelay}` : ".14s ease"}, transform .48s ${SHELL_EASE}, height 0s linear ${on ? "0s" : ".18s"}`,
   });
 
   const dockRef = useRef<HTMLDivElement | null>(null);
@@ -924,9 +924,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           border: "none",
           cursor: "pointer",
           color: "#5C6069",
-          opacity: sidebarOpen || morphOpen ? 0 : 1,
-          transform: sidebarOpen || morphOpen ? "translateX(-10px)" : "translateX(0)",
-          pointerEvents: sidebarOpen || morphOpen ? "none" : "auto",
+          opacity: sidebarOpen ? 0 : 1,
+          transform: sidebarOpen ? "translateX(-10px)" : "translateX(0)",
+          pointerEvents: sidebarOpen ? "none" : "auto",
           transition: `background .22s cubic-bezier(.22,1,.36,1), opacity .3s ease, transform .5s ${SHELL_EASE}`,
         }}
       >
@@ -1717,7 +1717,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               opacity: sent || morphOpen ? 0 : 1,
               transform: sent || morphOpen ? "translateY(-12px)" : "none",
               pointerEvents: sent || morphOpen ? "none" : "auto",
-              transition: `max-height ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}, margin-bottom ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}, opacity ${sent ? ".3s" : ".6s"} ease ${backDelay}, transform ${sent ? ".62s" : "0.95s"} cubic-bezier(.32,.72,0,1) ${backDelay}`,
+              transition: sent
+                ? `max-height .62s ${SHELL_EASE}, margin-bottom .62s ${SHELL_EASE}, opacity .3s ease, transform .62s ${SHELL_EASE}`
+                : `max-height ${MORPH_MS}ms ${SHELL_EASE}, margin-bottom ${MORPH_MS}ms ${SHELL_EASE}, opacity ${morphOpen ? ".24s" : ".5s"} ease ${morphOpen ? "0s" : ".2s"}, transform ${MORPH_MS}ms ${SHELL_EASE}`,
             }}
           >
             {/* Clyra's orb: the same living face the voice call uses. It is the
@@ -1888,7 +1890,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             // choreography above.
             transition: reduceMotion
               ? `height .01s linear, max-width .01s linear`
-              : `height .42s ${SHELL_EASE}, max-width .32s ${SHELL_EASE}, opacity .22s ${SHELL_EASE}, transform .22s ${SHELL_EASE}`,
+              : `height ${MORPH_MS}ms ${MORPH_EASE}, width ${MORPH_MS}ms ${MORPH_EASE}, max-width .32s ${SHELL_EASE}, opacity .22s ${SHELL_EASE}, transform .22s ${SHELL_EASE}`,
             opacity: reduceMotion ? 1 : mounted ? 1 : 0,
             // Forces a stable compositing layer for this rounded, clipped,
             // height-animating box — mitigates a known Chromium paint glitch
@@ -2664,8 +2666,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               style={{
                 animation:
                   exitingPanel === "manage"
-                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
-                    : `clyraFade .28s ${SHELL_EASE} both`,
+                    ? `clyraMorphOut .22s ease both`
+                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
               }}
             >
               <ConnectionsPanel
@@ -2683,8 +2685,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               style={{
                 animation:
                   exitingPanel === "detail"
-                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
-                    : `clyraFade .28s ${SHELL_EASE} both`,
+                    ? `clyraMorphOut .22s ease both`
+                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
               }}
             >
               <ConnectionsDetail
@@ -2707,8 +2709,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 overflow: "hidden",
                 animation:
                   exitingPanel === "settings"
-                    ? `clyraFade .28s ${SHELL_EASE} reverse both`
-                    : `clyraFade .28s ${SHELL_EASE} both`,
+                    ? `clyraMorphOut .22s ease both`
+                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
               }}
             >
               {settingsSheet

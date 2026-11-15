@@ -47,20 +47,24 @@ export function ChatResearchResults({ steps }: { steps: AgentStepView[] }) {
             <span>Images</span>
             <span className="clyra-research-section__count">{images.length}</span>
           </div>
-          <div className="clyra-research-image-grid">
-            {images.slice(0, expanded ? images.length : 5).map((image, index) => (
-              <button className={"clyra-research-image" + (index === 0 ? " clyra-research-image--hero" : "")} key={image.sourceUrl} type="button" title={image.title} onClick={() => setSelected(image)}>
-                <img src={image.thumbnailUrl} alt={image.title} loading="lazy" referrerPolicy="no-referrer" />
-                <span className="clyra-research-image__caption">{image.title}</span>
-              </button>
-            ))}
+          <div className="clyra-research-image-grid" data-count={expanded ? "many" : Math.min(images.length, 5)}>
+            {images.slice(0, expanded ? images.length : 5).map((image, index) => {
+              let host = "";
+              try { host = new URL(image.sourceUrl).hostname.replace(/^www\./i, ""); } catch { /* keep blank */ }
+              return (
+                <button className={"clyra-research-image" + (index === 0 ? " clyra-research-image--hero" : "")} key={image.sourceUrl} type="button" title={image.title} onClick={() => setSelected(image)} style={{ ["--i" as string]: index }}>
+                  <img src={image.thumbnailUrl} alt={image.title} loading="lazy" referrerPolicy="no-referrer" />
+                  <span className="clyra-research-image__caption"><b>{image.title}</b>{host ? <i>{host}</i> : null}</span>
+                </button>
+              );
+            })}
           </div>
           {images.length > 5 ? (
             <button type="button" className="clyra-research-more" onClick={() => setExpanded((open) => !open)}>
               {expanded ? "Show fewer" : "View all images"} <ChevronDown size={13} aria-hidden className={expanded ? "is-rotated" : ""} />
             </button>
           ) : null}
-          <p className="clyra-research-attribution">Image previews from Openverse and Wikimedia Commons. Open each image for source and licence.</p>
+          <p className="clyra-research-attribution">Photos from Wikipedia, Openverse and Wikimedia Commons. Open an image for its source and licence.</p>
         </section>
       ) : null}
       {repositories.length ? (

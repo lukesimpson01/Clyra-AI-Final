@@ -23,6 +23,8 @@ final class NotchModel: ObservableObject {
     @Published var showTimerSetup = false
     @Published var selectedTimerID: UUID?
     @Published var widgetRows = 2
+    /// Briefly true while the panel changes width, so content never shows half-moved: it fades out, relayouts, fades back.
+    @Published var contentHidden = false
     @Published var sidebarOpen = UserDefaults.standard.bool(forKey: "notchSidebar")
     private var widgetsReturn: NotchView = .home
     var onKeyboardFocus: (() -> Void)?
@@ -53,7 +55,7 @@ final class NotchModel: ObservableObject {
             ?? timers.soonest ?? timers.timers.last { $0.status == .paused }
     }
     let weather = WeatherService()
-    let media = MediaMonitor()
+    lazy var media = MediaHub(link: flow)
     let chat = ChatClient()
     let flow = FlowBridge()
     /// Clyra's Flow dictation is being shown in the notch.
@@ -127,6 +129,7 @@ final class NotchModel: ObservableObject {
         chat.onChange = { [weak self] in
             guard let self else { return }
             // A to-do list opens a column beside the chat, so the panel changes width with it.
+            if let draft = self.chat.pendingDraft { self.chat.pendingDraft = nil; self.chatDraft = draft }
             let wide = self.chatWide
             let busy = self.working != nil
             let done = self.doneMessage != nil
@@ -268,9 +271,15 @@ final class NotchModel: ObservableObject {
     }
 
     func toggleSidebar() {
-        sidebarOpen.toggle()
-        UserDefaults.standard.set(sidebarOpen, forKey: "notchSidebar")
-        onLayoutChange?()
+        guard !contentHidden else { return }
+        contentHidden = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) { [weak self] in
+            guard let self else { return }
+            self.sidebarOpen.toggle()
+            UserDefaults.standard.set(self.sidebarOpen, forKey: "notchSidebar")
+            self.onLayoutChange?()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.contentHidden = false }
+        }
     }
 
     func goBack() { show(view == .widgets ? widgetsReturn : .home) }
@@ -304,8 +313,21 @@ final class NotchModel: ObservableObject {
 
     /// "Ask anything" → timers and weather the notch can do itself; everything else goes to Clyra.
     func submitChat() {
-        let text = chatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = chatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // "/search …" is answered here as a web search; every other command runs inside Clyra, so hand it over.
+        if let space = text.firstIndex(of: " "), text.hasPrefix("/") {
+            let command = String(text[..<space])
+            let rest = String(text[text.index(after: space)...]).trimmingCharacters(in: .whitespaces)
+            if command == "/search" || command == "/deep-research" { text = rest.isEmpty ? text : (command == "/search" ? "Search the web for " : "Research in depth: ") + rest }
+            else if SlashCommand.all.contains(where: { $0.prefix == command }) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                chatDraft = ""
+                openClyra()
+                return
+            }
+        }
         chatDraft = ""
         if let req = TimerEngine.parseRequest(text) {
             let t = timers.start(seconds: req.seconds, label: req.label)

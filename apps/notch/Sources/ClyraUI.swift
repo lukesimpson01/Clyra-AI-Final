@@ -50,6 +50,14 @@ struct ClyraComposer: View {
     var compact = false
     @FocusState private var focused: Bool
     @State private var showEffort = false
+    @State private var slashIndex = 0
+
+    private var slashMatches: [SlashCommand] { SlashCommand.matches(model.chatDraft) }
+
+    private func applySlash(_ command: SlashCommand) {
+        model.chatDraft = command.prefix + " "
+        slashIndex = 0
+    }
 
     var body: some View {
         let height: CGFloat = compact ? 42 : 48
@@ -61,7 +69,14 @@ struct ClyraComposer: View {
                 .focused($focused)
                 .padding(.horizontal, 4)
                 .simultaneousGesture(TapGesture().onEnded { model.onKeyboardFocus?(); focused = true })
-                .onSubmit { model.submitChat() }
+                .onSubmit {
+                    if !slashMatches.isEmpty { applySlash(slashMatches[min(slashIndex, slashMatches.count - 1)]) } else { model.submitChat() }
+                }
+                .onKeyPress(.downArrow) { guard !slashMatches.isEmpty else { return .ignored }; slashIndex = min(slashIndex + 1, slashMatches.count - 1); return .handled }
+                .onKeyPress(.upArrow) { guard !slashMatches.isEmpty else { return .ignored }; slashIndex = max(slashIndex - 1, 0); return .handled }
+                .onKeyPress(.tab) { guard !slashMatches.isEmpty else { return .ignored }; applySlash(slashMatches[min(slashIndex, slashMatches.count - 1)]); return .handled }
+                .onKeyPress(.escape) { guard !slashMatches.isEmpty else { return .ignored }; model.chatDraft = ""; return .handled }
+                .onChange(of: model.chatDraft) { _, _ in slashIndex = 0 }
             Button { showEffort.toggle() } label: {
                 HStack(spacing: 4) {
                     Text(model.chat.effortTitle).font(.system(size: 12.5, weight: .medium))
@@ -84,10 +99,100 @@ struct ClyraComposer: View {
             EffortPopover(model: model, open: showEffort, close: { showEffort = false })
                 .offset(x: 28, y: -(height + 10))
         }
+        .overlay(alignment: .bottomLeading) {
+            if !slashMatches.isEmpty {
+                SlashMenu(matches: slashMatches, selected: min(slashIndex, slashMatches.count - 1), pick: applySlash, hover: { slashIndex = $0 })
+                    .offset(y: -(height + 10))
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+            }
+        }
+        .animation(model.reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: slashMatches.isEmpty)
         .zIndex(showEffort ? 10 : 0)
         .onReceive(NotificationCenter.default.publisher(for: .notchDebugEffort)) { _ in showEffort.toggle() }
         .animation(model.reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
         .onChange(of: focused) { _, f in model.chatFocused = f }
+    }
+}
+
+/// The commands Clyra's composer offers when you type "/", with the same names and descriptions.
+struct SlashCommand: Identifiable, Equatable {
+    let prefix: String
+    let label: String
+    let detail: String
+    let symbol: String
+    /// Answered by the notch itself (web search); the rest run inside Clyra and are handed over.
+    var id: String { prefix }
+
+    static let all: [SlashCommand] = [
+        .init(prefix: "/search", label: "Web search", detail: "Research current information from the web", symbol: "globe"),
+        .init(prefix: "/deep-research", label: "Deep Research", detail: "Investigate a topic across trusted sources and produce a verified report", symbol: "binoculars"),
+        .init(prefix: "/youtube", label: "YouTube analyzer", detail: "Analyze a video and answer from its transcript", symbol: "play.rectangle"),
+        .init(prefix: "/browser-use", label: "Browser use", detail: "Let Clyra operate a real browser for you, right here in the chat", symbol: "cursorarrow.rays"),
+        .init(prefix: "/gmail", label: "Google Gmail", detail: "Read email or prepare a message without leaving Clyra", symbol: "envelope"),
+        .init(prefix: "/email", label: "Email", detail: "Read, search or draft email in Clyra's inbox view", symbol: "tray"),
+        .init(prefix: "/calendar", label: "Google Calendar", detail: "Check upcoming events or prepare a calendar action", symbol: "calendar"),
+        .init(prefix: "/docs", label: "Google Docs", detail: "Create a polished Google document", symbol: "doc.text"),
+        .init(prefix: "/sheets", label: "Google Sheets", detail: "Create a Google spreadsheet", symbol: "tablecells"),
+        .init(prefix: "/slides", label: "Google Slides", detail: "Create a Google presentation", symbol: "rectangle.on.rectangle"),
+        .init(prefix: "/drive", label: "Google Drive", detail: "Create a file in Google Drive", symbol: "externaldrive"),
+        .init(prefix: "/spotify", label: "Clyra Music", detail: "Show the ambient music player", symbol: "music.note"),
+        .init(prefix: "/computer", label: "Computer Use", detail: "Let Clyra operate apps on your Mac or PC", symbol: "desktopcomputer"),
+        .init(prefix: "/vibe", label: "Vibe Coder", detail: "Build polished apps in a live workbench", symbol: "chevron.left.forwardslash.chevron.right"),
+        .init(prefix: "/notes", label: "Clyra Notes", detail: "Capture, organise, and review your notes", symbol: "note.text"),
+        .init(prefix: "/browser", label: "Web Browser", detail: "Research and act across live websites", symbol: "safari"),
+        .init(prefix: "/text-story", label: "Text Story", detail: "Generate a narrated iMessage-style story", symbol: "message"),
+        .init(prefix: "/would-rather", label: "Would You Rather", detail: "Create voiced quiz videos with timed reveals", symbol: "questionmark.bubble"),
+        .init(prefix: "/clip", label: "AI Clip", detail: "Render high-quality 1080p clips with timed subtitles", symbol: "film"),
+    ]
+
+    /// Commands matching what has been typed so far; empty once a space follows the command.
+    static func matches(_ draft: String) -> [SlashCommand] {
+        guard draft.hasPrefix("/"), !draft.contains(" ") else { return [] }
+        let q = draft.dropFirst().lowercased()
+        let list = q.isEmpty ? all : all.filter { $0.prefix.dropFirst().hasPrefix(q) || $0.label.lowercased().contains(q) }
+        return Array(list.prefix(8))
+    }
+}
+
+struct SlashMenu: View {
+    let matches: [SlashCommand]
+    let selected: Int
+    let pick: (SlashCommand) -> Void
+    let hover: (Int) -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(Array(matches.enumerated()), id: \.element.id) { i, command in
+                        Button { pick(command) } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: command.symbol).font(.system(size: 13)).foregroundStyle(.white.opacity(0.7)).frame(width: 20)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(command.label).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white.opacity(0.95))
+                                    Text(command.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.48)).lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Text(command.prefix).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.white.opacity(0.35))
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(i == selected ? 0.1 : 0)))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { if $0 { hover(i) } }
+                        .id(i)
+                    }
+                }
+                .padding(5)
+            }
+            .scrollIndicators(.never)
+            .onChange(of: selected) { _, new in withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(new) } }
+        }
+        .frame(width: 380, height: min(CGFloat(matches.count) * 44 + 10, 230))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(white: 0.075)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+        .shadow(color: .black.opacity(0.55), radius: 16, y: 8)
     }
 }
 
@@ -582,8 +687,14 @@ struct StepList: View {
     let steps: [StepItem]
     let live: Bool
     var reduceMotion = false
+    var startsOpen = false
     var openNote: ((String) -> Void)?
-    @State private var expanded = false
+    @State private var expanded: Bool
+
+    init(steps: [StepItem], live: Bool, reduceMotion: Bool = false, startsOpen: Bool = false, openNote: ((String) -> Void)? = nil) {
+        self.steps = steps; self.live = live; self.reduceMotion = reduceMotion; self.startsOpen = startsOpen; self.openNote = openNote
+        _expanded = State(initialValue: startsOpen)
+    }
 
     var body: some View {
         let finished = steps.filter { $0.state != "running" }.count
@@ -646,45 +757,105 @@ struct SectionHeading: View {
     }
 }
 
+/// Pictures in the reply, laid out by how many there are (one wide, two side by side, a hero with two, a hero with four), with
+/// soft rounded tiles, a caption that names the picture and where it is from, and a gentle lift on hover.
 struct ImageGrid: View {
     let images: [ResearchImage]
     @State private var all = false
 
-    private func tile(_ image: ResearchImage, _ side: CGFloat) -> some View {
-        Button { if let url = URL(string: image.sourceURL) { NSWorkspace.shared.open(url) } } label: {
-            AsyncImage(url: URL(string: image.thumbnailURL)) { phase in
-                if case .success(let img) = phase { img.resizable().scaledToFill() } else { Color.white.opacity(0.08) }
-            }
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(image.title)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let shown = all ? Array(images.prefix(12)) : Array(images.prefix(5))
+        VStack(alignment: .leading, spacing: 8) {
             SectionHeading(symbol: "photo.on.rectangle", title: "Images", count: images.count)
             if all {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 5)], spacing: 5) {
-                    ForEach(images) { tile($0, 74) }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 5)], spacing: 5) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, image in ImageTile(image: image, hero: false, index: i) }
                 }
             } else {
-                HStack(alignment: .top, spacing: 5) {
-                    if let hero = images.first { tile(hero, 153) }
-                    VStack(spacing: 5) {
-                        HStack(spacing: 5) { ForEach(Array(images.dropFirst().prefix(2))) { tile($0, 74) } }
-                        HStack(spacing: 5) { ForEach(Array(images.dropFirst(3).prefix(2))) { tile($0, 74) } }
-                    }
-                }
+                layout(shown)
             }
             if images.count > 5 {
-                Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { all.toggle() } } label: {
+                Button { withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { all.toggle() } } label: {
                     HStack(spacing: 4) { Text(all ? "Show fewer" : "View all images"); Image(systemName: "chevron.down").rotationEffect(.degrees(all ? 180 : 0)) }
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.55))
                 }.buttonStyle(.plain)
             }
+            Text("Photos from Wikipedia, Openverse and Wikimedia Commons. Open an image for its source and licence.")
+                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.32))
         }
+    }
+
+    @ViewBuilder private func layout(_ list: [ResearchImage]) -> some View {
+        let gap: CGFloat = 5
+        switch list.count {
+        case 1:
+            GeometryReader { g in ImageTile(image: list[0], hero: true, index: 0) }.aspectRatio(2.4, contentMode: .fit)
+        case 2:
+            GeometryReader { g in
+                HStack(spacing: gap) { ForEach(Array(list.enumerated()), id: \.element.id) { i, image in ImageTile(image: image, hero: i == 0, index: i) } }
+            }.aspectRatio(3.0, contentMode: .fit)
+        case 3:
+            GeometryReader { g in
+                HStack(spacing: gap) {
+                    ImageTile(image: list[0], hero: true, index: 0).frame(width: (g.size.width - gap) * 2 / 3)
+                    VStack(spacing: gap) { ImageTile(image: list[1], hero: false, index: 1); ImageTile(image: list[2], hero: false, index: 2) }
+                }
+            }.aspectRatio(2.0, contentMode: .fit)
+        default:
+            GeometryReader { g in
+                let unit = (g.size.width - gap * 3) / 4
+                HStack(spacing: gap) {
+                    ImageTile(image: list[0], hero: true, index: 0).frame(width: unit * 2 + gap)
+                    VStack(spacing: gap) {
+                        HStack(spacing: gap) { ForEach(Array(list.dropFirst().prefix(2).enumerated()), id: \.element.id) { i, image in ImageTile(image: image, hero: false, index: i + 1) } }
+                        HStack(spacing: gap) { ForEach(Array(list.dropFirst(3).prefix(2).enumerated()), id: \.element.id) { i, image in ImageTile(image: image, hero: false, index: i + 3) } }
+                    }
+                }
+            }.aspectRatio(2.0, contentMode: .fit)
+        }
+    }
+}
+
+struct ImageTile: View {
+    let image: ResearchImage
+    let hero: Bool
+    let index: Int
+    @State private var hover = false
+    @State private var shown = false
+
+    var body: some View {
+        let host = URL(string: image.sourceURL)?.host?.replacingOccurrences(of: "www.", with: "", options: .anchored) ?? ""
+        Button { if let url = URL(string: image.sourceURL) { NSWorkspace.shared.open(url) } } label: {
+            // the colour sizes the tile; the picture and caption are overlays, so a picture's own size can never stretch the layout
+            Color.white.opacity(0.07)
+                .overlay {
+                    AsyncImage(url: URL(string: image.thumbnailURL)) { phase in
+                        if case .success(let img) = phase { img.resizable().scaledToFill().transition(.opacity) } else { Color.clear }
+                    }
+                    .scaleEffect(hover ? 1.04 : 1)
+                }
+                .overlay(alignment: .bottomLeading) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(image.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                        if !host.isEmpty { Text(host).font(.system(size: 9.5)).opacity(0.7).lineLimit(1) }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9).padding(.bottom, 7).padding(.top, 22)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(LinearGradient(colors: [.clear, Color.black.opacity(0.62)], startPoint: .top, endPoint: .bottom))
+                    .opacity(hero || hover ? 1 : 0)
+                }
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.white.opacity(hover ? 0.16 : 0.07), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.spring(response: 0.38, dampingFraction: 0.84), value: hover)
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : 6)
+        .onAppear { withAnimation(.spring(response: 0.45, dampingFraction: 0.85).delay(Double(index) * 0.045)) { shown = true } }
+        .help(image.title)
     }
 }
 
@@ -731,39 +902,84 @@ struct RepoList: View {
     }
 }
 
-/// "Sources" under a finished answer: the first favicons, the count and a chevron. Opening it spreads the real sources out.
+/// "Sources" under a finished answer, as in Clyra. The pill on the left stays put. To its right every site consulted is one icon,
+/// the icons overlapping like a stack; opening it slides the very same icons apart and each grows a pill with its site's name.
 struct SourcesInline: View {
     let sources: [SourceRef]
     @State private var open = false
+    @State private var hover = false
 
     var body: some View {
         let list = uniqueHosts(sources)
         if !list.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Button { withAnimation(.spring(response: 0.38, dampingFraction: 0.85)) { open.toggle() } } label: {
-                    HStack(spacing: 7) {
-                        HStack(spacing: -5) { ForEach(Array(list.prefix(3))) { Favicon(host: $0.host, size: 16) } }
+            let shown = Array(list.prefix(12))
+            HStack(spacing: 8) {
+                Button { withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) { open.toggle() } } label: {
+                    HStack(spacing: 6) {
                         Text("Sources").font(.system(size: 12, weight: .medium))
-                        Text("\(sources.count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.5))
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).rotationEffect(.degrees(open ? 90 : 0)).foregroundStyle(.white.opacity(0.5))
+                        Text("\(list.count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.45))
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+                            .rotationEffect(.degrees(open ? 180 : 0))
                     }
-                    .padding(.horizontal, 10).frame(height: 28)
-                    .background(Capsule().fill(Color.white.opacity(0.07)))
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                    .padding(.horizontal, 11).frame(height: 28)
+                    .background(Capsule().fill(Color.white.opacity(hover ? 0.1 : 0.06)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(hover ? 0.2 : 0.12), lineWidth: 1))
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                if open {
-                    HStack(spacing: 5) {
-                        ForEach(list.prefix(10)) { source in
-                            Favicon(host: source.host, size: 24).help(source.title ?? source.host)
-                                .onTapGesture { if let url = URL(string: source.url) { NSWorkspace.shared.open(url) } }
+                .onHover { hover = $0 }
+                .animation(.easeOut(duration: 0.15), value: hover)
+                ScrollView(.horizontal) {
+                    HStack(spacing: open ? 6 : -9) {
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { i, source in
+                            SourceChip(source: source, open: open, index: i) {
+                                if !open { withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) { open = true } }
+                            }
+                            .zIndex(Double(shown.count - i))
                         }
                     }
-                    .transition(.opacity.combined(with: .offset(x: -8)))
+                    .padding(.vertical, 3).padding(.horizontal, 3)
                 }
+                .scrollIndicators(.never)
+                .scrollDisabled(!open)
             }
+            .animation(.spring(response: 0.46, dampingFraction: 0.86), value: open)
         }
+    }
+}
+
+/// One site. The icon never moves out of its chip: closed, the chip is just the icon; open, the same chip widens to show the name.
+struct SourceChip: View {
+    let source: SourceRef
+    let open: Bool
+    let index: Int
+    let tapWhenClosed: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        let name = source.host.replacingOccurrences(of: "www.", with: "", options: .anchored)
+        Button {
+            if open { if let url = URL(string: source.url) { NSWorkspace.shared.open(url) } } else { tapWhenClosed() }
+        } label: {
+            HStack(spacing: open ? 6 : 0) {
+                Favicon(host: source.host, size: 18)
+                    .overlay(Circle().strokeBorder(Color(white: 0.07), lineWidth: open ? 0 : 1.5))
+                Text(name).font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize()
+                    .frame(width: open ? nil : 0, alignment: .leading)
+                    .opacity(open ? 1 : 0)
+                    .clipped()
+            }
+            .padding(.leading, open ? 4 : 0).padding(.trailing, open ? 10 : 0).frame(height: 26)
+            .background(Capsule().fill(Color.white.opacity(open ? (hover ? 0.12 : 0.06) : 0)))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(open ? (hover ? 0.22 : 0.1) : 0), lineWidth: 1))
+            .contentShape(Capsule())
+            .offset(y: hover ? -1 : 0)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(.spring(response: 0.46, dampingFraction: 0.86).delay(Double(index) * 0.022), value: open)
+        .animation(.easeOut(duration: 0.15), value: hover)
+        .help(source.title ?? source.host)
     }
 }
 
@@ -955,28 +1171,122 @@ struct MarkdownView: View {
 
 // MARK: Message
 
+/// A round action under a message: grey wash on hover and a tooltip after a beat, like Clyra's.
+struct ActionButton: View {
+    let symbol: String
+    let tip: String
+    var pressed = false
+    let action: () -> Void
+    @State private var hover = false
+    @State private var showTip = false
+
+    var body: some View {
+        Button(action: action) { icon }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+            .overlay(alignment: .top) { tooltip }
+            .task(id: hover) {
+                showTip = false
+                guard hover else { return }
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                if hover { showTip = true }
+            }
+            .accessibilityLabel(tip)
+    }
+
+    var icon: some View {
+        Image(systemName: symbol).font(.system(size: 12.5, weight: .regular))
+            .foregroundStyle(.white.opacity(hover || pressed ? 0.95 : 0.6))
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(Color.white.opacity(hover || pressed ? 0.1 : 0)))
+            .contentShape(Circle())
+            .animation(.easeOut(duration: 0.14), value: hover)
+    }
+
+    var tooltip: some View {
+        Text(tip).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white)
+            .padding(.horizontal, 7).padding(.vertical, 3.5)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(white: 0.16)))
+            .fixedSize()
+            .offset(y: showTip ? -27 : -23)
+            .opacity(showTip ? 1 : 0)
+            .animation(.easeOut(duration: 0.16), value: showTip)
+            .allowsHitTesting(false)
+    }
+}
+
+/// The "more" menu: a button that looks like the others, opening Clyra's list of actions.
+struct MoreButton<Content: View>: View {
+    @ViewBuilder let items: () -> Content
+    @State private var hover = false
+    var body: some View {
+        Menu { items() } label: {
+            Image(systemName: "ellipsis").font(.system(size: 12.5))
+                .foregroundStyle(.white.opacity(hover ? 0.95 : 0.6))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.white.opacity(hover ? 0.1 : 0)))
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.14), value: hover)
+        .help("More")
+    }
+}
+
+enum ActivityDetail: String { case compact, normal, detailed }
+
 struct ChatBubble: View {
     @ObservedObject var model: NotchModel
     let msg: ChatMessage
     let isLast: Bool
     @State private var copied = false
+    @State private var hovering = false
+    @AppStorage("notchActivityDetail") private var detailRaw = ActivityDetail.normal.rawValue
 
     private var reduce: Bool { model.reduceMotion }
+    private var detail: ActivityDetail { ActivityDetail(rawValue: detailRaw) ?? .normal }
+    private var index: Int { model.chat.chat.messages.firstIndex { $0.id == msg.id } ?? 0 }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(msg.text, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
+    }
 
     var body: some View {
         if msg.isUser {
-            Text(msg.text)
-                .font(.system(size: 13.5))
-                .textSelection(.enabled)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.11)))
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.leading, 60)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(msg.text)
+                    .font(.system(size: 13.5))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(hovering ? 0.14 : 0.11)))
+                    .animation(.easeOut(duration: 0.15), value: hovering)
+                // outside the bubble, so the bubble never moves when they appear
+                HStack(spacing: 0) {
+                    ActionButton(symbol: copied ? "checkmark" : "doc.on.doc", tip: copied ? "Copied" : "Copy", action: copy)
+                    ActionButton(symbol: "pencil", tip: "Edit") { model.chat.edit(at: index) }
+                    MoreButton {
+                        Button { model.chat.branch(through: index); model.show(.chat) } label: { Label("Continue in a new chat from here", systemImage: "bubble.left.and.bubble.right") }
+                    }
+                }
+                .opacity(hovering ? 1 : 0)
+                .offset(y: hovering ? 0 : -3)
+                .animation(.easeOut(duration: 0.16), value: hovering)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 60)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
         } else {
             let steps = msg.steps
             VStack(alignment: .leading, spacing: 9) {
-                if !steps.isEmpty {
-                    StepList(steps: steps, live: msg.streaming, reduceMotion: reduce) { id in model.openClyra(path: "notes#\(id)") }
+                if !steps.isEmpty && !(detail == .compact && !msg.streaming) {
+                    StepList(steps: steps, live: msg.streaming, reduceMotion: reduce, startsOpen: detail == .detailed) { id in model.openClyra(path: "notes#\(id)") }
                 }
                 if msg.streaming && msg.text.isEmpty && steps.allSatisfy({ $0.state != "running" }) {
                     ThinkingLine(reduceMotion: reduce)
@@ -987,24 +1297,46 @@ struct ChatBubble: View {
                 }
                 if !msg.streaming {
                     ResearchResults(steps: msg.allSteps)
-                    SourcesInline(sources: msg.citations)
+                    SourcesInline(sources: allSources)
                 }
                 if msg.stopped { Text("Stopped").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)) }
                 if !msg.streaming && !msg.text.isEmpty {
-                    HStack(spacing: 2) {
-                        ComposerButton(symbol: copied ? "checkmark" : "doc.on.doc", label: "Copy") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(msg.text, forType: .string)
-                            copied = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
+                    HStack(spacing: 0) {
+                        ActionButton(symbol: copied ? "checkmark" : "doc.on.doc", tip: copied ? "Copied" : "Copy", action: copy)
+                        ActionButton(symbol: "arrow.counterclockwise", tip: "Retry") { model.chat.regenerate(at: index) }
+                        MoreButton {
+                            Button { Speech.toggle(msg.text) } label: { Label(Speech.speaking ? "Stop reading" : "Read aloud", systemImage: Speech.speaking ? "stop.fill" : "speaker.wave.2") }
+                            Button { model.chat.branch(through: index); model.show(.chat) } label: { Label("Continue in a new chat", systemImage: "bubble.left.and.bubble.right") }
+                            Button { model.chat.exportToClipboard() } label: { Label("Export conversation", systemImage: "archivebox") }
+                            Divider()
+                            Text("Activity detail")
+                            ForEach([ActivityDetail.compact, .normal, .detailed], id: \.rawValue) { level in
+                                Button { detailRaw = level.rawValue } label: { Label(level.rawValue.capitalized, systemImage: detail == level ? "checkmark" : "circle.dotted") }
+                            }
                         }
-                        if isLast { ComposerButton(symbol: "arrow.counterclockwise", label: "Try again") { model.chat.regenerate() } }
                     }
                     .padding(.leading, -6)
+                    .opacity(hovering ? 1 : 0.72)
+                    .animation(.easeOut(duration: 0.16), value: hovering)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
         }
+    }
+
+    /// Sites the answer cites plus every site its searches consulted.
+    private var allSources: [SourceRef] {
+        msg.citations + msg.allSteps.filter { $0.tool == "web_search" }.flatMap(\.sources)
+    }
+}
+
+enum Speech {
+    private static let synth = NSSpeechSynthesizer()
+    static var speaking: Bool { synth.isSpeaking }
+    static func toggle(_ text: String) {
+        if synth.isSpeaking { synth.stopSpeaking() } else { synth.startSpeaking(text) }
     }
 }
 

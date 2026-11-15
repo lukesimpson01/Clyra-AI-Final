@@ -1813,9 +1813,17 @@ export const AnimatedMessage = ({
   const showAnswer = content.length > 0 && !suppressVibeAnswerBody;
   const sourceViews = useMemo(() => {
     const fromSearch = searchSourcesToViews(searchSources, searchCitations);
+    // every site the agent's searches consulted, not only the ones the answer cites, so the footer shows the whole set
+    const consulted = (agentRun?.steps ?? []).filter((step) => step.tool === "web_search").flatMap((step) => step.sources ?? []);
+    if (!isStreaming && !isVibe && consulted.length) {
+      const seen = new Set(fromSearch.map((source) => source.host.replace(/^www\./i, "")));
+      const extra = consulted.filter((source) => { const host = source.host.replace(/^www\./i, ""); if (seen.has(host)) return false; seen.add(host); return true; })
+        .map((source, index) => ({ id: `run-${index}-${source.url}`, url: source.url, host: source.host, title: source.title }));
+      return [...fromSearch, ...extra] as typeof fromSearch;
+    }
     if (fromSearch.length || isStreaming || isVibe) return fromSearch;
     return sourcesFromContent(content);
-  }, [searchSources, searchCitations, isStreaming, isVibe, content]);
+  }, [searchSources, searchCitations, isStreaming, isVibe, content, agentRun]);
   const googleActivity: ActivityStep[] = useMemo(
     () =>
       (googleSteps ?? []).map((step, index) => ({

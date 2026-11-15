@@ -346,6 +346,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
     private var farRule = false
     private var outsideTicks = 0
     private var lastInteraction = Date.distantPast
+    /// True while one of the panel's own menus (More, Weather location…) is open: the pointer is then over the menu, not
+    /// the panel, and that must never read as "left the notch".
+    private var menuTracking = false
+    private var menuEndedAt = Date.distantPast
     private var pageBeforeFilePreview: NotchView?
     var outsideClick: Any?
     var hotkeyRef: EventHotKeyRef?
@@ -385,10 +389,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         panel.onEscape = { [weak self] in
             guard let self else { return }
             if self.model.ringingAlarm != nil { self.model.dismissAlarm() }
-            else { self.collapse() }
+            else { self.collapse("escape") }
         }
         model.onLayoutChange = { [weak self] in self?.layout() }
-        model.onFlowStart = { [weak self] in self?.collapse() }
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in self?.menuTracking = true }
+        NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.menuTracking = false
+            self?.menuEndedAt = Date()
+        }
+        model.onFlowStart = { [weak self] in self?.collapse("flow") }
         model.onDone = { [weak self] in
             guard let self else { return }
             self.canvas.playDone(reduceMotion: self.model.reduceMotion)
@@ -631,14 +640,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         let p = NSEvent.mouseLocation
         if panelRect(margin: 6).contains(p) { armed = true; farRule = true; outsideTicks = 0; return }
         // Never judge the pointer while the panel is changing shape or while someone is clicking in it.
-        if displayLink != nil || Date().timeIntervalSince(lastInteraction) < 1.6 { outsideTicks = 0; return }
+        if displayLink != nil || menuTracking || Date().timeIntervalSince(menuEndedAt) < 0.9 || Date().timeIntervalSince(lastInteraction) < 1.6 { outsideTicks = 0; return }
         // Never close under the user while they're typing, dragging or a button is held.
         if model.keepsPanelOpen || NSEvent.pressedMouseButtons != 0 || model.airdropTargeted { outsideTicks = 0; return }
         if armed {
             outsideTicks += 1
-            if outsideTicks >= 2 { collapse() }
+            if outsideTicks >= 2 { collapse("pointer-left") }
         } else if farRule, !panelRect(margin: 220).contains(p) {
-            collapse()
+            collapse("pointer-far")
         }
     }
 
@@ -654,12 +663,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         if outsideClick == nil {
             outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
                 guard let self, !self.model.keepsPanelOpenOnOutsideClick else { return }
-                self.collapse()
+                // A click that passed through the panel's edge, or one made in a menu it opened, is not "outside".
+                if self.menuTracking || Date().timeIntervalSince(self.menuEndedAt) < 0.8 { return }
+                if self.panelRect(margin: 14).contains(NSEvent.mouseLocation) { return }
+                self.collapse("outside-click")
             }
         }
     }
 
-    func collapse() {
+    /// Why the panel closed, kept in ~/Library/Logs/Notch/collapse.log so an unexpected close can be traced.
+    private func logCollapse(_ reason: String) {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Notch")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("collapse.log")
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(reason) view=\(model.view.rawValue) mouse=\(NSEvent.mouseLocation) armed=\(armed) menu=\(menuTracking)\n"
+        if let handle = try? FileHandle(forWritingTo: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() }
+        else { try? line.write(to: file, atomically: true, encoding: .utf8) }
+    }
+
+    func collapse(_ reason: String = "unknown") {
+        if model.expanded { logCollapse(reason) }
         closeWork?.cancel()
         hoverWork?.cancel()
         guard model.expanded else { return }
@@ -674,7 +697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         if let m = outsideClick { NSEvent.removeMonitor(m); outsideClick = nil }
     }
 
-    func toggle() { model.expanded ? collapse() : expand() }
+    func toggle() { model.expanded ? collapse("hotkey") : expand() }
 
     // MARK: Shortcut
 
@@ -703,6 +726,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
             case "login":
                 if u.lastPathComponent == "enable" { LoginItem.set(true) }
                 if u.lastPathComponent == "disable" { LoginItem.set(false) }
+            case "state":
+                let m = model
+                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
+                try? text.write(toFile: u.path, atomically: true, encoding: .utf8)
+            case "open":
+                if let i = Int(u.lastPathComponent), model.chat.allChats.indices.contains(i) { expand(); model.chat.open(model.chat.allChats[i]); model.show(.chat) }
             case "expand": expand()
             case "effort": NotificationCenter.default.post(name: .notchDebugEffort, object: nil)
             case "snap":
@@ -710,7 +739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
                     canvas.cacheDisplay(in: canvas.bounds, to: rep)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: u.path))
                 }
-            case "collapse": collapse()
+            case "collapse": collapse("url")
             case "view": expand(); model.show(NotchView(rawValue: u.lastPathComponent) ?? .home)
             case "ask":
                 expand()

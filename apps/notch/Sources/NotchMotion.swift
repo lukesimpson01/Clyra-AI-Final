@@ -100,8 +100,13 @@ extension NotchMotion {
     /// Grow with a little overshoot (liquid), shrink without any, and let the axes run at slightly different rates.
     static func tune(_ s: inout Spring, toward target: CGFloat, bounce: CGFloat) {
         let growing = target > s.value
-        s.stiffness = growing ? 430 - bounce * 60 : 520
-        s.damping = growing ? 25 + bounce * 4 : 44
+        let travel = abs(target - s.value)
+        // Long moves (a wide panel opening) get a softer, slower spring with no overshoot; short ones keep a little life.
+        let lively = travel > 140 ? min(bounce, 0.12) : bounce
+        let stiffness: CGFloat = growing ? (travel > 140 ? 330 : 420 - 60 * lively) : 480
+        let zeta: CGFloat = growing ? 1.0 - 0.42 * lively : 1.0
+        s.stiffness = stiffness
+        s.damping = 2 * zeta * stiffness.squareRoot()
         s.target = target
     }
 }

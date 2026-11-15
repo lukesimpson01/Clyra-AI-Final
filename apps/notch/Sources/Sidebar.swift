@@ -166,7 +166,31 @@ struct SettingsView: View {
         var symbol: String { self == .conversation ? "bubble.left" : self == .model ? "cpu" : "rectangle.topthird.inset.filled" }
     }
     @State private var section: Section = .conversation
+    @State private var query = ""
+    @State private var flash: String?
     @Namespace private var highlight
+
+    /// Every setting's words, so search finds a row by anything it says, not only by its section's name.
+    private static let index: [(section: Section, title: String, detail: String)] = [
+        (.conversation, "Show plan while working", "The agent’s to-do list opens above the composer only while it is working. Tasks checklist"),
+        (.conversation, "Auto-scroll", "Keep the latest response in view. Scroll follow"),
+        (.model, "Effort", "How much Clyra thinks before it answers. Light Standard Extended reasoning depth speed"),
+        (.notch, "Weather location", "Current location default city forecast temperature"),
+        (.notch, "Shortcut", "Keyboard hotkey open the notch Option Command N Control Space"),
+        (.notch, "Show over full-screen apps", "Spaces full screen visible above other windows"),
+        (.notch, "Open at login", "Start automatically launch when you sign in"),
+        (.notch, "Live audio bars", "Music visualiser playing bars system audio capture"),
+        (.notch, "Face unlock", "Glance Face ID password lock screen enroll"),
+        (.notch, "Quit Notch", "Close exit the app"),
+    ]
+    private var matches: [(section: Section, title: String, detail: String)] {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return [] }
+        return Self.index.filter { entry in
+            let hay = "\(entry.title) \(entry.detail) \(entry.section.rawValue)".lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+    }
     @AppStorage("notchShowPlan") private var showPlan = true
     @AppStorage("notchAutoScroll") private var autoScroll = true
     @AppStorage("weatherCity") private var city = ""
@@ -180,8 +204,35 @@ struct SettingsView: View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 SidebarRow(symbol: "arrow.left", title: "Back to application") { model.show(.chat) }
-                    .padding(.bottom, 6)
-                ForEach(Section.allCases, id: \.self) { item in
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    TextField("Search settings", text: $query).textFieldStyle(.plain).font(.system(size: 12.5))
+                        .simultaneousGesture(TapGesture().onEnded { model.onKeyboardFocus?() })
+                }
+                .padding(.horizontal, 8).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.07)))
+                .padding(.bottom, 6)
+                if !query.isEmpty {
+                    ForEach(Array(matches.enumerated()), id: \.offset) { _, entry in
+                        Button {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) { section = entry.section }
+                            flash = entry.title
+                            query = ""
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { flash = nil }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(entry.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white.opacity(0.92)).lineLimit(1)
+                                Text(entry.section.rawValue).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if matches.isEmpty { Text("No results for “\(query)”.").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.4)).padding(.horizontal, 8) }
+                }
+                ForEach(query.isEmpty ? Section.allCases : [], id: \.self) { item in
                     Button { withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) { section = item } } label: {
                         HStack(spacing: 9) {
                             Image(systemName: item.symbol).font(.system(size: 12)).frame(width: 16)
@@ -299,7 +350,8 @@ struct SettingsView: View {
     }
 
     private func row<C: View>(_ title: String, _ detail: String?, @ViewBuilder _ control: () -> C) -> some View {
-        HStack(spacing: 12) {
+        let lit = flash == title
+        return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 12.5, weight: .medium))
                 if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).fixedSize(horizontal: false, vertical: true) }
@@ -308,6 +360,8 @@ struct SettingsView: View {
             control()
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(lit ? 0.12 : 0)))
+        .animation(.easeOut(duration: 0.4), value: lit)
     }
 }
 

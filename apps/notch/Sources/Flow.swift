@@ -121,6 +121,8 @@ final class FlowBridge: ObservableObject {
     @Published private(set) var detail = ""
     let engine = WaveformEngine()
     var onChange: ((Bool) -> Void)?   // (active changed)
+    /// Clyra's Spotify connection, polled by Clyra and forwarded here (the Notch never holds Spotify credentials).
+    var onSpotify: (([String: Any]) -> Void)?
 
     private var listener: NWListener?
     private var sender: NWConnection?
@@ -161,6 +163,8 @@ final class FlowBridge: ObservableObject {
         case "level":
             let rms = (o["rms"] as? NSNumber)?.doubleValue ?? (o["level"] as? NSNumber)?.doubleValue ?? 0
             engine.push(rms: rms)
+        case "spotify":
+            onSpotify?(o)
         case "state":
             let next = o["phase"] as? String ?? "idle"
             let was = active
@@ -171,6 +175,13 @@ final class FlowBridge: ObservableObject {
             if was != active { onChange?(active) } else { objectWillChange.send() }
         default: break
         }
+    }
+
+    func sendSpotify(_ action: String, extra: [String: Any] = [:]) {
+        var message: [String: Any] = ["op": "spotify", "action": action]
+        for (key, value) in extra { message[key] = value }
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        sender?.send(content: data, completion: .contentProcessed { _ in })
     }
 
     func send(action: String) {

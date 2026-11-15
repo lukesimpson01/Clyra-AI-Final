@@ -136,6 +136,36 @@ const modelPresets = [
   { label: "Creative", detail: "More exploration", temperature: 1 },
 ] as const;
 
+
+/** Every setting's words, so search finds a row by anything it says, not only by its section's name. */
+const SETTINGS_INDEX: Array<{ section: string; title: string; detail: string }> = [
+  { section: "account", title: "Profile", detail: "How you appear across Clyra." },
+  { section: "account", title: "Display name", detail: "Shown in your greeting and profile." },
+  { section: "account", title: "Export my data", detail: "Download every saved chat as JSON." },
+  { section: "look", title: "Appearance", detail: "Choose how Clyra looks on this device. Theme light dark system." },
+  { section: "look", title: "Accent color", detail: "Used for highlights and interactive elements." },
+  { section: "look", title: "Text size", detail: "Adjust the reading size across your conversations. Small medium large font." },
+  { section: "look", title: "Message color", detail: "Choose a color for your chat messages. Bubble." },
+  { section: "chat", title: "Send on Enter", detail: "Shift + Enter for a new line. Return key submit." },
+  { section: "chat", title: "Auto-scroll", detail: "Keep the latest response in view." },
+  { section: "chat", title: "Markdown", detail: "Render headings, lists, and links." },
+  { section: "chat", title: "Code highlighting", detail: "Colorize code blocks. Syntax." },
+  { section: "chat", title: "Show in the notch", detail: "Flow dictation indicator floating pill notch Right Option microphone." },
+  { section: "voice", title: "Voice presets", detail: "Pick a starting point, then fine-tune the result below. Calm natural bright." },
+  { section: "voice", title: "Adjust", detail: "Fine-tune the voice you heard. Rate pitch volume speed." },
+  { section: "voice", title: "Test Mode", detail: "Voice call repeats back what you say. Mic connection Fish Audio." },
+  { section: "advanced", title: "Local model", detail: "Transcription whisper tiny base small automatic fastest balanced quality." },
+  { section: "advanced", title: "Response character", detail: "How exploratory or direct everyday answers should feel. Precise balanced creative temperature." },
+  { section: "advanced", title: "System prompt", detail: "Persistent instructions for Clyra on every reply. Custom instructions." },
+  { section: "data", title: "Export chats", detail: "Download as JSON. Backup." },
+  { section: "data", title: "Clear chats", detail: "Remove from this browser. Delete history." },
+  { section: "data", title: "Reset", detail: "Restore every preference to its original value. Defaults." },
+  { section: "memory", title: "Memory", detail: "Clyra’s identity, what it knows about you, what it has learned, and its skills." },
+  { section: "workspace", title: "Workspace", detail: "Make the controls around Chat feel like your own. Dock shortcuts." },
+  { section: "my-apps", title: "My apps", detail: "Apps saved from Clyra Code. Shortcuts pinned." },
+  { section: "usage", title: "Usage", detail: "Current status of your connected Clyra services. Requests credits billing quota." },
+];
+
 function Toggle({
   checked,
   onChange,
@@ -498,6 +528,29 @@ export function SettingsSheet({
     () => (query ? sections.filter((section) => section.label.toLowerCase().includes(query)) : sections),
     [query],
   );
+  const settingMatches = useMemo(() => {
+    if (!query) return [] as typeof SETTINGS_INDEX;
+    const words = query.split(/\s+/).filter(Boolean);
+    return SETTINGS_INDEX.filter((entry) => {
+      const label = sections.find((section) => section.id === entry.section)?.label ?? "";
+      const haystack = `${entry.title} ${entry.detail} ${label}`.toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    }).slice(0, 12);
+  }, [query]);
+  const [foundTitle, setFoundTitle] = useState<string | null>(null);
+  useEffect(() => {
+    if (!foundTitle) return;
+    const timer = window.setTimeout(() => {
+      const root = document.querySelector(".clys-content__inner");
+      const hit = Array.from(root?.querySelectorAll<HTMLElement>(".clys-row__label, .clys-subtitle, .clys-section-title") ?? []).find((el) => el.textContent?.trim().toLowerCase() === foundTitle.toLowerCase());
+      const target = hit?.closest<HTMLElement>(".clys-row, .clys-settings-card") ?? hit;
+      target?.scrollIntoView({ block: "center", behavior: "smooth" });
+      target?.setAttribute("data-found", "true");
+      window.setTimeout(() => target?.removeAttribute("data-found"), 1600);
+      setFoundTitle(null);
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [foundTitle, activeSection]);
   const navGroups = useMemo(() => {
     const groups: Array<{ label: string; items: Section[] }> = [];
     for (const category of navCategories) {
@@ -641,7 +694,23 @@ export function SettingsSheet({
                     ))}
                   </div>
                 ))}
-                {navGroups.length === 0 ? (
+                {settingMatches.length > 0 ? (
+                  <div className="clys-nav-group">
+                    <p className="clys-nav-group__label">Settings</p>
+                    {settingMatches.map((entry) => (
+                      <button
+                        key={`${entry.section}-${entry.title}`}
+                        type="button"
+                        className="clys-nav-result"
+                        onClick={() => { setActiveSection(entry.section as typeof activeSection); setFoundTitle(entry.title); }}
+                      >
+                        <span className="clys-nav-result__title">{entry.title}</span>
+                        <span className="clys-nav-result__where">{sections.find((section) => section.id === entry.section)?.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {navGroups.length === 0 && settingMatches.length === 0 ? (
                   <p className="clys-nav-empty">No results for “{navQuery.trim()}”.</p>
                 ) : null}
               </nav>
@@ -856,15 +925,8 @@ export function SettingsSheet({
                       </SettingsCard>
                       {flowPillMode ? (
                         <SettingsCard title="Flow dictation" description="Where the indicator appears when you tap Right Option to dictate.">
-                          <SettingRow title="Indicator" detail="The notch keeps a black background and hangs from the top of your screen.">
-                            <Segmented
-                              value={flowPillMode}
-                              onChange={chooseFlowPillMode}
-                              options={[
-                                { label: "Floating pill", value: "pill" },
-                                { label: "Notch", value: "notch" },
-                              ]}
-                            />
+                          <SettingRow title="Show in the notch" detail="Dictation grows out of the notch, on a black background. Off keeps the floating pill.">
+                            <Toggle checked={flowPillMode === "notch"} onChange={(on) => chooseFlowPillMode(on ? "notch" : "pill")} label="Show Flow dictation in the notch" />
                           </SettingRow>
                         </SettingsCard>
                       ) : null}

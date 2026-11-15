@@ -7,7 +7,8 @@ import { execFile } from "node:child_process";
  * stream light and never block the dictation pipeline; if the Notch is not running nothing is lost.
  */
 export class NotchBridge {
-  constructor({ onAction } = {}) {
+  constructor({ onAction, onMessage } = {}) {
+    this.onMessage = onMessage;
     this.tx = dgram.createSocket("udp4");
     this.tx.on("error", () => {});
     this.alive = false;
@@ -16,7 +17,8 @@ export class NotchBridge {
     this.rx.on("message", (buffer) => {
       try {
         const message = JSON.parse(buffer.toString("utf8"));
-        if (message?.action === "stop" || message?.action === "cancel") onAction?.(message.action);
+        if (message?.op) this.onMessage?.(message);
+        else if (message?.action === "stop" || message?.action === "cancel") onAction?.(message.action);
       } catch { /* ignore a damaged datagram */ }
     });
     try { this.rx.bind(31417, "127.0.0.1"); } catch { /* port busy: the pill window still works */ }

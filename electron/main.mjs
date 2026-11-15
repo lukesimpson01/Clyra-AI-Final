@@ -794,6 +794,62 @@ function startPackagedNodeFallback(env) {
   );
 }
 
+
+/**
+ * Clyra's Spotify connection, shared with the Notch app: the same playback state Clyra's own notch reads goes out over the
+ * local bridge every second or so, and play / pause / next / previous / seek from the Notch come back and run here.
+ * The Notch never sees a token.
+ */
+let notchMediaTimer = null;
+function startNotchMediaLink() {
+  const bridge = dictationManager?.notch;
+  if (!bridge || notchMediaTimer) return;
+  const summary = (state) => {
+    const item = state?.item;
+    if (!item) return null;
+    const images = item.album?.images || item.images || [];
+    return {
+      playing: Boolean(state.is_playing),
+      title: item.name || "",
+      artist: (item.artists || []).map((artist) => artist.name).join(", ") || item.show?.name || "",
+      album: item.album?.name || item.show?.name || "",
+      artwork: (images[1] || images[0])?.url || "",
+      durationMs: item.duration_ms || 0,
+      progressMs: state.progress_ms || 0,
+      shuffle: state.shuffle_state,
+      repeat: state.repeat_state,
+      device: state.device?.name || "",
+      volume: state.device?.volume_percent,
+      uri: item.uri || "",
+    };
+  };
+  const push = async () => {
+    if (!bridge.alive || !spotifyManager) return;
+    try {
+      const status = await spotifyManager.status();
+      if (!status?.connected) { bridge.send({ t: "spotify", connected: false }); return; }
+      bridge.send({ t: "spotify", connected: true, state: summary(await spotifyManager.getPlaybackState()) });
+    } catch {
+      bridge.send({ t: "spotify", connected: false });
+    }
+  };
+  bridge.onMessage = async (message) => {
+    if (message?.op !== "spotify" || !spotifyManager) return;
+    try {
+      const action = String(message.action || "");
+      if (action === "play" || action === "pause" || action === "next" || action === "previous" || action === "seek" || action === "volume" || action === "shuffle" || action === "repeat") {
+        await spotifyManager.control(action, { positionMs: message.positionMs, volumePercent: message.volumePercent, state: message.state });
+      }
+    } catch (error) {
+      console.warn("[notch] spotify control failed:", error?.message || error);
+    }
+    setTimeout(() => void push(), 250);
+  };
+  notchMediaTimer = setInterval(() => void push(), 1_200);
+  notchMediaTimer.unref?.();
+  void push();
+}
+
 function startLocalService() {
   serviceLaunchError = null;
   serviceFallbackStarted = false;
@@ -1929,6 +1985,7 @@ function ensureFullBoot() {
       startLocalService();
       await waitForService();
       void launchNotch();
+      startNotchMediaLink();
     })().catch((error) => {
       // A failed start must not be cached: the next "Open Clyra" gets a fresh attempt.
       fullBootPromise = null;
