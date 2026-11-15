@@ -7,11 +7,12 @@
   let stream = null, ctx = null, source = null, node = null, mute = null, lastLevel = 0, analyser = null, levelBuf = null, levelTimer = 0;
   const TARGET = 16000;
 
-  function level(samples) {
-    let sum = 0;
-    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  // The voice meter wants true RMS and peak (it works in decibels); the endpoint detector keeps its normalised level.
+  function measure(samples) {
+    let sum = 0, peak = 0;
+    for (let i = 0; i < samples.length; i++) { const v = samples[i]; sum += v * v; const a = v < 0 ? -v : v; if (a > peak) peak = a; }
     const rms = Math.sqrt(sum / (samples.length || 1));
-    return Math.max(0, Math.min(1, (rms - 0.006) / 0.1));
+    return { level: Math.max(0, Math.min(1, (rms - 0.006) / 0.1)), rms, peak };
   }
 
   // The context runs at the speech model's own rate, so Chromium's high-quality resampler does the conversion
@@ -99,7 +100,7 @@
     // instead of stepping every 130 ms with each audio chunk.
     analyser = ctx.createAnalyser(); analyser.fftSize = 512; analyser.smoothingTimeConstant = 0; levelBuf = new Float32Array(analyser.fftSize);
     source.connect(analyser);
-    levelTimer = setInterval(() => { if (!capturing || !analyser) return; analyser.getFloatTimeDomainData(levelBuf); window.flowCapture.level(level(levelBuf)); }, 33);
+    levelTimer = setInterval(() => { if (!capturing || !analyser) return; analyser.getFloatTimeDomainData(levelBuf); const m = measure(levelBuf); window.flowCapture.level(m.level, m.rms, m.peak); }, 16);
     source.connect(node); node.connect(mute); mute.connect(ctx.destination);
     return false;
   }

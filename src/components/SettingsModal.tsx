@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { getElectronDesktop } from "../lib/electron-runtime";
 import type { OrbColorTheme } from "./AiOrb";
 import { MemorySettingsPanel } from "./memory/MemorySettingsPanel";
 import { WorkspaceDockCustomizer } from "./WorkspaceDockCustomizer";
@@ -454,6 +455,16 @@ export function SettingsSheet({
 }: SettingsSheetProps) {
   const [activeSection, setActiveSection] = useState<(typeof sections)[number]["id"]>("look");
   const [navQuery, setNavQuery] = useState("");
+  const [flowPillMode, setFlowPillMode] = useState<"pill" | "notch" | null>(null);
+  useEffect(() => {
+    const dictation = getElectronDesktop()?.dictation;
+    if (!dictation?.getSettings) return;
+    void dictation.getSettings().then((result) => setFlowPillMode(result?.pillMode === "notch" ? "notch" : "pill")).catch(() => undefined);
+  }, []);
+  const chooseFlowPillMode = (mode: "pill" | "notch") => {
+    setFlowPillMode(mode);
+    void getElectronDesktop()?.dictation.syncSettings?.({ pillMode: mode }).catch(() => undefined);
+  };
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [nameDraft, setNameDraft] = useState(profileName);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -843,6 +854,20 @@ export function SettingsSheet({
                           <Toggle checked={codeHighlighting} onChange={setCodeHighlighting} label="Toggle highlighting" />
                         </SettingRow>
                       </SettingsCard>
+                      {flowPillMode ? (
+                        <SettingsCard title="Flow dictation" description="Where the indicator appears when you tap Right Option to dictate.">
+                          <SettingRow title="Indicator" detail="The notch keeps a black background and hangs from the top of your screen.">
+                            <Segmented
+                              value={flowPillMode}
+                              onChange={chooseFlowPillMode}
+                              options={[
+                                { label: "Floating pill", value: "pill" },
+                                { label: "Notch", value: "notch" },
+                              ]}
+                            />
+                          </SettingRow>
+                        </SettingsCard>
+                      ) : null}
                     </>
                   ) : null}
 

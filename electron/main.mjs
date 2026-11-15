@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
 import { initAnywhereSettings, isAnywhereEnabled, isFlowBackgroundEnabled, setAnywhereEnabled, setFlowBackgroundEnabled } from "./anywhere-settings.mjs";
 
 /** Stay alive in the tray (window closed / quit from the Dock) — Anywhere OR Flow background. */
@@ -124,6 +124,7 @@ let companionManager = null;
 let screenCaptureService = null;
 let desktopControlService = null;
 let serviceProcess = null;
+let notchLaunched = false;
 let serviceLaunchError = null;
 let serviceFallbackStarted = false;
 let bridgeServer = null;
@@ -446,6 +447,21 @@ function configureUiSession() {
     details.securityOrigin,
     details.requestingUrl,
   ].some((candidate) => isClyraOrigin(String(candidate || "")));
+  // Voice-call screen sharing: share the entire primary display without the
+  // Chromium picker, only for Clyra's own origin. macOS still asks once for
+  // Screen Recording permission in System Settings.
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      if (!isClyraOrigin(request?.securityOrigin || request?.frame?.url || "")) { callback({}); return; }
+      const primary = screen.getPrimaryDisplay();
+      const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
+      const source = sources.find((item) => String(item.display_id) === String(primary.id)) || sources[0];
+      if (!source) { callback({}); return; }
+      callback({ video: source });
+    } catch {
+      callback({});
+    }
+  }, { useSystemPicker: false });
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (permission === "geolocation") {
       return allowGeolocationFromClyra(requestingOrigin, details || {});
@@ -841,6 +857,37 @@ function startLocalService() {
   );
 }
 
+/**
+ * Notch (apps/notch) lives in the menu-bar notch and chats through Clyra's own server, so it needs no API key of its own.
+ * It is started through LaunchServices (`open`), not spawned: a spawned child is blamed by macOS privacy checks on
+ * Electron, which has no Bluetooth usage text, and Notch is killed on launch.
+ */
+const notchDir = path.join(projectRoot, "apps", "notch");
+const notchBundle = path.join(notchDir, "build", "Notch.app");
+const notchExecutable = path.join(notchBundle, "Contents", "MacOS", "Notch");
+
+async function launchNotch() {
+  if (process.platform !== "darwin") return;
+  const run = promisify(execFile);
+  try {
+    if (!isRunnableFile(notchExecutable)) {
+      console.log("[notch] building Notch (first run)…");
+      await run("sh", [path.join(notchDir, "build.sh"), "build/Notch.app"], { cwd: notchDir, timeout: 300_000 });
+    }
+    const running = await run("pgrep", ["-f", notchExecutable]).then((r) => r.stdout.trim(), () => "");
+    if (running) { console.log("[notch] already running"); return; }
+    await run("open", ["-n", "-g", "--env", `CLYRA_URL=http://127.0.0.1:${appPort}`, "--env", `CLYRA_SERVICE_TOKEN=${serviceToken}`, notchBundle]);
+    notchLaunched = true;
+    console.log("[notch] launched");
+  } catch (error) {
+    console.warn("[notch] could not start:", error?.message || error);
+  }
+}
+
+function stopNotch() {
+  if (notchLaunched) spawn("pkill", ["-f", notchExecutable], { stdio: "ignore" });
+}
+
 async function waitForService(timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1202,6 +1249,7 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("dictation:renderer-ready", (event, ready) => { authorize(event); dictationManager?.setRendererReady(Boolean(ready)); return { ok: true }; });
+  ipcMain.handle("dictation:get-settings", (event) => { authorize(event); return { ok: true, ...(dictationManager?.readFlowSettings() || {}) }; });
   ipcMain.handle("dictation:sync-settings", (event, settings) => { authorize(event); dictationManager?.writeFlowSettings(settings || {}); return { ok: true }; });
   ipcMain.handle("companion:get-state", (event) => {
     authorizeCompanion(event);
@@ -1880,6 +1928,7 @@ function ensureFullBoot() {
       reportDesktopLifecycle("browser bridge resolved; starting service");
       startLocalService();
       await waitForService();
+      void launchNotch();
     })().catch((error) => {
       // A failed start must not be cached: the next "Open Clyra" gets a fresh attempt.
       fullBootPromise = null;
@@ -1952,6 +2001,7 @@ app.on("before-quit", (event) => {
   quitting = true;
   bridgeServer?.close();
   destroyNativeManagers();
+  stopNotch();
 
   const service = serviceProcess;
   if (!service || service.exitCode != null || service.killed) {

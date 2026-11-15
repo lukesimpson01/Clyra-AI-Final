@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { NotchBridge } from "./notch-bridge.mjs";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -175,17 +176,21 @@ export class DictationManager {
     this.settingsPath = settingsPath;
     this.cleanupViaService = cleanupViaService;
     this.optimiseViaService = optimiseViaService;
+    this.notch = new NotchBridge({ onAction: (action) => void this.action(action) });
+    this.pillMode = this.readFlowSettings().pillMode; // "pill" = floating capsule, "notch" = black, flush with the top of the screen
     this.userPosition = null; // set when the user drags the pill; null = default centred near the bottom
     this.rendererReady = false;
     this.nativeActive = false;
     this.nativeStartPromise = null;
-    if (this.native) this.native.onLevel = (level) => {
+    if (this.native) this.native.onLevel = (level, meta = {}) => {
       if (!this.nativeActive || this.phase !== "listening") return;
       const now = Date.now();
-      // The waveform gets every reading (~30/s) on its own light channel so it moves in time with the voice;
+      // The waveform gets every reading (~60/s) on its own light channel so it moves in time with the voice;
       // full state updates (which do more work) stay at ~11/s.
       const live = this.window;
-      if (live && !live.isDestroyed()) live.webContents.send("dictation:pill-level", level);
+      const reading = { level, rms: meta.rms ?? 0, peak: meta.peak ?? 0 };
+      if (this.showsInNotch()) this.notch.send({ t: "level", ...reading });
+      else if (live && !live.isDestroyed()) live.webContents.send("dictation:pill-level", reading);
       if (now - (this.lastLevelPush || 0) >= 90) { this.lastLevelPush = now; this.setState({ level: Math.max(0, Math.min(1, level)) }); }
       // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
       // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
@@ -317,9 +322,10 @@ export class DictationManager {
         level: saved.level === "raw" || saved.level === "polished" ? saved.level : "light",
         dictionary: Array.isArray(saved.dictionary) ? saved.dictionary.map(String).filter(Boolean).slice(0, 80) : [],
         hotkey: typeof saved.hotkey === "string" ? saved.hotkey : DEFAULT_HOTKEY,
+        pillMode: saved.pillMode === "notch" ? "notch" : "pill",
       };
     } catch {
-      return { level: "light", dictionary: [], hotkey: DEFAULT_HOTKEY };
+      return { level: "light", dictionary: [], hotkey: DEFAULT_HOTKEY, pillMode: "pill" };
     }
   }
 
@@ -330,9 +336,25 @@ export class DictationManager {
       let existing = {};
       try { existing = JSON.parse(readFileSync(this.settingsPath, "utf8")); } catch { /* first write */ }
       const merged = { ...existing };
-      for (const key of ["level", "dictionary", "hotkey"]) if (settings?.[key] !== undefined) merged[key] = settings[key];
+      for (const key of ["level", "dictionary", "hotkey", "pillMode"]) if (settings?.[key] !== undefined) merged[key] = settings[key];
       writeFileSync(this.settingsPath, JSON.stringify(merged), "utf8");
     } catch { /* settings are best-effort */ }
+    if (settings?.pillMode !== undefined) this.setPillMode(settings.pillMode);
+  }
+
+  /** Flow is drawn by the Notch app itself: only when that is the chosen indicator and the Notch is actually running. */
+  showsInNotch() {
+    return this.pillMode === "notch" && this.notch?.alive === true;
+  }
+
+  /** Switch the Flow indicator between the floating pill and the notch, live (an open pill moves and restyles at once). */
+  setPillMode(mode) {
+    const next = mode === "notch" ? "notch" : "pill";
+    if (next === this.pillMode) return;
+    this.pillMode = next;
+    if (next !== "notch") this.notch?.send({ t: "state", phase: "idle" });
+    this.positionPill();
+    this.emitPill();
   }
 
   async nativeStart(activationId) {
@@ -598,6 +620,7 @@ export class DictationManager {
   }
 
   destroy() {
+    this.notch?.destroy();
     clearTimeout(this.watchdog);
     try { this.spare?.destroy(); } catch { /* gone */ }
     this.spare = null;
@@ -741,13 +764,19 @@ export class DictationManager {
     // the window itself is never resized mid-animation (that is what made the old one lurch).
     const w = Math.min(PREVIEW_WIDTH, width - 16);
     const h = Math.min(PREVIEW_HEIGHT, height - 16);
-    if (this.userPosition) {
+    if (this.userPosition && this.pillMode !== "notch") {
       const anchor = { x: this.userPosition.x + Math.round(w / 2), y: this.userPosition.y + h - 30 };
       if (screen.getAllDisplays().some((d) => anchor.x >= d.bounds.x && anchor.x < d.bounds.x + d.bounds.width && anchor.y >= d.bounds.y && anchor.y < d.bounds.y + d.bounds.height)) {
         this.window.setBounds({ x: this.userPosition.x, y: this.userPosition.y, width: w, height: h });
         return;
       }
       this.userPosition = null;
+    }
+    if (this.pillMode === "notch") {
+      // Hangs from the very top edge of the display (over the menu bar), centred on the notch.
+      const bounds = display.bounds;
+      this.window.setBounds({ x: Math.round(bounds.x + (bounds.width - w) / 2), y: bounds.y, width: w, height: h });
+      return;
     }
     this.window.setBounds({
       x: Math.round(x + (width - w) / 2),
@@ -900,7 +929,11 @@ export class DictationManager {
 
   emitPill() {
     if (!this.window || this.window.isDestroyed()) return;
-    this.window.webContents.send("dictation:pill-state", this.payload);
+    const inNotch = this.showsInNotch();
+    // In the notch the Notch app draws it; the pill window stays invisible so nothing shows twice.
+    try { this.window.setOpacity(inNotch ? 0 : 1); } catch { /* opacity unsupported */ }
+    if (inNotch) this.notch.send({ t: "state", ...this.payload });
+    this.window.webContents.send("dictation:pill-state", { ...this.payload, pillMode: this.pillMode });
   }
 
   emitUi(channel, payload) {
@@ -914,6 +947,7 @@ export class DictationManager {
     if (payload.phase === "idle" || payload.phase === "arming") this.payload.handsFree = false;
     this.phase = this.payload.phase || "idle";
     if (this.phase === "idle") {
+      if (this.pillMode === "notch") this.notch?.send({ t: "state", phase: "idle" });
       this.handsFree = false;
       this.autoStop = false;
       this.pendingStop = false;

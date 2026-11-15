@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     shortcutStatus: () => ipcRenderer.invoke("dictation:shortcut-status"),
     setRendererReady: (ready) => ipcRenderer.invoke("dictation:renderer-ready", Boolean(ready)),
     syncSettings: (settings) => ipcRenderer.invoke("dictation:sync-settings", settings),
+    getSettings: () => ipcRenderer.invoke("dictation:get-settings"),
     setState: (payload) => ipcRenderer.invoke("dictation:set-state", payload),
     serviceUrl: () => ipcRenderer.invoke("dictation:service-url"),
     insert: (payload) => ipcRenderer.invoke("dictation:insert", payload),

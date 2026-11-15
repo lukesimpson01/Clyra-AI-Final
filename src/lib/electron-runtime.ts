@@ -219,7 +219,8 @@ export type ClyraDesktopBridge = {
     openMicrophoneSettings?: () => Promise<{ ok: boolean }>;
     openCameraSettings?: () => Promise<{ ok: boolean }>;
     setRendererReady?: (ready: boolean) => Promise<{ ok: boolean }>;
-    syncSettings?: (settings: { level?: string; dictionary?: string[] }) => Promise<{ ok: boolean }>;
+    syncSettings?: (settings: { level?: string; dictionary?: string[]; pillMode?: "pill" | "notch" }) => Promise<{ ok: boolean }>;
+    getSettings?: () => Promise<{ ok: boolean; pillMode?: "pill" | "notch" }>;
     onTrigger: (callback: (payload: any) => void) => () => void;
     onAction: (callback: (payload: any) => void) => () => void;
   };

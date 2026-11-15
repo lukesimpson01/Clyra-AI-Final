@@ -44,7 +44,8 @@
 
     /* centre: waveform when nothing has been said yet, otherwise the words */
     .mid { position: relative; flex: 1; min-width: 0; height: 36px; overflow: hidden; transition: height .48s var(--ease); }
-    .meter { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2.5px; transition: opacity .3s ease; }
+    .meter { position: absolute; inset: 0; transition: opacity .3s ease; }
+    .meter canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     .bar { display: block; width: 2.5px; height: 18px; flex: 0 0 2.5px; border-radius: 999px; background: linear-gradient(180deg, #5b92ff, var(--blue)); transform: scaleY(.17); will-change: transform, opacity; }
     .text { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: flex-start; overflow: hidden; opacity: 0; transition: opacity .3s ease;
       -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 22px, #000 calc(100% - 6px), transparent 100%); }
@@ -120,6 +121,29 @@
     .msg { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 14px; font-size: 12.5px; font-weight: 540; color: #334155; }
     .msg.error { color: #b42318; }
 
+
+    /* Notch layout: the same capsule, but black and hanging flush from the top edge of the screen so it reads as
+       the notch itself growing. Only colour, anchor and corner shape change; every animation is untouched. */
+    body[data-layout="notch"] { --ink: #f4f6fa; --mute: #98a2b3; }
+    body[data-layout="notch"] #stage { align-items: flex-start; padding-bottom: 0; }
+    body[data-layout="notch"] #pill { transform-origin: 50% 0; cursor: default; border-radius: 0 0 var(--r) var(--r); }
+    body[data-layout="notch"] #pill:not([data-ready="true"]) { transform: translateY(-10px) scale(.5); }
+    body[data-layout="notch"] .clip { background: #000; border: 0; border-radius: 0 0 var(--r) var(--r); }
+    body[data-layout="notch"] .cancel { background: rgba(255,255,255,.1); color: #cbd2de; }
+    body[data-layout="notch"] .cancel:hover { background: rgba(255,255,255,.18); color: #fff; }
+    body[data-layout="notch"] .bar, body[data-layout="notch"] .spin i { background: linear-gradient(180deg, #b7cdff, #5b92ff); }
+    body[data-layout="notch"] .label { background-image: linear-gradient(110deg, #8a94a6 34%, #7aa5ff 46%, #ffffff 50%, #7aa5ff 54%, #8a94a6 66%); background-size: 260% 100%; -webkit-background-clip: text; background-clip: text; }
+    body[data-layout="notch"] .thinking .w { animation-name: wordWaveNotch; }
+    @keyframes wordWaveNotch { 0%, 100% { color: #98a2b3; opacity: .75; } 40% { color: #8fb4ff; opacity: 1; } 70% { color: #98a2b3; opacity: .9; } }
+    body[data-layout="notch"] .sweep .track { background-image: linear-gradient(100deg, var(--ink) 0 38%, #8fb4ff 46%, #ffffff 50%, rgba(255,255,255,0) 58%); }
+    body[data-layout="notch"] .msg { color: #cbd2de; }
+    body[data-layout="notch"] .msg.error { color: #ff8f85; }
+    body[data-layout="notch"] .choice { background: rgba(255,255,255,.09); color: var(--ink); }
+    body[data-layout="notch"] .choice:hover { background: rgba(255,255,255,.16); color: #9bbcff; }
+    body[data-layout="notch"] .selchip { top: calc(100% + 8px); bottom: auto; background: #000; border-color: rgba(255,255,255,.14); color: #aab4c3; transform: translate(-50%, -6px); }
+    body[data-layout="notch"] .selchip.show { transform: translate(-50%, 0); }
+    body[data-layout="notch"] .selchip .tag { color: #8fb4ff; }
+
     @media (prefers-reduced-motion: reduce) { #pill, .layer, .w, .badge { transition-duration: 1ms !important; } .spin i, .badge .disc, .badge .tick, .badge .wave, .label, .thinking .w, .w.in, .w.in::after, .w.bump, #pill, .sweep .track { animation: none !important; } }
   </style>
 </head>
@@ -157,7 +181,7 @@
     let inputLevel = 0, currentVolume = .06, phaseValue = 0, cardOpen = false, liveText = '', timers = [];
     const later = (fn, ms) => { timers.push(setTimeout(fn, ms)); };
     const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
-    const bars = Array.from({ length: 11 }, () => { const bar = document.createElement('i'); bar.className = 'bar'; meter.append(bar); return bar; });
+    const waveCanvas = document.createElement('canvas'); meter.append(waveCanvas);
     const isVisible = () => pill.dataset.ready === 'true';
     const maxW = () => Math.max(220, Math.min(340, innerWidth - 32));
 
@@ -398,35 +422,87 @@
     try { ensureAudio(); } catch { /* no audio device */ }
 
     // ---------------------------------------------------------------- waveform
-    // The bars follow the real loudness of your voice. Readings arrive ~30 times a second; the bars rise fast when you
-    // speak and fall slowly when you stop (so they never flicker), a running peak scales quiet and loud voices to the
-    // same range, and the newest loudness sits in the middle and travels outward, so the shape moves with your speech.
-    let directLevel = 0, directAt = 0, smoothLevel = 0, peakLevel = .12, lastFrame = 0, lastShift = 0, waveRaf = 0;
-    const history = new Float32Array(6);   // [0] = the middle bar (now) ... [5] = the outer bars (a moment ago)
-    api.onLevel && api.onLevel((value) => { directLevel = Math.max(0, Math.min(1, Number(value) || 0)); directAt = performance.now(); });
+    // How the bars behave (the same recipe as the Notch's native waveform):
+    //  1. the mic's RMS reading (~30/s) becomes decibels, so quiet and loud voices both move the bars in proportion;
+    //  2. an adaptive noise floor is learned while nobody speaks, and everything under it is gated to a calm idle;
+    //  3. a running peak scales the voice to the full height, so a quiet mic and a loud one look alike;
+    //  4. an envelope follower: fast attack (28 ms) so the first syllable lands at once, slow release (170 ms) so the
+    //     bars never flicker between words;
+    //  5. the envelope is pushed into a short history that travels outward from the centre, so the wave ripples with
+    //     your speech instead of pulsing all at once;
+    //  6. every bar rides its own critically-damped spring, which is what makes it feel like a physical object;
+    //  7. in silence the bars breathe slowly, so the pill never looks frozen.
+    class Waveform {
+      constructor(canvas, { bars = 23, barWidth = 2.6, gap = 2.8 } = {}) {
+        this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.n = bars; this.barWidth = barWidth; this.gap = gap;
+        this.h = new Float32Array(Math.ceil(bars / 2) * 2 + 4); this.pos = new Float32Array(bars); this.vel = new Float32Array(bars);
+        this.floorDb = -52; this.peakDb = -24; this.env = 0; this.raw = 0; this.rawAt = 0; this.lastShift = 0; this.last = 0; this.t = 0;
+        this.dark = false; this.w = 0; this.hgt = 0; this.dpr = 1;
+        new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
+      }
+      resize() {
+        const r = this.canvas.parentElement.getBoundingClientRect(); this.dpr = Math.min(3, window.devicePixelRatio || 1);
+        this.w = r.width; this.hgt = r.height;
+        this.canvas.width = Math.max(1, Math.round(r.width * this.dpr)); this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+      }
+      // `reading` is {level, rms, peak}: true RMS keeps the decibel mapping honest (a normalised level clips on loud voices).
+      push(reading, ts) {
+        if (reading && typeof reading === 'object') { this.raw = Math.max(0, Math.min(1, Number(reading.rms) || 0)); this.rawIsRms = (Number(reading.rms) || 0) > 0 || (Number(reading.peak) || 0) > 0; }
+        else { this.raw = Math.max(0, Math.min(1, Number(reading) || 0)); this.rawIsRms = false; }
+        this.rawAt = ts;
+      }
+      reset() { this.env = 0; this.pos.fill(0); this.vel.fill(0); this.h.fill(0); this.last = 0; }
+      step(ts) {
+        const dt = Math.min(.05, Math.max(.001, ((ts - (this.last || ts - 16.7)) / 1000))); this.last = ts; this.t += dt;
+        const raw = ts - this.rawAt < 260 ? this.raw : 0;
+        // a normalised level is (rms - .006) / .1, so undo it to land on the same dB scale as a true RMS reading
+        const rmsEq = this.rawIsRms ? raw : (raw > 0 ? raw * .1 + .006 : 0);
+        const db = 20 * Math.log10(Math.max(rmsEq, 1e-4));
+        this.floorDb += (db - this.floorDb) * (db < this.floorDb ? Math.min(1, dt / .25) : Math.min(1, dt / 6));
+        this.floorDb = Math.max(-64, Math.min(-36, this.floorDb));
+        const gate = this.floorDb + 5;
+        this.peakDb = Math.max(db, this.peakDb - 5 * dt, gate + 16);
+        const norm = Math.pow(Math.max(0, Math.min(1, (db - gate) / (this.peakDb - gate))), .8);
+        this.env += (norm - this.env) * (1 - Math.exp(-dt / (norm > this.env ? .028 : .17)));
+        if (ts - this.lastShift >= 26) { for (let i = this.h.length - 1; i > 0; i--) this.h[i] = this.h[i - 1]; this.lastShift = ts; }
+        this.h[0] = this.env;
+        const c = (this.n - 1) / 2, quiet = this.env < .025;
+        for (let i = 0; i < this.n; i++) {
+          const d = Math.abs(i - c), taper = 1 - (d / c) * .38;
+          const at = d * .6, lo = Math.floor(at), f = at - lo;
+          const hist = this.h[lo] * (1 - f) + this.h[Math.min(this.h.length - 1, lo + 1)] * f;
+          let target = hist * taper * (1 + .1 * Math.sin(this.t * 5.2 + i * 1.7) * hist);
+          if (quiet) target = Math.max(target, taper * (.07 + .05 * (.5 + .5 * Math.sin(this.t * 1.7 - d * .6))));
+          // critically damped spring, substepped for stability
+          let x = this.pos[i], v = this.vel[i];
+          for (let s = 0; s < 3; s++) { const h = dt / 3, a = -520 * (x - target) - 44 * v; v += a * h; x += v * h; }
+          this.pos[i] = Math.max(0, Math.min(1.15, x)); this.vel[i] = v;
+        }
+      }
+      draw() {
+        const { ctx, dpr, w, hgt } = this; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, hgt);
+        const total = this.n * this.barWidth + (this.n - 1) * this.gap, x0 = (w - total) / 2, mid = hgt / 2, maxH = hgt * .9;
+        const top = this.dark ? '#cfe0ff' : '#6d9dff', bottom = this.dark ? '#6f9bff' : '#0052fb';
+        for (let i = 0; i < this.n; i++) {
+          const p = this.pos[i], bh = 3 + Math.min(1, p) * (maxH - 3), x = x0 + i * (this.barWidth + this.gap);
+          const g = ctx.createLinearGradient(0, mid - bh / 2, 0, mid + bh / 2); g.addColorStop(0, top); g.addColorStop(1, bottom);
+          ctx.globalAlpha = .4 + Math.min(1, p) * .6; ctx.fillStyle = g;
+          ctx.beginPath(); ctx.roundRect(x, mid - bh / 2, this.barWidth, bh, this.barWidth / 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    const waveform = new Waveform(waveCanvas);
+    let waveRaf = 0;
+    api.onLevel && api.onLevel((value) => waveform.push(value, performance.now()));
     function animateWave(ts) {
-      const dt = Math.min(48, ts - (lastFrame || ts - 16)); lastFrame = ts;
-      const raw = ts - directAt < 400 ? directLevel : inputLevel;
-      smoothLevel += (raw - smoothLevel) * (1 - Math.exp(-dt / (raw > smoothLevel ? 32 : 160)));
-      peakLevel = Math.max(.1, smoothLevel, peakLevel * Math.exp(-dt / 7000));
-      const shaped = Math.pow(Math.min(1, smoothLevel / peakLevel), .85);
-      if (ts - lastShift >= 58) { for (let i = history.length - 1; i > 0; i--) history[i] = history[i - 1]; lastShift = ts; }
-      history[0] = shaped;
-      phaseValue += dt * .004;
-      const centre = (bars.length - 1) / 2;
-      bars.forEach((bar, index) => {
-        const distance = Math.abs(index - centre);
-        const h = history[Math.min(history.length - 1, Math.round(distance))] * (1 - distance * .045);
-        const shimmer = 1 + .1 * Math.sin(phaseValue * 3 + index * 1.3) * h;   // a little life, only while there is sound
-        const px = 3 + h * 15 * shimmer;
-        bar.style.transform = `scaleY(${Math.min(1, px / 18).toFixed(3)})`;
-        bar.style.opacity = String((.38 + h * .62).toFixed(2));
-      });
-      // Set on the one element that uses it: a custom property changed on #pill would restyle the whole subtree every frame.
-      clipEl.style.borderColor = phase === 'listening' ? `rgba(0,82,251,${(.11 + shaped * .3).toFixed(2)})` : '';
+      waveform.dark = document.body.dataset.layout === 'notch';
+      waveform.step(ts); waveform.draw();
+      // The capsule's edge picks up a little of the voice's colour while you speak.
+      clipEl.style.borderColor = phase === 'listening' && !waveform.dark ? `rgba(0,82,251,${(.11 + waveform.env * .3).toFixed(2)})` : '';
       waveRaf = (!prefersReducedMotion && phase === 'listening') ? requestAnimationFrame(animateWave) : 0;
     }
-    function ensureWave() { if (!waveRaf && !prefersReducedMotion) { lastFrame = 0; waveRaf = requestAnimationFrame(animateWave); } }
+    function ensureWave() { if (!waveRaf && !prefersReducedMotion) { waveform.resize(); waveform.last = 0; waveRaf = requestAnimationFrame(animateWave); } }
 
     // ---------------------------------------------------------------- state machine
     let readyTimer = 0;
@@ -460,6 +536,7 @@
       label.classList.remove('flip'); void label.offsetWidth; label.classList.add('flip');
     }
     function render(payload = {}) {
+      document.body.dataset.layout = payload.pillMode === 'notch' ? 'notch' : 'pill';
       updateSelection(payload);
       playFor(payload);
       phase = payload.phase || 'idle';
@@ -497,7 +574,7 @@
       setHover(event.clientX >= r.left - 4 && event.clientX <= r.right + 4 && event.clientY >= r.top - 4 && event.clientY <= r.bottom + 4);
     });
     pill.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || event.target.closest('button')) return;
+      if (event.button !== 0 || event.target.closest('button') || document.body.dataset.layout === 'notch') return;
       dragging = { x: event.screenX, y: event.screenY }; pill.setPointerCapture(event.pointerId); pill.classList.add('dragging');
     });
     pill.addEventListener('pointermove', (event) => {

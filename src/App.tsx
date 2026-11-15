@@ -8,6 +8,7 @@ import { CreditsNotice } from "./components/chat/CreditsNotice";
 import { AgentTodo, ChatAgentRunView } from "./components/chat/ChatAgentRun";
 import { ChatMapCard } from "./components/chat/ChatMapCard";
 import { ChatCodeRun } from "./components/chat/ChatCodeRun";
+import { useChatSync } from "./hooks/useChatSync";
 import { shouldUseBrowserUse, shouldUseChatAgent, streamChatAgent, type ChatAgentRun } from "./lib/chatAgentClient";
 import { ChatBrowserRunView, type ChatBrowserRunState } from "./components/chat/ChatBrowserRun";
 import { reduceRunItems, type RunEvent, type RunItem } from "./lib/browserRunFeed";
@@ -2081,7 +2082,7 @@ interface CommandSuggestionBase {
 }
 
 interface BuiltInCommandSuggestion extends CommandSuggestionBase {
-  id: "youtube" | "search" | "deep-research" | "spotify" | `google-${GoogleToolId}`;
+  id: "youtube" | "search" | "deep-research" | "spotify" | "email" | "computer" | "browser-use" | `google-${GoogleToolId}`;
   kind: "command";
 }
 
@@ -2094,6 +2095,8 @@ type CommandSuggestion = BuiltInCommandSuggestion | AppSuggestion;
 
 function detectGoogleTool(prompt: string, selected?: BuiltInCommandSuggestion | AppSuggestion | null): GoogleToolId | null {
   if (selected?.kind === "command" && selected.id.startsWith("google-")) return selected.id.slice("google-".length) as GoogleToolId;
+  if (selected?.kind === "command" && selected.id === "email") return "gmail";
+  if (/^\/email\b/i.test(prompt.trim())) return "gmail";
   const value = prompt.toLowerCase();
   if (/\b(?:summari[sz]e|digest|brief|review)\b[\s\S]{0,120}\b(?:emails?|gmail|inbox)\b[\s\S]{0,120}\b(?:doc|document|report)\b/.test(value)) return "docs";
   if (/\b(?:gmail|inbox|unread (?:email|mail)|check (?:my )?(?:email|mail))\b/.test(value)) return "gmail";
@@ -4209,6 +4212,7 @@ export default function App() {
   const [profileName, setProfileNameState] = useState(() => {
     try { return window.localStorage.getItem("clyra-profile-name")?.trim() || "Luke"; } catch { return "Luke"; }
   });
+  useChatSync({ chats, setChats, currentChatIdRef, setMessages, profileName });
   const setProfileName = useCallback((name: string) => {
     const next = name.trim() || "Luke";
     setProfileNameState(next);
@@ -5350,6 +5354,7 @@ export default function App() {
       workspace: "vibe",
     },
     { id:"google-gmail", kind:"command", icon:()=> <GoogleGlyph product="gmail" />, label:"Google Gmail", description:"Read email or prepare a message without leaving Clyra", prefix:"/gmail", workspace:"chat" },
+    { id:"email", kind:"command", icon:()=> <GoogleGlyph product="gmail" />, label:"Email", description:"Read, search or draft email in Clyra's inbox view", prefix:"/email", workspace:"chat" },
     { id:"google-calendar", kind:"command", icon:()=> <GoogleGlyph product="calendar" />, label:"Google Calendar", description:"Check upcoming events or prepare a calendar action", prefix:"/calendar", workspace:"chat" },
     { id:"google-docs", kind:"command", icon:()=> <GoogleGlyph product="docs" />, label:"Google Docs", description:"Create a polished Google document", prefix:"/docs", workspace:"chat" },
     { id:"google-sheets", kind:"command", icon:()=> <GoogleGlyph product="sheets" />, label:"Google Sheets", description:"Create a Google spreadsheet", prefix:"/sheets", workspace:"chat" },
@@ -5374,6 +5379,8 @@ export default function App() {
       label: "Computer Use",
       description: "Let Clyra operate apps on your Mac or PC",
       prefix: "/computer",
+      kind: "command",
+      workspace: "chat",
     },
     {
       id: "vibe",
@@ -7013,7 +7020,8 @@ Please analyze the code you just wrote and fix this error.`;
         return;
       }
       const missionCommand = rawUserText.match(/^\/mission(?:\s+(.+))?$/i);
-      const isForcedMission = userCommandId === "mission" || Boolean(missionCommand);
+      const computerCommand = rawUserText.match(/^\/computer(?:\s+(.+))?$/i);
+      const isForcedMission = userCommandId === "mission" || userCommandId === "computer" || Boolean(missionCommand) || Boolean(computerCommand);
       const isDeepResearchMode = userCommandId === "deep-research" || /^\/deep-research\b/i.test(rawUserText) || Boolean(pendingDeepResearch);
       const googleTool = isDeepResearchMode ? null : detectGoogleTool(rawUserText, selectedCommand);
       const googleAction = googleTool ? googleActionLabel(googleTool, rawUserText) : undefined;
@@ -7235,6 +7243,9 @@ Please analyze the code you just wrote and fix this error.`;
         automationRequest ||
         browserTask ||
         vibeCommand?.[1]?.trim() ||
+        (userCommandId === "computer" || computerCommand
+          ? "Computer use (observe the desktop first, then act with the visible cursor): " + (computerCommand?.[1]?.trim() || rawUserText.replace(/^\/computer\s*/i, "").trim())
+          : null) ||
         (isForcedMission ? missionCommand?.[1]?.trim() || rawUserText.replace(/^\/mission\s*/i, "").trim() : null) ||
         (isWeatherMode
           ? weatherCommand?.[1]?.trim() ||
@@ -10486,7 +10497,7 @@ Please analyze the code you just wrote and fix this error.`;
                             dictation={composerDictationState}
                             historyPanel
                             introReady={introState === "complete"}
-                            sidebarOpen={shellSidebarOpen && !composerMorphOpen}
+                            sidebarOpen={shellSidebarOpen}
                             onToggleSidebar={() => setShellSidebarOpen((v) => !v)}
                             onMorphChange={setComposerMorphOpen}
                             onOpenSettings={() => { setSettingsSection(undefined); setIsSettingsOpen(true); }}

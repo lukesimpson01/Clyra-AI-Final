@@ -200,6 +200,7 @@ import { initNotesStore } from "./lib/notes/store";
 import { registerNotesRoutes } from "./lib/notes/routes";
 import { runChatAgent, type AgentEvent } from "./lib/chat-agent/agent";
 import * as notesStore from "./lib/notes/store";
+import * as chatSync from "./lib/chat-sync/store";
 import { createPage as createNotesPage } from "./lib/notes/store";
 import { ServerMissionService } from "./lib/clyra-agent/server-mission-service";
 import { AutomationEngine, parseAutomationPrompt } from "./lib/clyra-agent/automation-engine";
@@ -3088,6 +3089,33 @@ async function startServer() {
     } catch {
       res.json({ ok: false, configured: true, exhausted: false });
     }
+  });
+
+  /* Chats shared between Clyra's chat and the Notch: one store, live over server-sent events. */
+  app.get("/api/chat-sync-profile", (_req, res) => { res.json({ name: chatSync.getProfileName() }); });
+  app.put("/api/chat-sync-profile", (req, res) => { chatSync.setProfileName(String(req.body?.name || "")); res.json({ ok: true }); });
+  app.get("/api/chat-sync", (req, res) => {
+    res.json(req.query.summary ? { chats: chatSync.listChatSummaries() } : { chats: chatSync.listChats() });
+  });
+  app.get("/api/chat-sync/events", (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
+    res.write(": ready\n\n");
+    const unsubscribe = chatSync.onChatChange((change) => res.write(`data: ${JSON.stringify(change)}\n\n`));
+    const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 20_000);
+    res.on("close", () => { unsubscribe(); clearInterval(heartbeat); });
+  });
+  app.get("/api/chat-sync/:id", (req, res) => {
+    const chat = chatSync.getChat(String(req.params.id));
+    if (!chat) { res.status(404).json({ error: "Chat not found." }); return; }
+    res.json({ chat });
+  });
+  app.put("/api/chat-sync/:id", (req, res) => {
+    const chat = req.body?.chat;
+    if (!chat || chat.id !== req.params.id) { res.status(400).json({ error: "A chat with a matching id is required." }); return; }
+    res.json({ ok: chatSync.putChat(chat, String(req.query.source || "clyra")) });
+  });
+  app.delete("/api/chat-sync/:id", (req, res) => {
+    res.json({ ok: chatSync.deleteChat(String(req.params.id), String(req.query.source || "clyra")) });
   });
 
   /**

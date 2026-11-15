@@ -25,7 +25,7 @@ export class FlowNative {
     this.onLive = (event) => { if (mine(event)) this.liveWaiter?.resolve(); };
     this.onFailed = (event, message) => { if (mine(event)) this.liveWaiter?.reject(new Error(message || "Microphone unavailable.")); };
     this.onStopped = (event) => { if (mine(event)) this.stopWaiter?.resolve(); };
-    this.onLevelMsg = (event, value) => { if (mine(event)) this.onLevel?.(Number(value) || 0); };
+    this.onLevelMsg = (event, value, rms, peak) => { if (mine(event)) this.onLevel?.(Number(value) || 0, { rms: Number(rms) || 0, peak: Number(peak) || 0 }); };
     this.onChunk = (event, buffer) => {
       if (!mine(event) || !(this.capturing || this.warming) || this.bytes > this.maxBytes) return;
       const chunk = Buffer.from(buffer);

@@ -83,17 +83,24 @@ export function AgentTodo({ todos, live }: { todos: TodoItem[]; live: boolean; d
   );
 }
 
+/** Opening, finding in and following links inside a page are the search's own legwork: the search row and its favicons say it all. */
+const QUIET_TOOLS = new Set(["web_open", "web_find", "web_follow_links"]);
+export const visibleSteps = (steps: AgentStepView[]) => steps.filter((step) => !QUIET_TOOLS.has(step.tool));
+
 function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: string) => void }) {
   const Icon = ICON[step.tool as keyof typeof ICON] ?? Globe;
   const running = step.state === "running";
+  const isSearch = step.tool === "web_search";
+  // A web search is just "Searching" with the sites it found sliding in beside it; the query and counts stay out of the way.
+  const label = isSearch ? (running ? "Searching" : "Searched") : step.label;
   return (
     <li className={`clyra-ai-row clyra-ai-row--${running ? "running" : step.state}`}>
       <span className="clyra-ai-row__icon" aria-hidden><Icon /></span>
-      <span className="clyra-ai-row__label">{running ? <ShimmerText>{step.label}</ShimmerText> : step.label}</span>
+      <span className="clyra-ai-row__label">{running ? <ShimmerText>{label}</ShimmerText> : label}</span>
       {step.tool === "web_search" && step.sources?.length ? (
         <SourceStrip sources={step.sources.map((s, i) => ({ id: `${step.id}-${i}`, url: s.url, host: s.host, title: s.title }))} />
       ) : null}
-      {step.state === "failed" && step.error ? <span className="clyra-agent-meta" title={step.error}>{step.error}</span> : step.detail && step.tool !== "web_search" ? <span className="clyra-agent-meta" title={step.detail}>{step.detail}</span> : null}
+      {isSearch && step.state !== "failed" ? null : step.state === "failed" && step.error ? <span className="clyra-agent-meta" title={step.error}>{step.error}</span> : step.detail ? <span className="clyra-agent-meta" title={step.detail}>{step.detail}</span> : null}
       {step.document && onOpenNote ? (
         <button type="button" className="clyra-agent-open" onClick={() => onOpenNote(step.document!.id)}>Open note</button>
       ) : null}
@@ -102,7 +109,8 @@ function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: 
 }
 
 /** Every real step the agent took, in order, with the plan above it. Nothing here is decorative: each row is a tool call. */
-export function ChatAgentRunView({ run, live, onOpenNote, showTodo = true }: { run: Run; live: boolean; onOpenNote?: (id: string) => void; showTodo?: boolean }) {
+export function ChatAgentRunView({ run: fullRun, live, onOpenNote, showTodo = true }: { run: Run; live: boolean; onOpenNote?: (id: string) => void; showTodo?: boolean }) {
+  const run = { ...fullRun, steps: visibleSteps(fullRun.steps) };
   const ref = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const showSteps = live || expanded;
@@ -131,7 +139,7 @@ export function ChatAgentRunView({ run, live, onOpenNote, showTodo = true }: { r
               {run.steps.map((step) => <StepRow key={step.id} step={step} onOpenNote={onOpenNote} />)}
             </ul>
           ) : null}
-          <ChatResearchResults steps={run.steps} />
+          <ChatResearchResults steps={fullRun.steps} />
         </>
       ) : null}
     </div>
