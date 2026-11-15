@@ -788,7 +788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
                 if u.lastPathComponent == "disable" { LoginItem.set(false) }
             case "state":
                 let m = model
-                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) meterStatus=\(m.audioMeter.status) meterLevel=\(m.audioMeter.level) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
+                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) meterStatus=\(m.audioMeter.status) meterLevel=\(m.audioMeter.level) liveLevel=\(m.audioMeter.hasLiveLevel) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
                 try? text.write(toFile: u.path, atomically: true, encoding: .utf8)
             case "open":
                 if let i = Int(u.lastPathComponent), model.chat.allChats.indices.contains(i) { expand(); model.chat.open(model.chat.allChats[i]); model.show(.chat) }

@@ -1425,12 +1425,12 @@ struct MediaView: View {
                     }
                     IconButton(symbol: "laptopcomputer", size: 17, label: "Open player") { model.media.openSource() }
                 }
-                if !model.audioMeter.status.isEmpty {
+                if !model.audioMeter.hasLiveLevel {
                     // the live wave needs the system's permission to hear the player; say so and take them there
                     Button {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
                     } label: {
-                        HStack(spacing: 5) { Image(systemName: "waveform"); Text("Allow audio access for the live wave") }
+                        HStack(spacing: 5) { Image(systemName: "waveform"); Text("Allow Screen & System Audio Recording for Clyra to power the wave") }
                             .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white.opacity(0.5))
                     }.buttonStyle(.plain)
                 }

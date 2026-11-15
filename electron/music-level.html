@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Clyra music level</title>
+<script>
+  // Hears what the Mac is playing (system audio loopback) only to measure its loudness for the Notch's wave. Nothing is recorded or kept.
+  let stream = null, ctx = null, analyser = null, buffer = null, timer = 0;
+  async function start() {
+    if (stream) return;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      stream.getVideoTracks().forEach((track) => track.stop());
+      if (!stream.getAudioTracks().length) throw new Error("No system audio was provided.");
+      ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+      analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
+      source.connect(analyser);
+      buffer = new Float32Array(analyser.fftSize);
+      timer = setInterval(() => {
+        analyser.getFloatTimeDomainData(buffer);
+        let sum = 0; for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
+        window.musicLevel.level(Math.sqrt(sum / buffer.length));
+      }, 25);
+      window.musicLevel.live();
+    } catch (error) {
+      stop();
+      window.musicLevel.failed(String(error && error.message || error));
+    }
+  }
+  function stop() {
+    clearInterval(timer); timer = 0;
+    try { stream && stream.getTracks().forEach((track) => track.stop()); } catch {}
+    try { ctx && ctx.close(); } catch {}
+    stream = ctx = analyser = null;
+  }
+  window.musicLevel.onStart(start);
+  window.musicLevel.onStop(stop);
+</script>

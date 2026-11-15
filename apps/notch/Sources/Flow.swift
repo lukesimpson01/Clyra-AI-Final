@@ -123,6 +123,8 @@ final class FlowBridge: ObservableObject {
     var onChange: ((Bool) -> Void)?   // (active changed)
     /// Clyra's Spotify connection, polled by Clyra and forwarded here (the Notch never holds Spotify credentials).
     var onSpotify: (([String: Any]) -> Void)?
+    /// Loudness of what the Mac is playing, measured by Clyra, and whether that measurement is available.
+    var onMusicLevel: (([String: Any]) -> Void)?
 
     private var listener: NWListener?
     private var sender: NWConnection?
@@ -165,6 +167,8 @@ final class FlowBridge: ObservableObject {
             engine.push(rms: rms)
         case "spotify":
             onSpotify?(o)
+        case "music-level":
+            onMusicLevel?(o)
         case "state":
             let next = o["phase"] as? String ?? "idle"
             let was = active
@@ -175,6 +179,12 @@ final class FlowBridge: ObservableObject {
             if was != active { onChange?(active) } else { objectWillChange.send() }
         default: break
         }
+    }
+
+    /// Ask Clyra to listen for the loudness of the music (or stop).
+    func sendMusic(_ on: Bool) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["op": "music", "on": on]) else { return }
+        sender?.send(content: data, completion: .contentProcessed { _ in })
     }
 
     func sendSpotify(_ action: String, extra: [String: Any] = [:]) {
@@ -259,7 +269,7 @@ struct LevelBars: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60)) { frame in
             Canvas { context, size in
-                engine.step(frame.date, input: Double(meter.level), live: meter.status.isEmpty && !reduceMotion)
+                engine.step(frame.date, input: Double(meter.level), live: meter.hasLiveLevel && !reduceMotion)
                 let n = engine.bars.count
                 let barW: CGFloat = 2.2, gap: CGFloat = 2
                 let total = CGFloat(n) * barW + CGFloat(n - 1) * gap

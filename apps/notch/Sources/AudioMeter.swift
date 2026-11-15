@@ -17,6 +17,19 @@ final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDele
 
     deinit { request?.cancel(); stream?.stopCapture { _ in } }
 
+    // Loudness measured by Clyra (which already holds the screen-recording permission), used when the Notch has none of its own.
+    private var externalAt = Date.distantPast
+    /// A real reading is arriving, from this app's own capture or from Clyra's.
+    var hasLiveLevel: Bool { status.isEmpty || Date().timeIntervalSince(externalAt) < 0.8 }
+
+    func receiveExternal(rms: Double) {
+        externalAt = Date()
+        let normalized = Float(min(1, max(0, (20 * log10(max(0.0001, rms)) + 55) / 55)))
+        let next = max(normalized, level * 0.74)
+        let visible: Float = next < 0.01 ? 0 : next
+        if visible != level { level = visible }
+    }
+
     func update(bundle: String?, enabled: Bool) {
         let target = enabled ? bundle : nil
         guard desired != target else { return }

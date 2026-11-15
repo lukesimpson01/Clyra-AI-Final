@@ -111,6 +111,7 @@ final class NotchModel: ObservableObject {
         timers.onChange = { [weak self] in self?.activityChanged() }
         timers.onFinish = { [weak self] t in self?.timerFinished(t) }
         weather.onChange = { [weak self] in self?.changed() }
+        media.meter = audioMeter
         media.onChange = { [weak self] in
             guard let self else { return }
             if self.followActivity, self.expanded, self.ringingAlarm == nil, !self.chatFocused {
@@ -227,8 +228,14 @@ final class NotchModel: ObservableObject {
             chat.adoptWorking()
             view = .chat
         }
+        // Something is happening (music, a timer, the stopwatch): opening shows it, even if the last page was Chat or Widgets.
+        // A half-written message is the one thing that keeps the chat open.
+        else if on, let activity = activityView, !(view == .chat && !chatDraft.isEmpty) {
+            view = activity
+            followActivity = true
+        }
         else if on, view != .chat, view != .widgets {
-            view = activityView ?? .home
+            view = .home
         }
         if view == .airdrop || view == .bluetooth || view == .chat { followActivity = false }
         if on && view == .timer {

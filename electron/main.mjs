@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import dotenv from "dotenv";
 import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray, WebContentsView } from "electron";
+import { MusicLevel } from "./music-level.mjs";
 import { initAnywhereSettings, isAnywhereEnabled, isFlowBackgroundEnabled, setAnywhereEnabled, setFlowBackgroundEnabled } from "./anywhere-settings.mjs";
 
 /** Stay alive in the tray (window closed / quit from the Dock) — Anywhere OR Flow background. */
@@ -801,9 +802,16 @@ function startPackagedNodeFallback(env) {
  * The Notch never sees a token.
  */
 let notchMediaTimer = null;
+let musicLevel = null;
 function startNotchMediaLink() {
   const bridge = dictationManager?.notch;
   if (!bridge || notchMediaTimer) return;
+  musicLevel = new MusicLevel({
+    preloadPath: path.join(here, "music-level-preload.cjs"),
+    pagePath: path.join(here, "music-level.html"),
+    onLevel: (rms) => bridge.send({ t: "music-level", rms }),
+    onState: (state) => bridge.send({ t: "music-level", ...state }),
+  });
   const summary = (state) => {
     const item = state?.item;
     if (!item) return null;
@@ -834,6 +842,7 @@ function startNotchMediaLink() {
     }
   };
   bridge.onMessage = async (message) => {
+    if (message?.op === "music") { musicLevel?.set(Boolean(message.on)); return; }
     if (message?.op !== "spotify" || !spotifyManager) return;
     try {
       const action = String(message.action || "");

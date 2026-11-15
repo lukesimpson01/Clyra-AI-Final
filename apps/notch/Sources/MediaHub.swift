@@ -15,6 +15,10 @@ struct MediaSource: Identifiable, Equatable {
 final class MediaHub {
     private let local = MediaMonitor()
     private weak var link: FlowBridge?
+    /// The wave's meter, so Clyra's loudness readings can reach it.
+    weak var meter: AudioMeter?
+    private var listening = false
+    private var listenTimer: Timer?
     private var spotifyState: MediaState?
     private var spotifyMisses = 0
     private var spotifyArtwork: NSImage?
@@ -27,6 +31,9 @@ final class MediaHub {
         self.link = link
         local.onChange = { [weak self] in self?.recompute() }
         link.onSpotify = { [weak self] payload in self?.receiveSpotify(payload) }
+        link.onMusicLevel = { [weak self] payload in
+            if let rms = (payload["rms"] as? NSNumber)?.doubleValue { self?.meter?.receiveExternal(rms: rms) }
+        }
         recompute()
     }
 
@@ -91,7 +98,23 @@ final class MediaHub {
             if !duplicate { list.append(MediaSource(id: "local-\(l.bundleID)", name: l.source, symbol: l.bundleID == "com.apple.Music" ? "music.note" : "play.rectangle", state: l, viaClyra: false)) }
         }
         sources = list
+        updateListening()
         onChange?()
+    }
+
+    /// While something plays, ask Clyra to measure its loudness; keep asking now and then so a restarted Clyra picks it up.
+    private func updateListening() {
+        let playing = active?.state.status == .playing
+        guard playing != listening else { return }
+        listening = playing
+        link?.sendMusic(playing)
+        listenTimer?.invalidate()
+        listenTimer = nil
+        if playing {
+            let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in if self?.listening == true { self?.link?.sendMusic(true) } }
+            RunLoop.main.add(t, forMode: .common)
+            listenTimer = t
+        }
     }
 
     // MARK: Controls
