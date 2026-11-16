@@ -133,6 +133,7 @@ final class FlowBridge: ObservableObject {
     var onNotchOp: (([String: Any]) -> Void)?
     var onVoiceCall: (([String: Any]) -> Void)?
     var onPassThrough: ((Double) -> Void)?
+    var onAppCall: (([String: Any]) -> Void)?
 
     private var listener: NWListener?
     private var sender: NWConnection?
@@ -183,6 +184,8 @@ final class FlowBridge: ObservableObject {
             onNotchOp?(o)
         case "voice-call":
             onVoiceCall?(o)
+        case "app-call":
+            onAppCall?(o)
         case "passthrough":
             onPassThrough?((o["ms"] as? NSNumber)?.doubleValue ?? 400)
         case "state":

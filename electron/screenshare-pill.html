@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{--ink:#f5f7ff;--blue:#1e6fff}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;background:transparent;overflow:hidden;font:13px/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
+  #pill{position:fixed;left:12px;right:12px;top:10px;height:40px;display:flex;align-items:center;gap:10px;padding:0 6px 0 16px;border-radius:20px;
+    background:linear-gradient(180deg,#1b2036,#121528);color:var(--ink);border:1px solid rgba(120,165,255,.34);box-shadow:0 6px 18px rgba(18,30,80,.35);
+    opacity:0;transform:translateY(-8px) scale(.98);transition:opacity 320ms cubic-bezier(.32,.72,0,1),transform 380ms cubic-bezier(.32,.72,0,1)}
+  #pill.on{opacity:1;transform:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:#5b9dff;animation:beat 1.8s ease-in-out infinite;flex:none}
+  @keyframes beat{0%,100%{box-shadow:0 0 0 0 rgba(91,157,255,.55)}60%{box-shadow:0 0 0 7px rgba(91,157,255,0)}}
+  .txt{flex:1;white-space:nowrap;font-weight:500;letter-spacing:-.005em}
+  button{all:unset;cursor:pointer;height:28px;padding:0 14px;border-radius:14px;background:#fff;color:#12162a;font-weight:600;font-size:12.5px;display:grid;place-items:center;transition:filter 140ms,transform 140ms}
+  button:hover{filter:brightness(.93)}button:active{transform:scale(.96)}
+  @media(prefers-reduced-motion:reduce){#pill,.dot{animation:none;transition-duration:1ms}}
+</style></head><body>
+<div id="pill"><i class="dot"></i><span class="txt">Clyra can see your screen</span><button id="stop" aria-label="Stop sharing">Stop</button></div>
+<script>
+document.getElementById("stop").onclick=()=>window.shareIndicator.stop();
+window.__on=(v)=>requestAnimationFrame(()=>document.getElementById("pill").classList.toggle("on",!!v));
+</script></body></html>

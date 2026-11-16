@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { patchClyraElectron } from "./patch-electron-macos-privacy.mjs";
 
@@ -57,11 +59,33 @@ const env = {
 // Cursor/agent shells can inherit ELECTRON_RUN_AS_NODE from helper processes.
 // That forces Electron to behave like plain Node and breaks `import from "electron"`.
 delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(electronBinary, ["."], {
-  cwd: process.cwd(),
-  env,
-  stdio: "inherit",
-});
+// macOS decides who a permission request belongs to by the *responsible process*: an Electron started as a child of `npm`
+// in a terminal (or another app's shell) asks for the camera and screen as that terminal, so Clyra never gets a pop-up and
+// never appears in the Privacy lists. Starting it through LaunchServices (`open`) makes Clyra its own responsible process.
+// Opt out with CLYRA_LAUNCH_VIA_OPEN=0 to keep it a direct child.
+let child;
+let followLog = null;
+if (process.platform === "darwin" && process.env.CLYRA_LAUNCH_VIA_OPEN !== "0") {
+  const appBundle = path.resolve("node_modules", "electron", "dist", "Electron.app");
+  const logFile = process.env.CLYRA_DEV_LOG || path.join(os.homedir(), "Library", "Logs", "clyra-electron.log");
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, "");
+  const envArgs = Object.entries(env)
+    .filter(([key, value]) => value !== undefined && !/[\n\r]/.test(String(value)) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+    .flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+  child = spawn("open", ["-n", "-W", "--stdout", logFile, "--stderr", logFile, ...envArgs, "-a", appBundle, "--args", process.cwd()], { stdio: "inherit" });
+  followLog = spawn("tail", ["-n", "+1", "-F", logFile], { stdio: "inherit" });
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => { try { spawn("pkill", ["-f", `${appBundle}/Contents/MacOS/Electron`]); } catch { /* already gone */ } });
+  }
+  child.once("exit", () => { try { followLog?.kill(); } catch { /* done */ } });
+} else {
+  child = spawn(electronBinary, ["."], {
+    cwd: process.cwd(),
+    env,
+    stdio: "inherit",
+  });
+}
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {

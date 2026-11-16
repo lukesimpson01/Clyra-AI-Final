@@ -14,6 +14,7 @@ import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from 
 import { Camera, Monitor, ScanLine, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
 import { VoiceMediaSurface } from "./VoiceMediaSurface";
 import { ShimmerText } from "../chat/assistant";
+import { getElectronDesktop } from "../../lib/electron-runtime";
 import { AgentCursor } from "../vibe-coder/preview/AgentCursor";
 import "./voiceMotion.css";
 
@@ -1087,6 +1088,28 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
 
   const flyRef = useRef<HTMLDivElement | null>(null);
   const flight = useAnimationControls();
+  // Mirror the call on the notch, and let the notch end or mute it.
+  useEffect(() => {
+    const bridge = getElectronDesktop()?.voiceApp;
+    bridge?.setState({ active: call.active, state: modeStatus, muted: call.muted });
+    return () => { if (!call.active) bridge?.setState({ active: false, state: "", muted: false }); };
+  }, [call.active, modeStatus, call.muted]);
+  useEffect(() => {
+    if (!call.active) return;
+    return getElectronDesktop()?.voiceApp?.onCommand((action) => {
+      if (action === "end") void call.endCall();
+      else if (action === "mute" && !call.muted) call.toggleMute();
+      else if (action === "unmute" && call.muted) call.toggleMute();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call.active, call.muted]);
+  // Sharing the screen: a soft rim around the display and a "Clyra can see your screen" pill with Stop, until it stops.
+  useEffect(() => {
+    const bridge = getElectronDesktop()?.voiceApp;
+    bridge?.setScreenShare(mediaMode === "screen" && call.active);
+    return () => bridge?.setScreenShare(false);
+  }, [mediaMode, call.active]);
+  useEffect(() => getElectronDesktop()?.voiceApp?.onScreenShareStop(() => onMediaModeChange?.(null)), [onMediaModeChange]);
   const homeRectRef = useRef<DOMRect | null>(null);
   const delta = () => {
     const from = homeRectRef.current;

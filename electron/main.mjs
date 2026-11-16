@@ -28,6 +28,7 @@ import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
 import { DesktopControlService } from "./desktop-control.mjs";
 import { ComputerRun } from "./computer-run.mjs";
+import { ScreenShareIndicator } from "./screenshare-indicator.mjs";
 import { ComputerOverlay } from "./computer-overlay.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
 import { collectCareSnapshot } from "./care-manager.mjs";
@@ -74,6 +75,8 @@ if (process.env.CLYRA_USER_DATA_DIR) {
 }
 nativeTheme.themeSource = "light";
 
+// Started through LaunchServices (npm run desktop:dev on macOS) the working directory is "/": use the project folder.
+try { if (process.cwd() === "/") process.chdir(app.getAppPath()); } catch { /* keep the default */ }
 app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 app.commandLine.appendSwitch("enable-gpu-rasterization");
@@ -880,6 +883,7 @@ function startNotchMediaLink() {
   };
   bridge.onMessage = async (message) => {
     if (message?.op === "computer") { await handleComputerCommand(String(message.action || ""), message).catch((error) => console.warn("[computer]", error?.message || error)); return; }
+    if (message?.op === "app-call") { try { if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send("voiceapp:command", String(message.action || "")); } catch { /* window closing */ } return; }
     if (message?.op === "permissions") { void dictationManager?.ensureAllAccess({ open: true }); return; }
     if (message?.op === "voice-call") { if (message.action === "listen") await dictationManager?.listenForCall(true); else if (message.action === "toggle") await dictationManager?.toggleVoiceCall(); else if (message.action === "mute") { if (dictationManager) { dictationManager.callMuted = true; if (["listening", "arming"].includes(dictationManager.phase)) dictationManager.cancel(); } } else if (message.action === "unmute") { if (dictationManager) { dictationManager.callMuted = false; await dictationManager.listenForCall(); } } else if (message.action === "end") { dictationManager?.endVoiceCall(); } return; }
     if (message?.op === "music") { musicLevel?.set(Boolean(message.on)); return; }
@@ -1335,6 +1339,19 @@ function registerIpc() {
     const status = await dictationManager?.permissionStatus();
     if (mic && mic.ok === false) return { ...status, ...mic };
     return { ok: true, ...(status || {}), ...(mic || {}) };
+  });
+  // The voice call running in Clyra's own window is mirrored on the notch, which can also end or mute it.
+  let screenShareIndicator = null;
+  ipcMain.on("screenshare:set", (event, on) => {
+    if (!screenShareIndicator) screenShareIndicator = new ScreenShareIndicator({
+      rimHtml: path.join(here, "screenshare-rim.html"), pillHtml: path.join(here, "screenshare-pill.html"),
+      pillPreload: path.join(here, "screenshare-pill-preload.cjs"),
+      onStop: () => { try { if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send("screenshare:stop-request"); } catch { /* window closing */ } void screenShareIndicator?.hide(); },
+    });
+    void (on ? screenShareIndicator.show() : screenShareIndicator.hide());
+  });
+  ipcMain.on("voiceapp:state", (event, state) => {
+    try { dictationManager?.notch?.send({ t: "app-call", active: Boolean(state?.active), state: String(state?.state || "Voice call").slice(0, 24), muted: Boolean(state?.muted) }); } catch { /* notch not running */ }
   });
   ipcMain.handle("permissions:status", async (event) => { authorize(event); return { ok: true, status: dictationManager?.accessStatus() || {} }; });
   ipcMain.handle("permissions:ensure-all", async (event) => { authorize(event); return (await dictationManager?.ensureAllAccess({ open: true })) || { ok: false }; });

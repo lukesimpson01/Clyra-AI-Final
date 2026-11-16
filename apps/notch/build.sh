@@ -17,8 +17,8 @@ cat > "$APP/Contents/Info.plist" <<PL
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>local.notch</string>
-<key>CFBundleName</key><string>Notch</string>
-<key>CFBundleDisplayName</key><string>Notch</string>
+<key>CFBundleName</key><string>Clyra’s Notch</string>
+<key>CFBundleDisplayName</key><string>Clyra’s Notch</string>
 <key>CFBundleExecutable</key><string>Notch</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.4</string>

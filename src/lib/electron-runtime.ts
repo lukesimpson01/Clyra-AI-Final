@@ -246,6 +246,7 @@ export type ClyraDesktopBridge = {
     vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
     error?: string;
   }>;
+  voiceApp?: { setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean }) => void; onCommand: (callback: (action: string) => void) => () => void };
   permissions?: { status: () => Promise<{ ok: boolean; status: Record<string, string> }>; ensureAll: () => Promise<{ ok: boolean; results?: Record<string, string> }> };
   notch?: { op: (payload: { kind: "timer" | "stopwatch" | "alarm"; action?: "start" | "stop" | "reset"; seconds?: number; label?: string; hour?: number; minute?: number }) => Promise<{ ok: boolean; error?: string }> };
   computer?: {

@@ -12,6 +12,29 @@ final class VoiceCall: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     private(set) var snippet = "Speaking"
     var thinking: Bool { waiting }
     private(set) var startedAt: Date?
+    /// A voice call running in the Clyra app itself: the notch mirrors it and can end or mute it.
+    @Published private(set) var appActive = false
+    @Published private(set) var appState = "Listening"
+    @Published private(set) var appMuted = false
+    var live: Bool { active || appActive }
+
+    func handleApp(_ o: [String: Any]) {
+        let was = appActive
+        appActive = o["active"] as? Bool ?? false
+        appState = o["state"] as? String ?? "Voice call"
+        appMuted = o["muted"] as? Bool ?? false
+        if appActive && !was { startedAt = Date() }
+        if was && !appActive { DispatchQueue.main.async { [weak model] in if let model, model.view == .voice { model.show(.home) } } }
+        objectWillChange.send()
+    }
+
+    func endAny() {
+        if appActive { model?.flow.sendOp(["op": "app-call", "action": "end"]) } else { end() }
+    }
+
+    func muteAny() {
+        if appActive { model?.flow.sendOp(["op": "app-call", "action": appMuted ? "unmute" : "mute"]) } else { toggleMute() }
+    }
     private weak var model: NotchModel?
     private let synthesizer = AVSpeechSynthesizer()
     private var waiting = false
@@ -39,8 +62,8 @@ final class VoiceCall: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
             if speaking { synthesizer.stopSpeaking(at: .immediate) } else if !waiting { listen() }
         case "transcript":
             guard active, let text = (o["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, let model else { return }
+            if let say = model.submitVoice(text) { speak(say); return }
             waiting = true
-            model.submitVoice(text)
             startPolling()
         default: break
         }
@@ -139,6 +162,7 @@ struct VoiceView: View {
     init(model: NotchModel) { self.model = model; self.flow = model.flow; self.voice = model.voice }
 
     private var status: String {
+        if voice.appActive { return voice.appMuted ? "Muted" : voice.appState }
         if voice.muted { return "Muted" }
         if voice.speaking { return "Speaking" }
         if model.chat.work != nil || model.chat.isStreaming || model.computer.isActive { return "Thinking" }
@@ -151,7 +175,7 @@ struct VoiceView: View {
     }
 
     var body: some View {
-        if voice.active { call } else { dictation }
+        if voice.live { call } else { dictation }
     }
 
     private var call: some View {
@@ -180,7 +204,9 @@ struct VoiceView: View {
                             Text(VoiceCall.spoken(reply.text)).font(.system(size: 16, weight: .medium)).foregroundStyle(.white.opacity(0.95)).multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
                         }
-                        if flow.text.isEmpty, (reply?.text.isEmpty ?? true) {
+                        if voice.appActive {
+                            Text("On a call in Clyra").font(.system(size: 14)).foregroundStyle(.white.opacity(0.55))
+                        } else if flow.text.isEmpty, (reply?.text.isEmpty ?? true) {
                             Text("Say something…").font(.system(size: 14)).foregroundStyle(.white.opacity(0.4))
                         }
                         Color.clear.frame(height: 1).id("end")
@@ -195,8 +221,9 @@ struct VoiceView: View {
             MicBars(flow: flow, live: flow.phase == "listening" && !voice.muted).frame(height: 22)
 
             HStack(spacing: 26) {
-                control(symbol: voice.muted ? "mic.slash.fill" : "mic.fill", label: voice.muted ? "Unmute" : "Mute", tint: voice.muted ? Color(red: 0.95, green: 0.7, blue: 0.2) : .white.opacity(0.14)) { voice.toggleMute() }
-                control(symbol: "phone.down.fill", label: "End", tint: Color(red: 0.9, green: 0.25, blue: 0.27)) { voice.end() }
+                let muted = voice.appActive ? voice.appMuted : voice.muted
+                control(symbol: muted ? "mic.slash.fill" : "mic.fill", label: muted ? "Unmute" : "Mute", tint: muted ? Color(red: 0.95, green: 0.7, blue: 0.2) : .white.opacity(0.14)) { voice.muteAny() }
+                control(symbol: "phone.down.fill", label: "End", tint: Color(red: 0.9, green: 0.25, blue: 0.27)) { voice.endAny() }
             }
         }
     }

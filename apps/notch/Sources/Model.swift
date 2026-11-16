@@ -88,7 +88,7 @@ final class NotchModel: ObservableObject {
     var hasActivity: Bool { computer.isActive || hasMedia || !secondaryActivities.isEmpty }
     var activityView: NotchView? {
         if ringingAlarm != nil { return .alarm }
-        if flowActive || voice.active { return .voice }
+        if flowActive || voice.live { return .voice }
         if computer.isActive { return .computer }
         // A reply that has just finished: pointing at the notch shows that answer, with a way into the whole chat.
         if doneMessage != nil { return .reply }
@@ -115,6 +115,7 @@ final class NotchModel: ObservableObject {
         voice.attach(self)
         voiceBag = voice.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send() } }
         flow.onVoiceCall = { [weak self] payload in self?.voice.handle(payload) }
+        flow.onAppCall = { [weak self] payload in self?.voice.handleApp(payload) }
         computer.onChange = { [weak self] in
             guard let self else { return }
             self.lastWorking = self.working != nil
@@ -219,6 +220,7 @@ final class NotchModel: ObservableObject {
         if computer.isActive { let c = computer.collapsedLabel; return (c.symbol, c.label, []) }
         if let work = chat.work { return work }
         // On a call between turns: say so, centred like any other activity.
+        if voice.appActive && !flowActive { return ("phone.fill", voice.appMuted ? "Muted" : "Voice call", []) }
         if voice.active && !flowActive {
             if voice.speaking { return ("speaker.wave.2.fill", voice.snippet, []) }
             return voice.thinking || chat.isStreaming ? ("ellipsis", "Thinking", []) : ("phone.fill", "Voice call", [])
@@ -261,7 +263,7 @@ final class NotchModel: ObservableObject {
             clearConnectionBanner()
         }
         // Dictating or on a voice call: opening shows what is being heard and said.
-        else if on, flowActive || voice.active {
+        else if on, flowActive || voice.live {
             view = .voice
             followActivity = true
         }
@@ -414,11 +416,8 @@ final class NotchModel: ObservableObject {
             }
         }
         chatDraft = ""
-        if let req = TimerEngine.parseRequest(text) {
-            let t = timers.start(seconds: req.seconds, label: req.label)
-            requestNotificationPermission()
-            chat.appendLocal(user: text, reply: "Timer set: \(t.label), ends at \(t.endsAt.formatted(date: .omitted, time: .shortened)).")
-            show(.timer)
+        if let say = timeIntent(text) {
+            chat.appendLocal(user: text, reply: say)
             return
         }
         // Asked to operate an app or the machine in plain words: that is computer use, the same as typing /computer.
@@ -451,16 +450,41 @@ final class NotchModel: ObservableObject {
         return patterns.contains { t.range(of: $0, options: .regularExpression) != nil }
     }
 
-    /// A turn spoken on a voice call: nothing is shown as sent. It thinks, then the answer is spoken (and shown) smoothly.
-    func submitVoice(_ text: String) {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        if NotchModel.wantsComputerUse(text) { computer.start(text); return }
+    /// Timers, the stopwatch and alarms, asked for in words (typed or spoken): set here. Returns what to say, or nil if it was something else.
+    func timeIntent(_ text: String) -> String? {
+        let t = text.lowercased()
         if let req = TimerEngine.parseRequest(text) {
-            _ = timers.start(seconds: req.seconds, label: req.label)
+            selectedTimerID = timers.start(seconds: req.seconds, label: req.label).id
             requestNotificationPermission()
+            show(.timer)
+            return "Timer set for \(TimerEngine.clock(req.seconds))."
         }
+        if t.contains("stopwatch") {
+            if t.range(of: #"\b(stop|pause|end)\b"#, options: .regularExpression) != nil { stopwatch.stop(); show(.stopwatch); return "Stopwatch stopped." }
+            stopwatch.start(); show(.stopwatch); return "Stopwatch started."
+        }
+        if t.contains("alarm"), let re = try? NSRegularExpression(pattern: #"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?"#),
+           let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)), let hr = Range(m.range(at: 1), in: t), var hour = Int(t[hr]) {
+            var minute = 0
+            if let mr = Range(m.range(at: 2), in: t) { minute = Int(t[mr]) ?? 0 }
+            let marker = Range(m.range(at: 3), in: t).map { String(t[$0]).replacingOccurrences(of: ".", with: "") } ?? ""
+            if marker == "pm", hour < 12 { hour += 12 } else if marker == "am", hour == 12 { hour = 0 }
+            guard hour < 24, minute < 60 else { return nil }
+            alarms.add(NotchAlarm(hour: hour, minute: minute, weekdays: []))
+            show(.alarm)
+            return "Alarm set for \(String(format: "%d:%02d", (hour + 11) % 12 + 1, minute)) \(hour < 12 ? "AM" : "PM")."
+        }
+        return nil
+    }
+
+    /// A turn spoken on a voice call: nothing is shown as sent. Returns a line to speak when it was handled here.
+    func submitVoice(_ text: String) -> String? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if NotchModel.wantsComputerUse(text) { computer.start(text); return nil }
+        if let say = timeIntent(text) { return say }
         chat.send(text, hidden: true)
+        return nil
     }
 
     func openClyra(path: String = "") {
