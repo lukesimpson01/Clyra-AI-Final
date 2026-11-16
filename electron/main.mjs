@@ -135,7 +135,7 @@ let screenCaptureService = null;
 let desktopControlService = null;
 let computerRun = null;
 let computerOverlay = null;
-const COMPUTER_STOP_SHORTCUT = "CommandOrControl+Alt+Shift+Escape";
+const COMPUTER_STOP_SHORTCUT = "Alt+Escape";
 
 /** One typed, versioned event reaches Clyra chat, the control bar and the Notch. */
 function publishComputerEvent(event) {
@@ -1987,7 +1987,7 @@ async function createWindow() {
       { id: "dictation", label: "Dictation (Flow): tap to start and stop", group: "Voice", accelerator: "Right Option tap", note: "Change it in the Flow menu" },
       { id: "dictationAlt", label: "Dictation (Flow), alternative", group: "Voice", accelerator: dictationManager?.shortcut || "Control+Space" },
       { id: "voiceCallTap", label: "Voice call on the Notch: double-tap", group: "Voice", accelerator: "Right Option ×2" },
-      { id: "companion", label: "Clyra companion", group: "General", accelerator: "CommandOrControl+Shift+J" },
+      { id: "companion", label: "Clyra companion", group: "General", accelerator: "Alt+J" },
       { id: "aiStop", label: "Emergency stop for AI control", group: "AI control", accelerator: COMPUTER_STOP_SHORTCUT },
     ],
     actions: {

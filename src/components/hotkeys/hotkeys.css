@@ -45,3 +45,7 @@
   .clyra-hk__keys kbd { background: none; color: #f2f3f6; box-shadow: none; }
 }
 @media (prefers-reduced-motion: reduce) { .clyra-hk__press { animation: none; } .clyra-hk__keys { transition: none; } }
+
+.clyra-hk__head, .clyra-hk__hint, .clyra-hk__body { animation: clyra-hk-in .24s cubic-bezier(.16, 1, .3, 1) .07s both; }
+@keyframes clyra-hk-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .clyra-hk__head, .clyra-hk__hint, .clyra-hk__body { animation: none; } }

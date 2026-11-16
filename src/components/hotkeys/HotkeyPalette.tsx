@@ -101,13 +101,26 @@ export function HotkeyPalette() {
     return entries.filter((entry) => !q || entry.label.toLowerCase().includes(q) || entry.group.toLowerCase().includes(q) || entry.accelerator.toLowerCase().includes(q));
   }, [entries, query]);
 
+  // The palette grows out of the composer bar (and folds back into it) when the bar is on screen.
+  const fromBarRef = useRef<{ x: number; y: number; scaleX: number; scaleY: number; opacity: number } | null>(null);
+  if (open && !fromBarRef.current && typeof document !== "undefined") {
+    const bar = document.querySelector(".clyra-composer-shell__bar")?.getBoundingClientRect();
+    if (bar && bar.width > 40 && bar.height > 20 && bar.bottom > 0 && bar.top < window.innerHeight) {
+      const w = Math.min(680, window.innerWidth - 48);
+      const h = Math.min(640, window.innerHeight - 48);
+      fromBarRef.current = { x: bar.left + bar.width / 2 - window.innerWidth / 2, y: bar.top + bar.height / 2 - window.innerHeight / 2, scaleX: bar.width / w, scaleY: bar.height / h, opacity: 0.6 };
+    }
+  }
+  const fromBar = fromBarRef.current;
+  useEffect(() => { if (!open) fromBarRef.current = null; }, [open]);
+
   if (!desktop) return null;
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div className="clyra-hk" role="dialog" aria-modal="true" aria-label="Hotkeys" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduced ? 0.01 : 0.18 }}
+        <motion.div className="clyra-hk" role="dialog" aria-modal="true" aria-label="Hotkeys" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduced ? 0.01 : 0.16, ease: "easeOut" }}
           onMouseDown={(event) => { if (event.target === event.currentTarget) { if (recording) stopRecording(); setOpen(false); } }}>
-          <motion.div className="clyra-hk__panel" initial={reduced ? false : { opacity: 0, y: 14, scale: 0.975 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }} transition={{ type: "spring", stiffness: 380, damping: 34, mass: 0.9 }}>
+          <motion.div className="clyra-hk__panel" initial={reduced ? false : fromBar ?? { opacity: 0, y: 14, scale: 0.975 }} animate={{ opacity: 1, x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1 }} exit={reduced ? { opacity: 0 } : fromBar ? { ...fromBar, opacity: 0, transition: { duration: 0.2, ease: [0.4, 0, 0.8, 0.4] } } : { opacity: 0, y: 8, scale: 0.985 }} transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.8 }}>
             <header className="clyra-hk__head">
               <h2>Hotkeys</h2>
               <input className="clyra-hk__search clyra-text-input" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search hotkeys" autoFocus />

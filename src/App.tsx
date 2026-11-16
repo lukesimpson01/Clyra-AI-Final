@@ -91,6 +91,7 @@ import {
 } from "lucide-react";
 import { cn, formatApiError } from "./lib/utils";
 import { SettingsModal, SettingsSheet } from "./components/SettingsModal";
+import { HoverBubble } from "./components/ui/HoverBubble";
 import { useMacOSPageTransition } from "./components/MacOSPageTransition";
 import { ChatSearchModal } from "./components/ChatSearchModal";
 import {
@@ -3863,6 +3864,7 @@ export default function App() {
   // surrounding chrome (docked sidebar, workspace tab switcher) clears away
   // so the sheet has the full width and reads as one focused surface.
   const [composerMorphOpen, setComposerMorphOpen] = useState(false);
+  const sidebarPanelRef = useRef<HTMLDivElement>(null);
   const [vibeProjectToOpen, setVibeProjectToOpen] = useState<string | null>(null);
   const buildChatRowPreview = (messages: { role: "user" | "assistant"; content: string }[]) => {
     const last = messages[messages.length - 1];
@@ -11189,7 +11191,8 @@ Please analyze the code you just wrote and fix this error.`;
             willChange: "transform",
           }}
         >
-          <div className="clyra-sidebar-panel w-[244px] h-full min-h-0 flex flex-col shrink-0">
+          <div ref={sidebarPanelRef} className="clyra-sidebar-panel clyra-has-bubble relative w-[244px] h-full min-h-0 flex flex-col shrink-0">
+            <HoverBubble containerRef={sidebarPanelRef} selector=".clyra-sidebar-action, .clyra-sidebar-action--active, .clyra-sidebar-footer" />
             <div className="clyra-sidebar-section px-3 pb-2 pt-3 flex flex-col gap-1.5 shrink-0">
               <div className="flex items-center justify-between h-9 -mt-0.5 -mb-0.5 pl-1 -mr-1">
                 <div className="flex items-center gap-2 text-[13px] font-semibold tracking-tight text-slate-700">

@@ -4,9 +4,30 @@ import AppKit
 // Clyra's chat sidebar and settings, drawn for the notch (dark). Same structure as the app: chats grouped by day,
 // new chat, search, request usage, settings and the profile at the bottom.
 
+/// One soft bubble that glides between rows as the pointer moves, like the tab switcher in the app.
+struct GlideHover: ViewModifier {
+    let id: String
+    @Binding var hovered: String?
+    let space: Namespace.ID
+    func body(content: Content) -> some View {
+        content
+            .background { if hovered == id { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.075)).matchedGeometryEffect(id: "glide", in: space) } }
+            .onHover { inside in
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    if inside { hovered = id } else if hovered == id { hovered = nil }
+                }
+            }
+    }
+}
+
+extension View {
+    func glideHover(_ id: String, _ hovered: Binding<String?>, _ space: Namespace.ID) -> some View { modifier(GlideHover(id: id, hovered: hovered, space: space)) }
+}
+
 struct SidebarRow: View {
     let symbol: String
     let title: String
+    var glided = false
     let action: () -> Void
     @State private var hover = false
     var body: some View {
@@ -17,7 +38,7 @@ struct SidebarRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover ? 0.07 : 0)))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover && !glided ? 0.07 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -28,7 +49,9 @@ struct SidebarRow: View {
 struct ChatSidebar: View {
     @ObservedObject var model: NotchModel
     @State private var query = ""
+    @State private var hovered: String?
     @Namespace private var selection
+    @Namespace private var glide
 
     private var chats: [ChatSummary] {
         let all = model.chat.allChats
@@ -61,7 +84,8 @@ struct ChatSidebar: View {
                 IconButton(symbol: "chevron.left", size: 11, label: "Hide chats") { model.toggleSidebar() }
             }
             .frame(height: 26)
-            SidebarRow(symbol: "plus", title: "New chat") { model.chat.newConversation(); model.show(.chat) }
+            SidebarRow(symbol: "plus", title: "New chat", glided: true) { model.chat.newConversation(); model.show(.chat) }
+                .glideHover("new", $hovered, glide)
             HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).frame(width: 16)
                 TextField("Search chats", text: $query)
@@ -80,6 +104,7 @@ struct ChatSidebar: View {
                                     model.chat.open(chat)
                                     model.show(.chat)
                                 }
+                                .glideHover("chat-\(chat.id)", $hovered, glide)
                             }
                         }
                     }
@@ -106,7 +131,8 @@ struct ChatSidebar: View {
                     }
                     .frame(height: 3)
                 }
-                SidebarRow(symbol: "gearshape", title: "Settings") { model.show(.settings) }
+                SidebarRow(symbol: "gearshape", title: "Settings", glided: true) { model.show(.settings) }
+                    .glideHover("settings", $hovered, glide)
                 HStack(spacing: 9) {
                     Text(String((model.chat.profileName.isEmpty ? "L" : model.chat.profileName).prefix(1)).uppercased())
                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
@@ -146,8 +172,6 @@ struct SidebarChat: View {
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.1)).matchedGeometryEffect(id: "selected", in: namespace)
-                } else if hover {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.05))
                 }
             }
             .contentShape(Rectangle())

@@ -12251,3 +12251,8 @@ textarea::selection{background:rgba(26,107,255,.22)}
 .clyra-agent-dock__btn:active { transform: scale(.92); }
 .clyra-agent-dock__btn.is-stop { color: #ff8a8f; }
 @media (prefers-reduced-motion: reduce) { .clyra-agent-glow, .clyra-agent-dock__dot { animation: none; } }
+
+/* The sliding hover bubble replaces each row's own hover fill so only one grey shape ever moves. */
+.clyra-has-bubble .clyra-sidebar-action:hover,
+.clyra-has-bubble .clyra-sidebar-footer:hover { background: transparent; transform: none; }
+.clyra-has-bubble .clyra-sidebar-action > *, .clyra-has-bubble .clyra-sidebar-action--active > *, .clyra-has-bubble .clyra-sidebar-footer > * { position: relative; z-index: 1; }

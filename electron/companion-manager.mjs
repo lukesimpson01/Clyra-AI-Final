@@ -49,7 +49,7 @@ export class CompanionManager {
   async initialize() {
     await this.options.desktop.initialize();
     try {
-      this.shortcutRegistered = globalShortcut.register("CommandOrControl+Shift+J", () => {
+      this.shortcutRegistered = globalShortcut.register("Alt+J", () => {
         void this.toggle();
       });
     } catch {
@@ -452,7 +452,7 @@ export class CompanionManager {
 
   destroy() {
     try {
-      if (this.shortcutRegistered) globalShortcut.unregister("CommandOrControl+Shift+J");
+      if (this.shortcutRegistered) globalShortcut.unregister("Alt+J");
     } catch {
       /* ignore */
     }

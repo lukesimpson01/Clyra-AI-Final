@@ -734,7 +734,7 @@ export function SettingsSheet({
                   key={activeSection}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  transition={{ duration: 0.12, ease: "easeOut" }}
                   className={cn("clys-content__inner", activeSection === "memory" && "max-w-[760px]")}
                 >
                   <h1 className="clys-section-title">{activeMeta.label}</h1>
@@ -1252,7 +1252,7 @@ export function SettingsModal(props: SettingsModalProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.2, ease: "easeOut" }}
+          transition={{ duration: 0.14, ease: "easeOut" }}
         >
           <motion.button
             type="button"
@@ -1262,10 +1262,10 @@ export function SettingsModal(props: SettingsModalProps) {
             tabIndex={-1}
           />
           <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.22, ease: EASE_OUT }}
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.99, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
+            transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.8 }}
           >
             <SettingsSheet {...props} />
           </motion.div>

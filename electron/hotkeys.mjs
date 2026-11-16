@@ -25,22 +25,22 @@ export class HotkeyManager {
     this.registered = new Map(); // id -> accelerator actually registered
     this.suspended = false;
     this.registry = [
-      { id: "front", label: "Bring Clyra to the front", group: "General", default: "CommandOrControl+Alt+/" },
+      { id: "front", label: "Bring Clyra to the front", group: "General", default: "Alt+Space" },
       { id: "hotkeys", label: "Show all hotkeys", group: "General", default: "CommandOrControl+/" },
       { id: "taskview", label: "Task View", group: "General", default: "CommandOrControl+J" },
       { id: "launcher", label: "App launcher", group: "General", default: "CommandOrControl+K" },
-      { id: "newChat", label: "New chat", group: "Chat", default: "CommandOrControl+Alt+N" },
-      { id: "voiceCall", label: "Start or end a voice call", group: "Voice", default: "CommandOrControl+Alt+V" },
-      { id: "callMute", label: "Mute or unmute the call", group: "Voice", default: "CommandOrControl+Alt+M" },
-      { id: "screenShare", label: "Share or stop sharing the screen", group: "Voice", default: "CommandOrControl+Alt+S" },
-      { id: "camera", label: "Turn the camera on or off", group: "Voice", default: "CommandOrControl+Alt+C" },
-      { id: "aiPause", label: "Pause or resume AI control", group: "AI control", default: "CommandOrControl+Alt+P" },
-      { id: "notchToggle", label: "Open or close the Notch", group: "Notch", default: "CommandOrControl+Alt+O" },
-      { id: "notchRestart", label: "Restart the Notch", group: "Notch", default: "CommandOrControl+Alt+Shift+N" },
-      { id: "notchQuit", label: "Quit the Notch", group: "Notch", default: "CommandOrControl+Alt+Shift+Q" },
-      { id: "reload", label: "Reload Clyra's window", group: "App", default: "CommandOrControl+Alt+L" },
-      { id: "restart", label: "Restart Clyra", group: "App", default: "CommandOrControl+Alt+Shift+R" },
-      { id: "devtools", label: "Developer tools", group: "App", default: "CommandOrControl+Alt+I" },
+      { id: "newChat", label: "New chat", group: "Chat", default: "Alt+N" },
+      { id: "voiceCall", label: "Start or end a voice call", group: "Voice", default: "Alt+V" },
+      { id: "callMute", label: "Mute or unmute the call", group: "Voice", default: "Alt+M" },
+      { id: "screenShare", label: "Share or stop sharing the screen", group: "Voice", default: "Alt+S" },
+      { id: "camera", label: "Turn the camera on or off", group: "Voice", default: "Alt+C" },
+      { id: "aiPause", label: "Pause or resume AI control", group: "AI control", default: "Alt+P" },
+      { id: "notchToggle", label: "Open or close the Notch", group: "Notch", default: "Alt+O" },
+      { id: "notchRestart", label: "Restart the Notch", group: "Notch", default: "Alt+U" },
+      { id: "notchQuit", label: "Quit the Notch", group: "Notch", default: "Alt+Q" },
+      { id: "reload", label: "Reload Clyra's window", group: "App", default: "Alt+L" },
+      { id: "restart", label: "Restart Clyra", group: "App", default: "Alt+R" },
+      { id: "devtools", label: "Developer tools", group: "App", default: "Alt+I" },
     ];
   }
 
