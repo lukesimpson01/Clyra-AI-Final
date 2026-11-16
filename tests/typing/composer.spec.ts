@@ -60,3 +60,27 @@ test("typing a slash command shows it inline and the text stays aligned with its
   const value = await box.inputValue();
   expect(value.startsWith("open /")).toBe(true);
 });
+
+test("the caret rectangle from the native selection matches the text position", async ({ page }) => {
+  const box = composer(page);
+  await box.fill("");
+  await box.pressSequentially("caret alignment", { delay: 2 });
+  // The textarea's own geometry: the caret must sit inside the textarea and its mirror-measured x must advance with the text.
+  const first = await page.evaluate(() => {
+    const el = document.querySelector("textarea") as HTMLTextAreaElement;
+    const probe = (n: number) => {
+      const mirror = document.createElement("div");
+      const cs = getComputedStyle(el);
+      for (const k of ["fontFamily", "fontSize", "fontWeight", "letterSpacing", "lineHeight", "paddingLeft", "whiteSpace"] as const) (mirror.style as unknown as Record<string, string>)[k] = (cs as unknown as Record<string, string>)[k];
+      mirror.style.position = "fixed"; mirror.style.visibility = "hidden"; mirror.style.whiteSpace = "pre";
+      mirror.textContent = el.value.slice(0, n);
+      document.body.appendChild(mirror);
+      const width = mirror.getBoundingClientRect().width;
+      document.body.removeChild(mirror);
+      return width;
+    };
+    return { short: probe(5), full: probe(el.value.length), start: el.selectionStart, length: el.value.length };
+  });
+  expect(first.start).toBe(first.length);
+  expect(first.full).toBeGreaterThan(first.short);
+});

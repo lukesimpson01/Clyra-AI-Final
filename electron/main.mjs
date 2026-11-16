@@ -30,6 +30,7 @@ import { DesktopControlService } from "./desktop-control.mjs";
 import { ComputerRun } from "./computer-run.mjs";
 import { ScreenShareIndicator } from "./screenshare-indicator.mjs";
 import { HotkeyManager } from "./hotkeys.mjs";
+import { pickGuideTarget } from "./companion-guide.mjs";
 import { ComputerOverlay } from "./computer-overlay.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
 import { collectCareSnapshot } from "./care-manager.mjs";
@@ -312,6 +313,34 @@ async function activateClyraShortcut(channel) {
 }
 
 /** Restart Clyra. In development it is started through LaunchServices (see tools/electron-dev.mjs), so the new copy is too. */
+/** A small chooser listing the screens and windows that can be shared, as Windows.Graphics.Capture's picker does. */
+function chooseCaptureSource(sources) {
+  return new Promise((resolve) => {
+    const usable = sources.filter((item) => item.name && !/^clyra$/i.test(item.name));
+    if (!usable.length) { resolve(null); return; }
+    const win = new BrowserWindow({
+      width: 720, height: 520, minWidth: 520, minHeight: 380, title: "Share your screen", show: false, parent: mainWindow || undefined, modal: Boolean(mainWindow),
+      autoHideMenuBar: true, backgroundColor: "#ffffff", fullscreenable: false, minimizable: false,
+      webPreferences: { preload: path.join(here, "capture-picker-preload.cjs"), sandbox: false, contextIsolation: true },
+    });
+    let settled = false;
+    const finish = (id) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener("capture-picker:choose", onChoose);
+      try { if (!win.isDestroyed()) win.close(); } catch { /* gone */ }
+      resolve(id ? usable.find((item) => item.id === id) || null : null);
+    };
+    const onChoose = (event, id) => { if (event.sender === win.webContents) finish(id); };
+    ipcMain.on("capture-picker:choose", onChoose);
+    win.on("closed", () => finish(null));
+    void win.loadFile(path.join(here, "capture-picker.html")).then(() => {
+      const list = usable.map((item) => ({ id: item.id, name: item.name, kind: item.id.startsWith("screen") ? "screen" : "window", thumb: item.thumbnail.toDataURL() }));
+      void win.webContents.executeJavaScript(`window.__sources(${JSON.stringify(list)})`).then(() => win.show());
+    });
+  });
+}
+
 function restartClyra() {
   if (app.isPackaged) { app.relaunch(); app.exit(0); return; }
   const bundle = process.execPath.split("/Contents/MacOS/")[0];
@@ -504,9 +533,9 @@ function configureUiSession() {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       if (!isClyraOrigin(request?.securityOrigin || request?.frame?.url || "")) { callback({}); return; }
-      const primary = screen.getPrimaryDisplay();
-      const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
-      const source = sources.find((item) => String(item.display_id) === String(primary.id)) || sources[0];
+      // Windows (and macOS before the system picker): the person chooses a screen or a window in Clyra's own picker.
+      const sources = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false });
+      const source = await chooseCaptureSource(sources);
       if (!source) { callback({}); return; }
       callback({ video: source });
     } catch {
@@ -1363,6 +1392,40 @@ function registerIpc() {
     const status = await dictationManager?.permissionStatus();
     if (mic && mic.ok === false) return { ...status, ...mic };
     return { ok: true, ...(status || {}), ...(mic || {}) };
+  });
+  // The voice call decides by itself when to look at the screen or the camera: this runs the switch as a user gesture.
+  ipcMain.handle("voiceapp:media", async (event, mode) => {
+    authorize(event);
+    const wanted = mode === "screen" || mode === "camera" ? mode : null;
+    const contents = uiView?.webContents;
+    if (!contents || contents.isDestroyed()) return { ok: false };
+    await contents.executeJavaScript(`window.__clyraVoiceMediaSet && window.__clyraVoiceMediaSet(${JSON.stringify(wanted)})`, true).catch(() => {});
+    return { ok: true };
+  });
+  // Pointing on a shared screen: read the frame Clyra is looking at, find what was asked about, and move the AI cursor there.
+  let pointTimer = null;
+  ipcMain.handle("voiceapp:point", async (event, payload) => {
+    authorize(event);
+    try {
+      const data = String(payload?.image || "");
+      const match = data.match(/^data:image\/jpeg;base64,(.+)$/);
+      if (!match || !desktopControlService) return { ok: false, error: "No frame to read." };
+      const file = path.join(app.getPath("temp"), `clyra-point-${Date.now()}.jpg`);
+      await fs.writeFile(file, Buffer.from(match[1], "base64"));
+      const question = String(payload?.question || "");
+      const vision = await analyseCompanionVision(file, question).finally(() => fs.rm(file, { force: true }).catch(() => {}));
+      const display = screen.getPrimaryDisplay();
+      const pointer = pickGuideTarget(vision, { bounds: display.bounds, dimensions: { width: Number(payload?.width) || 960, height: Number(payload?.height) || 600 } }, question);
+      if (!pointer) return { ok: true, pointer: null };
+      await desktopControlService.setGuideOnly(true);
+      desktopControlService.setCursorEnabled(true);
+      await desktopControlService.setCursor({ x: pointer.x, y: pointer.y, label: pointer.label, kind: "point", guide: true, durationMs: 0, jump: false });
+      clearTimeout(pointTimer);
+      pointTimer = setTimeout(() => { void desktopControlService.setCursor(null); void desktopControlService.setGuideOnly(false); }, 7000);
+      return { ok: true, pointer: { label: pointer.label } };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
   });
   // The voice call running in Clyra's own window is mirrored on the notch, which can also end or mute it.
   let screenShareIndicator = null;

@@ -7,7 +7,7 @@ import { personalDictionary, applyDictionary } from "../speech/personalDictionar
 import { VoiceActivityGate } from "../lib/voiceActivityGate";
 import { shouldEndVoiceUtterance } from "../lib/voiceEndpoint";
 import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
-import { asksToInspectSharedView } from "../lib/voiceVisualIntent";
+import { asksToInspectSharedView, asksWhereOnScreen, detectMediaIntent } from "../lib/voiceVisualIntent";
 
 const SCREEN_ACTION_REQUEST = /^(?:(?:please|can you|could you|go ahead and)\s+)*(?:open|launch|click|double[- ]click|press|type|scroll|go to|navigate to|close|switch to|select|drag|search for|play|pause|start|run|take me to|control|use my computer)\b/i;
 import {
@@ -156,8 +156,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       dispatch({ type: "SET_LEVEL", source: "bot", level: 0.17 });
     }, 140);
   }, []);
-  const mediaCaptureRef = useRef<(() => { mode: "camera" | "screen"; image: string } | null) | null>(null);
-  const registerMediaCapture = useCallback((capture: (() => { mode: "camera" | "screen"; image: string } | null) | null) => {
+  const mediaCaptureRef = useRef<(() => { mode: "camera" | "screen"; image: string; width?: number; height?: number } | null) | null>(null);
+  const registerMediaCapture = useCallback((capture: (() => { mode: "camera" | "screen"; image: string; width?: number; height?: number } | null) | null) => {
     mediaCaptureRef.current = capture;
   }, []);
   const engine = useRef({
@@ -418,6 +418,25 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     // While the camera or screen is live, every conversational turn (typed or
     // spoken) goes through DeepSeek vision with the current frame. Short
     // task-control words still reach the agent below.
+    // The call chooses its own view: ask to look at the screen or the camera and it switches (and back to plain talking on request).
+    const bridge = getElectronDesktop()?.voiceApp;
+    const currentMedia = (window as unknown as { __clyraVoiceMediaMode?: "camera" | "screen" | null }).__clyraVoiceMediaMode ?? null;
+    const wantedView = bridge ? detectMediaIntent(clean) : null;
+    if (wantedView && bridge && (wantedView === "off" ? currentMedia !== null : wantedView !== currentMedia)) {
+      if (wantedView === "off") {
+        await bridge.requestMedia(null);
+        acknowledge(currentMedia === "screen" ? "Okay, I've stopped looking at your screen." : "Okay, the camera is off.");
+        return true;
+      }
+      await bridge.requestMedia(wantedView);
+      if (wantedView === "screen") {
+        acknowledge("Sure. Choose the screen or window you want to share in the picker, then ask me again.");
+        return true;
+      }
+      // Camera: wait for the first frame, then answer the question about it in the same turn.
+      for (let waited = 0; waited < 4_000 && !mediaCaptureRef.current; waited += 200) await new Promise((resolve) => setTimeout(resolve, 200));
+      if (!mediaCaptureRef.current) { acknowledge("I turned the camera on, but no picture has arrived yet. Try again in a moment."); return true; }
+    }
     const isTaskControl = /^(?:stop|cancel|stop now|pause|hold on|wait|continue|resume|go ahead)[.!]?$/i.test(clean);
     const wantsMedia = Boolean(mediaCaptureRef.current) && (asksToInspectSharedView(clean) || !isTaskControl);
     const sharedFrame = wantsMedia ? mediaCaptureRef.current!() : null;
@@ -447,6 +466,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         if (controller.signal.aborted) return true;
         if (!response.ok || !payload?.ok || !(payload.text || payload.summary)) throw new Error(payload?.error || "The frame could not be examined.");
         acknowledge(String(payload.text || payload.summary).slice(0, 1800));
+        // Asked where something is on the shared screen: show it, with the AI cursor and a ring around the spot.
+        if (frame.mode === "screen" && asksWhereOnScreen(clean)) void getElectronDesktop()?.voiceApp?.pointAt({ image: frame.image, width: frame.width, height: frame.height, question: clean }).catch(() => undefined);
       } catch (error) {
         if (controller.signal.aborted) return true;
         const raw = error instanceof Error ? error.message : "";

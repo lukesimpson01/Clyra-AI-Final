@@ -1,5 +1,7 @@
 "use client";
 
+import { AgentControlOverlay } from "../vibe-coder/preview/AgentControlOverlay";
+import { AgentCursorGlyph } from "../agent/AgentCursorGlyph";
 import {
   memo,
   useCallback,
@@ -697,27 +699,13 @@ export function VibeLivePreviewPanel({
   const runAgentCursorReplay = useCallback(() => {
     for (const id of cursorTimeoutsRef.current) window.clearTimeout(id);
     cursorTimeoutsRef.current = [];
+    // The cursor only says what is really happening: a test is running. It drifts across the preview, with no invented clicks.
     const steps: Array<Partial<AgentCursorState> & { at: number }> = [
-      {
-        at: 0,
-        visible: true,
-        x: 18,
-        y: 22,
-        label: "Opening preview",
-        clicking: false,
-      },
-      { at: 650, x: 48, y: 38, label: "Scanning UI", clicking: false },
-      {
-        at: 1250,
-        x: 66,
-        y: 58,
-        label: "Checking interactions",
-        clicking: true,
-      },
-      { at: 1700, clicking: false },
-      { at: 2200, x: 34, y: 70, label: "Testing controls", clicking: true },
-      { at: 2700, clicking: false },
-      { at: 3400, x: 72, y: 28, label: "Validating render", clicking: false },
+      { at: 0, visible: true, x: 18, y: 24, label: "Testing the preview", clicking: false },
+      { at: 900, x: 52, y: 40, label: "Testing the preview", clicking: false },
+      { at: 1900, x: 70, y: 62, label: "Testing the preview", clicking: false },
+      { at: 2900, x: 36, y: 68, label: "Testing the preview", clicking: false },
+      { at: 3900, x: 64, y: 30, label: "Testing the preview", clicking: false },
     ];
     for (const step of steps) {
       const id = window.setTimeout(() => {
@@ -727,8 +715,12 @@ export function VibeLivePreviewPanel({
     }
   }, []);
 
+  const testAbortRef = useRef<AbortController | null>(null);
   const testPreview = useCallback(async () => {
     if (Object.keys(mergedFiles).length === 0) return;
+    testAbortRef.current?.abort();
+    const abort = new AbortController();
+    testAbortRef.current = abort;
     const inferredPrompt = inferPreviewTestPrompt(mergedFiles);
     setIsTesting(true);
     setTestResult(null);
@@ -737,6 +729,7 @@ export function VibeLivePreviewPanel({
     try {
       const response = await fetch(`${SANDBOX_DEV_HOST}/api/test-preview`, {
         method: "POST",
+        signal: abort.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: sessionUrl || `${SANDBOX_DEV_HOST}/`,
@@ -760,6 +753,7 @@ export function VibeLivePreviewPanel({
         setToastMessage?.("Preview test found errors");
       }
     } catch (error) {
+      if (abort.signal.aborted) { setPreviewNotice("Preview test stopped."); return; }
       const message = error instanceof Error ? error.message : String(error);
       setTestResult({ success: false, error: message });
       setPreviewNotice(message);
@@ -782,6 +776,13 @@ export function VibeLivePreviewPanel({
     sessionUrl,
     setToastMessage,
   ]);
+
+  // "Test it" said in the Vibe chat runs the real preview test.
+  useEffect(() => {
+    const run = () => void testPreview();
+    window.addEventListener("clyra:vibe-test-preview", run);
+    return () => window.removeEventListener("clyra:vibe-test-preview", run);
+  }, [testPreview]);
 
   const reload = useCallback(() => {
     try {
@@ -1247,31 +1248,21 @@ export function VibeLivePreviewPanel({
                 />
               )}
 
+              <AgentControlOverlay isActive={isTesting} label="Testing the preview" onStop={() => { testAbortRef.current?.abort(); setIsTesting(false); }} />
               {agentCursor.visible ? (
                 <div
-                  className="pointer-events-none absolute z-50 transition-[left,top,transform,opacity] duration-500 ease-out"
+                  className="pointer-events-none absolute z-50"
                   style={{
                     left: `${agentCursor.x}%`,
                     top: `${agentCursor.y}%`,
-                    transform: `translate(-10px, -8px) scale(${agentCursor.clicking ? 0.92 : 1})`,
+                    transition: "left 900ms cubic-bezier(.32,.72,0,1), top 900ms cubic-bezier(.32,.72,0,1), opacity 260ms ease",
                   }}
                   aria-hidden
                 >
                   <div className="relative">
-                    <div
-                      className="h-9 w-9 bg-black shadow-[0_10px_28px_rgba(15,23,42,0.28)]"
-                      style={{
-                        clipPath:
-                          "polygon(11% 0%, 100% 45%, 61% 57%, 47% 100%, 28% 91%, 42% 52%, 0% 35%)",
-                        transform: "rotate(-8deg)",
-                        borderRadius: "8px",
-                      }}
-                    />
-                    {agentCursor.clicking ? (
-                      <span className="absolute left-4 top-4 h-7 w-7 animate-ping rounded-full border-2 border-black/50" />
-                    ) : null}
-                    <span className="absolute left-7 top-7 whitespace-nowrap rounded-full border border-slate-200 bg-white/95 px-2 py-1 text-[10.5px] font-semibold text-slate-700 shadow-lg">
-                      {agentCursor.label}
+                    <AgentCursorGlyph pressed={agentCursor.clicking} />
+                    <span className="absolute left-5 top-5 inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/20 bg-white/95 px-2.5 text-[11px] font-medium text-slate-700 shadow-[0_6px_18px_rgba(14,30,70,0.16)]">
+                      <i className="h-1.5 w-1.5 rounded-full bg-[#1e6fff]" />{agentCursor.label}
                     </span>
                   </div>
                 </div>

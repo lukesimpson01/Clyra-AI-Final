@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getElectronDesktop } from "../../lib/electron-runtime";
 
 export type VoiceMediaMode = "camera" | "screen";
-export type VoiceMediaSnapshot = { mode: VoiceMediaMode; image: string };
+export type VoiceMediaSnapshot = { mode: VoiceMediaMode; image: string; width?: number; height?: number };
 
 type Props = {
   mode: VoiceMediaMode;
@@ -50,7 +50,7 @@ export function VoiceMediaSurface({ mode, onStop, onCaptureChange, xray = false,
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return { mode, image: canvas.toDataURL("image/jpeg", 0.76) };
+    return { mode, image: canvas.toDataURL("image/jpeg", 0.76), width: canvas.width, height: canvas.height };
   }, [mode]);
   useEffect(() => {
     onCaptureChange?.(captureFrame);
@@ -91,6 +91,7 @@ export function VoiceMediaSurface({ mode, onStop, onCaptureChange, xray = false,
         stream?.getTracks().forEach((track) => track.stop());
         stream = null;
         if (video) { video.pause(); video.srcObject = null; }
+        if (mode === "camera" && cause instanceof Error && cause.name === "NotAllowedError") void getElectronDesktop()?.dictation?.openCameraSettings?.();
         if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to open the camera.");
       }
     };

@@ -181,6 +181,7 @@ import {
 } from "./components/chat/assistant";
 import { deriveAgentEvents, type AgentEvent, type RunSnapshot } from "../lib/agent-events/agent-event";
 import { HotkeyPalette } from "./components/hotkeys/HotkeyPalette";
+import { InputPerformanceMonitor } from "./components/text-engine/InputPerformanceMonitor";
 import { VoiceCallHost } from "./components/voice/VoiceCallHost";
 import { requestVoiceCall } from "./components/voice/voiceCallTrigger";
 import { DictationController } from "./components/DictationController";
@@ -1615,6 +1616,7 @@ function inferCommandId(text: string): string | undefined {
   const t = text.trim().toLowerCase();
   if (!t || t.startsWith("/")) return undefined;
   if (/\b(connect|pair|disconnect|turn (?:on|off)|switch (?:on|off)|enable|disable)\b[^.?!]{0,30}\b(bluetooth|wi-?fi|my (?:phone|iphone|ipad|airpods|headphones|speaker|watch|mac)|airplay|hotspot|dark mode|do not disturb|volume|brightness)\b/.test(t)) return "computer";
+  if (/\b(find|search for|list|read|show me|what(?:\u2019|')?s in)\b[^.?!]{0,30}\b(file|files|folder|folders|downloads|documents|my desktop|bluetooth devices?)\b|\brun\b[^.?!]{0,20}\b(command|terminal|script)\b|\b(system info|how much (?:disk|storage|battery|memory))\b/.test(t) && !/\b(on the web|online|website|article)\b/.test(t)) return "computer";
   if (/\b(check|fix|enable|grant|set ?up|review)\b[^.?!]{0,30}\b(permissions?|privacy access)\b|\bclyra (doesn.t|does not|isn.t|is not) (show|listed|appear)/.test(t)) return "permissions";
   if (/\b(use|using|with|via|through|open)\s+(the\s+)?(clyra\s+)?computer[ -]use\b/.test(t) || /\b(take over|control|operate)\s+(my|the)\s+(computer|mac|pc|laptop|desktop|screen)\b/.test(t)) return "computer";
   if (/(?:youtube\.com\/(?:watch|shorts|live)|youtu\.be\/)/.test(t)) return "youtube";
@@ -5072,6 +5074,11 @@ export default function App() {
     lastScrollTopRef.current = 0;
     setShowScrollToLatest(false);
   }, [chatDrafts.new, currentChatId, isTemporaryChat, value]);
+  // Development only: typing diagnostics (input-to-frame latency, long tasks). Read with window.__clyraTyping.summary().
+  useEffect(() => {
+    if (window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") return;
+    return new InputPerformanceMonitor().start();
+  }, []);
   // The "New chat" hotkey (⌘⌥N by default; see the hotkey palette) works from anywhere on the machine.
   useEffect(() => getElectronDesktop()?.hotkeys?.onNewChat(() => handleNewChat()), [handleNewChat]);
 
@@ -7443,6 +7450,10 @@ Please analyze the code you just wrote and fix this error.`;
         userCommandId === "vibe" ||
         Boolean(vibeCommand) ||
         workspaceIntent?.workspace === "vibe";
+      // Told to test or check the live preview in a Vibe project: really run the preview test (glow, cursor and dock show while it runs).
+      if (isVibeMode && /\b(test|verify|check|try|run through|click through)\b[^.?!]{0,48}\b(preview|app|site|page|ui|it|everything|buttons?)\b/i.test(rawUserText)) {
+        window.setTimeout(() => window.dispatchEvent(new Event("clyra:vibe-test-preview")), 400);
+      }
       if (isVibeMode || activeWorkspaceTab === "chat") {
         setWorkflowTabsHidden(true);
       }

@@ -587,6 +587,11 @@ const AI_PRESENCE_HTML = `<!doctype html>
   body.typing #caret{opacity:1;transform:none;animation:blink 1.05s steps(1,end) infinite}
   body.typing #caret.flash{animation:none}
   @keyframes blink{0%,58%{opacity:1}59%,100%{opacity:.18}}
+  #focus{position:absolute;left:0;top:0;width:0;height:0;opacity:0;transition:opacity 260ms cubic-bezier(.32,.72,0,1);pointer-events:none}
+  body.pointing #focus{opacity:1}
+  #focus i{position:absolute;left:-34px;top:-34px;width:68px;height:68px;border-radius:50%;border:2px solid rgba(30,111,255,.85);background:radial-gradient(circle,rgba(30,111,255,.16),rgba(30,111,255,0) 70%);animation:focusPing 1.7s cubic-bezier(.16,.84,.3,1) infinite}
+  #focus i:nth-child(2){animation-delay:.85s}
+  @keyframes focusPing{0%{opacity:.95;transform:scale(.35)}100%{opacity:0;transform:scale(1.25)}}
   .ring{position:absolute;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:1.5px solid rgba(30,111,255,.75);background:radial-gradient(circle,rgba(30,111,255,.26),rgba(30,111,255,0) 68%);opacity:0;transform:scale(.18);pointer-events:none}
   .ring.go{animation:ring 520ms cubic-bezier(.16,.84,.3,1) forwards}
   @keyframes ring{0%{opacity:.95;transform:scale(.18)}60%{opacity:.5}100%{opacity:0;transform:scale(1)}}
@@ -614,7 +619,7 @@ const AI_PRESENCE_HTML = `<!doctype html>
   @media(prefers-reduced-motion:reduce){.ring.go,.dot.go{animation-duration:1ms}#txt.swap{animation:none}body.thinking #arrow,#dots i,body.typing #caret{animation:none}}
 </style></head><body>
 <div id="rig"><div id="pointer">
-  <div class="ring" id="ring"></div><div class="dot" id="dot"></div>
+  <div id="focus"><i></i><i></i></div><div class="ring" id="ring"></div><div class="dot" id="dot"></div>
   <svg id="arrow" viewBox="0 0 22 22" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4b93ff"/><stop offset="1" stop-color="#1e6fff"/></linearGradient></defs><path d="M2.4 2.4 L19.4 8.2 L11.2 11.4 L8.2 19.6 Z" fill="url(#g)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
   <div id="caret"></div>
 </div>
@@ -672,7 +677,7 @@ function burst(){
 }
 window.__setAIPresence=(value)=>{
   if(!value){
-    document.body.classList.remove("active","typing","thinking");lastLabel="";
+    document.body.classList.remove("active","typing","thinking","pointing");lastLabel="";
     clearTimeout(hideTimer);hideTimer=setTimeout(()=>{cur={x:-100,y:-100};},400);
     return;
   }
@@ -684,6 +689,7 @@ window.__setAIPresence=(value)=>{
   document.body.classList.add("active");
   document.body.classList.toggle("typing",kind==="type");
   document.body.classList.toggle("thinking",kind==="think");
+  document.body.classList.toggle("pointing",kind==="point");
   arrow.classList.toggle("hide",kind==="type");
   if(!wasActive&&Number.isFinite(value.fromX)){cur={x:Number(value.fromX),y:Number(value.fromY)};place(cur.x,cur.y);}
   setLabel(String(value.label||"Clyra"),iconFor(kind,value.label));

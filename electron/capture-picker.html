@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{--ink:#15171c;--mute:#7a7f8a;--line:rgba(20,24,40,.1);--blue:#1e6fff;--bg:#fff}
+  @media(prefers-color-scheme:dark){:root{--ink:#f2f3f6;--mute:#a1a6b0;--line:rgba(255,255,255,.14);--bg:#1e2028}}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);font:13px/1.4 -apple-system,"Segoe UI",system-ui,sans-serif;user-select:none;overflow:hidden}
+  header{padding:18px 20px 6px}h1{font-size:16px;font-weight:650;letter-spacing:-.02em}p{color:var(--mute);margin-top:2px;font-size:12.5px}
+  nav{display:flex;gap:6px;padding:10px 20px 4px}
+  nav button{all:unset;cursor:pointer;padding:6px 14px;border-radius:999px;font-weight:500;color:var(--mute);transition:background .16s,color .16s}
+  nav button.on{background:rgba(30,111,255,.12);color:var(--blue)}nav button:hover:not(.on){background:rgba(127,127,127,.12)}
+  #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;padding:12px 20px 76px;overflow-y:auto;height:calc(100% - 108px)}
+  .item{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:7px;padding:8px;border-radius:14px;border:1.5px solid transparent;transition:background .16s,border-color .16s,transform .2s cubic-bezier(.16,1,.3,1)}
+  .item:hover{background:rgba(127,127,127,.1);transform:translateY(-1px)}.item.sel{border-color:var(--blue);background:rgba(30,111,255,.08)}
+  .item img{width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:9px;border:1px solid var(--line);background:#0001}
+  .item span{padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  footer{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;background:var(--bg);border-top:1px solid var(--line)}
+  footer button{all:unset;cursor:pointer;height:34px;padding:0 18px;border-radius:17px;font-weight:600;display:grid;place-items:center}
+  #cancel{color:var(--mute)}#cancel:hover{background:rgba(127,127,127,.12)}
+  #share{background:var(--blue);color:#fff;opacity:.4;pointer-events:none;transition:opacity .16s}#share.ok{opacity:1;pointer-events:auto}#share.ok:hover{filter:brightness(1.08)}
+</style></head><body>
+<header><h1>Share your screen</h1><p>Clyra will only see what you choose.</p></header>
+<nav><button id="t-screen" class="on">Screens</button><button id="t-window">Windows</button></nav>
+<div id="grid"></div>
+<footer><button id="cancel">Cancel</button><button id="share">Share</button></footer>
+<script>
+let all=[],tab="screen",chosen=null;
+const grid=document.getElementById("grid"),share=document.getElementById("share");
+function render(){grid.innerHTML="";for(const s of all.filter(x=>x.kind===tab)){const b=document.createElement("button");b.className="item"+(chosen===s.id?" sel":"");b.innerHTML='<img alt=""><span></span>';b.querySelector("img").src=s.thumb;b.querySelector("span").textContent=s.name;b.onclick=()=>{chosen=s.id;share.classList.add("ok");render()};b.ondblclick=()=>window.capturePicker.choose(s.id);grid.appendChild(b)}}
+window.__sources=(list)=>{all=list;chosen=null;share.classList.remove("ok");render()};
+for(const t of ["screen","window"])document.getElementById("t-"+t).onclick=()=>{tab=t;document.getElementById("t-screen").classList.toggle("on",t==="screen");document.getElementById("t-window").classList.toggle("on",t==="window");render()};
+share.onclick=()=>chosen&&window.capturePicker.choose(chosen);
+document.getElementById("cancel").onclick=()=>window.capturePicker.choose(null);
+addEventListener("keydown",e=>{if(e.key==="Escape")window.capturePicker.choose(null)});
+</script></body></html>

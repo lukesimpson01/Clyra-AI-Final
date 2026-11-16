@@ -49,8 +49,11 @@ export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
   const mediaModeRef = useRef(mediaMode);
   mediaModeRef.current = mediaMode;
   useEffect(() => {
-    (window as unknown as { __clyraVoiceMedia?: (mode: "camera" | "screen") => void }).__clyraVoiceMedia = (mode) => changeMediaMode(mediaModeRef.current === mode ? null : mode);
-    return () => { delete (window as unknown as { __clyraVoiceMedia?: unknown }).__clyraVoiceMedia; };
+    const w = window as unknown as { __clyraVoiceMedia?: (mode: "camera" | "screen") => void; __clyraVoiceMediaSet?: (mode: "camera" | "screen" | null) => void; __clyraVoiceMediaMode?: "camera" | "screen" | null };
+    w.__clyraVoiceMedia = (mode) => changeMediaMode(mediaModeRef.current === mode ? null : mode);
+    w.__clyraVoiceMediaSet = (mode) => { if (mediaModeRef.current !== mode) changeMediaMode(mode); };
+    w.__clyraVoiceMediaMode = mediaModeRef.current;
+    return () => { delete w.__clyraVoiceMedia; delete w.__clyraVoiceMediaSet; delete w.__clyraVoiceMediaMode; };
   });
   useEffect(() => {
     const onTrigger = (event: Event) => {

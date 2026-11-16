@@ -39,6 +39,7 @@ import {
   type ComposerDictationPhase,
 } from "../../lib/composerDictation";
 import { shortcut } from "../../lib/platform";
+import "../text-engine/TextEngine.css";
 
 export type ChatEffortLevel = "light" | "medium" | "high" | "max";
 
@@ -2267,7 +2268,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 </div>
               ) : null}
               <textarea
-                className={dictation.flow?.phase === "closing" ? "clyra-flow-land" : undefined}
+                className={`clyra-text-input${dictation.flow?.phase === "closing" ? " clyra-flow-land" : ""}`}
                 ref={textareaRef}
                 rows={2}
                 placeholder={placeholder}

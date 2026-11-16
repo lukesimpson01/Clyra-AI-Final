@@ -110,8 +110,8 @@ export function HotkeyPalette() {
           <motion.div className="clyra-hk__panel" initial={reduced ? false : { opacity: 0, y: 14, scale: 0.975 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }} transition={{ type: "spring", stiffness: 380, damping: 34, mass: 0.9 }}>
             <header className="clyra-hk__head">
               <h2>Hotkeys</h2>
-              <input className="clyra-hk__search" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search hotkeys" autoFocus />
-              <button type="button" className="clyra-hk__close" onClick={() => setOpen(false)} aria-label="Close">Esc</button>
+              <input className="clyra-hk__search clyra-text-input" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search hotkeys" autoFocus />
+              <button type="button" className="clyra-hk__close" onClick={() => setOpen(false)} aria-label="Close hotkeys" title="Close (Esc)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </header>
             <p className="clyra-hk__hint">Press a hotkey to change it, then press the new keys. Backspace turns it off, Esc cancels.</p>
             <div className="clyra-hk__body">

@@ -256,7 +256,7 @@ export type ClyraDesktopBridge = {
     onNewChat: (callback: () => void) => () => void;
   };
   appIcon?: (name: string) => Promise<string | null>;
-  voiceApp?: { setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string, text?: string) => void) => () => void };
+  voiceApp?: { requestMedia: (mode: "camera" | "screen" | null) => Promise<{ ok: boolean }>; pointAt: (payload: { image: string; width?: number; height?: number; question: string }) => Promise<{ ok: boolean; pointer?: { label: string } | null; error?: string }>; setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string, text?: string) => void) => () => void };
   permissions?: { status: () => Promise<{ ok: boolean; status: Record<string, string> }>; ensureAll: () => Promise<{ ok: boolean; results?: Record<string, string> }> };
   notch?: { op: (payload: { kind: "timer" | "stopwatch" | "alarm"; action?: "start" | "stop" | "reset"; seconds?: number; label?: string; hour?: number; minute?: number }) => Promise<{ ok: boolean; error?: string }> };
   computer?: {

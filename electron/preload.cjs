@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
   },
   appIcon: (name) => ipcRenderer.invoke("app:icon", String(name || "")),
   voiceApp: {
+    requestMedia: (mode) => ipcRenderer.invoke("voiceapp:media", mode),
+    pointAt: (payload) => ipcRenderer.invoke("voiceapp:point", payload),
     setScreenShare: (on) => ipcRenderer.send("screenshare:set", Boolean(on)),
     onScreenShareStop: (callback) => { const handler = () => callback(); ipcRenderer.on("screenshare:stop-request", handler); return () => ipcRenderer.removeListener("screenshare:stop-request", handler); },
     setState: (state) => ipcRenderer.send("voiceapp:state", state),

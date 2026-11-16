@@ -8,10 +8,11 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { app, desktopCapturer, screen } from "electron";
+import { app, clipboard, desktopCapturer, screen } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
 
 const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,9 +94,9 @@ export class ComputerRun {
     if (process.platform !== "darwin" && process.platform !== "win32") return { ok: false, error: "Computer use runs on macOS and Windows." };
     if (process.platform === "darwin") {
       const trust = await this.perceive("trusted").catch((error) => ({ ok: false, error: error?.message }));
-      if (!trust?.accessibility) {
-        return { ok: false, error: "Clyra needs macOS Accessibility permission to see and control apps. Turn it on in System Settings → Privacy & Security → Accessibility, then try again.", needsPermission: "accessibility" };
-      }
+      // Without Accessibility the screen cannot be read or clicked, but the machine actions (commands, files, links, Bluetooth,
+      // clipboard) still work: carry on and say so, instead of refusing the whole task.
+      this.noAccessibility = !trust?.accessibility;
     }
     this.reset();
     this.run = { id: crypto.randomUUID(), goal: text, status: "planning", plan: [], steps: [], history: [], startedAt: Date.now(), message: "", app: "" };
@@ -310,7 +311,8 @@ export class ComputerRun {
           lastKey = key;
           this.run.struggle = outcome.ok && changed ? 0 : this.run.struggle + 1;
           const did = outcome.performed?.length ? `did: ${outcome.performed.join(", ")}; ` : "";
-          this.run.history.push({ label, result: did + (outcome.ok ? (changed ? "screen changed" : "no visible change") + (repeated ? " (you repeated the same action: choose a different one)" : "") : `failed after that: ${outcome.detail}`) });
+          const said = outcome.outputs?.length ? ` OUTPUT: ${outcome.outputs.join(" | ").slice(0, 900)}` : "";
+          this.run.history.push({ label, result: did + said + (outcome.ok ? (changed ? "screen changed" : "no visible change") + (repeated ? " (you repeated the same action: choose a different one)" : "") : `failed after that: ${outcome.detail}`) });
           this.emit("step.ended", { step });
           nextObservation = after || null;
         }
@@ -374,6 +376,7 @@ export class ComputerRun {
   async runBatch(actions, observation, label) {
     let current = observation;
     const performed = [];
+    const outputs = [];
     for (let index = 0; index < actions.length; index += 1) {
       await this.gate();
       let action = actions[index];
@@ -409,9 +412,10 @@ export class ComputerRun {
       if (result.needUser) return { ok: false, needUser: result.needUser, detail: result.needUser, performed };
       if (!result.ok) return { ok: false, detail: result.detail || "That didn't work.", last: null, performed };
       performed.push(describeAction(action, current));
+      if (result.output) outputs.push(result.output);
       if (result.settleMs && index === actions.length - 1) await this.settle(action, result.settleMs);
     }
-    return { ok: true, detail: actions.length > 1 ? `${actions.length} actions` : undefined, last: null, performed };
+    return { ok: true, detail: actions.length > 1 ? `${actions.length} actions` : undefined, last: null, performed, outputs };
   }
 
   async activate(appName) {
@@ -506,8 +510,13 @@ export class ComputerRun {
       const bounds = screen.getPrimaryDisplay().bounds;
       return { app: "", elements: [], text: `Screen ${bounds.width}x${bounds.height}. Pointer at ${point.x},${point.y}. Screen reading is not available on this OS yet; act with coordinates only.`, signature: `win:${point.x},${point.y}` };
     }
-    const tree = await this.perceive("ax");
-    if (!tree.ok) throw new Error(tree.error || "Could not read the screen.");
+    const tree = await this.perceive("ax").catch((error) => ({ ok: false, error: error?.message }));
+    if (!tree.ok) {
+      if (this.noAccessibility || /Accessibility/i.test(String(tree.error))) {
+        return { app: "", pid: 0, centre: null, elements: [], secureFocus: false, signature: "no-ax", text: "The screen cannot be read: macOS Accessibility is off for Clyra. Clicking and typing are unavailable; use the machine actions (shell, open, read_file, list_dir, bluetooth, clipboard), or answer need_user asking the person to turn on Accessibility in System Settings → Privacy & Security → Accessibility." };
+      }
+      throw new Error(tree.error || "Could not read the screen.");
+    }
     let ocr = [];
     const frameless = tree.elements.length < 6;
     if (frameless) {
@@ -594,6 +603,81 @@ export class ComputerRun {
     return { x: Math.round(x), y: Math.round(y) };
   }
 
+  /**
+   * Things on the machine that are not a click: run a command, open a file or link, read a file or folder, Bluetooth, the
+   * clipboard. Anything destructive or outward asks the person first; security settings and secrets are never touched.
+   */
+  async machineAction(type, action) {
+    const home = os.homedir();
+    const SECRET = /(\.ssh|id_rsa|id_ed25519|\.gnupg|keychain|\.aws|\.env\b|\.netrc|credentials|password|secrets?\.|\.npmrc|Library\/Cookies|Login Data|\.kube)/i;
+    const SECURITY = /\b(tccutil|csrutil|spctl|sudo|security (?:add|delete|find|import|unlock)|defaults write com\.apple\.(?:security|TCC)|launchctl (?:load|unload|bootout|disable)|dscl|passwd|visudo)\b/i;
+    const RISKY = /(\brm\s+-[a-z]*[rf]|\brm\b[^|;&]*\*|\bmkfs|\bdd\s+if=|>\s*\/dev\/|\bchmod\s+-R|\bchown\s+-R|\bkillall\b|\bpkill\b|\bshutdown\b|\breboot\b|\bcurl\b[^|]*\|\s*(?:sh|bash|zsh)|\bgit\s+(?:push|reset --hard|clean -f)|\bnpm\s+(?:publish|unpublish)|\bbrew\s+(?:uninstall|remove)|\bmv\b[^|;&]*\s\/(?:\s|$)|\bsendmail\b|\bmail\b)/i;
+    const cap = (value, n = 1800) => String(value ?? "").slice(0, n);
+    const under = (p) => path.resolve(String(p || "").replace(/^~(?=$|\/)/, home));
+    switch (type) {
+      case "shell": {
+        const command = cap(action.command, 1200).trim();
+        if (!command) return { ok: false, detail: "No command." };
+        if (SECURITY.test(command) || SECRET.test(command)) return { ok: false, detail: "I won't run commands that change security settings or read secrets." };
+        if (RISKY.test(command)) return { ok: false, needUser: `Run this? ${command.slice(0, 90)}` };
+        try {
+          const { stdout, stderr } = await execFileAsync("/bin/zsh", ["-lc", command], { cwd: home, timeout: 30_000, maxBuffer: 256 * 1024, env: { ...process.env, TERM: "dumb" } });
+          return { ok: true, output: cap(`${stdout}${stderr ? `\n${stderr}` : ""}`.trim() || "(no output)", 900), detail: command.slice(0, 80) };
+        } catch (error) {
+          return { ok: false, detail: cap(error?.stderr || error?.message || "The command failed.", 300), output: cap(error?.stdout, 400) };
+        }
+      }
+      case "open": {
+        const target = cap(action.target || action.url || action.path, 600).trim();
+        if (!target) return { ok: false, detail: "Nothing to open." };
+        if (!/^https?:\/\//i.test(target) && SECRET.test(target)) return { ok: false, detail: "I won't open that." };
+        const args = /^https?:\/\//i.test(target) ? [target] : /^[\w .&+\-]+$/.test(target) && !target.includes("/") ? ["-a", target] : [under(target)];
+        try { await execFileAsync("open", args, { timeout: 10_000 }); return { ok: true, settleMs: 900, detail: `opened ${target.slice(0, 60)}` }; } catch (error) { return { ok: false, detail: cap(error?.message, 200) }; }
+      }
+      case "read_file": {
+        const file = under(action.path);
+        if (SECRET.test(file)) return { ok: false, detail: "I won't read that file." };
+        try {
+          const stat = await fs.stat(file);
+          if (!stat.isFile() || stat.size > 400_000) return { ok: false, detail: "That is not a readable text file (or it is too large)." };
+          return { ok: true, output: cap(await fs.readFile(file, "utf8"), 3000), detail: path.basename(file) };
+        } catch (error) { return { ok: false, detail: cap(error?.message, 200) }; }
+      }
+      case "list_dir": {
+        const dir = under(action.path || ".");
+        if (SECRET.test(dir)) return { ok: false, detail: "I won't list that folder." };
+        try {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+          return { ok: true, output: cap(entries.slice(0, 80).map((e) => `${e.isDirectory() ? "[dir] " : ""}${e.name}`).join("\n"), 2000), detail: path.basename(dir) || dir };
+        } catch (error) { return { ok: false, detail: cap(error?.message, 200) }; }
+      }
+      case "clipboard": {
+        if (action.text !== undefined) { clipboard.writeText(cap(action.text, 4000)); return { ok: true, detail: "copied" }; }
+        return { ok: true, output: cap(clipboard.readText(), 1500), detail: "read the clipboard" };
+      }
+      case "bluetooth": {
+        try {
+          const { stdout } = await execFileAsync("/usr/sbin/system_profiler", ["SPBluetoothDataType", "-json"], { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 });
+          const root = JSON.parse(stdout)?.SPBluetoothDataType?.[0] || {};
+          const devices = [];
+          for (const [group, list] of [["connected", root.device_connected], ["not connected", root.device_not_connected]]) {
+            for (const item of list || []) for (const [name, info] of Object.entries(item)) devices.push({ name, address: info.device_address, state: group });
+          }
+          const wanted = String(action.device || "").toLowerCase();
+          const verb = String(action.action || "list").toLowerCase();
+          if (verb === "list" || !wanted) return { ok: true, output: cap(devices.map((d) => `${d.name} (${d.state})`).join("\n") || "No Bluetooth devices found.", 1500), detail: "listed Bluetooth devices" };
+          const match = devices.find((d) => d.name.toLowerCase().includes(wanted));
+          if (!match) return { ok: false, detail: `No Bluetooth device like “${action.device}”.`, output: cap(devices.map((d) => d.name).join(", "), 400) };
+          const blueutil = await execFileAsync("/usr/bin/which", ["blueutil"]).then((r) => r.stdout.trim(), () => "");
+          if (!blueutil) return { ok: false, detail: `${match.name} is ${match.state}. Connecting needs the Bluetooth menu: use System Settings → Bluetooth.`, output: `${match.name} (${match.state})` };
+          await execFileAsync(blueutil, [verb === "disconnect" ? "--disconnect" : "--connect", match.address], { timeout: 20_000 });
+          return { ok: true, detail: `${verb === "disconnect" ? "disconnected" : "connected to"} ${match.name}`, settleMs: 600 };
+        } catch (error) { return { ok: false, detail: cap(error?.message, 200) }; }
+      }
+      default: return { ok: false, detail: "Unknown action." };
+    }
+  }
+
   async act(action, observation, label, { glided = false } = {}) {
     const type = String(action.type || "");
     // Input windows are the only moments the overlay lets events through; see ComputerOverlay.inject.
@@ -654,6 +738,8 @@ export class ComputerRun {
         } else await inject(async () => { await this.desktop.runAction({ type: "scroll", deltaY: dy }); });
         return { ok: true, settleMs: 200 };
       }
+      case "shell": case "open": case "read_file": case "list_dir": case "bluetooth": case "clipboard":
+        return this.machineAction(type, action);
       case "wait":
         await wait(Math.max(200, Math.min(4000, Number(action.ms) || 800)));
         return { ok: true };
@@ -680,6 +766,12 @@ function describeAction(action, observation) {
     case "type": return `typed "${String(action.text || "").slice(0, 30)}"`;
     case "key": return `pressed ${action.keys || action.key}`;
     case "open_app": return `opened ${action.app}`;
+    case "shell": return `ran ${String(action.command || "").slice(0, 40)}`;
+    case "open": return `opened ${String(action.target || action.url || action.path || "").slice(0, 40)}`;
+    case "read_file": return `read ${action.path}`;
+    case "list_dir": return `listed ${action.path || "."}`;
+    case "bluetooth": return `bluetooth ${action.action || "list"} ${action.device || ""}`.trim();
+    case "clipboard": return action.text !== undefined ? "copied text" : "read clipboard";
     default: return action.type;
   }
 }
