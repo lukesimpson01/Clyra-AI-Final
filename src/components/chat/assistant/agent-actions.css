@@ -798,3 +798,30 @@
 .clyra-sources-inline.is-open .clyra-sources-stack { cursor: default; }
 .clyra-source-chip__more { margin-left: 8px; color: #8d8e95; font-size: 11px; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .clyra-source-chip, .clyra-source-chip__name { transition-duration: 1ms; transition-delay: 0s; } }
+
+/* ---- Agent to-do list, refined: narrower, calmer, with a hairline of progress and a connected timeline ---- */
+.clyra-plan { width: min(100%, 332px); border-radius: 16px; border-color: rgba(20, 24, 40, .085); background: #fff; box-shadow: 0 1px 2px rgba(20, 24, 40, .04), 0 10px 22px -16px rgba(20, 24, 40, .22); }
+.clyra-plan__trigger { position: relative; height: 38px; min-height: 38px; padding: 0 12px 0 11px; gap: 9px; transition: background .2s ease; }
+.clyra-plan__trigger:hover { background: rgba(20, 24, 40, .025); }
+.clyra-plan__trigger::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 1.5px; border-radius: 1px; background: linear-gradient(90deg, #1a6bff calc(var(--plan-progress, 0) * 100%), rgba(20, 24, 40, .07) 0); transition: background .5s cubic-bezier(.22, 1, .36, 1); opacity: .9; }
+.clyra-plan__ring { flex-basis: 22px; width: 22px; height: 22px; }
+.clyra-plan__ring > svg:first-child { width: 22px; height: 22px; }
+.clyra-plan__title { font: 500 12.5px/18px var(--chat-font); color: #2c2f38; letter-spacing: -.005em; }
+.clyra-plan__counter { font: 500 11px/18px var(--chat-font); color: #8a8d97; }
+.clyra-plan__list-body { padding: 8px 12px 10px 13px; }
+.clyra-plan__item { position: relative; gap: 10px; min-height: 30px; padding: 4px 2px; border-radius: 8px; opacity: 0; transform: translateY(-3px); transition: opacity .32s ease, transform .42s cubic-bezier(.22, 1, .36, 1), background .24s ease; }
+.clyra-plan__disclosure[data-open="true"] .clyra-plan__item { opacity: 1; transform: none; transition-delay: calc(var(--row-index, 0) * 32ms + 60ms); }
+.clyra-plan__item.is-done { animation: none; }
+.clyra-plan__status { position: relative; flex-basis: 17px; width: 17px; height: 17px; border-width: 1.4px; border-color: #cfd2d9; }
+.clyra-plan__item:not(:last-child) .clyra-plan__status::before { content: ""; position: absolute; left: 50%; top: calc(100% + 1px); width: 1.4px; height: 14px; border-radius: 1px; background: #e6e8ec; transform: translateX(-50%); transition: background .4s ease; }
+.clyra-plan__item.is-done:not(:last-child) .clyra-plan__status::before { background: #b9bec9; }
+.clyra-plan__item.is-current .clyra-plan__status { border-color: #1a6bff; background: radial-gradient(circle, #1a6bff 0 2.6px, transparent 3px); box-shadow: 0 0 0 3px rgba(26, 107, 255, .12); animation: clyra-plan-breathe 1.9s ease-in-out infinite; }
+.clyra-plan__item.is-done .clyra-plan__status { transform: none; animation: none; background: #2f3541; border-color: #2f3541; }
+.clyra-plan__status svg { width: 10px; height: 10px; }
+.clyra-plan__status svg path { stroke-dasharray: 18; stroke-dashoffset: 18; transition: stroke-dashoffset .38s cubic-bezier(.22, 1, .36, 1) .08s; }
+.clyra-plan__item.is-done .clyra-plan__status svg path { stroke-dashoffset: 0; }
+.clyra-plan__text { font-size: 12.5px; color: #6b6e78; transition: color .3s ease; }
+.clyra-plan__item.is-current .clyra-plan__text { color: #1d1f27; font-weight: 500; }
+.clyra-plan__item.is-done .clyra-plan__text { color: #9a9ca5; }
+@keyframes clyra-plan-breathe { 0%, 100% { box-shadow: 0 0 0 3px rgba(26, 107, 255, .12); } 50% { box-shadow: 0 0 0 5px rgba(26, 107, 255, .04); } }
+@media (prefers-reduced-motion: reduce) { .clyra-plan__item { transition: none !important; opacity: 1; transform: none; } .clyra-plan__item.is-current .clyra-plan__status { animation: none !important; } .clyra-plan__trigger::after { transition: none; } }

@@ -108,6 +108,8 @@ export function DictationController() {
   const pipelineRetryRef = useRef(0);
   const manualRef = useRef(false);
   const autoStopRef = useRef(false);
+  /** How long a pause ends a hands-free session: short on a voice call, a little longer when dictating. */
+  const autoStopSilenceRef = useRef(3200);
   const startingRef = useRef(false);
   const socketReadyRef = useRef(false);
   const flushWhenReadyRef = useRef(false);
@@ -286,12 +288,12 @@ export function DictationController() {
         // trailing pause. This avoids cutting off the first word while
         // still handing a finished sentence to transcription promptly.
         if (now - speechStartedAtRef.current < VOICE_MIN_UTTERANCE_MS) return;
-        const remaining = autoStopRef.current ? Math.max(120, 8000 - (now - lastSpeechAtRef.current)) : remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
+        const remaining = autoStopRef.current ? Math.max(120, autoStopSilenceRef.current - (now - lastSpeechAtRef.current)) : remainingVoiceSilenceMs(lastSpeechAtRef.current, now);
         silenceTimerRef.current = window.setTimeout(() => {
           silenceTimerRef.current = null;
           const current = activeRef.current;
           if (!current || !heardSpeechRef.current) return;
-          if (performance.now() - lastSpeechAtRef.current < (autoStopRef.current ? 7900 : VOICE_TRAILING_SILENCE_MS)) return;
+          if (performance.now() - lastSpeechAtRef.current < (autoStopRef.current ? autoStopSilenceRef.current - 100 : VOICE_TRAILING_SILENCE_MS)) return;
           heardSpeechRef.current = false;
           stopRef.current();
         }, remaining);
@@ -409,7 +411,7 @@ export function DictationController() {
     if (!desktop) return;
     const removeTrigger = desktop.dictation.onTrigger((event) => {
       if (event?.type === "start") void start("normal", event.target || {}, Boolean(event.manual));
-      else if (event?.type === "autostop") { manualRef.current = false; autoStopRef.current = true; }
+      else if (event?.type === "autostop") { manualRef.current = false; autoStopRef.current = true; autoStopSilenceRef.current = Math.max(600, Math.min(8000, Number(event?.silenceMs) || 3200)); }
       else if (event?.type === "target") { if (activeRef.current) Object.assign(activeRef.current.target, event.target || {}); }
       else if (event?.type === "stop") stop();
       else if (event?.type === "cancel") cancel();

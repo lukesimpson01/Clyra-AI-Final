@@ -32,7 +32,10 @@ final class MediaHub {
         local.onChange = { [weak self] in self?.recompute() }
         link.onSpotify = { [weak self] payload in self?.receiveSpotify(payload) }
         link.onMusicLevel = { [weak self] payload in
-            if let rms = (payload["rms"] as? NSNumber)?.doubleValue { self?.meter?.receiveExternal(rms: rms) }
+            if let rms = (payload["rms"] as? NSNumber)?.doubleValue {
+                let bands = (payload["bands"] as? [NSNumber])?.map { $0.floatValue } ?? []
+                self?.meter?.receiveExternal(rms: rms, bands: bands)
+            }
         }
         recompute()
     }

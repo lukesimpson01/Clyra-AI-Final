@@ -124,6 +124,7 @@ struct SlashCommand: Identifiable, Equatable {
     var id: String { prefix }
 
     static let all: [SlashCommand] = [
+        .init(prefix: "/permissions", label: "Permissions", detail: "Make sure Clyra has microphone, camera, screen and accessibility access", symbol: "checkmark.shield"),
         .init(prefix: "/search", label: "Web search", detail: "Research current information from the web", symbol: "globe"),
         .init(prefix: "/deep-research", label: "Deep Research", detail: "Investigate a topic across trusted sources and produce a verified report", symbol: "binoculars"),
         .init(prefix: "/youtube", label: "YouTube analyzer", detail: "Analyze a video and answer from its transcript", symbol: "play.rectangle"),
@@ -529,7 +530,7 @@ struct SendButton: View {
         let streaming = model.chat.isStreaming
         let empty = model.chatDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         Button {
-            if streaming { model.chat.stop() } else if empty { model.openClyra() } else { model.submitChat() }
+            if streaming { model.chat.stop() } else if empty { model.flow.sendOp(["op": "voice-call", "action": model.voice.active ? "end" : "toggle"]) } else { model.submitChat() }
         } label: {
             Image(systemName: streaming ? "stop.fill" : (empty ? "waveform" : "arrow.up"))
                 .font(.system(size: streaming ? 10 : 13, weight: .semibold))

@@ -7,6 +7,8 @@ import SwiftUI
 /// Measures the selected player's PCM without saving audio or capturing video frames.
 final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDelegate {
     @Published private(set) var level: Float = 0
+    /// Bass-to-treble energy from the real spectrum (5 bands), 0...1. Empty until a live reading arrives.
+    private(set) var bands: [Float] = []
     @Published private(set) var status = ""
     private var desired: String?
     private var stream: SCStream?
@@ -14,6 +16,8 @@ final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDele
     private var generation = 0
     private let queue = DispatchQueue(label: "notch.audio-meter", qos: .utility)
     private var lastSample: TimeInterval = 0
+    private var tap: AnyObject?
+    private var silentSince: Date?
 
     deinit { request?.cancel(); stream?.stopCapture { _ in } }
 
@@ -22,8 +26,9 @@ final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDele
     /// A real reading is arriving, from this app's own capture or from Clyra's.
     var hasLiveLevel: Bool { status.isEmpty || Date().timeIntervalSince(externalAt) < 0.8 }
 
-    func receiveExternal(rms: Double) {
+    func receiveExternal(rms: Double, bands: [Float] = []) {
         externalAt = Date()
+        if bands.count == 5 { self.bands = bands }
         let normalized = Float(min(1, max(0, (20 * log10(max(0.0001, rms)) + 55) / 55)))
         let next = max(normalized, level * 0.74)
         let visible: Float = next < 0.01 ? 0 : next
@@ -41,6 +46,10 @@ final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDele
         stream = nil
         level = 0
         status = ""
+        if #available(macOS 14.2, *) {
+            if target == nil { (tap as? SystemAudioTap)?.stop(); tap = nil }
+            else if startTap() { return }
+        }
         request = Task { @MainActor [weak self] in
             if let previous { try? await previous.stopCapture() }
             guard let self, let target, !Task.isCancelled else { return }
@@ -70,6 +79,27 @@ final class AudioMeter: NSObject, ObservableObject, SCStreamOutput, SCStreamDele
                 guard self.generation == generation else { return }
                 self.status = "Allow Screen & System Audio Recording for live bars."
             }
+        }
+    }
+
+    /// Real audio analysis through a Core Audio tap, which needs only the System Audio Recording permission.
+    @available(macOS 14.2, *)
+    private func startTap() -> Bool {
+        let existing = (tap as? SystemAudioTap) ?? SystemAudioTap()
+        silentSince = nil
+        existing.onReading = { [weak self] rms, bands in
+            guard let self else { return }
+            // Without the System Audio Recording permission macOS hands back pure silence: say so instead of showing dead bars.
+            if rms < 0.000_001 {
+                let since = self.silentSince ?? Date()
+                self.silentSince = since
+                if Date().timeIntervalSince(since) > 6, self.status.isEmpty { self.status = "Allow System Audio Recording for Notch (Privacy & Security) for live bars." }
+            } else { self.silentSince = nil; if !self.status.isEmpty { self.status = "" } }
+            self.receiveExternal(rms: Double(rms), bands: bands)
+        }
+        do { try existing.start(); tap = existing; status = ""; return true } catch {
+            tap = nil
+            return false
         }
     }
 

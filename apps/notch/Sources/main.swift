@@ -103,13 +103,23 @@ final class NotchCanvas: NSView {
     private let mask = CAShapeLayer()
     private let beamBase = CAShapeLayer()
     private var beamLayers: [CAShapeLayer] = []
-    private let beamLengths: [CGFloat] = [170, 112, 72, 42, 20]
+    /// A comet: many stacked dashes from a long faint tail to a short bright head, so the light fades smoothly along the
+    /// edge like a conic sweep, but measured in arc length so it never slows on a corner.
+    private static let beamSteps = 16
+    private let beamLengths: [CGFloat] = (0..<NotchCanvas.beamSteps).map { i in
+        let t = CGFloat(i) / CGFloat(NotchCanvas.beamSteps - 1)
+        return 210 * pow(1 - t, 1.35) + 10
+    }
+    private let beamAlphas: [CGFloat] = (0..<NotchCanvas.beamSteps).map { i in
+        let t = CGFloat(i) / CGFloat(NotchCanvas.beamSteps - 1)
+        return 0.07 + 0.08 * t * t
+    }
     private var beamLink: CADisplayLink?
     private var beamHead: CGFloat = 0
     private var beamPerimeter: CGFloat = 0
     private var beamPath: CGPath?
     /// Points per second, the same on straights and corners: the light runs along the edge, not around a centre.
-    private let beamSpeed: CGFloat = 120
+    private let beamSpeed: CGFloat = 230
     private var beamDone = false
     let clip = ClipView()
     private(set) var shapeRect = CGRect.zero
@@ -129,16 +139,15 @@ final class NotchCanvas: NSView {
         layer?.addSublayer(silhouette)
         mask.fillColor = NSColor.black.cgColor
         beamBase.fillColor = nil
-        beamBase.strokeColor = NSColor(calibratedRed: 0.36, green: 0.57, blue: 1, alpha: 0.22).cgColor
-        beamBase.lineWidth = 1.5
+        beamBase.strokeColor = NSColor(calibratedWhite: 1, alpha: 0.3).cgColor
+        beamBase.lineWidth = 1.8
         beamBase.opacity = 0
         layer?.addSublayer(beamBase)
-        let alphas: [CGFloat] = [0.10, 0.12, 0.16, 0.24, 0.42]
-        for alpha in alphas {
+        for alpha in beamAlphas {
             let l = CAShapeLayer()
             l.fillColor = nil
-            l.strokeColor = NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: alpha).cgColor
-            l.lineWidth = 2.4
+            l.strokeColor = NSColor(calibratedWhite: 1, alpha: alpha).cgColor
+            l.lineWidth = 2.8
             l.lineCap = .round
             l.opacity = 0
             layer?.addSublayer(l)
@@ -258,13 +267,12 @@ final class NotchCanvas: NSView {
     }
 
     private func tint(done: Bool) {
-        let alphas: [CGFloat] = [0.10, 0.12, 0.16, 0.24, 0.42]
-        for (layer, alpha) in zip(beamLayers, alphas) {
+        for (layer, alpha) in zip(beamLayers, beamAlphas) {
             layer.strokeColor = (done ? NSColor(calibratedRed: 0.8, green: 1, blue: 0.88, alpha: min(1, alpha * 1.7))
-                                      : NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: alpha)).cgColor
+                                      : NSColor(calibratedWhite: 1, alpha: alpha)).cgColor
         }
         beamBase.strokeColor = (done ? NSColor(calibratedRed: 0.45, green: 0.95, blue: 0.62, alpha: 0.34)
-                                     : NSColor(calibratedRed: 0.36, green: 0.57, blue: 1, alpha: 0.22)).cgColor
+                                     : NSColor(calibratedWhite: 1, alpha: 0.3)).cgColor
     }
 
     /// The reply is finished: one fast, bright lap in white-green, then the edge settles.
@@ -381,6 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         host.fileDropTarget = canvas
         host.registerForDraggedTypes([.fileURL])
         host.onPointerInside = { [weak self] in self?.hover($0) }
+        model.flow.onPassThrough = { [weak self] ms in self?.passThrough(ms) }
         canvas.onFileDrag = { [weak self] in self?.previewFileDrop() == true }
         canvas.onFileDragExit = { [weak self] in self?.endFileDrag() }
         canvas.onFileDrop = { [weak self] urls in self?.acceptFileDrop(urls) == true }
@@ -648,7 +657,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
 
     // MARK: Hover, click, escape
 
+    /// The AI is sending a real click or pointer move: this window lets it through to whatever is underneath, and cannot be hovered.
+    private var aiInputUntil = Date.distantPast
+    func passThrough(_ milliseconds: Double) {
+        aiInputUntil = Date().addingTimeInterval(milliseconds / 1000)
+        panel.ignoresMouseEvents = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + milliseconds / 1000 + 0.02) { [weak self] in
+            guard let self, Date() >= self.aiInputUntil else { return }
+            self.panel.ignoresMouseEvents = false
+        }
+    }
+
     func hover(_ inside: Bool) {
+        if Date() < aiInputUntil { return }
         if inside {
             closeWork?.cancel()
             hoverWork?.cancel()
@@ -697,6 +718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
 
     private func watchPointer() {
         guard model.expanded else { stopWatching(); return }
+        if Date() < aiInputUntil { return }
         let p = NSEvent.mouseLocation
         if panelRect(margin: 6).contains(p) { armed = true; farRule = true; outsideTicks = 0; return }
         // Never judge the pointer while the panel is changing shape or while someone is clicking in it.
@@ -788,7 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
                 if u.lastPathComponent == "disable" { LoginItem.set(false) }
             case "state":
                 let m = model
-                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) meterStatus=\(m.audioMeter.status) meterLevel=\(m.audioMeter.level) liveLevel=\(m.audioMeter.hasLiveLevel) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
+                let text = "expanded=\(m.expanded) view=\(m.view.rawValue) mediaTitle=\(m.media.state?.title ?? "nil") status=\(String(describing: m.media.state?.status)) hasPlaying=\(m.hasPlayingMedia) sources=\(m.media.sources.map(\.id)) working=\(String(describing: m.working?.label)) done=\(String(describing: m.doneMessage)) flow=\(m.flowActive) voice=\(m.voice.active) phase=\(m.flow.phase) banner=\(String(describing: m.banner?.title)) secondary=\(m.secondaryActivities.count) meterStatus=\(m.audioMeter.status) meterLevel=\(m.audioMeter.level) liveLevel=\(m.audioMeter.hasLiveLevel) w=\(Metrics.width(m)) h=\(Metrics.height(m, menuBar: menuBarHeight))"
                 try? text.write(toFile: u.path, atomically: true, encoding: .utf8)
             case "open":
                 if let i = Int(u.lastPathComponent), model.chat.allChats.indices.contains(i) { expand(); model.chat.open(model.chat.allChats[i]); model.show(.chat) }

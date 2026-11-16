@@ -8,6 +8,8 @@ import { VoiceActivityGate } from "../lib/voiceActivityGate";
 import { shouldEndVoiceUtterance } from "../lib/voiceEndpoint";
 import { shouldInterruptVoiceReply } from "../lib/voiceTurnDetection";
 import { asksToInspectSharedView } from "../lib/voiceVisualIntent";
+
+const SCREEN_ACTION_REQUEST = /^(?:(?:please|can you|could you|go ahead and)\s+)*(?:open|launch|click|double[- ]click|press|type|scroll|go to|navigate to|close|switch to|select|drag|search for|play|pause|start|run|take me to|control|use my computer)\b/i;
 import {
   createVoiceSessionState,
   voiceSessionReducer,
@@ -413,8 +415,17 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     lastSideEffectRef.current = { text: clean, at: Date.now() };
     // No passive camera uploads: inspect ONE compressed frame on an
     // explicit spoken/typed visual question or user-initiated Inspect.
-    if (mediaCaptureRef.current && asksToInspectSharedView(clean)) {
-      const frame = mediaCaptureRef.current();
+    // While the camera or screen is live, every conversational turn (typed or
+    // spoken) goes through DeepSeek vision with the current frame. Short
+    // task-control words still reach the agent below.
+    const isTaskControl = /^(?:stop|cancel|stop now|pause|hold on|wait|continue|resume|go ahead)[.!]?$/i.test(clean);
+    const wantsMedia = Boolean(mediaCaptureRef.current) && (asksToInspectSharedView(clean) || !isTaskControl);
+    const sharedFrame = wantsMedia ? mediaCaptureRef.current!() : null;
+    // On a shared screen, "open / click / type ..." is a request for Clyra's
+    // existing desktop control (with its visible cursor), not a description.
+    const screenAction = sharedFrame?.mode === "screen" && SCREEN_ACTION_REQUEST.test(clean);
+    if (wantsMedia && !screenAction) {
+      const frame = sharedFrame;
       if (!frame) {
         acknowledge("The camera or screen is not ready yet. Try again in a moment.");
         return true;
@@ -429,7 +440,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             image: frame.image,
-            question: "Inspect this user-shared " + frame.mode + " frame. Answer the user's spoken question briefly, using only visible evidence: " + clean,
+            question: "This is the user's live shared " + (frame.mode === "screen" ? "screen" : "camera view") + ". Reply conversationally in one to three short spoken sentences, grounded only in what is visible; say so if it is not visible. User said: " + clean,
           }),
         });
         const payload = await response.json().catch(() => null) as { ok?: boolean; text?: string; summary?: string; error?: string } | null;
@@ -438,7 +449,8 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         acknowledge(String(payload.text || payload.summary).slice(0, 1800));
       } catch (error) {
         if (controller.signal.aborted) return true;
-        acknowledge("I couldn't inspect the " + frame.mode + " image: " + (error instanceof Error ? error.message : "please try again."));
+        const raw = error instanceof Error ? error.message : "";
+        acknowledge("I couldn't inspect the " + frame.mode + " view: " + (/failed to fetch|networkerror|load failed/i.test(raw) || !raw ? "Clyra's server wasn't reachable, please try again." : raw));
       } finally {
         if (replyAbortRef.current === controller) replyAbortRef.current = null;
       }
@@ -508,7 +520,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
       acknowledge("I've handled that Google Workspace request.");
       return true;
     }
-    const launched = await startMission(clean);
+    const launched = await startMission(screenAction ? "Computer use on my screen (observe first, then act with the visible cursor): " + clean : clean);
     if (launched) acknowledge("I'm on it.");
     return launched;
   }, [acknowledge, executeGoogle, pauseTask, pollMission, resumeTask, startMission, stopTask, takeControl, updateMission]);
@@ -565,7 +577,7 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
         body: JSON.stringify({ model: "deepseek-v4-flash", messages, temperature: o.temperature ?? 0.7, stream: true, max_tokens: 380, thinking: { type: "disabled" } }),
       });
       if (!response.ok || !response.body) {
-        const detail = await response.json().then((b: { error?: string }) => b?.error).catch(() => undefined);
+        const detail = await response.json().then((b: { error?: string | { message?: string } }) => typeof b?.error === "string" ? b.error : b?.error?.message).catch(() => undefined);
         throw new Error(detail || "Clyra couldn’t reach its language model.");
       }
       const reader = response.body.getReader();
@@ -602,7 +614,9 @@ export function useVoiceCall(options: UseVoiceCallOptions) {
     } catch (error) {
       if (controller.signal.aborted) return;
       speaker.interrupt();
-      dispatch({ type: "ERROR", error: { code: "VOICE_REPLY_FAILED", message: error instanceof Error ? error.message : "Clyra couldn’t answer that.", retryable: true } });
+      const raw = error instanceof Error ? error.message : "";
+      const message = /failed to fetch|networkerror|load failed/i.test(raw) ? "Clyra couldn’t reach its server. Check the connection and try again." : raw || "Clyra couldn’t answer that.";
+      dispatch({ type: "ERROR", error: { code: "VOICE_REPLY_FAILED", message, retryable: true } });
     } finally {
       if (captionFrame !== null) window.cancelAnimationFrame(captionFrame);
       if (replyAbortRef.current === controller) replyAbortRef.current = null;

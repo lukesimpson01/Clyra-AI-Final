@@ -15,7 +15,7 @@ export class MusicLevel {
     this.window = null;
     this.wanted = false;
     const mine = (event) => Boolean(this.window && !this.window.isDestroyed() && event.sender.id === this.window.webContents.id);
-    ipcMain.on("music:level", (event, rms) => { if (mine(event)) this.onLevel?.(Number(rms) || 0); });
+    ipcMain.on("music:level", (event, rms, bands) => { if (mine(event)) this.onLevel?.(Number(rms) || 0, bands); });
     ipcMain.on("music:live", (event) => { if (mine(event)) this.onState?.({ live: true }); });
     ipcMain.on("music:failed", (event, message) => {
       if (!mine(event)) return;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FilePlus, FileText, Globe, Github, Images, Link2, MapPin, PencilLine, Search } from "lucide-react";
+import { AlarmClock, ChevronDown, FilePlus, Mouse, ShieldCheck, Timer, FileText, Globe, Github, Images, Link2, MapPin, PencilLine, Search } from "lucide-react";
 import { SourceStrip } from "./assistant";
 import { ShimmerText } from "./assistant";
 import { ChatResearchResults } from "./ChatResearchResults";
@@ -52,6 +52,7 @@ export function AgentTodo({ todos, live }: { todos: TodoItem[]; live: boolean; d
     <section
       ref={rootRef}
       className={`clyra-plan${open ? " is-open" : ""}`}
+      style={{ ["--plan-progress" as string]: todos.length ? done / todos.length : 0 }}
       aria-label="Agent task list"
       onPointerEnter={(event) => { if (event.pointerType === "mouse" || event.pointerType === "pen") setPeek(true); }}
       onPointerLeave={() => setPeek(false)}
@@ -88,7 +89,7 @@ const QUIET_TOOLS = new Set(["web_open", "web_find", "web_follow_links"]);
 export const visibleSteps = (steps: AgentStepView[]) => steps.filter((step) => !QUIET_TOOLS.has(step.tool));
 
 function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: string) => void }) {
-  const Icon = ICON[step.tool as keyof typeof ICON] ?? Globe;
+  const Icon = step.tool.startsWith("computer") ? Mouse : step.tool.startsWith("permission") ? ShieldCheck : step.tool === "notch_alarm" ? AlarmClock : step.tool.startsWith("notch_") ? Timer : ICON[step.tool as keyof typeof ICON] ?? Globe;
   const running = step.state === "running";
   const isSearch = step.tool === "web_search";
   // A web search is just "Searching" with the sites it found sliding in beside it; the query and counts stay out of the way.
@@ -117,7 +118,8 @@ export function ChatAgentRunView({ run: fullRun, live, onOpenNote, showTodo = tr
   const stepCount = run.steps.filter((step) => step.state !== "running").length;
   const running = run.steps.some((step) => step.state === "running");
   const failed = run.steps.some((step) => step.state === "failed");
-  const SummaryIcon = ICON[run.steps[run.steps.length - 1]?.tool as keyof typeof ICON] ?? Globe;
+  const lastTool = run.steps[run.steps.length - 1]?.tool ?? "";
+  const SummaryIcon = lastTool.startsWith("computer") ? Mouse : ICON[lastTool as keyof typeof ICON] ?? Globe;
   const growthSignal = run.steps.reduce((total, step) =>
     total + (step.state === "done" ? 1 : 0) + (step.images?.length || 0) + (step.repositories?.length || 0), run.steps.length);
   useFollowGrowth(ref, growthSignal, live);

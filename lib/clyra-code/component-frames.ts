@@ -118,6 +118,19 @@ createRoot(document.getElementById("root")!).render(<App />);
 window.setTimeout(() => document.documentElement.classList.add("idle"), 1100);
 ${bleed ? 'document.documentElement.classList.add("bleed");' : ""}
 parent.postMessage({ type: "clyra-frame-ready" }, "*");
+// Tell the card how tall the component really is, so it can be fitted whole instead of cropped.
+{
+  const root = document.getElementById("root")!;
+  let last = 0;
+  const report = () => {
+    const height = Math.ceil(root.getBoundingClientRect().height + 56);
+    if (Math.abs(height - last) < 4) return;
+    last = height;
+    parent.postMessage({ type: "clyra-frame-size", height }, "*");
+  };
+  new ResizeObserver(report).observe(root);
+  window.setTimeout(report, 60); window.setTimeout(report, 400);
+}
 `;
 }
 

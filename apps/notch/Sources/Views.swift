@@ -43,7 +43,7 @@ enum Metrics {
         switch view {
         case .home, .apps: return 540
         case .media: return 430
-        case .timer, .stopwatch, .alarm, .bluetooth, .airdrop: return 500
+        case .timer, .stopwatch, .alarm, .bluetooth, .airdrop, .computer, .reply, .voice: return 500
         case .more, .note: return 560
         default: return nil
         }
@@ -56,11 +56,13 @@ enum Metrics {
 
     static func collapsedWidth(_ model: NotchModel) -> CGFloat {
         if model.flowActive { return 336 }
-        if model.banner != nil { return 338 }
-        if model.working != nil || model.doneMessage != nil { return 392 }
+        if model.banner != nil { return 372 }
+        if model.working != nil || model.doneMessage != nil { return 412 }
         // Playing music keeps the notch exactly as wide as when nothing plays; only a running timer or alarm adds wings.
         let wings = !model.secondaryActivities.isEmpty
-        return notchWidth + 2 * ear + (wings ? 2 * wing : 0)
+        let base = notchWidth + 2 * ear + (wings ? 2 * wing : 0)
+        // Music plus live timers needs room for the title between them.
+        return wings && model.hasMedia ? max(base, 300 + CGFloat(model.secondaryActivities.count) * 70) : base
     }
 
     static func panelHeight(_ m: NotchModel) -> CGFloat {
@@ -76,6 +78,9 @@ enum Metrics {
         case .browser: return 390
         case .widgets: return m.widgetsEditing ? maximumPanelHeight : min(maximumPanelHeight, CGFloat(max(1, m.widgetRows)) * 110 + 116)
         case .stopwatch: return 255
+        case .computer: return 300
+        case .reply: return 290
+        case .voice: return 300
         case .note: return 250
         case .settings: return maximumPanelHeight
         }
@@ -196,25 +201,32 @@ struct CollapsedContent: View {
                 // Clyra is mid-reply: the same tool line the chat shows, so the notch says what it is doing even closed.
                 HStack(spacing: 8) {
                     Image(systemName: work.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
-                    ShimmerText(text: work.label, reduceMotion: model.reduceMotion, size: 12.5)
+                    if model.computer.isActive && model.computer.status != "running" {
+                        // Paused or waiting for the person: the light stops, the words stay.
+                        Text(work.label).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    } else {
+                        ShimmerText(text: work.label, reduceMotion: model.reduceMotion, size: 12.5)
+                    }
                     if !work.sources.isEmpty { SourceStrip(sources: work.sources, reduceMotion: model.reduceMotion) }
                 }
-                .frame(maxWidth: 360)
-            } else if let track = model.media.state, model.hasPlayingMedia {
-                // Centred and fixed: the player's icon, the track's name, and a wave that follows the real loudness.
-                HStack(spacing: 7) {
-                    PlayerIcon(track: track, size: 16)
-                    Text(track.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    LevelBars(meter: model.audioMeter, reduceMotion: model.reduceMotion)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 20)
+                .transaction { $0.animation = nil }
+            } else if let track = model.media.state, model.hasMedia {
+                // One row, so nothing overlaps: live activities sit at the edges, the player takes whatever room is left.
+                HStack(spacing: 8) {
+                    if let left = model.secondaryActivities.dropFirst().first { indicator(left).fixedSize() }
+                    HStack(spacing: 7) {
+                        PlayerIcon(track: track, size: 16)
+                        Text(track.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        LevelBars(meter: model.audioMeter, reduceMotion: model.reduceMotion, paused: !model.hasPlayingMedia)
+                    }
+                    .frame(maxWidth: .infinity)
+                    if let right = model.secondaryActivities.first { indicator(right).fixedSize() }
                 }
-                .frame(maxWidth: .infinity)
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
                 .padding(.horizontal, 6)
-                HStack {
-                    if let left = model.secondaryActivities.dropFirst().first { indicator(left) }
-                    Spacer()
-                    if let right = model.secondaryActivities.first { indicator(right) }
-                }.font(.system(size: 10, weight: .medium))
             } else {
                 HStack(spacing: 10) {
                     Spacer(minLength: 0)
@@ -236,7 +248,7 @@ struct CollapsedContent: View {
         case .timer:
             if let timer = model.timers.soonest { Label(TimerEngine.clock(timer.remaining(at: model.now)), systemImage: "timer").foregroundStyle(.orange) }
         case .stopwatch:
-            HStack(spacing: 4) { Image(systemName: "stopwatch"); StopwatchReadout(model: model, size: model.hasPlayingMedia ? 10 : 15) }.foregroundStyle(.green)
+            HStack(spacing: 4) { Image(systemName: "stopwatch"); StopwatchReadout(model: model, size: model.hasMedia ? 10 : 15) }.foregroundStyle(.green)
         case .alarm:
             if let alarm = model.alarms.upcoming?.alarm { Label(alarm.label, systemImage: "alarm").foregroundStyle(.orange) }
         default: EmptyView()
@@ -253,7 +265,11 @@ struct ConnectionBanner: View {
             Label(banner.title, systemImage: banner.symbol).font(.system(size: 14, weight: .semibold))
             Text(banner.detail).font(.system(size: 12)).foregroundStyle(.secondary)
             if let name = banner.deviceName, let level = devices.battery[name]?.ring { BatteryRing(percent: level) }
-        }.lineLimit(1)
+        }
+        .lineLimit(1).fixedSize()
+        // Centred in the notch and held still: the content never drifts while the notch grows to meet it.
+        .frame(maxWidth: .infinity, alignment: .center)
+        .transaction { $0.animation = nil }
     }
 }
 
@@ -329,6 +345,9 @@ struct PanelContent: View {
                 case .weather: WeatherView(model: model).transition(.opacity)
                 case .more: MoreView(model: model).transition(.opacity)
                 case .stopwatch: StopwatchView(model: model).transition(.opacity)
+                case .computer: ComputerView(model: model).transition(.opacity)
+                case .reply: ReplyView(model: model).transition(.opacity)
+                case .voice: VoiceView(model: model).transition(.opacity)
                 case .note: NoteView(model: model).transition(.opacity)
                 case .settings: SettingsView(model: model).transition(.opacity)
                 case .media: MediaView(model: model).transition(.opacity)
@@ -490,6 +509,8 @@ struct ClyraMark: View {
 struct WelcomeView: View {
     @ObservedObject var model: NotchModel
     @State private var shown = false
+    @State private var hoverTitle: String?
+    @Namespace private var pill
     private func rise(_ delay: Double) -> some ViewModifier { Rise(shown: shown, delay: delay, reduce: model.reduceMotion) }
     private let shortcuts: [(symbol: String, title: String, prefix: String)] = [
         ("checkmark", "Continue", ""), ("chevron.left.forwardslash.chevron.right", "Build", "Build "), ("globe", "Research", "Research "), ("pencil", "Write", "Write "),
@@ -510,7 +531,9 @@ struct WelcomeView: View {
             ClyraComposer(model: model).modifier(rise(0.1))
             HStack(spacing: 4) {
                 ForEach(shortcuts, id: \.title) { item in
-                    ShortcutChip(symbol: item.symbol, title: item.title) {
+                    ShortcutChip(symbol: item.symbol, title: item.title, hovered: hoverTitle == item.title, pill: pill, onHover: { inside in
+                        if inside { hoverTitle = item.title } else if hoverTitle == item.title { hoverTitle = nil }
+                    }) {
                         if item.title == "Continue" {
                             if let latest = model.chat.recent.first { model.chat.open(latest) }
                             model.show(.chat)
@@ -530,6 +553,16 @@ struct WelcomeView: View {
                 .frame(width: 300, height: 300).offset(y: -92)
                 .allowsHitTesting(false)
         }
+        .overlay(alignment: .topLeading) {
+            // As in Clyra's own welcome: the chats sidebar is one tap away.
+            IconButton(symbol: "sidebar.left", size: 12, label: "Show chats") {
+                model.sidebarOpen = true
+                UserDefaults.standard.set(true, forKey: "notchSidebar")
+                model.show(.chat)
+            }
+            .modifier(rise(0.05))
+        }
+        .animation(model.reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.84), value: hoverTitle)
         .onAppear { shown = true }
         .onDisappear { shown = false }
     }
@@ -539,27 +572,29 @@ struct WelcomeView: View {
 struct ShortcutChip: View {
     let symbol: String
     let title: String
+    let hovered: Bool
+    let pill: Namespace.ID
+    let onHover: (Bool) -> Void
     let action: () -> Void
-    @State private var hover = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Image(systemName: symbol).font(.system(size: 12, weight: .regular))
-                    .offset(y: hover ? -1 : 0).scaleEffect(hover ? 1.06 : 1)
-                    .foregroundStyle(.white.opacity(hover ? 1 : 0.62))
+                    .offset(y: hovered ? -1 : 0).scaleEffect(hovered ? 1.06 : 1)
+                    .foregroundStyle(.white.opacity(hovered ? 1 : 0.62))
                 Text(title).font(.system(size: 13, weight: .medium)).tracking(-0.1)
-                    .foregroundStyle(.white.opacity(hover ? 1 : 0.82))
+                    .foregroundStyle(.white.opacity(hovered ? 1 : 0.82))
             }
             .padding(.leading, 11).padding(.trailing, 13).frame(height: 32)
-            .background(Capsule().fill(Color.white.opacity(hover ? 0.08 : 0)))
+            .background {
+                // One wash that glides from chip to chip instead of each chip lighting on its own.
+                if hovered { Capsule().fill(Color.white.opacity(0.09)).matchedGeometryEffect(id: "hover-pill", in: pill) }
+            }
             .contentShape(Capsule())
         }
         .buttonStyle(PillPress())
-        .onHover { hover = $0 }
-        .scaleEffect(hover ? 1.035 : 1)
-        .offset(y: hover ? -2 : 0)
-        .animation(.spring(response: 0.45, dampingFraction: 0.78), value: hover)
+        .onHover { onHover($0) }
     }
 }
 
@@ -790,6 +825,43 @@ struct Pill: ButtonStyle {
 
 // MARK: Chat
 
+/// What the collapsed notch opens to after a reply: only Clyra's answer, with an arrow that opens the whole conversation.
+struct ReplyView: View {
+    @ObservedObject var model: NotchModel
+    @State private var shown = false
+    var body: some View {
+        let messages = model.chat.chat.messages.filter { !$0.hidden }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Clyra").font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 6)
+                IconButton(symbol: "arrow.up.forward.app", size: 12, label: "Open in Clyra") { model.openClyra() }
+            }.frame(height: 24)
+            if let last = messages.last(where: { !$0.isUser }) {
+                ScrollView {
+                    ChatBubble(model: model, msg: last, isLast: true).frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, 2)
+                }
+                .scrollIndicators(.never)
+                .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 6)
+            } else {
+                Text("No reply yet.").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Button { model.show(.chat) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
+                    Text("Show full chat").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(maxWidth: .infinity).frame(height: 30)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(PillPress())
+        }
+        .animation(model.reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.84), value: shown)
+        .onAppear { shown = true }
+    }
+}
+
 struct ChatView: View {
     @ObservedObject var model: NotchModel
     @AppStorage("notchShowPlan") private var showPlan = true
@@ -797,7 +869,7 @@ struct ChatView: View {
 
     var body: some View {
         let todos = showPlan ? model.chat.planTodos : []
-        let messages = model.chat.chat.messages
+        let messages = model.chat.chat.messages.filter { !$0.hidden }
         HStack(alignment: .top, spacing: 0) {
             if model.sidebarOpen {
                 ChatSidebar(model: model)

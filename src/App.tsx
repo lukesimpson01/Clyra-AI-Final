@@ -70,6 +70,8 @@ import {
   Music2,
   Mic,
   MousePointer2,
+  Mouse,
+  ShieldCheck,
   Paperclip,
   Pencil,
   Pin,
@@ -128,7 +130,7 @@ import {
 } from "./components/chat/SpotifyNotch";
 import { SpotifyWorkspace } from "./components/spotify/SpotifyWorkspace";
 import { ClyraMailHost } from "./components/mail/ClyraMailWorkspace";
-import type { SpotifyTrack } from "./lib/electron-runtime";
+import type { ComputerUseEvent, SpotifyTrack } from "./lib/electron-runtime";
 import { SpotifyRunTimeline, type SpotifyRun, type SpotifyRunStep } from "./components/chat/SpotifyRunTimeline";
 import ClyraComposerShell, {
   chatBubbleStyle,
@@ -1603,8 +1605,88 @@ function AppAgentFlowPanel({
 }
 
 
-export function UserMessageText({ text }: { text: string }) {
-  return <div className="clyra-chat-user-text">{text}</div>;
+/** A slash command sits in the composer text as two en spaces (room for its icon) followed by its prefix. */
+/**
+ * Names a slash command from plain words, so "use web search" or "search the web for…" works without typing the slash.
+ * Explicit mentions win; the looser phrasings only fire when the request clearly needs that tool.
+ */
+function inferCommandId(text: string): string | undefined {
+  const t = text.trim().toLowerCase();
+  if (!t || t.startsWith("/")) return undefined;
+  if (/\b(check|fix|enable|grant|set ?up|review)\b[^.?!]{0,30}\b(permissions?|privacy access)\b|\bclyra (doesn.t|does not|isn.t|is not) (show|listed|appear)/.test(t)) return "permissions";
+  if (/\b(use|using|with|via|through|open)\s+(the\s+)?(clyra\s+)?computer[ -]use\b/.test(t) || /\b(take over|control|operate)\s+(my|the)\s+(computer|mac|pc|laptop|desktop|screen)\b/.test(t)) return "computer";
+  if (/(?:youtube\.com\/(?:watch|shorts|live)|youtu\.be\/)/.test(t)) return "youtube";
+  // Plain asks to operate an app or the machine: open, launch, quit, switch, click, type… in a named app.
+  if (/\b(open|launch|quit|close|switch to|click|double[- ]click|type|press|scroll)\b[^.?!]{0,40}\b(google chrome|chrome|safari|firefox|arc|finder|spotify|notes|calculator|terminal|mail|messages|calendar|system settings|settings|preferences|photos|music|slack|discord|whatsapp|vs ?code|the app|an app|my (?:mac|computer|desktop|screen))\b/.test(t) && !/\b(in|on) (?:my |the )?(?:clyra|chat|notch)\b/.test(t)) return "computer";
+  if (/\b(use|using|with|via|through)\s+(the\s+)?browser[ -]use\b/.test(t)) return "browser-use";
+  if (/\b(use|using|with|via|through)\s+(the\s+)?deep[ -]research\b|\bdeep research (on|into|about)\b/.test(t)) return "deep-research";
+  if (/\b(use|using|with|via|through)\s+(the\s+)?(web|internet|online)\s+search\b|\b(search|google|look up|look it up|find out)\b[^.?!]{0,40}\b(on the web|online|on the internet|the web)\b|\bsearch the (web|internet)\b|\bsearch online\b/.test(t)) return "search";
+  if (/\b(use|using|with|via)\s+(the\s+)?youtube( analyzer)?\b/.test(t)) return "youtube";
+  return undefined;
+}
+
+type NotchIntent = { kind: "timer"; seconds: number; label: string; say: string } | { kind: "stopwatch"; action: "start" | "stop"; say: string } | { kind: "alarm"; hour: number; minute: number; say: string };
+/** Timers, alarms and the stopwatch belong to the Notch: asked for in chat, they are set there. */
+function parseNotchIntent(text: string): NotchIntent | null {
+  const t = text.toLowerCase();
+  if (/\btimer\b/.test(t)) {
+    let seconds = 0;
+    const units: Array<[RegExp, number]> = [[/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/g, 3600], [/(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)\b/g, 60], [/(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/g, 1]];
+    for (const [re, mult] of units) for (const m of t.matchAll(re)) seconds += Number(m[1]) * mult;
+    if (seconds > 0 && !/\b(cancel|stop|delete|remove)\b/.test(t)) {
+      const named = t.match(/\b(?:for|called|named)\s+(?:the\s+)?([a-z][a-z ]{1,24}?)\s*$/);
+      const label = named && !/min|hour|sec/.test(named[1]) ? named[1].trim().replace(/\b\w/g, (c) => c.toUpperCase()) : "";
+      const mins = Math.round(seconds / 60);
+      const pretty = seconds >= 3600 ? `${+(seconds / 3600).toFixed(1)} hour` : seconds >= 60 ? `${mins} minute` : `${seconds} second`;
+      return { kind: "timer", seconds, label, say: `${pretty} timer` };
+    }
+  }
+  if (/\bstopwatch\b/.test(t)) {
+    if (/\b(stop|pause|end)\b/.test(t)) return { kind: "stopwatch", action: "stop", say: "Stopped the stopwatch" };
+    if (/\b(start|begin|run|set|open)\b|^stopwatch$/.test(t)) return { kind: "stopwatch", action: "start", say: "Started the stopwatch" };
+  }
+  if (/\balarm\b/.test(t) && !/\b(cancel|delete|remove|turn off)\b/.test(t)) {
+    const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/);
+    if (m) {
+      let hour = Number(m[1]); const minute = Number(m[2] || 0);
+      const marker = (m[3] || "").replace(/\./g, "");
+      if (marker === "pm" && hour < 12) hour += 12; else if (marker === "am" && hour === 12) hour = 0;
+      if (hour < 24 && minute < 60) return { kind: "alarm", hour, minute, say: `alarm for ${(hour + 11) % 12 + 1}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}` };
+    }
+  }
+  return null;
+}
+
+const COMMAND_PAD = "\u2002\u2002";
+const commandToken = (command: { prefix: string }) => `${COMMAND_PAD}${command.prefix}`;
+/** The text without the command token, and where in that plain text the token stood. */
+function splitCommandToken(text: string, command: { prefix: string } | null): { text: string; at: number } {
+  if (!command) return { text, at: 0 };
+  const token = commandToken(command);
+  const index = text.indexOf(token);
+  if (index < 0) return { text, at: 0 };
+  const after = text.slice(index + token.length).replace(/^ /, "");
+  const before = text.slice(0, index);
+  return { text: before + after, at: before.length };
+}
+
+export function UserMessageText({ text, command, icon }: { text: string; command?: { prefix: string; at: number }; icon?: React.ReactNode }) {
+  if (!command) return <div className="clyra-chat-user-text">{text}</div>;
+  // A bare command sends "Execute <name>" to the model; the bubble shows only the command itself.
+  const bare = /^Execute /.test(text) && command.at <= 0;
+  const at = bare ? 0 : Math.max(0, Math.min(command.at, text.length));
+  const before = bare ? "" : text.slice(0, at);
+  const after = bare ? "" : text.slice(at);
+  return (
+    <div className="clyra-chat-user-text">
+      {before}
+      <span className="clyra-inline-command">
+        {icon ? <span className="clyra-inline-command__icon" aria-hidden>{icon}</span> : null}
+        {command.prefix}
+      </span>
+      {after}
+    </div>
+  );
 }
 
 export const AnimatedMessage = ({
@@ -2399,6 +2481,8 @@ export default function App() {
     role: "user" | "assistant";
     content: string;
     createdAt?: number;
+    /** A slash command the person placed in their message: shown inline, in blue, where they put it. */
+    userCommand?: { id: string; label: string; prefix: string; at: number };
     isThinking?: boolean;
     isStreaming?: boolean;
     /** The person cancelled this reply before it finished. */
@@ -3504,6 +3588,8 @@ export default function App() {
   const [editingMessageText, setEditingMessageText] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [value, setValue] = useState("");
+  const [caret, setCaret] = useState(0);
+  const commandTokenPlaced = useRef(false);
   const [chatEffort, setChatEffort] = useState<ChatEffort>(() => {
     const stored = readStoredString("clyra-chat-effort");
     if (stored === "max") return "high";
@@ -5392,10 +5478,19 @@ export default function App() {
       workspace: "chat",
     },
     {
+      id: "permissions",
+      kind: "command",
+      icon: () => <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={1.9} />,
+      label: "Permissions",
+      description: "Make sure Clyra has microphone, camera, screen and accessibility access",
+      prefix: "/permissions",
+      workspace: "chat",
+    },
+    {
       id: "computer",
       icon: (isActive) => (
         <motion.div animate={isActive ? { scale: [1, 1.08, 1] } : { scale: 1 }} transition={{ duration: 1.4, repeat: isActive ? Infinity : 0 }}>
-          <MousePointer2 className="h-[18px] w-[18px] text-blue-600" />
+          <Mouse className="h-[18px] w-[18px]" strokeWidth={1.9} />
         </motion.div>
       ),
       label: "Computer Use",
@@ -5554,9 +5649,14 @@ export default function App() {
   ] as CommandSuggestion[]), []);
 
   const commandPaletteEnabled = true;
-  const isCommandMode =
-    commandPaletteEnabled && value.startsWith("/") && !value.includes(" ");
-  const commandQuery = isCommandMode ? value.substring(1).toLowerCase() : "";
+  // A slash starts a command wherever it is typed: at the start, or after a space, up to the caret.
+  const slashMatch = useMemo(() => {
+    const before = value.slice(0, Math.min(caret, value.length));
+    const found = before.match(/(^|\s)\/([A-Za-z-]*)$/);
+    return found ? { start: before.length - found[2].length - 1, query: found[2] } : null;
+  }, [value, caret]);
+  const isCommandMode = commandPaletteEnabled && slashMatch !== null;
+  const commandQuery = slashMatch ? slashMatch.query.toLowerCase() : "";
   const memoizedChats = React.useMemo(() => chats, [chats]);
   const filteredChats = React.useMemo(() => {
     if (!searchQuery) return memoizedChats;
@@ -5664,6 +5764,24 @@ export default function App() {
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Backspace" && selectedCommand && selectedCommand.kind === "command") {
+      const el = e.currentTarget;
+      const token = commandToken(selectedCommand);
+      const pos = el.selectionStart;
+      const start = value.indexOf(token);
+      if (start >= 0 && el.selectionEnd === pos) {
+        const end = start + token.length + (value[start + token.length] === " " ? 1 : 0);
+        if (pos > start && pos <= end) {
+          e.preventDefault();
+          const next = value.slice(0, start) + value.slice(end);
+          setValue(next);
+          setCaret(start);
+          setSelectedCommand(null);
+          window.setTimeout(() => textareaRef.current?.setSelectionRange(start, start), 0);
+          return;
+        }
+      }
+    }
     if (showCommandPalette && filteredSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -6647,8 +6765,12 @@ Please analyze the code you just wrote and fix this error.`;
     setToastMessage(paused ? "Agent paused" : "Agent resumed");
   }, []);
 
+  /** The composer text without the command token: what is actually sent and routed. */
+  const sentText = splitCommandToken(value, selectedCommand);
+  const plainValue = sentText.text;
+
   const handleSendMessage = async () => {
-    if (!value.trim() && attachments.length === 0 && !selectedCommand && selectedAppAgents.length === 0) return;
+    if (!plainValue.trim() && attachments.length === 0 && !selectedCommand && selectedAppAgents.length === 0) return;
     if (isOffline) return;
 
     const isClyraMusicCommand = selectedCommand?.id === "spotify";
@@ -6658,7 +6780,7 @@ Please analyze the code you just wrote and fix this error.`;
     // model. Only when Spotify is actually connected, so plain chat isn't
     // hijacked for anyone who hasn't set it up.
     if (
-      (value.trim() || isClyraMusicCommand) &&
+      (plainValue.trim() || isClyraMusicCommand) &&
       attachments.length === 0 &&
       (!selectedCommand || isClyraMusicCommand) &&
       selectedAppAgents.length === 0 &&
@@ -6667,9 +6789,9 @@ Please analyze the code you just wrote and fix this error.`;
       activeWorkspaceTab === "chat" &&
       (spotifyPlayback.connected || isClyraMusicCommand)
     ) {
-      const intent = detectSpotifyIntent(value.trim());
+      const intent = detectSpotifyIntent(plainValue.trim());
       if (intent || isClyraMusicCommand) {
-        const promptText = value.trim() || "Open Clyra Music";
+        const promptText = plainValue.trim() || "Open Clyra Music";
         setValue("");
         setSelectedCommand(null);
         adjustHeight(true);
@@ -6899,10 +7021,10 @@ Please analyze the code you just wrote and fix this error.`;
     const streamController = new AbortController();
     activeStreamController.current = streamController;
 
-    if (value.trim() || selectedCommand || selectedAppAgents.length) {
+    if (plainValue.trim() || selectedCommand || selectedAppAgents.length) {
       const pendingRewrite = pendingDocumentRewriteRef.current;
-      if (pendingRewrite && value.trim()) {
-        const instruction = value.trim();
+      if (pendingRewrite && plainValue.trim()) {
+        const instruction = plainValue.trim();
         pendingDocumentRewriteRef.current = null;
         setRewritePhase("applying");
         setSelectedCommand(null);
@@ -6954,11 +7076,11 @@ Please analyze the code you just wrote and fix this error.`;
         return;
       }
 
-      if (selectedAgent && value.trim()) {
+      if (selectedAgent && plainValue.trim()) {
         const message = messages.find((item) => item.id === selectedAgent.messageId);
         const agent = message?.appAgents?.find((item) => item.id === selectedAgent.agentId);
         if (agent) {
-          const instruction = value.trim();
+          const instruction = plainValue.trim();
           setValue("");
           setSelectedAgent(null);
           adjustHeight(true);
@@ -6977,8 +7099,8 @@ Please analyze the code you just wrote and fix this error.`;
         message.mission &&
         !["COMPLETED", "FAILED", "CANCELLED", "WAITING_FOR_APPROVAL"].includes(message.mission.state),
       );
-      if (activeHermesMessage && value.trim() && !value.trim().startsWith("/")) {
-        const instruction = value.trim();
+      if (activeHermesMessage && plainValue.trim() && !plainValue.trim().startsWith("/")) {
+        const instruction = plainValue.trim();
         const userSteerMessage: Message = { id: `${Date.now()}-steer`, role: "user", content: instruction, createdAt: Date.now() };
         const update = (previous: Message[]) => [...previous, userSteerMessage];
         const chatId = currentChatIdRef.current;
@@ -7011,8 +7133,9 @@ Please analyze the code you just wrote and fix this error.`;
         (activeWorkspaceTab === "vibe" ? "Vibe Coder" : undefined);
       const userCommandId: string | undefined =
         selectedCommand?.id ??
+        (activeWorkspaceTab === "vibe" ? undefined : inferCommandId(plainValue)) ??
         (activeWorkspaceTab === "vibe" ? "vibe" : undefined);
-      const rawUserText = value.trim();
+      const rawUserText = plainValue.trim();
       const workspaceIntent = instantWorkspaceIntent(rawUserText);
       // Opening Vibe for a build request is not enough: the natural-language
       // request should continue into the real project runtime below. Other
@@ -7357,6 +7480,12 @@ Please analyze the code you just wrote and fix this error.`;
         role: "user",
         content: userText,
         createdAt: Date.now(),
+        // Only when the sent text is the person's own words, so the command can sit exactly where they put it.
+        ...(selectedCommand?.kind === "command" && userText === rawUserText && commandTokenPlaced.current
+          ? { userCommand: { id: selectedCommand.id, label: selectedCommand.label, prefix: selectedCommand.prefix, at: Math.min(Math.max(0, sentText.at - (plainValue.length - plainValue.trimStart().length)), rawUserText.length) } }
+          : selectedCommand?.kind === "command" && !rawUserText
+            ? { userCommand: { id: selectedCommand.id, label: selectedCommand.label, prefix: selectedCommand.prefix, at: 0 } }
+            : {}),
       };
       const assistantMessage: Message = {
         id: aiMsgId,
@@ -7595,6 +7724,80 @@ Please analyze the code you just wrote and fix this error.`;
           console.error("Browser use error:", error);
           patch({ content: chatReplyFailureText(error), failure: isCreditsError(error) ? "credits" : undefined, isStreaming: false, isThinking: false });
         }
+        return;
+      }
+
+      // /permissions: put Clyra in every Privacy list, show macOS's own pop-ups, and open each Settings page that still needs a switch.
+      if ((userCommandId === "permissions" || /^\/permissions\b/i.test(rawUserText)) && getElectronDesktop()?.permissions) {
+        const permissions = getElectronDesktop()!.permissions!;
+        const names: Record<string, string> = { microphone: "Microphone", camera: "Camera", screen: "Screen & system audio recording", accessibility: "Accessibility" };
+        const build = (status: Record<string, string>, done: boolean) => Object.keys(names).map((key) => ({
+          type: "step" as const, id: `permission_${key}-${aiMsgId}`, tool: `permission_${key}`,
+          label: status[key] === "granted" ? `${names[key]} allowed` : done ? `${names[key]} still needs switching on` : `Checking ${names[key].toLowerCase()}`,
+          state: (status[key] === "granted" ? "done" : done ? "failed" : "running") as "done" | "failed" | "running", detail: status[key] === "granted" ? undefined : "System Settings",
+        }));
+        const patchSteps = (status: Record<string, string>, done: boolean, content = "") =>
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? { ...message, agentRun: { todos: [], steps: build(status, done) }, content, isThinking: !done, isStreaming: !done } : message));
+        patchSteps((await permissions.status().catch(() => ({ status: {} as Record<string, string> }))).status, false);
+        const poll = window.setInterval(() => { void permissions.status().then((r) => patchSteps(r.status, false)).catch(() => undefined); }, 1200);
+        const outcome = await permissions.ensureAll().catch(() => ({ ok: false, results: {} as Record<string, string> }));
+        window.clearInterval(poll);
+        const finalStatus = (await permissions.status().catch(() => ({ status: outcome.results || {} }))).status;
+        const missing = Object.keys(names).filter((key) => finalStatus[key] !== "granted").map((key) => names[key]);
+        patchSteps(finalStatus, true, missing.length ? `Still to switch on: ${missing.join(", ")}. I opened each page in System Settings; if Clyra is already ticked there but still shows as off, restart Clyra (macOS only applies a new permission to apps that start afterwards).` : "Everything Clyra needs is allowed.");
+        return;
+      }
+      // Timers, alarms and the stopwatch live on the Notch. Asked for here, they are set there, with a tool row to show it.
+      const notchIntent = !selectedCommand ? parseNotchIntent(rawUserText) : null;
+      if (notchIntent && getElectronDesktop()?.notch) {
+        const result = await getElectronDesktop()!.notch!.op(
+          notchIntent.kind === "timer" ? { kind: "timer", seconds: notchIntent.seconds, label: notchIntent.label }
+            : notchIntent.kind === "stopwatch" ? { kind: "stopwatch", action: notchIntent.action }
+              : { kind: "alarm", hour: notchIntent.hour, minute: notchIntent.minute },
+        ).catch(() => ({ ok: false }));
+        const tool = `notch_${notchIntent.kind}`;
+        const label = notchIntent.kind === "stopwatch" ? notchIntent.say : `Set ${/^[aeiou]/.test(notchIntent.say) ? "an" : "a"} ${notchIntent.say}`;
+        updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? {
+          ...message,
+          agentRun: { todos: [], steps: [{ type: "step" as const, id: `${tool}-${aiMsgId}`, tool, label, state: result.ok ? "done" : "failed", detail: "Notch" }] },
+          content: result.ok ? (notchIntent.kind === "stopwatch" ? `${notchIntent.say} on your Notch.` : `Done. Your ${notchIntent.say} is set on your Notch.`) : "I couldn't reach your Notch. Is it running?",
+          isThinking: false, isStreaming: false,
+        } : message));
+        return;
+      }
+      // /computer: Clyra drives the machine itself (real mouse and keyboard, the blue AI cursor, the glow and the control bar).
+      // The desktop run emits typed events; they become the same tool-call rows every other agent run shows.
+      if (isForcedMission && (userCommandId === "computer" || computerCommand) && getElectronDesktop()?.computer) {
+        const computer = getElectronDesktop()!.computer!;
+        const goal = (computerCommand?.[1]?.trim() || rawUserText.replace(/^\/computer\s*/i, "").trim());
+        const run: ChatAgentRun = { todos: [], steps: [] };
+        const patch = (extra: Partial<Message> = {}) =>
+          updateMessagesForRun((previous) => previous.map((message) => message.id === aiMsgId ? { ...message, agentRun: { todos: [...run.todos], steps: [...run.steps] }, ...extra } : message));
+        if (!goal) { patch({ content: "Tell me what to do on your computer, for example `/computer open Notes and write a shopping list`.", isThinking: false, isStreaming: false }); return; }
+        let ended = false;
+        const sync = (event: ComputerUseEvent) => {
+          const state = event.state;
+          run.todos = (state.plan ?? []).length < 2 ? [] : (state.plan ?? []).map((item, index) => ({ id: `cu-${index}`, content: item.title, status: item.status === "done" ? "completed" : item.status === "active" ? "in_progress" : "pending" }));
+          run.steps = (state.steps ?? []).filter((step) => step.kind !== "message").map((step) => ({ type: "step" as const, id: step.id, tool: `computer_${step.kind}`, label: step.label, state: step.status, detail: step.app }));
+          if (state.status === "needs_user") run.steps.push({ type: "step", id: "cu-needs-you", tool: "computer_needs_user", label: state.message || "Waiting for you", state: "running" });
+          if (["done", "failed", "cancelled"].includes(state.status) && !ended) {
+            ended = true;
+            const text = state.status === "done" ? (state.summary || "Done.") : state.status === "cancelled" ? "Stopped. Nothing else was changed after that." : (state.error || "I couldn't finish that.");
+            patch({ content: text, isThinking: false, isStreaming: false, stopped: state.status === "cancelled" });
+          } else patch({ content: "", isThinking: false, isStreaming: true });
+        };
+        const unsubscribe = computer.onEvent((event) => { if (event.state?.id && event.runId === started?.id) sync(event); });
+        let started: { ok: boolean; id?: string; error?: string } | undefined;
+        started = await computer.start(goal);
+        if (!started.ok) { unsubscribe(); patch({ content: started.error || "Computer use couldn't start.", isThinking: false, isStreaming: false }); return; }
+        patch({ content: "", isThinking: false, isStreaming: true });
+        await new Promise<void>((resolve) => {
+          const stopWatch = () => { if (streamController.signal.aborted) { void computer.stop(); } };
+          streamController.signal.addEventListener("abort", stopWatch, { once: true });
+          const timer = window.setInterval(() => { if (ended) { window.clearInterval(timer); resolve(); } }, 400);
+          streamController.signal.addEventListener("abort", () => { window.clearInterval(timer); resolve(); }, { once: true });
+        });
+        unsubscribe();
         return;
       }
 
@@ -9284,15 +9487,31 @@ Please analyze the code you just wrote and fix this error.`;
     const selectedCmd = commandSuggestions[index];
     if (!selectedCmd) return;
     if (selectedCmd.kind === "command") {
+      // The command lands in the text exactly where the slash was typed.
+      let text = value;
+      let start = slashMatch ? slashMatch.start : Math.min(caret, value.length);
+      let end = slashMatch ? slashMatch.start + 1 + slashMatch.query.length : start;
+      if (selectedCommand) {
+        const old = commandToken(selectedCommand);
+        const at = text.indexOf(old);
+        if (at >= 0) {
+          text = text.slice(0, at) + text.slice(at + old.length).replace(/^ /, "");
+          const removed = value.length - text.length;
+          if (at < start) { start -= removed; end -= removed; }
+        }
+      }
+      const insert = `${commandToken(selectedCmd)} `;
+      const next = text.slice(0, start) + insert + text.slice(end).replace(/^ /, "");
+      commandTokenPlaced.current = true;
       setSelectedCommand(selectedCmd);
-      // The selected-tool chip owns the command state. Leave the composer
-      // clean so users can write the actual request without a visible prefix.
-      setValue("");
+      setValue(next);
+      const nextCaret = start + insert.length;
+      setCaret(nextCaret);
+      window.setTimeout(() => { const el = textareaRef.current; if (el) { el.focus(); el.setSelectionRange(nextCaret, nextCaret); } }, 30);
       setSelectedAppAgents([]);
       setIsCommandPalettePinned(false);
       setShowCommandPalette(false);
       setIsInputExpanded(true);
-      window.setTimeout(() => textareaRef.current?.focus(), 50);
       return;
     }
     setSelectedAppAgents((current) => current.some((agent) => agent.id === selectedCmd.id) ? current.filter((agent) => agent.id !== selectedCmd.id) : [...current, selectedCmd]);
@@ -10187,7 +10406,7 @@ Please analyze the code you just wrote and fix this error.`;
   );
   const shellSelections = useMemo(
     () => [
-      ...(selectedCommand ? [{
+      ...(selectedCommand && !value.includes(commandToken(selectedCommand)) ? [{
         id: selectedCommand.id,
         label: selectedCommand.label,
         icon: selectedCommand.icon(true),
@@ -10200,8 +10419,22 @@ Please analyze the code you just wrote and fix this error.`;
         onRemove: () => setSelectedAppAgents((current) => current.filter((item) => item.id !== agent.id)),
       })),
     ],
-    [selectedCommand, selectedAppAgents],
+    [selectedCommand, selectedAppAgents, value],
   );
+  const inlineCommand = useMemo(
+    () => (selectedCommand && selectedCommand.kind === "command" && value.includes(commandToken(selectedCommand))
+      ? { token: commandToken(selectedCommand), icon: selectedCommand.icon(false) }
+      : null),
+    [selectedCommand, value],
+  );
+
+  useEffect(() => {
+    // The command lives in the text: if the person deletes or cuts it, the command goes with it.
+    if (commandTokenPlaced.current && selectedCommand && !value.includes(commandToken(selectedCommand))) {
+      commandTokenPlaced.current = false;
+      setSelectedCommand(null);
+    }
+  }, [value, selectedCommand]);
 
   const transcriptNodes = messages.map((message) => {
     const fontClass =
@@ -10266,7 +10499,11 @@ Please analyze the code you just wrote and fix this error.`;
                   )}
                   style={userBubbleInnerStyle}
                 >
-                  <UserMessageText text={message.content} />
+                  <UserMessageText
+                    text={message.content}
+                    command={message.userCommand}
+                    icon={message.userCommand ? commandSuggestions.find((cmd) => cmd.id === message.userCommand?.id)?.icon(false) : undefined}
+                  />
                 </div>
               </div>
               {/* outside the bubble, so the bubble never moves when they appear */}
@@ -10511,6 +10748,8 @@ Please analyze the code you just wrote and fix this error.`;
                             paletteActiveIndex={activeSuggestion}
                             onPaletteHoverIndex={setActiveSuggestion}
                             selections={shellSelections}
+                            inlineCommand={inlineCommand}
+                            onCaretChange={setCaret}
                             suggestions={shellHomePills}
                             files={shellFiles}
                             onPickFiles={handleAttachFile}

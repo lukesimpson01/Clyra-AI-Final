@@ -113,7 +113,54 @@ export class DesktopControlService {
     this.macPointerPromise = null;
     this.hasMoved = false;
     this.positionTrackingTimer = null;
+    /** "calm" = slower, eased pointer travel and human typing, used by computer use. */
+    this.profile = "default";
+    this.cursorDisplayId = null;
+    /** Where the AI's own (virtual) cursor is. The person's real pointer is never moved by computer use on macOS. */
+    this.virtualPos = null;
+    this.cursorEnabled = true;
   }
+
+  setCursorEnabled(on) { this.cursorEnabled = Boolean(on); if (!on) { this.virtualPos = this.virtualPos; void this.setCursor(null); } }
+
+  async glide(x, y, label, { quick = false } = {}) {
+    const target = { x: Math.round(x), y: Math.round(y) };
+    const from = this.virtualPos || screen.getCursorScreenPoint();
+    const motion = planCursorMotion(from, target, { speed: quick ? "fast" : "calm" });
+    this.virtualPos = target;
+    await this.setCursor({ ...target, fromX: from.x, fromY: from.y, label, kind: "move", durationMs: motion.durationMs });
+    if (motion.durationMs) await wait(motion.durationMs);
+    return motion.durationMs;
+  }
+
+  /** A click that leaves the person's pointer alone: the pulse lands on the exact frame it is sent. `press` tries the
+   * Accessibility route first; if the control cannot be pressed that way, a real click is made and the pointer is put back. */
+  async softClick(x, y, { button = "left", count = 1, label = "Clicking", press, around } = {}) {
+    if (this.paused || this.manualControl || !this.cursorEnabled) return { ok: false, skipped: "paused" };
+    await this.setCursor({ x, y, label, kind: "click", durationMs: 0 });
+    let via = "";
+    if (press && count === 1) { try { const done = await press(button === "right" ? "menu" : "press"); if (done) via = "accessibility"; } catch { /* fall back below */ } }
+    if (!via) {
+      // A real click has to pass through the shield, so it opens for these few milliseconds.
+      const send = () => this.macInput("clickrestore", Math.round(x), Math.round(y), button, count);
+      await (around ? around(send) : send());
+      via = "pointer";
+    }
+    this.virtualPos = { x: Math.round(x), y: Math.round(y) };
+    return { ok: true, point: { x, y }, via };
+  }
+
+  async pidScroll(pid, x, y, lines, label = "Scrolling") {
+    if (this.paused || this.manualControl || !this.cursorEnabled) return { ok: false, skipped: "paused" };
+    await this.setCursor({ x, y, label, kind: "scroll", durationMs: 0 });
+    await this.macInput("scrollpid", pid, Math.round(x), Math.round(y), Math.round(lines));
+    return { ok: true };
+  }
+
+  /** Where the AI's cursor is: its own position when it has one, otherwise the real pointer. */
+  cursorPoint() { return this.virtualPos || screen.getCursorScreenPoint(); }
+
+  setProfile(profile) { this.profile = profile === "calm" ? "calm" : "default"; }
 
   async initialize() {
     this.xdotool = process.platform === "linux" ? await which("xdotool") : null;
@@ -153,7 +200,7 @@ export class DesktopControlService {
 
   async macInput(...args) {
     const binary = await this.macPointerBinary();
-    await execFileAsync(binary, args.map(String), { timeout: 15_000 });
+    await execFileAsync(binary, args.map(String), { timeout: args[0] === "type" ? 90_000 : 15_000 });
   }
 
   async ensureCursorOverlay(display = screen.getPrimaryDisplay()) {
@@ -183,6 +230,8 @@ export class DesktopControlService {
       alwaysOnTop: true,
       hasShadow: false,
       show: false,
+      // Without this macOS pushes the window below the menu bar, which offsets the cursor by the bar's height.
+      enableLargerThanScreen: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -193,7 +242,9 @@ export class DesktopControlService {
     // the overlay at the normal floating level avoids it disappearing behind
     // a controlled app or showing a black surface on Windows 10.
     if (process.platform === "darwin") {
-      this.cursorWindow.setAlwaysOnTop(true, "pop-up-menu", 1);
+      // Above the glow, the control bar, the Dock and the menu bar, on every Space and over full-screen apps.
+      this.cursorWindow.setAlwaysOnTop(true, "screen-saver", 5);
+      try { this.cursorWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* older Electron */ }
     } else {
       this.cursorWindow.setAlwaysOnTop(true, "floating");
       try {
@@ -216,21 +267,28 @@ export class DesktopControlService {
       }
       return { ok: true };
     }
+    if (this.paused || !this.cursorEnabled) return { ok: true, skipped: "hidden" };
     const x = Number(cursor.x);
     const y = Number(cursor.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: "Cursor coordinates are invalid." };
     const display = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) });
     const win = await this.ensureCursorOverlay(display);
+    const jump = this.cursorDisplayId !== null && this.cursorDisplayId !== display.id;
+    this.cursorDisplayId = display.id;
     const payload = {
+      jump,
+      fromX: Number.isFinite(Number(cursor.fromX)) ? Math.round(Number(cursor.fromX) - display.bounds.x) : undefined,
+      fromY: Number.isFinite(Number(cursor.fromY)) ? Math.round(Number(cursor.fromY) - display.bounds.y) : undefined,
       x: Math.round(x - display.bounds.x),
       y: Math.round(y - display.bounds.y),
       label: String(cursor.label || "Clyra").slice(0, 96),
       kind: String(cursor.kind || "move"),
       guide: Boolean(cursor.guide),
       paused: this.paused,
-      durationMs: Math.max(0, Math.min(450, Number(cursor.durationMs) || 0)),
+      durationMs: Math.max(0, Math.min(1400, Number(cursor.durationMs) || 0)),
     };
     if (!win.isVisible()) win.showInactive();
+    else if (Date.now() - (this.lastRaise || 0) > 1500) { this.lastRaise = Date.now(); try { win.moveTop(); } catch { /* ignore */ } }
     await win.webContents.executeJavaScript(`window.__setAIPresence(${JSON.stringify(payload)}); true`, true);
     return { ok: true };
   }
@@ -289,8 +347,11 @@ export class DesktopControlService {
     if (process.platform === "darwin") await this.macPointerBinary();
     if (!this.xdotool && !["darwin", "win32"].includes(process.platform)) throw new Error("Native desktop mouse input is unavailable (xdotool required).");
     const previous = screen.getCursorScreenPoint();
-    const motion = planCursorMotion(previous, point);
-    const stopTracking = this.trackPhysicalPointer(label);
+    const calm = this.profile === "calm";
+    const motion = planCursorMotion(previous, point, calm ? { speed: "calm" } : {});
+    // Calm profile: the AI cursor glides itself from one pushed target (no per-frame IPC) while the real pointer follows the same easing.
+    if (calm) await this.setCursor({ ...point, fromX: previous.x, fromY: previous.y, label, kind: "move", durationMs: motion.durationMs });
+    const stopTracking = calm ? async () => {} : this.trackPhysicalPointer(label);
     try {
       if (process.platform === "darwin") {
         await this.macInput("move", point.x, point.y, motion.durationMs);
@@ -328,7 +389,12 @@ for ($i=1; $i -le $count; $i++) {
       throw error; // Never report a simulated move as a successful OS action.
     }
     await stopTracking();
-    const actual = screen.getCursorScreenPoint();
+    // The last synthetic move event can land a frame after the helper exits.
+    let actual = screen.getCursorScreenPoint();
+    for (let tries = 0; tries < 12 && Math.hypot(actual.x - point.x, actual.y - point.y) > 4; tries += 1) {
+      await wait(25);
+      actual = screen.getCursorScreenPoint();
+    }
     if (Math.hypot(actual.x - point.x, actual.y - point.y) > 4) {
       await this.setCursor(null);
       throw new Error("The OS cursor did not reach the intended coordinate; click cancelled.");
@@ -346,6 +412,10 @@ for ($i=1; $i -le $count; $i++) {
     const moved = await this.move(point.x, point.y, label);
     if (!moved.ok) return moved;
     if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl", point };
+    // Let the app register the pointer over its control before the press; instant move+click is dropped by some apps.
+    await wait(this.profile === "calm" ? 60 : 90);
+    // The ripple and press animation land on the exact frame the click is sent.
+    if (this.profile === "calm") void this.setCursor({ ...point, label, kind: "click", durationMs: 0 }).catch(() => {});
     if (process.platform === "darwin") {
       await this.macInput("click", point.x, point.y, button === "right" ? "right" : button === "middle" ? "middle" : "left");
     } else if (this.xdotool) {
@@ -359,7 +429,7 @@ for ($i=1; $i -le $count; $i++) {
           : ["0x0002", "0x0004"];
       await runWindowsPowerShell(`${WINDOWS_INPUT}\n[ClyraWindowsInput]::mouse_event(${flags[0]}, 0, 0, 0, [UIntPtr]::Zero); [ClyraWindowsInput]::mouse_event(${flags[1]}, 0, 0, 0, [UIntPtr]::Zero)`);
     }
-    await this.setCursor({ ...point, label: "Clicked", kind: "click" });
+    if (this.profile !== "calm") await this.setCursor({ ...point, label: "Clicked", kind: "click" });
     return { ok: true, point };
   }
 
@@ -371,9 +441,13 @@ for ($i=1; $i -le $count; $i++) {
     if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
     const value = String(text || "");
     if (!value) return { ok: true };
-    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "type" });
+    await this.setCursor({ ...this.cursorPoint(), label, kind: "type", durationMs: 0 });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["type", "--clearmodifiers", "--delay", "12", "--", value], { timeout: 20_000 });
+    } else if (process.platform === "darwin" && this.profile === "calm") {
+      // One real key event per character with a human rhythm; the AI cursor shows a text caret while it runs.
+      const perChar = Math.max(24, Math.min(70, Math.round(2600 / Math.max(1, value.length))));
+      await this.macInput("type", Buffer.from(value, "utf8").toString("base64"), perChar);
     } else if (process.platform === "darwin") {
       const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r?\n/g, "\\n");
       await execFileAsync("osascript", ["-e", `tell application "System Events" to keystroke "${escaped}"`], { timeout: 20_000 });
@@ -390,7 +464,7 @@ for ($i=1; $i -le $count; $i++) {
       return { ok: true, skipped: "guide" };
     }
     if (this.paused || this.manualControl) return { ok: false, skipped: this.paused ? "paused" : "manualControl" };
-    await this.setCursor({ ...screen.getCursorScreenPoint(), label, kind: "key" });
+    await this.setCursor({ ...this.cursorPoint(), label, kind: "key", durationMs: 0 });
     if (this.xdotool) {
       await execFileAsync(this.xdotool, ["key", "--clearmodifiers", String(key)], { timeout: 3_000 });
     } else if (process.platform === "darwin") {
@@ -498,47 +572,123 @@ for ($i=1; $i -le $count; $i++) {
 
 const AI_PRESENCE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
+  :root{--blue:#1e6fff}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:100%;height:100%;background:transparent;overflow:hidden;pointer-events:none;user-select:none;-webkit-user-select:none}
-  #cursor{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;will-change:left,top;transition:opacity 100ms ease}
-  #arrow{position:absolute;left:-4px;top:-3px;width:34px;height:38px;overflow:visible;transform-origin:4px 3px;filter:drop-shadow(0 0 2px rgba(30,111,255,.30)) drop-shadow(0 2px 3px rgba(22,34,55,.20));transition:filter 140ms ease,transform 140ms ease}
-  #arrow.is-drag{transform:scale(.93);filter:drop-shadow(0 0 3px rgba(30,111,255,.42)) drop-shadow(0 4px 6px rgba(22,34,55,.26))}
-  #arrow .body{transition:fill 140ms ease,stroke 140ms ease}
-  #arrow.is-drag .body{fill:#1559d6;stroke:#1559d6}
-  #pulse{position:fixed;left:0;top:0;width:28px;height:28px;border:1.5px solid rgba(30,111,255,.55);border-radius:50%;background:radial-gradient(circle,rgba(30,111,255,.22),rgba(30,111,255,0) 70%);transform:translate(-50%,-50%) scale(.3);opacity:0;pointer-events:none}
-  #pulse.is-click{animation:impact 340ms cubic-bezier(.2,.8,.2,1)}
-  @keyframes impact{0%{opacity:.85;transform:translate(-50%,-50%) scale(.3)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.15)}}
-  @keyframes press{0%,100%{transform:scale(1)}38%{transform:scale(.84)}}
-  #arrow.is-press{animation:press 190ms cubic-bezier(.3,1.5,.5,1)}
-  #label{position:fixed;left:0;top:0;opacity:0;padding:6px 9px;border:1px solid rgba(36,42,52,.09);border-radius:9px;background:rgba(255,255,255,.96);color:#252a35;box-shadow:0 4px 14px rgba(20,32,52,.13);font:500 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
-  body.active #cursor{opacity:1}body.active #label{opacity:1}
-  @media(prefers-reduced-motion:reduce){#pulse.is-click,#arrow.is-press{animation:none}}
+  #rig{position:fixed;left:0;top:0;width:0;height:0;opacity:0;transition:opacity 220ms cubic-bezier(.32,.72,0,1);will-change:transform}
+  body.active #rig{opacity:1}
+  #pointer{position:absolute;left:0;top:0;width:0;height:0;will-change:transform}
+  #arrow{position:absolute;left:-1.5px;top:-1.5px;width:22px;height:22px;overflow:visible;transform-origin:1.5px 1.5px;filter:drop-shadow(0 1px 1.5px rgba(10,24,60,.35)) drop-shadow(0 0 6px rgba(30,111,255,.28));transition:transform 160ms cubic-bezier(.3,1.4,.5,1),opacity 140ms ease}
+  #arrow.press{transform:scale(.82)}
+  #arrow.hide{opacity:0;transform:scale(.7)}
+  #caret{position:absolute;left:-1px;top:-10px;width:2px;height:20px;border-radius:1px;background:var(--blue);box-shadow:0 0 0 1px rgba(255,255,255,.9),0 0 8px rgba(30,111,255,.5);opacity:0;transform:scaleY(.6);transition:opacity 140ms ease,transform 180ms cubic-bezier(.3,1.4,.5,1)}
+  #caret::before,#caret::after{content:"";position:absolute;left:-3px;width:8px;height:2px;background:var(--blue);border-radius:1px;box-shadow:0 0 0 .75px rgba(255,255,255,.9)}
+  #caret::before{top:-1px}#caret::after{bottom:-1px}
+  body.typing #caret{opacity:1;transform:none;animation:blink 1.05s steps(1,end) infinite}
+  body.typing #caret.flash{animation:none}
+  @keyframes blink{0%,58%{opacity:1}59%,100%{opacity:.18}}
+  .ring{position:absolute;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:1.5px solid rgba(30,111,255,.75);background:radial-gradient(circle,rgba(30,111,255,.26),rgba(30,111,255,0) 68%);opacity:0;transform:scale(.18);pointer-events:none}
+  .ring.go{animation:ring 520ms cubic-bezier(.16,.84,.3,1) forwards}
+  @keyframes ring{0%{opacity:.95;transform:scale(.18)}60%{opacity:.5}100%{opacity:0;transform:scale(1)}}
+  .dot{position:absolute;left:0;top:0;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:var(--blue);opacity:0;pointer-events:none}
+  .dot.go{animation:dot 360ms ease-out forwards}
+  @keyframes dot{0%{opacity:.85;transform:scale(.4)}100%{opacity:0;transform:scale(1.7)}}
+  #chip{position:absolute;left:0;top:0;display:flex;align-items:center;gap:6px;height:24px;padding:0 10px 0 7px;border-radius:12px;background:rgba(255,255,255,.94);color:#1d2230;border:1px solid rgba(30,111,255,.16);box-shadow:0 6px 18px rgba(14,30,70,.16),0 1px 2px rgba(14,30,70,.12);font:500 11.5px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;letter-spacing:.005em;white-space:nowrap;will-change:transform;opacity:0;transition:opacity 180ms ease}
+  body.active #chip{opacity:1}
+  @media(prefers-color-scheme:dark){#chip{background:rgba(30,32,38,.94);color:#f2f4f8;border-color:rgba(120,165,255,.28)}}
+  #ico{position:relative;width:15px;height:15px;flex:none;color:var(--blue);display:grid;place-items:center}
+  #ico svg{position:absolute;inset:0;width:15px;height:15px;opacity:0;transform:scale(.6) rotate(-12deg);transition:opacity 160ms ease,transform 260ms cubic-bezier(.3,1.5,.5,1)}
+  #ico svg.on{opacity:1;transform:none}
+  #ico .spin{animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #txt{display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  #txt.swap{animation:swap 260ms cubic-bezier(.3,1.2,.5,1)}
+  @keyframes swap{0%{opacity:0;transform:translateY(5px)}100%{opacity:1;transform:none}}
+  #dots{display:none;gap:2px;margin-left:1px}
+  body.thinking #dots{display:inline-flex}
+  #dots i{width:3px;height:3px;border-radius:50%;background:var(--blue);opacity:.35;animation:pulse 1.1s ease-in-out infinite}
+  #dots i:nth-child(2){animation-delay:.16s}#dots i:nth-child(3){animation-delay:.32s}
+  @keyframes pulse{0%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1.15)}}
+  body.thinking #arrow{animation:bob 2.4s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+  @media(prefers-reduced-motion:reduce){.ring.go,.dot.go{animation-duration:1ms}#txt.swap{animation:none}body.thinking #arrow,#dots i,body.typing #caret{animation:none}}
 </style></head><body>
-<div id="cursor"><svg id="arrow" viewBox="0 0 34 38" aria-hidden="true"><path d="M4 3 L4 28.5 L11 23.2 L23.5 22.5 Z" fill="#fff" stroke="#fff" stroke-width="5.2" stroke-linejoin="round"/><path class="body" d="M4 3 L4 28.5 L11 23.2 L23.5 22.5 Z" fill="#1e6fff" stroke="#1e6fff" stroke-width="2.6" stroke-linejoin="round"/></svg></div>
-<div id="pulse"></div><div id="label"></div>
+<div id="rig"><div id="pointer">
+  <div class="ring" id="ring"></div><div class="dot" id="dot"></div>
+  <svg id="arrow" viewBox="0 0 22 22" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4b93ff"/><stop offset="1" stop-color="#1e6fff"/></linearGradient></defs><path d="M2.4 2.4 L19.4 8.2 L11.2 11.4 L8.2 19.6 Z" fill="url(#g)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <div id="caret"></div>
+</div>
+<div id="chip"><span id="ico"></span><span id="txt"></span><span id="dots"><i></i><i></i><i></i></span></div></div>
 <script>
-const cursor=document.getElementById("cursor"), arrow=document.getElementById("arrow");
-const pulse=document.getElementById("pulse"), label=document.getElementById("label");
-let prior=null;
+const rig=document.getElementById("rig"),pointer=document.getElementById("pointer"),arrow=document.getElementById("arrow"),chip=document.getElementById("chip"),txt=document.getElementById("txt"),ico=document.getElementById("ico"),ring=document.getElementById("ring"),dot=document.getElementById("dot"),caret=document.getElementById("caret");
+const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const ICONS={
+  move:'<path d="M5 3l14 7-6 2-2 6z" fill="currentColor"/>',
+  click:'<path d="M9 4l9 5-4 1.3L12.2 14z" fill="currentColor"/><path d="M5 5l1.5 1.5M4 9h2M8 3v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  type:'<rect x="3" y="7" width="18" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 11h.01M11 11h.01M15 11h.01M8 14h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  key:'<rect x="3" y="6" width="18" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  scroll:'<rect x="7" y="3" width="10" height="18" rx="5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  open:'<rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 15l6-6M10 9h5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  search:'<circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
+  think:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-opacity=".25"/><path d="M12 4a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  verify:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 12.2l2.4 2.4 4.6-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  done:'<circle cx="12" cy="12" r="9" fill="currentColor"/><path d="M8 12.3l2.8 2.8 5.2-5.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  wait:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4.4l3 1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+};
+const iconFor=(kind,label)=>{
+  const l=(label||"").toLowerCase();
+  if(kind==="think")return"think"; if(kind==="done")return"done"; if(kind==="type")return"type"; if(kind==="key")return"key"; if(kind==="scroll")return"scroll";
+  if(/open|launch/.test(l))return"open"; if(/search|find|look/.test(l))return"search"; if(/verif|check|confirm/.test(l))return"verify"; if(/wait/.test(l))return"wait";
+  if(kind==="click"||kind==="double_click"||kind==="right_click")return"click"; return"move";
+};
+const svgs={};
+for(const k in ICONS){const s=document.createElementNS("http://www.w3.org/2000/svg","svg");s.setAttribute("viewBox","0 0 24 24");s.innerHTML=ICONS[k];if(k==="think")s.classList.add("spin");ico.appendChild(s);svgs[k]=s;}
+let cur={x:-100,y:-100},raf=0,lastLabel="",lastIcon="",pressTimer=0,hideTimer=0;
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+function place(x,y){
+  cur.x=x;cur.y=y;
+  pointer.style.transform="translate3d("+x+"px,"+y+"px,0)";
+  const w=chip.offsetWidth||90,h=24,pad=10;
+  let cx=x+16,cy=y+18;
+  if(cx+w>innerWidth-pad)cx=x-w-12;
+  if(cy+h>innerHeight-pad)cy=y-h-10;
+  if(cx<pad)cx=pad; if(cy<pad)cy=pad;
+  chip.style.transform="translate3d("+Math.round(cx)+"px,"+Math.round(cy)+"px,0)";
+}
+function glide(x,y,ms,jump){
+  cancelAnimationFrame(raf);
+  if(jump||reduced||ms<=0||cur.x<-50){place(x,y);return;}
+  const fx=cur.x,fy=cur.y,t0=performance.now();
+  const step=now=>{const t=Math.min(1,(now-t0)/ms),e=ease(t);place(fx+(x-fx)*e,fy+(y-fy)*e);if(t<1)raf=requestAnimationFrame(step);};
+  raf=requestAnimationFrame(step);
+}
+function setLabel(text,iconKey){
+  if(text!==lastLabel){txt.textContent=text;txt.classList.remove("swap");void txt.offsetWidth;if(lastLabel)txt.classList.add("swap");lastLabel=text;}
+  if(iconKey!==lastIcon){for(const k in svgs)svgs[k].classList.toggle("on",k===iconKey);lastIcon=iconKey;}
+}
+function burst(){
+  for(const el of [ring,dot]){el.classList.remove("go");void el.offsetWidth;el.classList.add("go");}
+  arrow.classList.add("press");clearTimeout(pressTimer);pressTimer=setTimeout(()=>arrow.classList.remove("press"),150);
+}
 window.__setAIPresence=(value)=>{
-  const active=!!value;
-  document.body.classList.toggle("active", active);
-  if(!active){prior=null;return;}
-  const x=Math.round(value.x), y=Math.round(value.y);
+  if(!value){
+    document.body.classList.remove("active","typing","thinking");lastLabel="";
+    clearTimeout(hideTimer);hideTimer=setTimeout(()=>{cur={x:-100,y:-100};},400);
+    return;
+  }
+  clearTimeout(hideTimer);
+  const x=Number(value.x),y=Number(value.y);
   if(!Number.isFinite(x)||!Number.isFinite(y))return;
-  cursor.style.left=x+"px";cursor.style.top=y+"px";
-  pulse.style.left=x+"px";pulse.style.top=y+"px";
-  label.style.left=(x+23)+"px";label.style.top=(y+27)+"px";
-  label.textContent=String(value.label||"Clyra");
-  label.style.display=value.showLabel===false?"none":"block";
-  const click=value.kind==="click"||value.kind==="double_click"||value.kind==="right_click";
-  if(click){
-    pulse.classList.remove("is-click");arrow.classList.remove("is-press");
-    void pulse.offsetWidth;
-    pulse.classList.add("is-click");arrow.classList.add("is-press");
-  }else if(prior==="click") arrow.classList.remove("is-press");
-  arrow.classList.toggle("is-drag", value.kind==="drag");
-  prior=click?"click":"move";
+  const kind=String(value.kind||"move");
+  const wasActive=document.body.classList.contains("active");
+  document.body.classList.add("active");
+  document.body.classList.toggle("typing",kind==="type");
+  document.body.classList.toggle("thinking",kind==="think");
+  arrow.classList.toggle("hide",kind==="type");
+  if(!wasActive&&Number.isFinite(value.fromX)){cur={x:Number(value.fromX),y:Number(value.fromY)};place(cur.x,cur.y);}
+  setLabel(String(value.label||"Clyra"),iconFor(kind,value.label));
+  if(kind==="click"||kind==="double_click"||kind==="right_click")burst();
+  glide(x,y,Number(value.durationMs)||0,Boolean(value.jump));
 };
 window.__openCluelySetAICursor=window.__setAIPresence;
 </script></body></html>`;

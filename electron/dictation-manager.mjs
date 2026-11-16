@@ -2,12 +2,13 @@ import { execFile } from "node:child_process";
 import { NotchBridge } from "./notch-bridge.mjs";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { promises as fsp } from "node:fs";
 import path from "node:path";
 import { cleanDictation, looksLikeInstruction } from "./dictation-cleanup.mjs";
 import { computeEndSilenceMs } from "./dictation-endpoint.mjs";
 import { hasEdits, wordDiff } from "./word-diff.mjs";
 import { createTapMachine, startHotkeyListener, pasteWithKeyTap, HOTKEY_PRESETS, DEFAULT_HOTKEY } from "./dictation-hotkey.mjs";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, screen, shell, systemPreferences } from "electron";
 
 const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -195,7 +196,13 @@ export class DictationManager {
       // Adaptive voice detection: learn the room's noise floor while nobody is speaking, so a fan or
       // a noisy mic never keeps the recording open, and quiet speakers still count as speech.
       // More sensitive than before: the first soft word of a sentence must count as speech, or it gets clipped.
-      const threshold = Math.max(0.03, this.noiseFloor * 1.9 + 0.016);
+      // Steady background sound (music, a fan) is not speech: a slow average of the level raises the bar, so a pause in
+      // *your* voice still counts as silence even in a noisy room.
+      const dtSlow = Math.min(0.5, Math.max(0.001, (now - (this.slowAt || now)) / 1000));
+      this.slowAt = now;
+      this.slowLevel = (this.slowLevel || 0) + (level - (this.slowLevel || 0)) * (1 - Math.exp(-dtSlow / 2.5));
+      const threshold = Math.max(0.03, this.noiseFloor * 1.9 + 0.016, this.slowLevel * 1.7 + 0.02);
+      if (process.env.CLYRA_FLOW_DEBUG === "1" && now - (this.dbgAt || 0) > 1000) { this.dbgAt = now; console.log(`[flow] level=${level.toFixed(3)} rms=${(meta.rms ?? 0).toFixed(4)} threshold=${threshold.toFixed(3)} heard=${this.heardSpeech} auto=${this.autoStop} call=${Boolean(this.callMode)}`); }
       const bytes = this.native.bytes;
       // The start cue plays as the microphone opens. Its sound must neither count as speech nor end up in the
       // first phrase, or the model "hears" a word that was never said.
@@ -260,7 +267,7 @@ export class DictationManager {
     // Every press of the hotkey toggles: press to start, press again to stop. (Hands-free and
     // silence auto-stop apply to every session; there is no hold-to-talk.)
     this.machine = createTapMachine({
-      onTap: () => this.hotkeyPressed(),
+      onTap: () => this.tapped(),
       onPress: () => this.prewarm(),
       onAbort: () => this.cooldown(),
     });
@@ -279,6 +286,49 @@ export class DictationManager {
     this.native?.cool();
   }
 
+  /** Two quick presses of the hotkey start (or end) a voice call; one press is ordinary dictation. */
+  tapped() {
+    const now = Date.now();
+    const double = now - (this.lastTapAt || 0) < 420;
+    this.lastTapAt = double ? 0 : now;
+    if (double) { void this.toggleVoiceCall(); return; }
+    if (this.callMode) { this.notch?.send({ t: "voice-call", event: "tap" }); return; }
+    this.hotkeyPressed();
+  }
+
+  /** Voice call: the same listening pill, but what is said goes to Clyra's chat (in the notch) and the answer is spoken back. */
+  async toggleVoiceCall() {
+    if (!this.notch?.alive) { this.lastTapAt = 0; this.hotkeyPressed(); return; }
+    if (this.callMode) { this.endVoiceCall(); return; }
+    // The first press of the pair already opened a dictation: drop it quietly before the call takes over.
+    if (["listening", "arming"].includes(this.phase)) this.cancel();
+    // Only the microphone is needed to start. Camera and screen are asked for when they are switched on (or by /permissions):
+    // asking for them here left a macOS pop-up open that froze the app and stopped the call.
+    this.callMode = true;
+    this.callMuted = false;
+    this.callBusy = false;
+    this.notch.send({ t: "voice-call", event: "start" });
+    setTimeout(() => { if (this.callMode) void this.listenForCall(); }, 450);
+  }
+
+  /** Ends the call everywhere: no more listening, the microphone is released, the notch is told. */
+  endVoiceCall() {
+    const wasCall = this.callMode;
+    this.callMode = false;
+    this.callBusy = false;
+    this.callMuted = false;
+    if (wasCall) this.notch?.send({ t: "voice-call", event: "end" });
+    if (["listening", "arming", "processing", "optimising"].includes(this.phase)) this.cancel();
+    else if (this.nativeActive) { try { this.native?.cancel(); } catch { /* already closed */ } this.nativeActive = false; }
+  }
+
+  /** The notch has finished answering: open the microphone again for the next thing to say. */
+  async listenForCall(fromNotch = false) {
+    if (!this.callMode || this.callMuted) return;
+    if (fromNotch) this.callBusy = false;
+    if (["idle", "done", "error"].includes(this.phase)) await this.toggle({ manual: false });
+  }
+
   hotkeyPressed() {
     this.handsFree = false;
     // A second press before the recorder has even been requested: remember it and stop as soon as it is live.
@@ -291,7 +341,7 @@ export class DictationManager {
     this.autoStop = true;
     this.heardSpeech = false;
     this.lastSpeechAt = Date.now();
-    this.emitUi("dictation:trigger", { type: "autostop" });
+    this.emitUi("dictation:trigger", { type: "autostop", silenceMs: this.callMode ? 2400 : 3200 });
   }
 
   setRendererReady(ready) {
@@ -364,6 +414,8 @@ export class DictationManager {
     this.heardSpeech = false;
     this.lastSpeechAt = startedAt;
     this.noiseFloor = 0.008;
+    this.slowLevel = 0;
+    this.slowAt = 0;
     this.longestPause = 0;
     this.segments = [];
     this.segStart = 0;
@@ -408,7 +460,8 @@ export class DictationManager {
 
   /** Adaptive endpoint: incomplete phrases wait longer, brief commands finish promptly. */
   endSilenceMs() {
-    return computeEndSilenceMs({
+    // One extra second: a short thinking pause must not end the turn.
+    return 1000 + computeEndSilenceMs({
       heard: this.payload.partial || this.partialText || "",
       speechDurationMs: Math.max(0, (this.lastSpeechAt || 0) - (this.speechStartedAt || 0)),
       longestPauseMs: this.longestPause || 0,
@@ -651,13 +704,15 @@ export class DictationManager {
     } catch {
       camera = "unknown";
     }
+    let screen = "unknown";
+    try { screen = systemPreferences.getMediaAccessStatus("screen"); } catch { screen = "unknown"; }
     let accessibility = true;
     try {
       accessibility = systemPreferences.isTrustedAccessibilityClient(false);
     } catch {
       accessibility = true;
     }
-    return { microphone, camera, accessibility, trusted: accessibility };
+    return { microphone, camera, screen, accessibility, trusted: accessibility };
   }
 
   micAppLabel() {
@@ -684,11 +739,16 @@ export class DictationManager {
     return `${label} access is blocked. Opening System Settings → Privacy & Security → ${label} and turn on “${appLabel}”.`;
   }
 
+  mediaOffMessage(kind) {
+    const label = kind === "camera" ? "Camera" : kind === "screen" ? "Screen recording" : "Microphone";
+    return `${label} access is off for ${this.micAppLabel()}. Allow it when macOS asks, or later in System Settings → Privacy & Security.`;
+  }
+
   micBlockedMessage(status = "denied") {
     return this.mediaBlockedMessage("microphone", status);
   }
 
-  async ensureMediaAccess(mediaType = "microphone") {
+  async ensureMediaAccess(mediaType = "microphone", { settings = true } = {}) {
     if (process.platform === "linux") return { ok: true, status: "unknown", mediaType };
     if (process.platform === "win32") {
       // Windows has no askForMediaAccess equivalent; Chromium still prompts /
@@ -713,38 +773,156 @@ export class DictationManager {
         const granted = await systemPreferences.askForMediaAccess(kind);
         if (granted) return { ok: true, status: "granted", mediaType: kind };
       } catch (error) {
-        await this.openPrivacySettings(kind);
+        if (settings) await this.openPrivacySettings(kind);
         return {
           ok: false,
           status: "denied",
           mediaType: kind,
-          error: this.mediaBlockedMessage(kind, "denied"),
+          error: settings ? this.mediaBlockedMessage(kind, "denied") : this.mediaOffMessage(kind),
           cause: error instanceof Error ? error.message : String(error || ""),
         };
       }
     }
 
     if (status === "restricted") {
-      await this.openPrivacySettings(kind);
+      if (settings) await this.openPrivacySettings(kind);
       return {
         ok: false,
         status,
         mediaType: kind,
-        error: this.mediaBlockedMessage(kind, status),
+        error: settings ? this.mediaBlockedMessage(kind, status) : this.mediaOffMessage(kind),
       };
     }
 
-    await this.openPrivacySettings(kind);
+    if (settings) await this.openPrivacySettings(kind);
     return {
       ok: false,
       status: "denied",
       mediaType: kind,
-      error: this.mediaBlockedMessage(kind, "denied"),
+      error: settings ? this.mediaBlockedMessage(kind, "denied") : this.mediaOffMessage(kind),
     };
   }
 
   async ensureMicrophoneAccess() {
     return this.ensureMediaAccess("microphone");
+  }
+
+  /** A tiny compiled helper that calls CGRequestScreenCaptureAccess as a child of Clyra, so macOS lists Clyra and asks. */
+  async requestScreenAccessNative() {
+    const dir = path.join(app.getPath("userData"), "native-input");
+    const bin = path.join(dir, "clyra-screen-request");
+    try { await fsp.access(bin); } catch {
+      await fsp.mkdir(dir, { recursive: true });
+      const src = `${bin}.swift`;
+      await fsp.writeFile(src, 'import CoreGraphics\nprint(CGPreflightScreenCaptureAccess() ? "granted" : (CGRequestScreenCaptureAccess() ? "granted" : "requested"))\n');
+      await execFileAsync("xcrun", ["swiftc", src, "-O", "-o", bin], { timeout: 120_000 });
+    }
+    const { stdout } = await execFileAsync(bin, [], { timeout: 30_000 });
+    return String(stdout).trim();
+  }
+
+  readAccess(kind) {
+    try { return systemPreferences.getMediaAccessStatus(kind); } catch { return "unknown"; }
+  }
+
+  /** Screen Recording: touching the capture list registers Clyra there (and shows macOS's pop-up the first time). */
+  async ensureScreenAccess({ settings = true } = {}) {
+    if (process.platform !== "darwin") return { ok: true, status: "unknown", mediaType: "screen" };
+    let status = this.readAccess("screen");
+    if (status === "granted" || status === "unknown") return { ok: true, status, mediaType: "screen" };
+    try { await this.requestScreenAccessNative(); } catch { /* falls through */ }
+    try { await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } }); } catch { /* registers the app in the list even when it fails */ }
+    status = this.readAccess("screen");
+    if (status === "granted") return { ok: true, status, mediaType: "screen" };
+    if (settings) await this.openPrivacySettings("screen");
+    return { ok: false, status, mediaType: "screen", error: `Screen recording is not active for ${this.micAppLabel()}. Turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then restart Clyra: macOS only applies it to apps that start afterwards.` };
+  }
+
+  /** Every permission Clyra uses, as macOS currently reports it. */
+  accessStatus() {
+    return {
+      microphone: this.readAccess("microphone"),
+      camera: this.readAccess("camera"),
+      screen: this.readAccess("screen"),
+      accessibility: (() => { try { return systemPreferences.isTrustedAccessibilityClient(false) ? "granted" : "denied"; } catch { return "unknown"; } })(),
+    };
+  }
+
+  /**
+   * The permissions command: makes Clyra appear in each Privacy list (macOS only lists an app after it has asked), shows
+   * macOS's own pop-up where there is one, and opens that Settings page, one at a time, for anything still off.
+   */
+  async ensureAllAccess({ open = true, onProgress } = {}) {
+    if (process.platform !== "darwin") return { ok: true, results: {} };
+    const report = (kind, state) => { try { onProgress?.(kind, state); } catch { /* listener gone */ } };
+    const results = {};
+    const trigger = {
+      microphone: async () => { await systemPreferences.askForMediaAccess("microphone").catch(() => false); },
+      camera: async () => { await systemPreferences.askForMediaAccess("camera").catch(() => false); },
+      // CGRequestScreenCaptureAccess is what makes macOS list the app and show its own "Allow" pop-up (desktopCapturer alone does not).
+      screen: async () => {
+        try { const r = await this.requestScreenAccessNative(); console.log("[permissions] screen request:", r); } catch (error) { console.log("[permissions] screen request failed:", error?.message); }
+        try { await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } }); } catch { /* registers the app */ }
+      },
+      accessibility: async () => { try { systemPreferences.isTrustedAccessibilityClient(true); } catch { /* prompt is best effort */ } },
+    };
+    for (const kind of ["microphone", "camera", "screen", "accessibility"]) {
+      report(kind, "checking");
+      console.log(`[permissions] ${kind}: ${this.accessStatus()[kind]}`);
+      if (this.accessStatus()[kind] === "granted") { results[kind] = "granted"; report(kind, "granted"); continue; }
+      // A pop-up waits for you; do not let one unanswered prompt hold up the rest.
+      await Promise.race([trigger[kind](), new Promise((resolve) => setTimeout(resolve, 8_000))]);
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      if (this.accessStatus()[kind] === "granted") { results[kind] = "granted"; report(kind, "granted"); continue; }
+      report(kind, "needs-you");
+      if (open) await this.openPrivacySettings(kind);
+      const until = Date.now() + 45_000;
+      while (open && Date.now() < until && this.accessStatus()[kind] !== "granted") await new Promise((resolve) => setTimeout(resolve, 1000));
+      results[kind] = this.accessStatus()[kind];
+      report(kind, results[kind] === "granted" ? "granted" : "waiting");
+    }
+    if (results.screen && results.screen !== "granted") void this.offerRestartForScreen();
+    return { ok: Object.values(results).every((state) => state === "granted"), results };
+  }
+
+  /** macOS applies a newly allowed Screen Recording only to apps that start afterwards; offer the restart instead of leaving it half-working. */
+  async offerRestartForScreen() {
+    if (this.restartOffered) return;
+    this.restartOffered = true;
+    try {
+      const { response } = await dialog.showMessageBox({
+        type: "question", buttons: ["Restart Clyra", "Not now"], defaultId: 0, cancelId: 1,
+        message: "Screen recording needs a restart",
+        detail: "If you just turned Screen Recording on for Clyra in System Settings, macOS only applies it after Clyra restarts.",
+      });
+      if (response === 0) { app.relaunch(); app.exit(0); }
+    } catch { /* dialog unavailable */ }
+  }
+
+  /**
+   * A voice call can use the microphone, the camera and the screen. One at a time: anything not allowed yet gets macOS's own
+   * pop-up where there is one, then its System Settings page, and the next waits until this one is allowed (or a minute passes).
+   */
+  async ensureCallPermissions() {
+    if (Date.now() - (this.callPermissionsAt || 0) < 120_000) return { ok: true, skipped: true };
+    this.callPermissionsAt = Date.now();
+    const results = {};
+    for (const kind of ["microphone", "camera", "screen"]) {
+      if (this.readAccess(kind) === "granted" || (process.platform !== "darwin")) { results[kind] = { ok: true }; continue; }
+      if (kind === "screen") {
+        results[kind] = await this.ensureScreenAccess({ settings: true }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+      } else {
+        results[kind] = await this.ensureMediaAccess(kind, { settings: true }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+      }
+      if (results[kind]?.ok === false) {
+        // Wait for this one to be allowed before the next Settings page opens.
+        const until = Date.now() + 60_000;
+        while (Date.now() < until && this.readAccess(kind) !== "granted") await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (this.readAccess(kind) === "granted") results[kind] = { ok: true };
+        else if (kind === "screen") await this.offerRestartForScreen();
+      }
+    }
+    return { ok: Object.values(results).every((r) => r?.ok !== false), results };
   }
 
   async ensureCameraAccess() {
@@ -801,7 +979,7 @@ export class DictationManager {
   async openPrivacySettings(kind = "microphone") {
     // Prefer the OS `open` / `start` CLIs — shell.openExternal often no-ops on
     // preference-pane URLs (especially on newer macOS System Settings).
-    const pane = kind === "camera" ? "Privacy_Camera" : "Privacy_Microphone";
+    const pane = { camera: "Privacy_Camera", screen: "Privacy_ScreenCapture", accessibility: "Privacy_Accessibility", automation: "Privacy_Automation" }[kind] || "Privacy_Microphone";
     if (process.platform === "darwin") {
       const candidates = [
         `x-apple.systempreferences:com.apple.preference.security?${pane}`,
@@ -932,6 +1110,8 @@ export class DictationManager {
     const inNotch = this.showsInNotch();
     // In the notch the Notch app draws it; the pill window stays invisible so nothing shows twice.
     try { this.window.setOpacity(inNotch ? 0 : 1); } catch { /* opacity unsupported */ }
+    // Invisible is not enough: the hidden pill sits over the notch and would swallow its hover and clicks.
+    try { this.window.setIgnoreMouseEvents(inNotch); } catch { /* window closing */ }
     if (inNotch) this.notch.send({ t: "state", ...this.payload });
     this.window.webContents.send("dictation:pill-state", { ...this.payload, pillMode: this.pillMode });
   }
@@ -944,9 +1124,16 @@ export class DictationManager {
   setState(payload) {
     const previousPhase = this.phase;
     this.payload = { ...this.payload, ...payload };
+    // Levels measured by Clyra's window (not the native mic) still move the notch's waveform.
+    if (this.showsInNotch() && !this.nativeActive && payload.level !== undefined && (payload.phase ?? this.phase) === "listening") {
+      const level = Math.max(0, Math.min(1, Number(payload.level) || 0));
+      this.notch.send({ t: "level", level, rms: level * 0.3, peak: level * 0.4 });
+    }
     if (payload.phase === "idle" || payload.phase === "arming") this.payload.handsFree = false;
     this.phase = this.payload.phase || "idle";
     if (this.phase === "idle") {
+      // A call keeps listening: if nothing was said (or it failed), open the microphone again unless the notch is answering.
+      if (this.callMode && !this.callBusy) setTimeout(() => { if (this.callMode && !this.callBusy) void this.listenForCall(); }, 900);
       if (this.pillMode === "notch") this.notch?.send({ t: "state", phase: "idle" });
       this.handsFree = false;
       this.autoStop = false;
@@ -1109,7 +1296,7 @@ export class DictationManager {
       void this.nativeStart(activationId);
     } else {
       this.emitUi("dictation:trigger", { type: "start", target: { ...this.target }, manual: true });
-      if (this.autoStop) this.emitUi("dictation:trigger", { type: "autostop" });
+      if (this.autoStop) this.emitUi("dictation:trigger", { type: "autostop", silenceMs: this.callMode ? 2400 : 3200 });
       if (this.pendingStop) {
         // Released before the mic was requested: the renderer defers the stop
         // until capture is live, so nothing said is lost and nothing hangs.
@@ -1239,6 +1426,7 @@ export class DictationManager {
 
   async insert({ text, target, probe }) {
     if (!text?.trim()) throw new Error("Clyra received no text to insert.");
+    if (this.callMode) { this.callBusy = true; this.notch?.send({ t: "voice-call", event: "transcript", text: String(text).trim() }); return { ok: true, method: "voice-call" }; }
     if (this.inline) { this.emitUi("dictation:inline-result", { text, edit: this.payload.edit || null }); return { ok: true, method: "composer" }; }
     // A click on the pill may have activated Clyra: wait for the refocus started in
     // action("stop") (and discard any focus probe taken while the pill had focus).

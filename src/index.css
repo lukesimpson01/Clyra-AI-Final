@@ -12225,3 +12225,10 @@ body,
 /* the row a search result points at lights up once, then settles */
 .clys-window [data-found="true"] { animation: clys-found 1.5s ease both; border-radius: 10px; }
 @keyframes clys-found { 0%, 55% { background: rgba(0, 102, 255, 0.1); } 100% { background: transparent; } }
+
+/* A slash command inside a sent message: blue text, its icon in the normal ink colour, sitting where it was typed. */
+.clyra-inline-command{display:inline-flex;align-items:center;gap:5px;color:#1a6bff;font-weight:500;vertical-align:baseline}
+.clyra-inline-command__icon{display:inline-flex;width:15px;height:15px;color:currentColor;flex:none;align-items:center;justify-content:center}
+.clyra-inline-command__icon svg,.clyra-inline-command__icon img{width:15px;height:15px;color:inherit}
+.clyra-inline-command__icon{color:var(--clyra-ink,#15171C)}
+textarea::selection{background:rgba(26,107,255,.22)}

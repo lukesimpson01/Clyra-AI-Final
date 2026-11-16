@@ -48,6 +48,8 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [scale, setScale] = useState(0.4);
+  const [boxWidth, setBoxWidth] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
   const [near, setNear] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -61,7 +63,7 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
   useEffect(() => {
     const element = box.current;
     if (!element) return;
-    const measure = () => setScale(element.clientWidth / frameWidth || 0.4);
+    const measure = () => { setBoxWidth(element.clientWidth); setScale(element.clientWidth / frameWidth || 0.4); };
     measure();
     const resize = new ResizeObserver(measure);
     resize.observe(element);
@@ -69,7 +71,7 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
     watch.observe(element);
     return () => { resize.disconnect(); watch.disconnect(); };
   }, [frameWidth]);
-  useEffect(() => { setLoaded(false); setFailed(false); setDoc(null); }, [src]);
+  useEffect(() => { setLoaded(false); setFailed(false); setDoc(null); setContentHeight(0); }, [src]);
   const post = useCallback((type: "clyra-play" | "clyra-idle") => frame.current?.contentWindow?.postMessage({ type }, "*"), []);
   useEffect(() => { if (loaded) post(active ? "clyra-play" : "clyra-idle"); }, [active, loaded, post]);
   useEffect(() => { if (loaded && replayKey) post("clyra-play"); }, [replayKey, loaded, post]);
@@ -77,11 +79,18 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
       if (event.data?.type === "clyra-frame-ready") setLoaded(true);
+      if (event.data?.type === "clyra-frame-size" && typeof event.data.height === "number") setContentHeight(event.data.height);
       if (event.data?.type === "clyra-frame-error") setFailed(true);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+  // A component taller than the frame is shown whole: the frame grows to fit it and the card scales it down, centred.
+  const boxHeight = boxWidth * frameHeight / frameWidth;
+  const tall = contentHeight > frameHeight && frameWidth < 800;
+  const shownHeight = tall ? Math.min(contentHeight, frameHeight * 3) : frameHeight;
+  const fit = tall && boxHeight ? Math.min(scale, boxHeight / shownHeight) : scale;
+  const left = Math.max(0, (boxWidth - frameWidth * fit) / 2);
   return (
     <div ref={box} className={cn("relative isolate overflow-hidden bg-[#FAFAF9]", className)} style={{ aspectRatio: `${frameWidth} / ${frameHeight}` }}>
       <div aria-hidden className="absolute inset-0 -z-10 [background-image:radial-gradient(rgba(55,53,47,0.09)_1px,transparent_1px)] [background-size:14px_14px]" />
@@ -93,8 +102,8 @@ function LivePreview({ src, active = false, interactive = false, frameWidth = 48
           sandbox="allow-scripts"
           tabIndex={interactive ? 0 : -1}
           aria-hidden={interactive ? undefined : true}
-          style={{ width: frameWidth, height: frameHeight, transform: `scale(${scale})`, transformOrigin: "0 0", opacity: loaded ? 1 : 0, transition: "opacity 320ms ease" }}
-          className={cn("absolute left-0 top-0 border-0 bg-transparent", interactive ? "" : "pointer-events-none")}
+          style={{ width: frameWidth, height: shownHeight, left, transform: `scale(${fit})`, transformOrigin: "0 0", opacity: loaded ? 1 : 0, transition: "opacity 320ms ease" }}
+          className={cn("absolute top-0 border-0 bg-transparent", interactive ? "" : "pointer-events-none")}
         />
       ) : null}
       {!loaded && !failed ? <div aria-hidden className="cc-shimmer absolute inset-0" /> : null}

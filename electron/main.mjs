@@ -27,6 +27,8 @@ import { DeepResearchManager } from "./deep-research-manager.mjs";
 import { LocalMemoryManager } from "./local-memory-manager.mjs";
 import { ScreenCaptureService } from "./screen-capture.mjs";
 import { DesktopControlService } from "./desktop-control.mjs";
+import { ComputerRun } from "./computer-run.mjs";
+import { ComputerOverlay } from "./computer-overlay.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
 import { collectCareSnapshot } from "./care-manager.mjs";
 
@@ -124,6 +126,39 @@ let localMemoryManager = null;
 let companionManager = null;
 let screenCaptureService = null;
 let desktopControlService = null;
+let computerRun = null;
+let computerOverlay = null;
+const COMPUTER_STOP_SHORTCUT = "CommandOrControl+Alt+Shift+Escape";
+
+/** One typed, versioned event reaches Clyra chat, the control bar and the Notch. */
+function publishComputerEvent(event) {
+  try { if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send("computer:event", event); } catch { /* window closing */ }
+  const state = event.state || {};
+  dictationManager?.notch?.send({
+    t: "computer", event: event.type, status: state.status, goal: state.goal, message: state.message || "", app: state.app || "",
+    summary: state.summary || "", error: state.error || "", plan: state.plan || [],
+    steps: (state.steps || []).slice(-24).map((step) => ({ id: step.id, kind: step.kind, label: step.label, app: step.app || "", status: step.status, detail: step.detail || "" })),
+  });
+  if (event.type === "run.started") {
+    try { if (!globalShortcut.register(COMPUTER_STOP_SHORTCUT, () => void computerRun?.stop())) console.warn("[computer] emergency stop shortcut unavailable"); } catch { /* unavailable */ }
+  } else if (event.type === "run.ended") {
+    try { globalShortcut.unregister(COMPUTER_STOP_SHORTCUT); } catch { /* ignore */ }
+  }
+}
+
+async function handleComputerCommand(action, payload = {}) {
+  if (!computerRun) return { ok: false, error: "Computer use is not ready." };
+  switch (action) {
+    case "start": return computerRun.start(payload.goal);
+    case "pause": return computerRun.pause();
+    case "resume": return computerRun.resume();
+    case "human-done": return computerRun.resume({ fromHuman: true });
+    case "stop": return computerRun.stop();
+    case "message": return computerRun.sendMessage(payload.text);
+    case "state": return { ok: true, state: computerRun.getState() };
+    default: return { ok: false, error: "Unknown computer command." };
+  }
+}
 let serviceProcess = null;
 let notchLaunched = false;
 let serviceLaunchError = null;
@@ -277,6 +312,7 @@ function destroyNativeManagers() {
   try { surfaceManager?.destroy(); } catch (error) { console.warn("[surface] teardown failed:", error); }
   try { dictationManager?.destroy(); flowNative?.destroy(); flowEngine?.stop(); } catch (error) { console.warn("[dictation] teardown failed:", error); }
   try { smartToolbarManager?.destroy(); } catch (error) { console.warn("[smart-toolbar] teardown failed:", error); }
+  try { void computerRun?.stop(); computerOverlay?.destroy(); } catch (error) { console.warn("[computer] teardown failed:", error); }
   try { companionManager?.destroy(); } catch (error) { console.warn("[companion] teardown failed:", error); }
   dictationManager = null;
   smartToolbarManager = null;
@@ -809,7 +845,7 @@ function startNotchMediaLink() {
   musicLevel = new MusicLevel({
     preloadPath: path.join(here, "music-level-preload.cjs"),
     pagePath: path.join(here, "music-level.html"),
-    onLevel: (rms) => bridge.send({ t: "music-level", rms }),
+    onLevel: (rms, bands) => bridge.send({ t: "music-level", rms, bands }),
     onState: (state) => bridge.send({ t: "music-level", ...state }),
   });
   const summary = (state) => {
@@ -842,6 +878,9 @@ function startNotchMediaLink() {
     }
   };
   bridge.onMessage = async (message) => {
+    if (message?.op === "computer") { await handleComputerCommand(String(message.action || ""), message).catch((error) => console.warn("[computer]", error?.message || error)); return; }
+    if (message?.op === "permissions") { void dictationManager?.ensureAllAccess({ open: true }); return; }
+    if (message?.op === "voice-call") { if (message.action === "listen") await dictationManager?.listenForCall(true); else if (message.action === "toggle") await dictationManager?.toggleVoiceCall(); else if (message.action === "mute") { if (dictationManager) { dictationManager.callMuted = true; if (["listening", "arming"].includes(dictationManager.phase)) dictationManager.cancel(); } } else if (message.action === "unmute") { if (dictationManager) { dictationManager.callMuted = false; await dictationManager.listenForCall(); } } else if (message.action === "end") { dictationManager?.endVoiceCall(); } return; }
     if (message?.op === "music") { musicLevel?.set(Boolean(message.on)); return; }
     if (message?.op !== "spotify" || !spotifyManager) return;
     try {
@@ -1296,6 +1335,12 @@ function registerIpc() {
     if (mic && mic.ok === false) return { ...status, ...mic };
     return { ok: true, ...(status || {}), ...(mic || {}) };
   });
+  ipcMain.handle("permissions:status", async (event) => { authorize(event); return { ok: true, status: dictationManager?.accessStatus() || {} }; });
+  ipcMain.handle("permissions:ensure-all", async (event) => { authorize(event); return (await dictationManager?.ensureAllAccess({ open: true })) || { ok: false }; });
+  ipcMain.handle("dictation:ensure-screen", async (event) => {
+    authorize(event);
+    return (await dictationManager?.ensureScreenAccess()) || { ok: true };
+  });
   ipcMain.handle("dictation:ensure-camera", async (event) => {
     authorize(event);
     const camera = await dictationManager?.ensureCameraAccess();
@@ -1335,6 +1380,21 @@ function registerIpc() {
     }
     return companionManager?.seeScreen(String(payload?.question || ""));
   });
+  // Timers, alarms and the stopwatch asked for in Clyra's chat are set on the Notch itself, exactly as when asked there.
+  ipcMain.handle("notch:op", async (event, payload) => {
+    authorize(event);
+    const kind = String(payload?.kind || "");
+    if (!["timer", "stopwatch", "alarm"].includes(kind)) return { ok: false, error: "Unsupported Notch action." };
+    dictationManager?.notch?.send({
+      t: "notch-op", kind, action: String(payload?.action || "start"),
+      seconds: Number(payload?.seconds) || 0, label: String(payload?.label || "").slice(0, 40),
+      hour: Number(payload?.hour), minute: Number(payload?.minute),
+    });
+    return { ok: true };
+  });
+  for (const action of ["start", "pause", "resume", "human-done", "stop", "message", "state"]) {
+    ipcMain.handle(`computer:${action}`, async (event, payload) => { authorize(event); return handleComputerCommand(action, payload || {}); });
+  }
   ipcMain.handle("desktop:see-screen", async (event, payload) => {
     authorize(event);
     return companionManager?.seeScreen(String(payload?.question || ""));
@@ -1762,6 +1822,15 @@ async function createWindow() {
   localMemoryManager = new LocalMemoryManager({ filePath:path.join(app.getPath("userData"), "clyra-memory.dat"), development:isDevelopment });
   screenCaptureService = new ScreenCaptureService();
   desktopControlService = new DesktopControlService();
+  const notchPassThrough = () => dictationManager?.notch?.send({ t: "passthrough", ms: 700 });
+  computerOverlay = new ComputerOverlay({
+    overlayHtml: path.join(here, "computer-overlay.html"),
+    barHtml: path.join(here, "computer-bar.html"),
+    barPreload: path.join(here, "computer-bar-preload.cjs"),
+  });
+  computerOverlay.onInject = notchPassThrough;
+  computerRun = new ComputerRun({ desktop: desktopControlService, overlay: computerOverlay, getServiceUrl: () => `http://127.0.0.1:${appPort}`, getServiceToken: () => serviceToken, emit: publishComputerEvent });
+  computerOverlay.registerIpc(() => computerRun);
   companionManager = new CompanionManager({
     preloadPath: path.join(here, "companion-preload.cjs"),
     htmlPath: path.join(here, "companion.html"),

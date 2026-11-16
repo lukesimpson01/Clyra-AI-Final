@@ -6,6 +6,13 @@ export type AgentsStackState = {
   url: string;
 };
 
+export type ComputerUseStep = { id: string; kind: string; label: string; app?: string; status: "running" | "done" | "failed"; detail?: string };
+export type ComputerUseState = {
+  v: number; status: "idle" | "planning" | "running" | "paused" | "needs_user" | "done" | "failed" | "cancelled"; id?: string; goal?: string;
+  plan?: Array<{ title: string; status: "pending" | "active" | "done" }>; steps?: ComputerUseStep[]; message?: string; app?: string; summary?: string; error?: string;
+};
+export type ComputerUseEvent = { v: number; type: string; runId?: string; ts: number; state: ComputerUseState };
+
 export type ElectronSurfaceBounds = { x: number; y: number; width: number; height: number };
 
 export type CareSnapshot = {
@@ -215,6 +222,7 @@ export type ClyraDesktopBridge = {
     serviceUrl: () => Promise<string>;
     insert: (payload: { text: string; target?: unknown; raw?: string }) => Promise<any>;
     ensurePermissions?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string; accessibility?: boolean }>;
+    ensureScreen?: () => Promise<{ ok: boolean; status?: string; error?: string }>;
     ensureCamera?: () => Promise<{ ok: boolean; status?: string; error?: string; microphone?: string; camera?: string }>;
     openMicrophoneSettings?: () => Promise<{ ok: boolean }>;
     openCameraSettings?: () => Promise<{ ok: boolean }>;
@@ -238,6 +246,18 @@ export type ClyraDesktopBridge = {
     vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
     error?: string;
   }>;
+  permissions?: { status: () => Promise<{ ok: boolean; status: Record<string, string> }>; ensureAll: () => Promise<{ ok: boolean; results?: Record<string, string> }> };
+  notch?: { op: (payload: { kind: "timer" | "stopwatch" | "alarm"; action?: "start" | "stop" | "reset"; seconds?: number; label?: string; hour?: number; minute?: number }) => Promise<{ ok: boolean; error?: string }> };
+  computer?: {
+    start: (goal: string) => Promise<{ ok: boolean; id?: string; error?: string; needsPermission?: string }>;
+    pause: () => Promise<{ ok: boolean }>;
+    resume: () => Promise<{ ok: boolean; error?: string }>;
+    humanDone: () => Promise<{ ok: boolean; error?: string }>;
+    stop: () => Promise<{ ok: boolean }>;
+    message: (text: string) => Promise<{ ok: boolean }>;
+    state: () => Promise<{ ok: boolean; state: ComputerUseState }>;
+    onEvent: (callback: (event: ComputerUseEvent) => void) => () => void;
+  };
   openCluely?: {
     ensure?: (payload?: { expand?: boolean }) => Promise<{ ok: boolean; error?: string; port?: number; action?: string }>;
     show?: (payload?: { expand?: boolean }) => Promise<{ ok: boolean; error?: string; port?: number; action?: string }>;

@@ -3,7 +3,9 @@ import net from "node:net";
 import path from "node:path";
 import { patchClyraElectron } from "./patch-electron-macos-privacy.mjs";
 
-// Unique macOS TCC identity so Privacy → Microphone lists "Clyra".
+// Unique macOS TCC identity so Privacy → Microphone lists "Clyra". The renamed app has to be ad-hoc signed too: unsigned,
+// macOS ignores the new identity and Clyra never shows up in the Privacy lists. Opt out with CLYRA_ELECTRON_CODESIGN=0.
+if (process.platform === "darwin" && process.env.CLYRA_ELECTRON_CODESIGN !== "0") process.env.CLYRA_ELECTRON_CODESIGN = "1";
 try {
   const patched = patchClyraElectron();
   if (patched?.ok) {

@@ -12,12 +12,14 @@ export function planCursorMotion(from, to, options = {}) {
     throw new TypeError("Cursor coordinates must be finite numbers.");
   }
   const distance = Math.hypot(end.x - start.x, end.y - start.y);
-  const speed = options.speed === "instant" || options.speed === "fast" ? options.speed : "natural";
+  const speed = ["instant", "fast", "calm"].includes(options.speed) ? options.speed : "natural";
   const reducedMotion = Boolean(options.reducedMotion);
   const durationMs = reducedMotion || speed === "instant" || distance < 4
     ? 0
+    : speed === "calm"
+      ? Math.round(Math.min(950, Math.max(380, 300 + distance * 0.5)))
     : Math.round(Math.min(speed === "fast" ? 235 : 350, Math.max(speed === "fast" ? 65 : 92, (speed === "fast" ? 54 : 78) + distance * (speed === "fast" ? 0.18 : 0.30))));
-  const count = durationMs === 0 ? 1 : Math.min(26, Math.max(2, Math.ceil(durationMs / MOTION_INTERVAL_MS)));
+  const count = durationMs === 0 ? 1 : Math.min(speed === "calm" ? 60 : 26, Math.max(2, Math.ceil(durationMs / MOTION_INTERVAL_MS)));
   const frames = [];
   for (let i = 1; i <= count; i++) {
     const t = i / count;

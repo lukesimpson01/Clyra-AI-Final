@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{--blue:30,111,255}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;background:transparent;overflow:hidden;user-select:none;-webkit-user-select:none;cursor:default}
+  #glow{position:fixed;inset:0;opacity:0;transition:opacity 380ms cubic-bezier(.32,.72,0,1);pointer-events:none}
+  #glow.on{opacity:1}
+  #glow.off{transition-duration:300ms;transition-timing-function:cubic-bezier(.4,0,.6,1)}
+  .edge{position:absolute;pointer-events:none;animation:breathe 3.6s ease-in-out infinite}
+  .t{left:0;right:0;top:0;height:120px;background:linear-gradient(to bottom,rgba(var(--blue),.34),rgba(var(--blue),.12) 38%,rgba(var(--blue),0))}
+  .b{left:0;right:0;bottom:0;height:120px;background:linear-gradient(to top,rgba(var(--blue),.34),rgba(var(--blue),.12) 38%,rgba(var(--blue),0))}
+  .l{top:0;bottom:0;left:0;width:96px;background:linear-gradient(to right,rgba(var(--blue),.30),rgba(var(--blue),.10) 38%,rgba(var(--blue),0))}
+  .r{top:0;bottom:0;right:0;width:96px;background:linear-gradient(to left,rgba(var(--blue),.30),rgba(var(--blue),.10) 38%,rgba(var(--blue),0))}
+  .rim{inset:0;box-shadow:inset 0 0 0 1px rgba(var(--blue),.26),inset 0 0 38px rgba(var(--blue),.20);animation:none}
+  @keyframes breathe{0%,100%{opacity:.82}50%{opacity:1}}
+  @media(prefers-reduced-motion:reduce){.edge{animation:none}#glow{transition-duration:1ms}}
+</style></head><body>
+<div id="glow"><div class="edge t"></div><div class="edge b"></div><div class="edge l"></div><div class="edge r"></div><div class="edge rim"></div></div>
+<script>
+const glow=document.getElementById("glow");
+window.__glow=(on)=>{glow.classList.toggle("off",!on);requestAnimationFrame(()=>requestAnimationFrame(()=>glow.classList.toggle("on",!!on)));};
+</script></body></html>

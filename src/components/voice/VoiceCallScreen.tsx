@@ -11,8 +11,9 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
-import { Camera, Monitor, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
+import { Camera, Monitor, ScanLine, ExternalLink, FileText, Globe2, Hand, Mail, Maximize2, MessageSquareText, Minimize2, Pause, Play, Square, PhoneOff } from "lucide-react";
 import { VoiceMediaSurface } from "./VoiceMediaSurface";
+import { ShimmerText } from "../chat/assistant";
 import { AgentCursor } from "../vibe-coder/preview/AgentCursor";
 import "./voiceMotion.css";
 
@@ -206,7 +207,9 @@ const GAZE_RANGE_Y = 16;
 const GAZE_DOWN = 18;
 
 function moodFor(state: VoiceCallState, muted: boolean, resting: boolean, typing: boolean): Mood {
-  if (typing) return "typing";
+  // Working states always win so the thinking dots show even while the
+  // composer is open (e.g. right after sending a message).
+  if (typing && state !== "thinking" && state !== "responding" && state !== "acting_browser" && state !== "acting_computer" && state !== "acting_clyra") return "typing";
   if (muted && (state === "ready" || state === "listening" || state === "transcribing" || state === "error" || state === "entering" || state === "awaiting_approval")) return "muted";
   if (state === "thinking") return "thinking";
   if (state === "responding") return "responding";
@@ -550,13 +553,8 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
             aria-hidden={open}
             onClick={onOpen}
             tabIndex={open ? -1 : 0}
-            style={{
-              background: open ? "rgba(255,255,255,.94)" : "rgba(0,0,0,.045)",
-              borderColor: open ? "rgba(0,0,0,.07)" : "rgba(0,0,0,.025)",
-              boxShadow: open ? "0 8px 30px rgba(0,0,0,.055)" : "0 8px 30px rgba(0,0,0,0)",
-              cursor: open ? "default" : "pointer",
-            }}
-          >
+            style={{ cursor: open ? "default" : "pointer" }}
+         >
             <span className="clyra-voice-morph__icon" style={{ opacity: open ? 0 : 1 }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" data-ico="kb" style={{ display: "block" }}>
                 <rect width="20" height="16" x="2" y="4" rx="2" />
@@ -604,7 +602,7 @@ function VoiceComposer({ open, muted, disabled, onOpen, onClose, onMute, onEnd, 
                 title="Send"
                 disabled={!value.trim() || disabled}
                 onClick={submit}
-                style={{ background: value.trim() ? "#1a1a19" : "rgba(0,0,0,.06)", color: value.trim() ? "#ffffff" : "rgba(25,25,25,.35)" }}
+                data-ready={Boolean(value.trim())}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m5 12 7-7 7 7" />
@@ -914,7 +912,7 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 function groupMotion(phase: "entering" | "live" | "ending", delay: number, distance: number, reduced: boolean | null) {
   if (reduced) return { animate: { opacity: phase === "live" ? 1 : 0, y: 0 }, transition: { duration: 0.08 } };
   if (phase === "entering") return { animate: { opacity: 0, y: distance }, transition: { duration: 0 } };
-  if (phase === "ending") return { animate: { opacity: 0, y: 0 }, transition: { duration: 0.18, ease: "easeOut" as const } };
+  if (phase === "ending") return { animate: { opacity: 0, y: 0 }, transition: { duration: reduced ? 0.08 : 0.34, ease: [0.32, 0.72, 0, 1] as [number, number, number, number] } };
   return { animate: { opacity: 1, y: 0 }, transition: { duration: 0.32, delay, ease: EASE } };
 }
 
@@ -957,10 +955,96 @@ function ApprovalPanel({ approval, onConfirm, onCancel }: { approval: ApprovalRe
   );
 }
 
+/* Samples the live frame behind the dock and publishes a glass tint + ink
+ * colour as CSS variables, so the controls adapt to whatever they overlap. */
+function useDockTint(ref: React.RefObject<HTMLElement | null>, mode: "camera" | "screen" | null, lowPower: boolean) {
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !mode) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 24; canvas.height = 8;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+    const cur = { r: 16, g: 20, b: 26 };
+    let timer = 0;
+    let disposed = false;
+    const publish = () => {
+      const luma = (0.2126 * cur.r + 0.7152 * cur.g + 0.0722 * cur.b) / 255;
+      // Pull colour toward its luma so saturated scenes never give a garish dock.
+      const g = luma * 255;
+      const mix = (c: number) => Math.round(c * 0.62 + g * 0.38);
+      const r = mix(cur.r), gr = mix(cur.g), b = mix(cur.b);
+      const darkInk = luma > 0.56;
+      const lift = darkInk ? 255 : 0;
+      const k = darkInk ? 0.3 : 0.28;
+      const c = (v: number) => Math.round(v * (1 - k) + lift * k);
+      root.style.setProperty("--voice-dock-glass", `rgba(${c(r)}, ${c(gr)}, ${c(b)}, ${darkInk ? 0.5 : 0.46})`);
+      root.style.setProperty("--voice-dock-edge", darkInk ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.16)");
+      root.style.setProperty("--voice-dock-ink", darkInk ? "rgb(22, 24, 28)" : "rgb(255, 255, 255)");
+      root.dataset.dockTone = darkInk ? "light-scene" : "dark-scene";
+    };
+    const sample = () => {
+      if (disposed) return;
+      timer = window.setTimeout(sample, document.hidden ? 1200 : lowPower ? 800 : 380);
+      if (document.hidden) return;
+      const video = root.querySelector<HTMLVideoElement>(".clyra-voice-media__viewport video");
+      const footer = root.querySelector<HTMLElement>(".clyra-voice-call__footer");
+      let target = { r: 16, g: 20, b: 26 };
+      if (video && footer && video.readyState >= 2 && video.videoWidth) {
+        const vr = video.getBoundingClientRect();
+        const fr = footer.getBoundingClientRect();
+        const cover = getComputedStyle(video).objectFit === "cover";
+        const sc = cover ? Math.max(vr.width / video.videoWidth, vr.height / video.videoHeight) : Math.min(vr.width / video.videoWidth, vr.height / video.videoHeight);
+        const pw = video.videoWidth * sc, ph = video.videoHeight * sc;
+        const px = vr.left + (vr.width - pw) / 2, py = vr.top + (vr.height - ph) / 2;
+        const bx0 = fr.left + fr.width * 0.2, bx1 = fr.right - fr.width * 0.2;
+        const by0 = fr.top - 18, by1 = fr.bottom + 18;
+        const sx0 = Math.max(0, (bx0 - px) / sc), sx1 = Math.min(video.videoWidth, (bx1 - px) / sc);
+        const sy0 = Math.max(0, (by0 - py) / sc), sy1 = Math.min(video.videoHeight, (by1 - py) / sc);
+        if (sx1 - sx0 > 2 && sy1 - sy0 > 2) {
+          try {
+            ctx.drawImage(video, sx0, sy0, sx1 - sx0, sy1 - sy0, 0, 0, canvas.width, canvas.height);
+            const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let r = 0, g = 0, b = 0;
+            const n = d.length / 4;
+            for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+            target = { r: r / n, g: g / n, b: b / n };
+          } catch { /* keep the neutral fallback */ }
+        }
+      }
+      cur.r += (target.r - cur.r) * 0.4; cur.g += (target.g - cur.g) * 0.4; cur.b += (target.b - cur.b) * 0.4;
+      publish();
+    };
+    publish();
+    sample();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      root.style.removeProperty("--voice-dock-glass");
+      root.style.removeProperty("--voice-dock-edge");
+      root.style.removeProperty("--voice-dock-ink");
+      delete root.dataset.dockTone;
+    };
+  }, [ref, mode, lowPower]);
+}
+
 export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, screenRequest }: VoiceCallScreenProps) {
   const reduced = useReducedMotion();
   const duration = useMemo(() => time(call.elapsedSeconds), [call.elapsedSeconds]);
   const hasActivity = Boolean(call.activeTask) || Boolean(mediaMode);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [cameraFilter, setCameraFilter] = useState(false);
+  useEffect(() => { if (mediaMode !== "camera") setCameraFilter(false); }, [mediaMode]);
+  // Keep the immersive layout alive while the stage animates out so ending
+  // camera/screen share dissolves instead of snapping into the flow layout.
+  const [heldMode, setHeldMode] = useState<"camera" | "screen" | null>(mediaMode);
+  useEffect(() => {
+    if (mediaMode) { setHeldMode(mediaMode); return; }
+    const t = window.setTimeout(() => setHeldMode(null), reduced ? 80 : 520);
+    return () => window.clearTimeout(t);
+  }, [mediaMode, reduced]);
+  const shownMode = mediaMode ?? heldMode;
+  useDockTint(sectionRef, mediaMode, call.lowPowerMode);
   const response = call.error || call.responseText;
   const [lastTypeAt, setLastTypeAt] = useState(0);
   const [now, setNow] = useState(0);
@@ -1033,9 +1117,8 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
   }, [call.active]);
   useEffect(() => {
     if (phase !== "ending") return;
-    const d = delta();
-    if (!d) { void flight.start({ opacity: 0, scale: 0.9, transition: { duration: 0.4, ease: EASE } }); return; }
-    void flight.start({ x: d.x, y: d.y, scale: d.scale, opacity: 1, transition: { type: "spring", stiffness: 150, damping: 24, mass: 0.9 } });
+    // Hanging up: the presence stays where it is and dissolves, softly shrinking a touch, instead of flying off.
+    void flight.start({ x: 0, y: 0, opacity: 0, scale: reduced ? 1 : 0.94, transition: { duration: reduced ? 0.12 : 0.62, ease: [0.32, 0.72, 0, 1] } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
   const headerGroup = groupMotion(phase, 0.38, 4, reduced);
@@ -1047,14 +1130,15 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
       {call.active ? (
         <motion.section
           key="clyra-voice-call"
+          ref={sectionRef}
           initial={{ opacity: 0 }}
           animate={{ opacity: phase === "ending" ? 0 : 1 }}
           exit={{ opacity: 0 }}
-          transition={phase === "ending" ? { duration: 0.24, delay: 0.42, ease: "easeOut" } : { duration: reduced ? 0.08 : 0.1, ease: "linear" }}
+          transition={phase === "ending" ? { duration: reduced ? 0.1 : 0.5, delay: reduced ? 0 : 0.2, ease: [0.32, 0.72, 0, 1] } : { duration: reduced ? 0.08 : 0.1, ease: "linear" }}
           className="clyra-voice-call"
           data-state={call.state}
           data-low-power={call.lowPowerMode || undefined}
-          data-media-mode={mediaMode || "none"}
+          data-media-mode={shownMode || "none"}
           data-agent-kind={call.activeTask?.kind || "none"}
           aria-label="Clyra voice call"
         >
@@ -1067,13 +1151,16 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: reduced ? 0 : -4 }}
                   transition={{ duration: reduced ? 0.06 : 0.18, ease: EASE }}
-                >{modeStatus}</motion.span>
+                >{["thinking", "transcribing", "acting_browser", "acting_computer", "acting_clyra"].includes(call.state) ? <ShimmerText>{modeStatus}</ShimmerText> : modeStatus}</motion.span>
               </AnimatePresence>
             </div>
             <time aria-label={`Call duration ${duration}`}>{duration}</time>
             <div className="clyra-voice-call__media-actions" aria-label="Live media controls">
               <button type="button" aria-label={mediaMode === "camera" ? "Stop camera" : "Start camera"} aria-pressed={mediaMode === "camera"} data-active={mediaMode === "camera"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "camera" ? null : "camera")}><Camera size={17} strokeWidth={1.8} /><span>Camera</span></button>
               <button type="button" aria-label={mediaMode === "screen" ? "Stop screen sharing" : "Start screen sharing"} aria-pressed={mediaMode === "screen"} data-active={mediaMode === "screen"} disabled={call.state === "ending"} onClick={() => onMediaModeChange?.(mediaMode === "screen" ? null : "screen")}><Monitor size={17} strokeWidth={1.8} /><span>Screen</span></button>
+              {mediaMode === "camera" ? (
+                <button type="button" aria-label={cameraFilter ? "Turn off X-ray filter" : "Turn on X-ray filter"} aria-pressed={cameraFilter} data-active={cameraFilter} onClick={() => setCameraFilter((on) => !on)}><ScanLine size={17} strokeWidth={1.8} /><span>X-ray</span></button>
+              ) : null}
               {(call.requiresApproval || (call.activeTask && !call.composerOpen)) ? (
                 <>
                   <button type="button" aria-label={call.muted ? "Unmute microphone" : "Mute microphone"} aria-pressed={call.muted} title={call.muted ? "Unmute microphone" : "Mute microphone"} data-active={call.muted} disabled={call.state === "ending"} onClick={call.toggleMute}><MicIcon muted={call.muted} /></button>
@@ -1127,15 +1214,15 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
                   key={mediaMode}
                   className="clyra-voice-media-stage"
                   data-mode={mediaMode}
-                  initial={{ opacity: 0, y: reduced ? 0 : 16, scale: reduced ? 1 : 0.975 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: reduced ? 0 : -10, scale: reduced ? 1 : 0.985 }}
-                  transition={{ duration: reduced ? 0.06 : 0.29, ease: EASE }}
+                  initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 1.045, clipPath: "inset(7% 6% 7% 6% round 34px)" }}
+                  animate={reduced ? { opacity: 1 } : { opacity: 1, scale: 1, clipPath: "inset(0% 0% 0% 0% round 0px)" }}
+                  exit={reduced ? { opacity: 0, transition: { duration: 0.06 } } : { opacity: 0, scale: 0.985, clipPath: "inset(4% 4% 4% 4% round 28px)", transition: { duration: 0.3, ease: [0.5, 0, 0.75, 0] } }}
+                  transition={{ duration: reduced ? 0.08 : 0.62, ease: [0.16, 1, 0.3, 1], opacity: { duration: reduced ? 0.08 : 0.4, ease: "easeOut" } }}
                 >
                   <VoiceMediaSurface mode={mediaMode} lowPower={call.lowPowerMode} screenRequest={screenRequest}
+                    xray={cameraFilter}
                     onStop={() => onMediaModeChange?.(null)}
                     onCaptureChange={call.registerMediaCapture}
-                    onAsk={() => void call.sendText("What can you see in this view?")}
                   />
                 </motion.div>
               ) : null}

@@ -3,7 +3,7 @@
 <title>Clyra music level</title>
 <script>
   // Hears what the Mac is playing (system audio loopback) only to measure its loudness for the Notch's wave. Nothing is recorded or kept.
-  let stream = null, ctx = null, analyser = null, buffer = null, timer = 0;
+  let stream = null, ctx = null, analyser = null, buffer = null, spectrum = null, edges = [], timer = 0;
   async function start() {
     if (stream) return;
     try {
@@ -12,13 +12,18 @@
       if (!stream.getAudioTracks().length) throw new Error("No system audio was provided.");
       ctx = new AudioContext();
       const source = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
-      analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
+      analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0; analyser.minDecibels = -90; analyser.maxDecibels = -20;
       source.connect(analyser);
-      buffer = new Float32Array(analyser.fftSize);
+      buffer = new Float32Array(analyser.fftSize); spectrum = new Uint8Array(analyser.frequencyBinCount);
+      // Five bands, bass to treble, from the real spectrum of what is playing.
+      const hz = ctx.sampleRate / analyser.fftSize;
+      edges = [[40, 140], [140, 500], [500, 2000], [2000, 6000], [6000, 14000]].map(([a, b]) => [Math.max(1, Math.round(a / hz)), Math.max(2, Math.round(b / hz))]);
       timer = setInterval(() => {
         analyser.getFloatTimeDomainData(buffer);
         let sum = 0; for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
-        window.musicLevel.level(Math.sqrt(sum / buffer.length));
+        analyser.getByteFrequencyData(spectrum);
+        const bands = edges.map(([lo, hi]) => { let acc = 0; for (let i = lo; i < hi; i++) acc += spectrum[i]; return +(acc / ((hi - lo) * 255)).toFixed(3); });
+        window.musicLevel.level(Math.sqrt(sum / buffer.length), bands);
       }, 25);
       window.musicLevel.live();
     } catch (error) {

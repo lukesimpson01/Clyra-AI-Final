@@ -119,12 +119,20 @@ final class FlowBridge: ObservableObject {
     @Published private(set) var phase = "idle"
     @Published private(set) var text = ""
     @Published private(set) var detail = ""
+    /// Edits made to the heard words (removed / added), and the finished text, exactly as Clyra's pill shows them.
+    @Published private(set) var diff: [(type: String, text: String)] = []
+    @Published private(set) var finalText = ""
     let engine = WaveformEngine()
     var onChange: ((Bool) -> Void)?   // (active changed)
     /// Clyra's Spotify connection, polled by Clyra and forwarded here (the Notch never holds Spotify credentials).
     var onSpotify: (([String: Any]) -> Void)?
     /// Loudness of what the Mac is playing, measured by Clyra, and whether that measurement is available.
     var onMusicLevel: (([String: Any]) -> Void)?
+    /// Clyra's computer-use run: status, plan and the tool-call rows.
+    var onComputer: (([String: Any]) -> Void)?
+    var onNotchOp: (([String: Any]) -> Void)?
+    var onVoiceCall: (([String: Any]) -> Void)?
+    var onPassThrough: ((Double) -> Void)?
 
     private var listener: NWListener?
     private var sender: NWConnection?
@@ -169,6 +177,14 @@ final class FlowBridge: ObservableObject {
             onSpotify?(o)
         case "music-level":
             onMusicLevel?(o)
+        case "computer":
+            onComputer?(o)
+        case "notch-op":
+            onNotchOp?(o)
+        case "voice-call":
+            onVoiceCall?(o)
+        case "passthrough":
+            onPassThrough?((o["ms"] as? NSNumber)?.doubleValue ?? 400)
         case "state":
             let next = o["phase"] as? String ?? "idle"
             let was = active
@@ -176,6 +192,8 @@ final class FlowBridge: ObservableObject {
             phase = next
             text = String((o["partial"] as? String ?? o["preview"] as? String ?? "").suffix(160))
             detail = o["detail"] as? String ?? ""
+            diff = (o["diff"] as? [[String: Any]] ?? []).map { ($0["type"] as? String ?? "same", $0["text"] as? String ?? "") }
+            finalText = o["finalText"] as? String ?? ""
             if was != active { onChange?(active) } else { objectWillChange.send() }
         default: break
         }
@@ -184,6 +202,11 @@ final class FlowBridge: ObservableObject {
     /// Ask Clyra to listen for the loudness of the music (or stop).
     func sendMusic(_ on: Bool) {
         guard let data = try? JSONSerialization.data(withJSONObject: ["op": "music", "on": on]) else { return }
+        sender?.send(content: data, completion: .contentProcessed { _ in })
+    }
+
+    func sendOp(_ message: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         sender?.send(content: data, completion: .contentProcessed { _ in })
     }
 
@@ -201,12 +224,54 @@ final class FlowBridge: ObservableObject {
 }
 
 /// What the notch shows while Flow is running: cancel, the voice (or your words), and stop. Same layout as the Flow pill.
+/// The edit step: removed words go red and struck through, added words glow blue, then the removed ones fold away.
+struct DiffLine: View {
+    let segments: [(type: String, text: String)]
+    var reduceMotion = false
+    @State private var folded = false
+
+    private var line: Text {
+        var out = Text("")
+        for segment in segments {
+            switch segment.type {
+            case "del": if !folded { out = out + Text(segment.text + " ").strikethrough(true, color: Color(red: 0.95, green: 0.27, blue: 0.27)).foregroundColor(Color(red: 0.95, green: 0.3, blue: 0.3)) }
+            case "add": out = out + Text(segment.text + " ").foregroundColor(Color(red: 0.5, green: 0.68, blue: 1))
+            default: out = out + Text(segment.text + " ").foregroundColor(.white)
+            }
+        }
+        return out
+    }
+
+    var body: some View {
+        line.font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.head)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: folded)
+            .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { folded = true } }
+    }
+}
+
+/// The finished words arrive in blue and settle to white, the way the pill sweeps them in.
+struct RevealLine: View {
+    let text: String
+    var reduceMotion = false
+    @State private var settled = false
+    var body: some View {
+        Text(text).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.head)
+            .foregroundStyle(settled ? Color.white : Color(red: 0.5, green: 0.68, blue: 1))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.8), value: settled)
+            .onAppear { settled = true }
+    }
+}
+
 struct FlowStrip: View {
     @ObservedObject var flow: FlowBridge
     var reduceMotion = false
 
     private var listening: Bool { flow.phase == "listening" }
-    private var thinking: Bool { ["processing", "optimising", "refining", "revealing"].contains(flow.phase) }
+    private var thinking: Bool { ["processing", "optimising"].contains(flow.phase) }
+    private var refining: Bool { flow.phase == "refining" }
+    private var revealing: Bool { flow.phase == "revealing" }
     private var finished: Bool { flow.phase == "done" }
     private var failed: Bool { flow.phase == "error" }
 
@@ -220,10 +285,14 @@ struct FlowStrip: View {
             .opacity(flow.phase == "arming" || finished ? 0.35 : 1)
             ZStack {
                 if listening && flow.text.isEmpty {
-                    WaveformView(engine: flow.engine, height: 22).transition(.opacity)
+                    MicBars(flow: flow, live: listening).transition(.opacity)
                 } else if listening || (!thinking && !finished && !failed && !flow.text.isEmpty) {
                     Text(flow.text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white)
                         .lineLimit(1).truncationMode(.head).frame(maxWidth: .infinity, alignment: .trailing).transition(.opacity)
+                } else if refining && !flow.diff.isEmpty {
+                    DiffLine(segments: flow.diff, reduceMotion: reduceMotion).transition(.opacity)
+                } else if revealing || (refining && flow.diff.isEmpty) {
+                    RevealLine(text: flow.finalText.isEmpty ? flow.text : flow.finalText, reduceMotion: reduceMotion).transition(.opacity)
                 } else if thinking {
                     ShimmerText(text: flow.detail.isEmpty ? "Thinking" : flow.detail, reduceMotion: reduceMotion, size: 12.5).transition(.opacity)
                 } else if finished {
@@ -231,7 +300,7 @@ struct FlowStrip: View {
                 } else if failed {
                     Text(flow.detail.isEmpty ? "Couldn’t dictate" : flow.detail).font(.system(size: 12, weight: .medium)).foregroundStyle(Color(red: 1, green: 0.56, blue: 0.52)).lineLimit(1).transition(.opacity)
                 } else {
-                    WaveformView(engine: flow.engine, height: 22).opacity(0.6).transition(.opacity)
+                    MicBars(flow: flow, live: listening).opacity(0.6).transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -264,12 +333,13 @@ struct FlowStrip: View {
 struct LevelBars: View {
     @ObservedObject var meter: AudioMeter
     var reduceMotion = false
+    var paused = false
     @State private var engine = LevelEngine()
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60)) { frame in
             Canvas { context, size in
-                engine.step(frame.date, input: Double(meter.level), live: meter.hasLiveLevel && !reduceMotion)
+                engine.step(frame.date, input: Double(meter.level), bands: meter.bands.map(Double.init), live: meter.hasLiveLevel && !reduceMotion && !paused)
                 let n = engine.bars.count
                 let barW: CGFloat = 2.2, gap: CGFloat = 2
                 let total = CGFloat(n) * barW + CGFloat(n - 1) * gap
@@ -286,25 +356,81 @@ struct LevelBars: View {
     }
 }
 
-final class LevelEngine {
-    private(set) var bars = [Double](repeating: 0, count: 5)
-    private var vel = [Double](repeating: 0, count: 5)
-    private var env = 0.0
-    private var last = Date.distantPast
-    private let weights = [0.62, 0.9, 1.0, 0.82, 0.55]
+/// The same five-bar wave the music player shows, driven by the microphone while dictating or on a voice call.
+struct MicBars: View {
+    @ObservedObject var flow: FlowBridge
+    var live = true
+    @State private var engine = LevelEngine(count: 11)
 
-    func step(_ now: Date, input: Double, live: Bool) {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60)) { frame in
+            Canvas { context, size in
+                flow.engine.step(frame.date)
+                engine.step(frame.date, input: flow.engine.level, bands: [], live: live, sensitivity: 1.8)
+                let n = engine.bars.count
+                let barW: CGFloat = 2.5, gap: CGFloat = 2.3
+                let total = CGFloat(n) * barW + CGFloat(n - 1) * gap
+                let x0 = (size.width - total) / 2
+                for i in 0..<n {
+                    let h = 3 + CGFloat(min(1, engine.bars[i])) * (size.height - 3)
+                    let rect = CGRect(x: x0 + CGFloat(i) * (barW + gap), y: (size.height - h) / 2, width: barW, height: h)
+                    context.fill(Path(roundedRect: rect, cornerRadius: barW / 2), with: .color(.white))
+                }
+            }
+        }
+        .frame(width: 60, height: 22)
+        .accessibilityHidden(true)
+    }
+}
+
+final class LevelEngine {
+    private(set) var bars: [Double]
+    private var vel: [Double]
+    private var smooth: [Double]
+    private var last = Date.distantPast
+    private let count: Int
+    /// Higher bands carry less energy, so they are lifted a little; bass moves the most.
+    private let gain: [Double]
+    private let shape: [Double]
+    private let micWeight: [Double]
+
+    /// `count` 5 is the music player's wave; the microphone's wave uses more bars.
+    init(count: Int = 5) {
+        self.count = count
+        bars = [Double](repeating: 0, count: count)
+        vel = bars
+        smooth = bars
+        gain = count == 5 ? [1.35, 1.2, 1.15, 1.45, 1.9] : [Double](repeating: 1.3, count: count)
+        shape = count == 5 ? [0.8, 1.0, 0.86, 0.96, 0.7] : (0..<count).map { 0.72 + 0.28 * abs(sin(Double($0) * 1.37 + 0.6)) }
+        let c = Double(count - 1) / 2
+        micWeight = (0..<count).map { 0.5 + 0.5 * pow(1 - abs(Double($0) - c) / max(1, c) * 0.8, 1.1) }
+    }
+
+    /// `bands` are the real bass-to-treble energies of what is playing. With no live reading (no permission, paused, silence)
+    /// the bars settle to rest: nothing is invented to look like music. `sensitivity` lifts quiet sounds (a speaking voice).
+    func step(_ now: Date, input: Double, bands: [Double], live: Bool, sensitivity: Double = 1) {
         let dt = min(0.05, max(0.001, last == .distantPast ? 1.0 / 60 : now.timeIntervalSince(last)))
         last = now
         let t = now.timeIntervalSinceReferenceDate
-        // with no meter (no permission) the bars only breathe softly, so they never claim a loudness they do not know
-        let level = live ? input : 0.12 + 0.05 * sin(t * 2.1)
-        env += (level - env) * (1 - exp(-dt / (level > env ? 0.035 : 0.16)))
         for i in 0..<bars.count {
-            let wobble = live ? 0.1 * sin(t * (5.0 + Double(i) * 1.3) + Double(i)) * env : 0
-            let target = max(0.08, min(1, env * weights[i] * (1.15 + wobble)))
+            var raw = 0.0
+            if live {
+                if bands.count == count { raw = min(1, pow(max(0, bands[i] - 0.04) * gain[i] * 1.6, 0.85)) }
+                else {
+                    // each bar hears the level a little differently, so a voice makes a moving shape, not a block
+                    let sway = 0.78 + 0.22 * sin(t * (3.1 + 0.9 * Double(i)) + Double(i) * 1.7)
+                    raw = min(1, pow(input * sensitivity, 0.62) * micWeight[i] * sway * 1.25)
+                }
+            }
+            // fast attack, slower release, independent of frame rate
+            let tau = raw > smooth[i] ? 0.025 : 0.14
+            smooth[i] += (raw - smooth[i]) * (1 - exp(-dt / tau))
+            // Steady sound still reads as alive: bars keep their own proportions and drift a little.
+            let drift = 0.5 + 0.5 * sin(t * (0.42 + 0.11 * Double(i)) + Double(i) * 1.9)
+            let wobble = 0.05 * sin(t * (1.6 + 0.7 * Double(i)) + Double(i) * 2.3)
+            let target = max(0.08, min(1, smooth[i] * shape[i] * (0.9 + 0.2 * drift + wobble)))
             var x = bars[i], v = vel[i]
-            for _ in 0..<3 { let h = dt / 3; v += (-480 * (x - target) - 38 * v) * h; x += v * h }
+            for _ in 0..<3 { let h = dt / 3; v += (-520 * (x - target) - 42 * v) * h; x += v * h }
             bars[i] = max(0, min(1.1, x)); vel[i] = v
         }
     }

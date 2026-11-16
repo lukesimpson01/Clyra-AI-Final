@@ -66,6 +66,12 @@ enum ToolStyle {
         case "image_search": return "photo.on.rectangle"
         case "github_repo_search", "github_repo_inspect": return "chevron.left.forwardslash.chevron.right"
         case "show_map": return "mappin.and.ellipse"
+        case "computer_click", "computer_double_click", "computer_right_click": return "cursorarrow.click"
+        case "computer_type": return "keyboard"
+        case "computer_key": return "command"
+        case "computer_open_app": return "macwindow"
+        case "computer_scroll": return "arrow.up.and.down"
+        case "computer_needs_user": return "hand.raised"
         case "create_note": return "doc.badge.plus"
         case "notes_insert", "notes_edit": return "pencil.line"
         default: return "globe"
@@ -82,6 +88,8 @@ struct ChatMessage: Identifiable {
     var raw: JSON
     var id: String { raw["id"] as? String ?? "" }
     var isUser: Bool { raw["role"] as? String == "user" }
+    /// A turn spoken on a voice call: kept for context, not shown as a sent message.
+    var hidden: Bool { raw["voiceHidden"] as? Bool == true }
     var text: String {
         get { raw["content"] as? String ?? "" }
         set { raw["content"] = newValue }
@@ -274,7 +282,7 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
     /// The closing message for the collapsed notch once a reply has finished.
     private(set) var finished: (message: String, at: Date)?
     var doneMessage: String? {
-        guard let finished, Date().timeIntervalSince(finished.at) < 6, work == nil else { return nil }
+        guard let finished, Date().timeIntervalSince(finished.at) < 6, work == nil, !voiceMode else { return nil }
         return finished.message
     }
     var onDone: ((String) -> Void)?
@@ -288,9 +296,15 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
 
     static var baseURL: URL {
         // Clyra launches Notch with CLYRA_URL pointing at its own server; that server talks to DeepSeek.
-        let configured = ProcessInfo.processInfo.environment["CLYRA_URL"] ?? UserDefaults.standard.string(forKey: "clyraURL") ?? ""
-        if let url = URL(string: configured), let scheme = url.scheme, ["http", "https"].contains(scheme), url.host != nil { return url }
-        return URL(string: "http://127.0.0.1:3000")!
+        let fromEnvironment = ProcessInfo.processInfo.environment["CLYRA_URL"]
+        let configured = fromEnvironment ?? UserDefaults.standard.string(forKey: "clyraURL") ?? ""
+        if let url = URL(string: configured), let scheme = url.scheme, ["http", "https"].contains(scheme), url.host != nil {
+            // Remembered, so the notch still finds Clyra when it is started by hand or at login.
+            if fromEnvironment != nil { UserDefaults.standard.set(configured, forKey: "clyraURL") }
+            return url
+        }
+        // Clyra's desktop service listens here.
+        return URL(string: "http://127.0.0.1:31415")!
     }
 
     private(set) var chat = SyncedChat.new()
@@ -314,6 +328,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
         get { UserDefaults.standard.string(forKey: "notchEffort") ?? "high" }
         set { UserDefaults.standard.set(newValue, forKey: "notchEffort"); onChange?() }
     }
+    /// On a voice call replies are quick and short: the light model, spoken-style answers.
+    var voiceMode = false
     var effortTitle: String { ChatClient.efforts.first { $0.key == effort }?.title ?? "Extended" }
 
     /// The reply being written now, wherever it is being written.
@@ -550,11 +566,13 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
         if let external, external.id == chat.id, Date().timeIntervalSince(externalAt) < 45 { chat = SyncedChat.new() }
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, hidden: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming else { return }
         detachFromClyraRun()
-        chat.messages.append(.make(role: "user", text: trimmed))
+        var userMessage = ChatMessage.make(role: "user", text: trimmed)
+        if hidden { userMessage.raw["voiceHidden"] = true }
+        chat.messages.append(userMessage)
         if chat.title == "New Chat" { chat.title = String(trimmed.prefix(40)) }
         chat.messages.append(.make(role: "assistant", text: "", streaming: true))
         let history = chat.messages.dropLast().filter { !$0.failed && !$0.stopped && !$0.text.isEmpty }
@@ -563,8 +581,10 @@ final class ChatClient: NSObject, URLSessionDataDelegate {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         req.timeoutInterval = 600
-        let model = ChatClient.efforts.first { $0.key == effort }?.model ?? "deepseek-v4-pro"
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["messages": Array(history.suffix(24)), "model": model, "effort": effort, "instructions": ChatClient.notifyInstruction])
+        let level = voiceMode ? "light" : effort
+        let model = ChatClient.efforts.first { $0.key == level }?.model ?? "deepseek-v4-pro"
+        let instructions = voiceMode ? ChatClient.notifyInstruction + "\nThis is a live voice call: answer the way you would speak, in one to three short plain sentences, no lists, no markdown." : ChatClient.notifyInstruction
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["messages": Array(history.suffix(24)), "model": model, "effort": level, "instructions": instructions])
         parser = SSEParser()
         streamBytes.removeAll()
         roundText = ""

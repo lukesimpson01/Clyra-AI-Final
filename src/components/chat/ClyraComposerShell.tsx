@@ -194,6 +194,9 @@ export interface ClyraComposerShellProps {
   /** Persistent selections live above the input, so multiple agents remain
    * visible, ordered, and individually removable before send. */
   selections?: ComposerSelection[];
+  /** A slash command placed inside the text: drawn in blue, with its icon, exactly where it sits in the message. */
+  inlineCommand?: { token: string; icon: ReactNode } | null;
+  onCaretChange?: (position: number) => void;
 
   /** Welcome-screen quick-starts, shown under the composer bar until a
    * conversation starts. Each click fills the draft; it never sends. */
@@ -421,6 +424,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     paletteActiveIndex = -1,
     onPaletteHoverIndex,
     selections = [],
+    inlineCommand = null,
+    onCaretChange,
     suggestions = [],
     files,
     onPickFiles,
@@ -647,6 +652,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // Matches the artboard's step==="connected" height (384) exactly — the
   // real detail view (email + scope rows) is the same shape as that step.
   const selectionRows = selections.length;
+  const mirrorRef = useRef<HTMLDivElement>(null);
   // While Flow dictation covers the card, give it room for live words / edits (more when a selection header shows).
   // The composer keeps its normal size while Flow dictation covers it.
   // Settings gets a taller, wider bar: the sheet keeps its own natural size
@@ -2239,13 +2245,38 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             ) : null}
 
             {!dictationBusy || dictation.flow ? (
+              <div style={{ position: "relative", width: "100%" }}>
+              {inlineCommand && text.includes(inlineCommand.token) ? (
+                <div
+                  ref={mirrorRef}
+                  aria-hidden
+                  style={{
+                    position: "absolute", inset: 0, padding: "0 4px", fontSize: 15.5, lineHeight: "24px", letterSpacing: "-0.011em",
+                    fontFamily: "inherit", whiteSpace: "pre-wrap", overflowWrap: "break-word", overflow: "hidden", color: "#15171C", pointerEvents: "none",
+                  }}
+                >
+                  {text.slice(0, text.indexOf(inlineCommand.token))}
+                  <span style={{ position: "relative", color: "#1a6bff", fontWeight: 500 }}>
+                    <span style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", color: "#15171C", display: "inline-flex", width: 15, height: 15 }}>
+                      {inlineCommand.icon}
+                    </span>
+                    {inlineCommand.token}
+                  </span>
+                  {text.slice(text.indexOf(inlineCommand.token) + inlineCommand.token.length)}
+                  {"\u200b"}
+                </div>
+              ) : null}
               <textarea
                 className={dictation.flow?.phase === "closing" ? "clyra-flow-land" : undefined}
                 ref={textareaRef}
                 rows={2}
                 placeholder={placeholder}
                 value={text}
-                onChange={(e) => onTextChange(e.target.value)}
+                onChange={(e) => { onTextChange(e.target.value); onCaretChange?.(e.target.selectionStart); }}
+                onSelect={(e) => onCaretChange?.(e.currentTarget.selectionStart)}
+                onClick={(e) => onCaretChange?.(e.currentTarget.selectionStart)}
+                onKeyUp={(e) => onCaretChange?.(e.currentTarget.selectionStart)}
+                onScroll={(e) => { if (mirrorRef.current) mirrorRef.current.scrollTop = e.currentTarget.scrollTop; }}
                 onKeyDown={onKeyDown}
                 style={{
                   width: "100%",
@@ -2258,13 +2289,17 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                   fontSize: 15.5,
                   lineHeight: "24px",
                   height: 48,
-                  color: "#15171C",
+                  color: inlineCommand && text.includes(inlineCommand.token) ? "transparent" : "#15171C",
+                  caretColor: "#15171C",
+                  position: "relative",
+                  scrollbarWidth: inlineCommand ? "none" : undefined,
                   letterSpacing: "-0.011em",
                   padding: "0 4px",
                   boxSizing: "border-box",
                   visibility: dictation.flow && dictation.flow.phase !== "closing" ? "hidden" : "visible",
                 }}
               />
+              </div>
             ) : (
               <div
                 style={{

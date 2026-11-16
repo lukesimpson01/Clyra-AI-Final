@@ -157,7 +157,7 @@ export function VoiceActivitySurface({ task, surface, controlling, onToggleExpan
                 top: `${(browser.cursor.y / browser.viewport.height) * 100}%`,
                 pointerEvents: "none",
               }}>
-                <AgentCursorGlyph pressed={["click", "double_click", "right_click"].includes(browser.cursor.kind)} />
+                <AgentCursorGlyph dragging={browser.cursor.kind === "drag"} pressed={["click", "double_click", "right_click"].includes(browser.cursor.kind)} />
               </div>
             )}
           </div>
