@@ -6,6 +6,7 @@ export type AgentsStackState = {
   url: string;
 };
 
+export type HotkeyEntry = { id: string; label: string; group: string; accelerator: string; default: string; editable: boolean; active: boolean; note?: string };
 export type ComputerUseStep = { id: string; kind: string; label: string; app?: string; thought?: string; status: "running" | "done" | "failed"; detail?: string };
 export type ComputerUseState = {
   v: number; status: "idle" | "planning" | "running" | "paused" | "needs_user" | "done" | "failed" | "cancelled"; id?: string; goal?: string;
@@ -246,6 +247,14 @@ export type ClyraDesktopBridge = {
     vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
     error?: string;
   }>;
+  hotkeys?: {
+    list: () => Promise<{ ok: boolean; hotkeys: HotkeyEntry[]; groups: string[] }>;
+    set: (id: string, accelerator: string) => Promise<{ ok: boolean; error?: string; hotkeys?: HotkeyEntry[] }>;
+    reset: (id: string) => Promise<{ ok: boolean; error?: string; hotkeys?: HotkeyEntry[] }>;
+    suspend: (on: boolean) => Promise<{ ok: boolean }>;
+    onOpen: (callback: () => void) => () => void;
+    onNewChat: (callback: () => void) => () => void;
+  };
   appIcon?: (name: string) => Promise<string | null>;
   voiceApp?: { setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string, text?: string) => void) => () => void };
   permissions?: { status: () => Promise<{ ok: boolean; status: Record<string, string> }>; ensureAll: () => Promise<{ ok: boolean; results?: Record<string, string> }> };

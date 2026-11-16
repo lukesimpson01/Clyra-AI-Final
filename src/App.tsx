@@ -180,6 +180,7 @@ import {
   type StatusKind,
 } from "./components/chat/assistant";
 import { deriveAgentEvents, type AgentEvent, type RunSnapshot } from "../lib/agent-events/agent-event";
+import { HotkeyPalette } from "./components/hotkeys/HotkeyPalette";
 import { VoiceCallHost } from "./components/voice/VoiceCallHost";
 import { requestVoiceCall } from "./components/voice/voiceCallTrigger";
 import { DictationController } from "./components/DictationController";
@@ -5071,6 +5072,8 @@ export default function App() {
     lastScrollTopRef.current = 0;
     setShowScrollToLatest(false);
   }, [chatDrafts.new, currentChatId, isTemporaryChat, value]);
+  // The "New chat" hotkey (⌘⌥N by default; see the hotkey palette) works from anywhere on the machine.
+  useEffect(() => getElectronDesktop()?.hotkeys?.onNewChat(() => handleNewChat()), [handleNewChat]);
 
   const showVibeLivePreview =
     !!vibePreviewFiles &&
@@ -12039,6 +12042,7 @@ Please analyze the code you just wrote and fix this error.`;
               </div>
             </div>
           </motion.div>
+          <HotkeyPalette />
           <AnimatePresence>
             {toastMessage ? (
               <motion.div

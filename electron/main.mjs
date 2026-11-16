@@ -29,6 +29,7 @@ import { ScreenCaptureService } from "./screen-capture.mjs";
 import { DesktopControlService } from "./desktop-control.mjs";
 import { ComputerRun } from "./computer-run.mjs";
 import { ScreenShareIndicator } from "./screenshare-indicator.mjs";
+import { HotkeyManager } from "./hotkeys.mjs";
 import { ComputerOverlay } from "./computer-overlay.mjs";
 import { CompanionManager } from "./companion-manager.mjs";
 import { collectCareSnapshot } from "./care-manager.mjs";
@@ -114,6 +115,8 @@ async function getPreciseLocation(timeoutSeconds) {
 
 let surfaceManager = null;
 let dictationManager = null;
+let hotkeyManager = null;
+let notchPanelOpen = false;
 let flowEngine = null;
 let flowNative = null;
 let forceQuit = false;
@@ -308,7 +311,17 @@ async function activateClyraShortcut(channel) {
   contents.send(channel);
 }
 
+/** Restart Clyra. In development it is started through LaunchServices (see tools/electron-dev.mjs), so the new copy is too. */
+function restartClyra() {
+  if (app.isPackaged) { app.relaunch(); app.exit(0); return; }
+  const bundle = process.execPath.split("/Contents/MacOS/")[0];
+  const envArgs = Object.entries(process.env).filter(([key, value]) => value !== undefined && !/[\n\r]/.test(String(value)) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+  spawn("open", ["-n", ...envArgs, "-a", bundle, "--args", app.getAppPath()], { detached: true, stdio: "ignore" }).unref();
+  setTimeout(() => app.exit(0), 400);
+}
+
 function destroyNativeManagers() {
+  try { hotkeyManager?.destroy(); } catch { /* shutting down */ }
   if (nativeManagersDestroyed) return;
   nativeManagersDestroyed = true;
   try { browserManager?.destroy(); } catch (error) { console.warn("[browser] teardown failed:", error); }
@@ -1901,30 +1914,58 @@ async function createWindow() {
   await smartToolbarManager.initialize();
   registerIpc();
 
-  // Global Task View works in every Clyra surface and summons Clyra when the
-  // chord is pressed from a different app.
-  try {
-    const registered = globalShortcut.register("CommandOrControl+J", () => {
-      void activateClyraShortcut("taskview:toggle");
-    });
-    if (!registered) console.warn("[taskview] Cmd+J is already owned by another app.");
-  } catch (error) {
-    console.warn("[taskview] global shortcut unavailable:", error);
-  }
-
-  /* Global app launcher. Registered here rather than left to the React
-     window's own keydown listener, because that listener only fires when the
-     UI view has focus — so ⌘K did nothing whenever a native WebContentsView
-     owned the keyboard, which is most of the time in the AI Browser and in
-     the Notes browser panel. ⌘J already worked for exactly this reason. */
-  try {
-    const registered = globalShortcut.register("CommandOrControl+K", () => {
-      void activateClyraShortcut("launcher:toggle");
-    });
-    if (!registered) console.warn("[launcher] Cmd+K is already owned by another app.");
-  } catch (error) {
-    console.warn("[launcher] global shortcut unavailable:", error);
-  }
+  // Every global shortcut lives in one registry (electron/hotkeys.mjs): the palette on the welcome screen lists them and
+  // lets the person record a new combination for each.
+  const runInPage = (script) => { const contents = uiView?.webContents; if (contents && !contents.isDestroyed()) void contents.executeJavaScript(script, true).catch(() => {}); };
+  hotkeyManager = new HotkeyManager({
+    userData: app.getPath("userData"),
+    authorize,
+    readonly: [
+      { id: "dictation", label: "Dictation (Flow): tap to start and stop", group: "Voice", accelerator: "Right Option tap", note: "Change it in the Flow menu" },
+      { id: "dictationAlt", label: "Dictation (Flow), alternative", group: "Voice", accelerator: dictationManager?.shortcut || "Control+Space" },
+      { id: "voiceCallTap", label: "Voice call on the Notch: double-tap", group: "Voice", accelerator: "Right Option ×2" },
+      { id: "companion", label: "Clyra companion", group: "General", accelerator: "CommandOrControl+Shift+J" },
+      { id: "aiStop", label: "Emergency stop for AI control", group: "AI control", accelerator: COMPUTER_STOP_SHORTCUT },
+    ],
+    actions: {
+      front: async () => {
+        await showOrCreateWindow();
+        const win = mainWindow;
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        // Over full-screen apps and on whichever Space is current, then settle back to a normal window.
+        try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* older Electron */ }
+        if (process.platform === "darwin") app.show();
+        win.show();
+        win.moveTop();
+        win.focus();
+        app.focus({ steal: true });
+        win.setAlwaysOnTop(true, "floating");
+        setTimeout(() => { try { win.setAlwaysOnTop(false); win.setVisibleOnAllWorkspaces(false); } catch { /* closed */ } }, 500);
+      },
+      hotkeys: () => activateClyraShortcut("hotkeys:toggle"),
+      taskview: () => activateClyraShortcut("taskview:toggle"),
+      launcher: () => activateClyraShortcut("launcher:toggle"),
+      newChat: () => activateClyraShortcut("chat:new"),
+      voiceCall: () => dictationManager?.toggleVoiceCall(),
+      callMute: () => {
+        if (dictationManager?.callMode) {
+          dictationManager.callMuted = !dictationManager.callMuted;
+          if (dictationManager.callMuted && ["listening", "arming"].includes(dictationManager.phase)) dictationManager.cancel(); else void dictationManager.listenForCall();
+        } else uiView?.webContents?.send("voiceapp:command", "togglemute", "");
+      },
+      screenShare: () => runInPage('window.__clyraVoiceMedia && window.__clyraVoiceMedia("screen")'),
+      camera: () => runInPage('window.__clyraVoiceMedia && window.__clyraVoiceMedia("camera")'),
+      aiPause: () => { if (!computerRun?.active) return; return computerRun.run?.status === "paused" ? computerRun.resume() : computerRun.pause(); },
+      notchToggle: () => { notchPanelOpen = !notchPanelOpen; return promisify(execFile)("open", ["-g", "-a", notchBundle, notchPanelOpen ? "notch://expand" : "notch://collapse"]); },
+      notchRestart: async () => { spawn("pkill", ["-f", notchExecutable], { stdio: "ignore" }); await new Promise((resolve) => setTimeout(resolve, 1400)); await launchNotch(); },
+      notchQuit: () => { spawn("pkill", ["-f", notchExecutable], { stdio: "ignore" }); },
+      reload: () => uiView?.webContents?.reload(),
+      restart: () => restartClyra(),
+      devtools: () => uiView?.webContents?.toggleDevTools(),
+    },
+  });
+  try { await hotkeyManager.load(); } catch (error) { console.warn("[hotkeys] could not start:", error); }
 
   // Clyra Flow’s Cmd/Ctrl+L shortcut is registered by DictationManager during
   // startup, before the chat renderer mounts, so it is genuinely system-wide.

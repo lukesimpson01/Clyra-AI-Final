@@ -2917,6 +2917,10 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
             <span className="clyra-welcome-hotkeys__key">{shortcut("J")}</span> Task view
             <span className="clyra-welcome-hotkeys__dot" aria-hidden="true">·</span>
             <span className="clyra-welcome-hotkeys__key">{shortcut("K")}</span> App launcher
+            <span className="clyra-welcome-hotkeys__dot" aria-hidden="true">·</span>
+            <button type="button" className="clyra-welcome-hotkeys__more" onClick={() => window.dispatchEvent(new Event("clyra:hotkeys-open"))} aria-label="Show all hotkeys">
+              <span className="clyra-welcome-hotkeys__key">{shortcut("⇧ /")}</span> Hotkeys
+            </button>
           </span>
         </div>
         <style>{`
@@ -2930,6 +2934,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           .clyra-welcome-pill__icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
           .clyra-welcome-hotkeys__line { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 400; letter-spacing: -.006em; color: #8A919E; white-space: nowrap; }
           .clyra-welcome-hotkeys__key { color: #5F636B; }
+          .clyra-welcome-hotkeys__more { all: unset; cursor: pointer; display: inline-flex; align-items: baseline; gap: 6px; border-radius: 6px; padding: 0 3px; margin: 0 -3px; transition: color .2s ease, background .2s ease; }
+          .clyra-welcome-hotkeys__more:hover { background: rgba(16,18,24,.05); color: #15171C; }
+          .clyra-welcome-hotkeys__more:focus-visible { outline: 2px solid rgba(16,18,24,.35); outline-offset: 2px; }
           .clyra-welcome-hotkeys__dot { margin: 0 2px; color: #B4BAC4; }
           .clyra-icon-ghost:hover { background: rgba(16,18,24,0.07); color: #1a1c20; }
           .clyra-icon-ghost:active { background: rgba(16,18,24,0.11); }

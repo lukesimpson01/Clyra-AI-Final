@@ -1099,6 +1099,7 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
     return getElectronDesktop()?.voiceApp?.onCommand((action, text) => {
       if (action === "end") void call.endCall();
       else if (action === "type" && text) call.sendText(text);
+      else if (action === "togglemute") call.toggleMute();
       else if (action === "mute" && !call.muted) call.toggleMute();
       else if (action === "unmute" && call.muted) call.toggleMute();
     });

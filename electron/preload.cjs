@@ -91,6 +91,14 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     ask: (text) => ipcRenderer.invoke("companion:ask", { text }),
   },
   seeScreen: (question) => ipcRenderer.invoke("desktop:see-screen", { question }),
+  hotkeys: {
+    list: () => ipcRenderer.invoke("hotkeys:list"),
+    set: (id, accelerator) => ipcRenderer.invoke("hotkeys:set", id, accelerator),
+    reset: (id) => ipcRenderer.invoke("hotkeys:reset", id),
+    suspend: (on) => ipcRenderer.invoke("hotkeys:suspend", Boolean(on)),
+    onOpen: (callback) => { const h = () => callback(); ipcRenderer.on("hotkeys:toggle", h); return () => ipcRenderer.removeListener("hotkeys:toggle", h); },
+    onNewChat: (callback) => { const h = () => callback(); ipcRenderer.on("chat:new", h); return () => ipcRenderer.removeListener("chat:new", h); },
+  },
   appIcon: (name) => ipcRenderer.invoke("app:icon", String(name || "")),
   voiceApp: {
     setScreenShare: (on) => ipcRenderer.send("screenshare:set", Boolean(on)),

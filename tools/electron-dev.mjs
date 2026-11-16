@@ -30,10 +30,13 @@ try {
 // A leftover Clyra from an earlier run keeps the Notch bridge and DevTools ports and answers instead of this one (buttons that do
 // nothing, "port busy"): stop it before anything else.
 if (process.platform === "darwin" && process.env.CLYRA_LAUNCH_VIA_OPEN !== "0") {
+  const patterns = [`${CLYRA_DEV_APP}/Contents/MacOS/Clyra`, "Clyra’s Notch.app/Contents/MacOS"];
+  const running = () => patterns.some((pattern) => spawnSync("pgrep", ["-f", pattern]).status === 0);
   try {
-    spawnSync("pkill", ["-f", `${CLYRA_DEV_APP}/Contents/MacOS/Clyra`]);
-    spawnSync("pkill", ["-f", "Clyra’s Notch.app/Contents/MacOS"]);
-    spawnSync("sleep", ["1.5"]);
+    for (const pattern of patterns) spawnSync("pkill", ["-f", pattern]);
+    // Give them a moment to quit cleanly, then make sure: a survivor keeps the ports and answers instead of this run.
+    for (let waited = 0; waited < 20 && running(); waited += 1) spawnSync("sleep", ["0.3"]);
+    if (running()) { for (const pattern of patterns) spawnSync("pkill", ["-9", "-f", pattern]); spawnSync("sleep", ["0.8"]); }
   } catch { /* nothing running */ }
 }
 

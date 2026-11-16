@@ -64,6 +64,7 @@ final class NotchModel: ObservableObject {
     let computer = ComputerSession()
     let voice = VoiceCall()
     let camera = NotchCamera()
+    private let systemActivity = SystemActivity()
     private var cameraBag: AnyCancellable?
     private var voiceBag: AnyCancellable?
     /// Clyra's Flow dictation is being shown in the notch.
@@ -117,6 +118,8 @@ final class NotchModel: ObservableObject {
         flow.onComputer = { [weak self] payload in self?.computer.apply(payload) }
         flow.onNotchOp = { [weak self] payload in self?.handleNotchOp(payload) }
         voice.attach(self)
+        systemActivity.onEvent = { [weak self] title, detail, symbol in self?.announce(title, detail, symbol: symbol) }
+        systemActivity.start()
         cameraBag = camera.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send(); self?.onLayoutChange?() } }
         voiceBag = voice.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send() } }
         flow.onVoiceCall = { [weak self] payload in self?.voice.handle(payload) }
