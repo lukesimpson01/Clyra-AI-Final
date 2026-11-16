@@ -75,3 +75,10 @@ electron/native-pointer-darwin
 # Cloned component libraries (npm run setup:component-sources)
 external/shadcn-library/
 external/21st-library/
+
+# Needed in a fresh clone: the shorts gameplay/music/vfx media and the built Notch app.
+!apps/shorts/app/public/media/**
+!apps/shorts/app/public/media/**/*.mp4
+!apps/notch/build/
+apps/notch/build/*
+!apps/notch/build/Notch.app/

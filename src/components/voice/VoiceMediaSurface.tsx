@@ -70,7 +70,8 @@ export function VoiceMediaSurface({ mode, onStop, onCaptureChange, xray = false,
         if (!navigator.mediaDevices) throw new Error("Media capture is unavailable in this window.");
         // Not allowed yet: macOS's own pop-up first, then System Settings opens on the right page.
         const desktop = getElectronDesktop()?.dictation;
-        const access = mode === "camera" ? await desktop?.ensureCamera?.().catch(() => null) : await desktop?.ensureScreen?.().catch(() => null);
+        // Screen goes through macOS's own picker, which needs no Screen Recording entry; only the camera needs its permission.
+        const access = mode === "camera" ? await desktop?.ensureCamera?.().catch(() => null) : null;
         if (access && access.ok === false) throw new Error(access.error || (mode === "camera" ? "Camera access is off. Turn it on in System Settings (opened for you), then try again." : "Screen recording is off. Turn it on in System Settings (opened for you), then restart Clyra."));
         const capture = mode === "camera"
           ? await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }, audio: false })

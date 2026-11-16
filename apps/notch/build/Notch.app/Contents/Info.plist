@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>local.notch</string>
+<key>CFBundleName</key><string>Notch</string>
+<key>CFBundleDisplayName</key><string>Notch</string>
+<key>CFBundleExecutable</key><string>Notch</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.4</string>
+<key>CFBundleVersion</key><string>13</string>
+<key>LSUIElement</key><true/>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSLocationUsageDescription</key><string>Notch shows the weather where you are.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Notch shows the weather where you are.</string>
+<key>NSAppleEventsUsageDescription</key><string>Notch shows what Spotify or Music is playing and controls playback.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Notch shows a brief banner when a Bluetooth device connects.</string>
+<key>NSAudioCaptureUsageDescription</key><string>Notch can react to the playing app’s audio when Live audio bars is enabled.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Notch shows your next calendar event when you add the calendar widget.</string>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>local.notch</string><key>CFBundleURLSchemes</key><array><string>notch</string></array></dict></array>
+</dict></plist>

@@ -484,9 +484,7 @@ function configureUiSession() {
     details.securityOrigin,
     details.requestingUrl,
   ].some((candidate) => isClyraOrigin(String(candidate || "")));
-  // Voice-call screen sharing: share the entire primary display without the
-  // Chromium picker, only for Clyra's own origin. macOS still asks once for
-  // Screen Recording permission in System Settings.
+  // Voice-call screen sharing, only for Clyra's own origin.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       if (!isClyraOrigin(request?.securityOrigin || request?.frame?.url || "")) { callback({}); return; }
@@ -498,7 +496,10 @@ function configureUiSession() {
     } catch {
       callback({});
     }
-  }, { useSystemPicker: false });
+  // macOS: the system's own screen picker (ScreenCaptureKit). The person chooses the screen or window in macOS's picker, and
+  // macOS grants exactly that, with no Screen Recording entry needed in Settings, which is what never listed Clyra.
+  // Elsewhere (and macOS before the picker existed) the handler above shares the primary display.
+  }, { useSystemPicker: process.platform === "darwin" });
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (permission === "geolocation") {
       return allowGeolocationFromClyra(requestingOrigin, details || {});
