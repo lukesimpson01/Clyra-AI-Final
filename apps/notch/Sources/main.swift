@@ -688,7 +688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         let frame = screen.frame
         let size = targetSize()
         return NSRect(x: frame.midX - size.width / 2 - margin, y: frame.maxY - size.height - margin,
-                      width: size.width + 2 * margin, height: size.height + 2 * margin + 60)
+                      width: size.width + 2 * margin, height: size.height + 2 * margin + 24)
     }
 
     /// A page change can leave the pointer outside the new, smaller shape (a button at the bottom, then a shorter
@@ -722,7 +722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSDr
         let p = NSEvent.mouseLocation
         if panelRect(margin: 6).contains(p) { armed = true; farRule = true; outsideTicks = 0; return }
         // Never judge the pointer while the panel is changing shape or while someone is clicking in it.
-        if displayLink != nil || menuTracking || Date().timeIntervalSince(menuEndedAt) < 0.9 || Date().timeIntervalSince(lastInteraction) < 1.6 { outsideTicks = 0; return }
+        if displayLink != nil || menuTracking || Date().timeIntervalSince(menuEndedAt) < 0.6 || Date().timeIntervalSince(lastInteraction) < 0.7 { outsideTicks = 0; return }
         // Never close under the user while they're typing, dragging or a button is held.
         if model.keepsPanelOpen || NSEvent.pressedMouseButtons != 0 || model.airdropTargeted { outsideTicks = 0; return }
         if armed {

@@ -1096,12 +1096,11 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
   }, [call.active, modeStatus, call.muted, mediaMode]);
   useEffect(() => {
     if (!call.active) return;
-    return getElectronDesktop()?.voiceApp?.onCommand((action) => {
+    return getElectronDesktop()?.voiceApp?.onCommand((action, text) => {
       if (action === "end") void call.endCall();
+      else if (action === "type" && text) call.sendText(text);
       else if (action === "mute" && !call.muted) call.toggleMute();
       else if (action === "unmute" && call.muted) call.toggleMute();
-      else if (action === "screen") onMediaModeChange?.(mediaMode === "screen" ? null : "screen");
-      else if (action === "camera") onMediaModeChange?.(mediaMode === "camera" ? null : "camera");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call.active, call.muted, mediaMode, onMediaModeChange]);

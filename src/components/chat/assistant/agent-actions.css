@@ -825,3 +825,8 @@
 .clyra-plan__item.is-done .clyra-plan__text { color: #9a9ca5; }
 @keyframes clyra-plan-breathe { 0%, 100% { box-shadow: 0 0 0 3px rgba(26, 107, 255, .12); } 50% { box-shadow: 0 0 0 5px rgba(26, 107, 255, .04); } }
 @media (prefers-reduced-motion: reduce) { .clyra-plan__item { transition: none !important; opacity: 1; transform: none; } .clyra-plan__item.is-current .clyra-plan__status { animation: none !important; } .clyra-plan__trigger::after { transition: none; } }
+
+/* A step's own words before it, and the app's real logo in place of a generic icon. */
+.clyra-ai-row__comment { flex: 0 0 100%; margin: 0 0 5px; font: 400 12.5px/1.5 var(--chat-font); color: #5d6068; }
+.clyra-ai-row:has(.clyra-ai-row__comment) { flex-wrap: wrap; }
+.clyra-ai-row__logo { width: 16px; height: 16px; border-radius: 4px; object-fit: contain; display: block; }

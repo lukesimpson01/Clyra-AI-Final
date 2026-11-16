@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -25,6 +25,16 @@ try {
   }
 } catch (error) {
   console.warn("[electron-dev] could not patch Electron Info.plist:", error?.message || error);
+}
+
+// A leftover Clyra from an earlier run keeps the Notch bridge and DevTools ports and answers instead of this one (buttons that do
+// nothing, "port busy"): stop it before anything else.
+if (process.platform === "darwin" && process.env.CLYRA_LAUNCH_VIA_OPEN !== "0") {
+  try {
+    spawnSync("pkill", ["-f", `${CLYRA_DEV_APP}/Contents/MacOS/Clyra`]);
+    spawnSync("pkill", ["-f", "Clyra’s Notch.app/Contents/MacOS"]);
+    spawnSync("sleep", ["1.5"]);
+  } catch { /* nothing running */ }
 }
 
 const electronBinary = path.resolve("node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");

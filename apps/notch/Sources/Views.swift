@@ -20,7 +20,7 @@ enum Metrics {
     static let sidebarWidth: CGFloat = 220
     static let maximumPanelHeight: CGFloat = 420
     static let wing: CGFloat = 62
-    static let hoverDelay: TimeInterval = 0.10
+    static let hoverDelay: TimeInterval = 0.07
     static let releaseDelay: TimeInterval = 0.08
 
     /// Width the page is designed at; the chat gains the sidebar's width when it is open.
@@ -55,14 +55,20 @@ enum Metrics {
     }
 
     static func collapsedWidth(_ model: NotchModel) -> CGFloat {
+        let base = notchWidth + 2 * ear
         if model.flowActive { return 336 }
-        if model.banner != nil { return 372 }
-        if model.working != nil || model.doneMessage != nil { return 412 }
-        // Playing music keeps the notch exactly as wide as when nothing plays; only a running timer or alarm adds wings.
-        let wings = !model.secondaryActivities.isEmpty
-        let base = notchWidth + 2 * ear + (wings ? 2 * wing : 0)
-        // Music plus live timers needs room for the title between them.
-        return wings && model.hasMedia ? max(base, 300 + CGFloat(model.secondaryActivities.count) * 70) : base
+        if let banner = model.banner {
+            let need = CollapsedLayout.text(banner.title, size: 14, weight: .semibold) + CollapsedLayout.text(banner.detail, size: 12) + 16 + 8 + 8 + (banner.deviceName != nil ? 30 : 0) + 2 * ear + 24
+            return min(440, max(base, need))
+        }
+        let center = CollapsedLayout.center(model)
+        let sides = CollapsedLayout.sides(model, center: center)
+        var need = CollapsedLayout.centerWidth(model, center)
+        for side in sides { need += CollapsedLayout.sideWidth(model, side) }
+        need += CGFloat(max(0, sides.count + (need > 0 ? 0 : -1))) * 10
+        // Content that fits inside the notch's own width (and its wings) does not widen it.
+        let withEars = need + 2 * ear + 36
+        return min(440, max(base, withEars))
     }
 
     static func panelHeight(_ m: NotchModel) -> CGFloat {
@@ -183,69 +189,23 @@ struct CollapsedContent: View {
     @ObservedObject var model: NotchModel
     let height: CGFloat
 
+    /// What fills the middle of the collapsed notch, and what sits beside it (up to two more things: three in all).
+    private var centerKind: CollapsedCenter { CollapsedLayout.center(model) }
+    private var sides: [NotchView] { CollapsedLayout.sides(model, center: centerKind) }
+
     var body: some View {
         ZStack {
             if model.flowActive {
                 FlowStrip(flow: model.flow, reduceMotion: model.reduceMotion)
             } else if let banner = model.banner {
                 ConnectionBanner(model: model, banner: banner)
-            } else if let note = model.doneMessage {
-                // The AI's own closing line, in white, while the notch glows once to say it is finished.
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 12.5)).foregroundStyle(Color(red: 0.35, green: 0.84, blue: 0.5))
-                    Text(note).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white).lineLimit(1)
-                }
-                .frame(maxWidth: 360)
-                .transition(.opacity)
-            } else if model.voice.live {
-                // On a call: plain white text with the audio graph on the right. No shimmer.
-                let label = model.voice.collapsedLabel
-                HStack(spacing: 8) {
-                    Image(systemName: label.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
-                    Text(label.text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white).lineLimit(1)
-                    Spacer(minLength: 6)
-                    MicBars(flow: model.flow, live: model.flow.phase == "listening")
-                        .frame(width: 44).scaleEffect(0.8)
-                }
-                .padding(.horizontal, 22)
-                .transaction { $0.animation = nil }
-            } else if let work = model.working {
-                // Clyra is mid-reply: the same tool line the chat shows, so the notch says what it is doing even closed.
-                HStack(spacing: 8) {
-                    Image(systemName: work.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
-                    if model.computer.isActive && model.computer.status != "running" {
-                        // Paused or waiting for the person: the light stops, the words stay.
-                        Text(work.label).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
-                    } else {
-                        ShimmerText(text: work.label, reduceMotion: model.reduceMotion, size: 12.5)
-                    }
-                    if !work.sources.isEmpty { SourceStrip(sources: work.sources, reduceMotion: model.reduceMotion) }
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 20)
-                .transaction { $0.animation = nil }
-            } else if let track = model.media.state, model.hasMedia {
-                // One row, so nothing overlaps: live activities sit at the edges, the player takes whatever room is left.
-                HStack(spacing: 8) {
-                    if let left = model.secondaryActivities.dropFirst().first { indicator(left).fixedSize() }
-                    HStack(spacing: 7) {
-                        PlayerIcon(track: track, size: 16)
-                        Text(track.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        LevelBars(meter: model.audioMeter, reduceMotion: model.reduceMotion, paused: !model.hasPlayingMedia)
-                    }
-                    .frame(maxWidth: .infinity)
-                    if let right = model.secondaryActivities.first { indicator(right).fixedSize() }
-                }
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
-                .padding(.horizontal, 6)
             } else {
                 HStack(spacing: 10) {
-                    Spacer(minLength: 0)
-                    ForEach(model.secondaryActivities.filter { $0 != .alarm }, id: \.rawValue) { indicator($0) }
-                    Spacer(minLength: 0)
-                    if model.secondaryActivities.contains(.alarm) { indicator(.alarm) }
+                    if sides.count > 1 { slot(sides[1]) }
+                    center.frame(maxWidth: .infinity)
+                    if let first = sides.first { slot(first) }
                 }
+                .padding(.horizontal, 8)
             }
         }
         .font(.system(size: 15, weight: .medium).monospacedDigit())
@@ -255,15 +215,112 @@ struct CollapsedContent: View {
         .frame(height: height)
     }
 
+    /// A side item: pointing at it opens that item, not the middle one.
+    @ViewBuilder private func slot(_ kind: NotchView) -> some View {
+        indicator(kind).fixedSize()
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { model.hoverTarget = kind } else if model.hoverTarget == kind { model.hoverTarget = nil }
+            }
+    }
+
+    @ViewBuilder private var center: some View {
+        switch centerKind {
+        case .done(let note):
+            // The AI's own closing line, in white, while the notch glows once to say it is finished.
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 12.5)).foregroundStyle(Color(red: 0.35, green: 0.84, blue: 0.5))
+                Text(note).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white).lineLimit(1)
+            }.transition(.opacity)
+        case .voice:
+            // On a call: plain white text with the audio graph on the right. No shimmer.
+            let label = model.voice.collapsedLabel
+            HStack(spacing: 8) {
+                Image(systemName: label.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
+                Text(label.text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white).lineLimit(1)
+                Spacer(minLength: 6)
+                MicBars(flow: model.flow, live: model.flow.phase == "listening").frame(width: 44).scaleEffect(0.8)
+            }.transaction { $0.animation = nil }
+        case .work(let work):
+            // Clyra is mid-reply: the same tool line the chat shows, so the notch says what it is doing even closed.
+            HStack(spacing: 8) {
+                Image(systemName: work.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                if model.computer.isActive && model.computer.status != "running" {
+                    Text(work.label).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                } else {
+                    ShimmerText(text: work.label, reduceMotion: model.reduceMotion, size: 12.5)
+                }
+                if !work.sources.isEmpty { SourceStrip(sources: work.sources, reduceMotion: model.reduceMotion) }
+            }.transaction { $0.animation = nil }
+        case .media(let track):
+            HStack(spacing: 7) {
+                PlayerIcon(track: track, size: 16)
+                Text(track.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                LevelBars(meter: model.audioMeter, reduceMotion: model.reduceMotion, paused: !model.hasPlayingMedia)
+            }
+        case .none:
+            Spacer(minLength: 0)
+        }
+    }
+
     @ViewBuilder private func indicator(_ kind: NotchView) -> some View {
         switch kind {
         case .timer:
-            if let timer = model.timers.soonest { Label(TimerEngine.clock(timer.remaining(at: model.now)), systemImage: "timer").foregroundStyle(.orange) }
+            if let timer = model.timers.soonest { Label(TimerEngine.clock(timer.remaining(at: model.now)), systemImage: "timer").font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(.orange) }
         case .stopwatch:
-            HStack(spacing: 4) { Image(systemName: "stopwatch"); StopwatchReadout(model: model, size: model.hasMedia ? 10 : 15) }.foregroundStyle(.green)
+            HStack(spacing: 4) { Image(systemName: "stopwatch"); StopwatchReadout(model: model, size: 12) }.font(.system(size: 12)).foregroundStyle(.green)
         case .alarm:
-            if let alarm = model.alarms.upcoming?.alarm { Label(alarm.label, systemImage: "alarm").foregroundStyle(.orange) }
+            if let alarm = model.alarms.upcoming?.alarm { Label(alarm.label, systemImage: "alarm").font(.system(size: 12, weight: .medium)).foregroundStyle(.orange) }
+        case .media:
+            if let track = model.media.state { PlayerIcon(track: track, size: 16) }
         default: EmptyView()
+        }
+    }
+}
+
+enum CollapsedCenter {
+    case none, voice, done(String), work((symbol: String, label: String, sources: [SourceRef])), media(MediaState)
+}
+
+/// Which things the collapsed notch shows and how wide they need it: no wider than blank unless the content needs it.
+enum CollapsedLayout {
+    static func center(_ m: NotchModel) -> CollapsedCenter {
+        if let note = m.doneMessage { return .done(note) }
+        if m.voice.live { return .voice }
+        if let work = m.working { return .work(work) }
+        if let track = m.media.state, m.hasMedia { return .media(track) }
+        return .none
+    }
+
+    static func sides(_ m: NotchModel, center: CollapsedCenter) -> [NotchView] {
+        var list: [NotchView] = []
+        if case .media = center {} else if m.hasMedia, m.media.state != nil { list.append(.media) }
+        list.append(contentsOf: m.secondaryActivities)
+        return Array(list.prefix(2))
+    }
+
+    static func text(_ s: String, size: CGFloat, weight: NSFont.Weight = .medium) -> CGFloat {
+        ceil((s as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight)]).width)
+    }
+
+    static func sideWidth(_ m: NotchModel, _ kind: NotchView) -> CGFloat {
+        switch kind {
+        case .timer: return 20 + (m.timers.soonest.map { text(TimerEngine.clock($0.remaining(at: m.now)), size: 12) } ?? 30)
+        case .stopwatch: return 20 + 50
+        case .alarm: return 20 + (m.alarms.upcoming.map { text($0.alarm.label, size: 12) } ?? 50)
+        case .media: return 16
+        default: return 0
+        }
+    }
+
+    static func centerWidth(_ m: NotchModel, _ c: CollapsedCenter) -> CGFloat {
+        switch c {
+        case .none: return 0
+        case .done(let note): return 22 + text(note, size: 12.5)
+        case .voice: return 20 + text(m.voice.collapsedLabel.text, size: 12.5) + 6 + 44
+        case .work(let w): return 20 + text(w.label, size: 12.5) + (w.sources.isEmpty ? 0 : 60)
+        case .media(let t): return 16 + 7 + min(160, text(t.title, size: 11.5, weight: .semibold)) + 7 + 18
         }
     }
 }

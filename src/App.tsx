@@ -1613,6 +1613,7 @@ function AppAgentFlowPanel({
 function inferCommandId(text: string): string | undefined {
   const t = text.trim().toLowerCase();
   if (!t || t.startsWith("/")) return undefined;
+  if (/\b(connect|pair|disconnect|turn (?:on|off)|switch (?:on|off)|enable|disable)\b[^.?!]{0,30}\b(bluetooth|wi-?fi|my (?:phone|iphone|ipad|airpods|headphones|speaker|watch|mac)|airplay|hotspot|dark mode|do not disturb|volume|brightness)\b/.test(t)) return "computer";
   if (/\b(check|fix|enable|grant|set ?up|review)\b[^.?!]{0,30}\b(permissions?|privacy access)\b|\bclyra (doesn.t|does not|isn.t|is not) (show|listed|appear)/.test(t)) return "permissions";
   if (/\b(use|using|with|via|through|open)\s+(the\s+)?(clyra\s+)?computer[ -]use\b/.test(t) || /\b(take over|control|operate)\s+(my|the)\s+(computer|mac|pc|laptop|desktop|screen)\b/.test(t)) return "computer";
   if (/(?:youtube\.com\/(?:watch|shorts|live)|youtu\.be\/)/.test(t)) return "youtube";
@@ -7778,7 +7779,7 @@ Please analyze the code you just wrote and fix this error.`;
         const sync = (event: ComputerUseEvent) => {
           const state = event.state;
           run.todos = (state.plan ?? []).length < 2 ? [] : (state.plan ?? []).map((item, index) => ({ id: `cu-${index}`, content: item.title, status: item.status === "done" ? "completed" : item.status === "active" ? "in_progress" : "pending" }));
-          run.steps = (state.steps ?? []).filter((step) => step.kind !== "message").map((step) => ({ type: "step" as const, id: step.id, tool: `computer_${step.kind}`, label: step.label, state: step.status, detail: step.app }));
+          run.steps = (state.steps ?? []).filter((step) => step.kind !== "message").map((step) => ({ type: "step" as const, id: step.id, tool: `computer_${step.kind}`, label: step.label, state: step.status, detail: step.app, comment: step.thought }));
           if (state.status === "needs_user") run.steps.push({ type: "step", id: "cu-needs-you", tool: "computer_needs_user", label: state.message || "Waiting for you", state: "running" });
           if (["done", "failed", "cancelled"].includes(state.status) && !ended) {
             ended = true;

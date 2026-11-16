@@ -882,8 +882,19 @@ function startNotchMediaLink() {
     }
   };
   bridge.onMessage = async (message) => {
+    if (process.env.CLYRA_BRIDGE_DEBUG === "1") console.log("[bridge] op", message?.op, message?.action || "");
     if (message?.op === "computer") { await handleComputerCommand(String(message.action || ""), message).catch((error) => console.warn("[computer]", error?.message || error)); return; }
-    if (message?.op === "app-call") { try { if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send("voiceapp:command", String(message.action || "")); } catch { /* window closing */ } return; }
+    if (message?.op === "app-call") {
+      try {
+        if (!uiView || uiView.webContents.isDestroyed()) return;
+        const action = String(message.action || "");
+        if (action === "screen" || action === "camera") {
+          // Screen and camera need a user gesture: run the toggle inside the page as one, as if the button had been clicked.
+          void uiView.webContents.executeJavaScript(`window.__clyraVoiceMedia && window.__clyraVoiceMedia(${JSON.stringify(action)})`, true).catch(() => {});
+        } else uiView.webContents.send("voiceapp:command", action, String(message.text || "").slice(0, 2000));
+      } catch { /* window closing */ }
+      return;
+    }
     if (message?.op === "permissions") { void dictationManager?.ensureAllAccess({ open: true }); return; }
     if (message?.op === "voice-call") { if (message.action === "listen") await dictationManager?.listenForCall(true); else if (message.action === "toggle") await dictationManager?.toggleVoiceCall(); else if (message.action === "mute") { if (dictationManager) { dictationManager.callMuted = true; if (["listening", "arming"].includes(dictationManager.phase)) dictationManager.cancel(); } } else if (message.action === "unmute") { if (dictationManager) { dictationManager.callMuted = false; await dictationManager.listenForCall(); } } else if (message.action === "end") { dictationManager?.endVoiceCall(); } return; }
     if (message?.op === "music") { musicLevel?.set(Boolean(message.on)); return; }
@@ -1350,6 +1361,33 @@ function registerIpc() {
     });
     // With the notch running, its own notification and controls say it; the floating pill is only for when it is not.
     void (on ? screenShareIndicator.show({ pill: !dictationManager?.notch?.alive }) : screenShareIndicator.hide());
+  });
+  // App logos for tool-call rows: the real icon of the app the agent is using.
+  const appIconCache = new Map();
+  ipcMain.handle("app:icon", async (event, name) => {
+    authorize(event);
+    const clean = String(name || "").replace(/[^\w .&+\-]/g, "").slice(0, 60);
+    if (!clean || process.platform !== "darwin") return null;
+    if (appIconCache.has(clean)) return appIconCache.get(clean);
+    for (const dir of ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities", "/System/Library/CoreServices", `${process.env.HOME}/Applications`]) {
+      const candidate = `${dir}/${clean}.app`;
+      if (existsSync(candidate)) {
+        try {
+          // The bundle's own .icns gives the real logo; the system file icon can come back generic.
+          const { stdout } = await promisify(execFile)("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIconFile", `${candidate}/Contents/Info.plist`]);
+          let file = String(stdout).trim();
+          if (file && !file.endsWith(".icns")) file += ".icns";
+          const icns = `${candidate}/Contents/Resources/${file}`;
+          if (file && existsSync(icns)) {
+            const image = nativeImage.createFromPath(icns);
+            if (!image.isEmpty()) { const url = image.resize({ width: 48, height: 48 }).toDataURL(); appIconCache.set(clean, url); return url; }
+          }
+        } catch { /* fall back to the system icon */ }
+        try { const icon = await app.getFileIcon(candidate, { size: "large" }); const url = icon.toDataURL(); appIconCache.set(clean, url); return url; } catch { /* try the next folder */ }
+      }
+    }
+    appIconCache.set(clean, null);
+    return null;
   });
   ipcMain.on("voiceapp:state", (event, state) => {
     try { dictationManager?.notch?.send({ t: "app-call", active: Boolean(state?.active), state: String(state?.state || "Voice call").slice(0, 24), muted: Boolean(state?.muted), media: ["camera", "screen"].includes(state?.media) ? state.media : "none" }); } catch { /* notch not running */ }

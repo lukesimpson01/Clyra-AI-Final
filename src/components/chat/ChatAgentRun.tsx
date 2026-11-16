@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlarmClock, ChevronDown, FilePlus, Mouse, ShieldCheck, Timer, FileText, Globe, Github, Images, Link2, MapPin, PencilLine, Search } from "lucide-react";
+import { getElectronDesktop } from "../../lib/electron-runtime";
 import { SourceStrip } from "./assistant";
 import { ShimmerText } from "./assistant";
 import { ChatResearchResults } from "./ChatResearchResults";
@@ -88,15 +89,29 @@ export function AgentTodo({ todos, live }: { todos: TodoItem[]; live: boolean; d
 const QUIET_TOOLS = new Set(["web_open", "web_find", "web_follow_links"]);
 export const visibleSteps = (steps: AgentStepView[]) => steps.filter((step) => !QUIET_TOOLS.has(step.tool));
 
+/** The real logo of the app a computer step used, if the desktop can find it. */
+function useAppIcon(name?: string, enabled = true) {
+  const [icon, setIcon] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!enabled || !name) { setIcon(null); return; }
+    void getElectronDesktop()?.appIcon?.(name).then((url) => { if (live) setIcon(url); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [name, enabled]);
+  return icon;
+}
+
 function StepRow({ step, onOpenNote }: { step: AgentStepView; onOpenNote?: (id: string) => void }) {
   const Icon = step.tool.startsWith("computer") ? Mouse : step.tool.startsWith("permission") ? ShieldCheck : step.tool === "notch_alarm" ? AlarmClock : step.tool.startsWith("notch_") ? Timer : ICON[step.tool as keyof typeof ICON] ?? Globe;
   const running = step.state === "running";
+  const appIcon = useAppIcon(step.detail, step.tool.startsWith("computer"));
   const isSearch = step.tool === "web_search";
   // A web search is just "Searching" with the sites it found sliding in beside it; the query and counts stay out of the way.
   const label = isSearch ? (running ? "Searching" : "Searched") : step.label;
   return (
     <li className={`clyra-ai-row clyra-ai-row--${running ? "running" : step.state}`}>
-      <span className="clyra-ai-row__icon" aria-hidden><Icon /></span>
+      {step.comment ? <p className="clyra-ai-row__comment">{step.comment}</p> : null}
+      <span className="clyra-ai-row__icon" aria-hidden>{appIcon ? <img src={appIcon} alt="" className="clyra-ai-row__logo" /> : <Icon />}</span>
       <span className="clyra-ai-row__label">{running ? <ShimmerText>{label}</ShimmerText> : label}</span>
       {step.tool === "web_search" && step.sources?.length ? (
         <SourceStrip sources={step.sources.map((s, i) => ({ id: `${step.id}-${i}`, url: s.url, host: s.host, title: s.title }))} />

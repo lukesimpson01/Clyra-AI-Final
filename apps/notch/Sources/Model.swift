@@ -13,6 +13,8 @@ struct NotchBanner: Equatable {
 }
 
 final class NotchModel: ObservableObject {
+    /// The collapsed item the pointer is over: opening shows that one, not always the middle one.
+    var hoverTarget: NotchView?
     @Published var expanded = false
     @Published var view: NotchView = .home
     @Published var now = Date()
@@ -261,7 +263,8 @@ final class NotchModel: ObservableObject {
     func setExpanded(_ on: Bool) {
         guard expanded != on else { return }
         followActivity = on && view != .widgets
-        if on, airdropTargeted { view = .airdrop }
+        if on, let target = hoverTarget, target != .voice { view = target; followActivity = false; hoverTarget = nil }
+        else if on, airdropTargeted { view = .airdrop }
         else if on, ringingAlarm != nil { view = .alarm }
         else if on, banner?.deviceName != nil {
             view = .bluetooth
@@ -450,6 +453,7 @@ final class NotchModel: ObservableObject {
         let t = text.lowercased()
         let patterns = [
             #"\b(use|using|with|via|through|open)\s+(the\s+)?(clyra\s+)?computer[ -]use\b"#,
+            #"\b(connect|pair|disconnect|turn (?:on|off)|switch (?:on|off)|enable|disable)\b[^.?!]{0,30}\b(bluetooth|wi-?fi|my (?:phone|iphone|ipad|airpods|headphones|speaker|watch|mac)|airplay|hotspot|dark mode|do not disturb|volume|brightness)\b"#,
             #"\b(take over|control|operate)\s+(my|the)\s+(computer|mac|pc|laptop|desktop|screen)\b"#,
             #"\b(open|launch|quit|close|switch to|click|double[- ]click|type|press|scroll)\b[^.?!]{0,40}\b(google chrome|chrome|safari|firefox|arc|finder|spotify|notes|calculator|terminal|mail|messages|calendar|system settings|settings|preferences|photos|music|slack|discord|whatsapp|vs ?code|the app|an app|my (?:mac|computer|desktop|screen))\b"#,
         ]

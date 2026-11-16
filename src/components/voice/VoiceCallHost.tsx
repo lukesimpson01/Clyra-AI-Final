@@ -45,6 +45,13 @@ export function VoiceCallHost({ call, ...screenProps }: VoiceCallHostProps) {
     setMediaMode(mode);
   };
 
+  // The notch's Screen and Camera buttons toggle through this, run by the app as if the button had been pressed.
+  const mediaModeRef = useRef(mediaMode);
+  mediaModeRef.current = mediaMode;
+  useEffect(() => {
+    (window as unknown as { __clyraVoiceMedia?: (mode: "camera" | "screen") => void }).__clyraVoiceMedia = (mode) => changeMediaMode(mediaModeRef.current === mode ? null : mode);
+    return () => { delete (window as unknown as { __clyraVoiceMedia?: unknown }).__clyraVoiceMedia; };
+  });
   useEffect(() => {
     const onTrigger = (event: Event) => {
       const detail = (event as CustomEvent<VoiceCallTriggerDetail>).detail;

@@ -6,7 +6,7 @@ export type AgentsStackState = {
   url: string;
 };
 
-export type ComputerUseStep = { id: string; kind: string; label: string; app?: string; status: "running" | "done" | "failed"; detail?: string };
+export type ComputerUseStep = { id: string; kind: string; label: string; app?: string; thought?: string; status: "running" | "done" | "failed"; detail?: string };
 export type ComputerUseState = {
   v: number; status: "idle" | "planning" | "running" | "paused" | "needs_user" | "done" | "failed" | "cancelled"; id?: string; goal?: string;
   plan?: Array<{ title: string; status: "pending" | "active" | "done" }>; steps?: ComputerUseStep[]; message?: string; app?: string; summary?: string; error?: string;
@@ -246,7 +246,8 @@ export type ClyraDesktopBridge = {
     vision?: { summary?: string; text?: string; ocrText?: string; model?: string; source?: string };
     error?: string;
   }>;
-  voiceApp?: { setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string) => void) => () => void };
+  appIcon?: (name: string) => Promise<string | null>;
+  voiceApp?: { setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string, text?: string) => void) => () => void };
   permissions?: { status: () => Promise<{ ok: boolean; status: Record<string, string> }>; ensureAll: () => Promise<{ ok: boolean; results?: Record<string, string> }> };
   notch?: { op: (payload: { kind: "timer" | "stopwatch" | "alarm"; action?: "start" | "stop" | "reset"; seconds?: number; label?: string; hour?: number; minute?: number }) => Promise<{ ok: boolean; error?: string }> };
   computer?: {

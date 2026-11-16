@@ -91,11 +91,12 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     ask: (text) => ipcRenderer.invoke("companion:ask", { text }),
   },
   seeScreen: (question) => ipcRenderer.invoke("desktop:see-screen", { question }),
+  appIcon: (name) => ipcRenderer.invoke("app:icon", String(name || "")),
   voiceApp: {
     setScreenShare: (on) => ipcRenderer.send("screenshare:set", Boolean(on)),
     onScreenShareStop: (callback) => { const handler = () => callback(); ipcRenderer.on("screenshare:stop-request", handler); return () => ipcRenderer.removeListener("screenshare:stop-request", handler); },
     setState: (state) => ipcRenderer.send("voiceapp:state", state),
-    onCommand: (callback) => { const handler = (_event, action) => callback(String(action || "")); ipcRenderer.on("voiceapp:command", handler); return () => ipcRenderer.removeListener("voiceapp:command", handler); },
+    onCommand: (callback) => { const handler = (_event, action, text) => callback(String(action || ""), String(text || "")); ipcRenderer.on("voiceapp:command", handler); return () => ipcRenderer.removeListener("voiceapp:command", handler); },
   },
   permissions: { status: () => ipcRenderer.invoke("permissions:status"), ensureAll: () => ipcRenderer.invoke("permissions:ensure-all") },
   notch: { op: (payload) => ipcRenderer.invoke("notch:op", payload) },

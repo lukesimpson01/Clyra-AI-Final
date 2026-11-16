@@ -50,6 +50,13 @@ final class VoiceCall: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         return ("phone.fill", muted ? "Muted" : "Voice call")
     }
 
+    /// Something typed on a call: the app's call (if that is the one running) or this one.
+    func sendTyped(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if appActive { model?.flow.sendOp(["op": "app-call", "action": "type", "text": text]) } else { handle(["event": "transcript", "text": text]) }
+    }
+
     func toggleShare(_ kind: String) {
         model?.flow.sendOp(["op": "app-call", "action": kind])
     }
@@ -184,6 +191,8 @@ struct VoiceView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var flow: FlowBridge
     @ObservedObject var voice: VoiceCall
+    @State private var typing = false
+    @State private var draft = ""
 
     init(model: NotchModel) { self.model = model; self.flow = model.flow; self.voice = model.voice }
 
@@ -238,6 +247,18 @@ struct VoiceView: View {
                 }
                 .frame(height: 126)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+            } else if typing {
+                HStack(spacing: 8) {
+                    TextField("Type to Clyra…", text: $draft).textFieldStyle(.plain).font(.system(size: 13.5)).foregroundStyle(.white)
+                        .onSubmit(submitTyped)
+                    if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Button(action: submitTyped) { Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold)).foregroundStyle(.white).frame(width: 26, height: 26).background(Circle().fill(ClyraTint.blue)) }
+                            .buttonStyle(PillPress()).accessibilityLabel("Send")
+                    }
+                }
+                .padding(.horizontal, 12).frame(height: 40)
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.22), lineWidth: 1))
+                .onAppear { model.onKeyboardFocus?() }
             } else {
                 // Captions: what is being heard, then what Clyra answers, in text.
                 ScrollViewReader { proxy in
@@ -270,10 +291,16 @@ struct VoiceView: View {
                     model.camera.toggle()
                     if voice.appActive { voice.toggleShare("camera") }
                 }
+                control(symbol: "keyboard", tip: typing ? "Hide keyboard" : "Type a message", on: typing, tint: ClyraTint.blue) { typing.toggle() }
                 control(symbol: "phone.down.fill", tip: "End call", on: true, tint: Color(red: 0.9, green: 0.25, blue: 0.27)) { voice.endAny() }
             }
         }
         .animation(model.reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.86), value: model.camera.wanted)
+    }
+
+    private func submitTyped() {
+        voice.sendTyped(draft)
+        draft = ""
     }
 
     private func control(symbol: String, tip: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {

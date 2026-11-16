@@ -1,7 +1,7 @@
 import type { AgentEvent, TodoItem } from "../../lib/chat-agent/events";
 
 export type { AgentEvent, TodoItem };
-export type AgentStepView = Extract<AgentEvent, { type: "step" }>;
+export type AgentStepView = Extract<AgentEvent, { type: "step" }> & { /** What the agent said before this step, in its own words. */ comment?: string };
 export type AgentMapPlace = Extract<AgentEvent, { type: "map" }>["place"];
 export type ChatAgentRun = { todos: TodoItem[]; steps: AgentStepView[] };
 
