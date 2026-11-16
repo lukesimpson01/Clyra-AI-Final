@@ -4,7 +4,7 @@ Start at `Sources/main.swift` for the panel and its frame interpolation, `Source
 
 ## macOS build
 
-Run `./build.sh build/notch-1.4/Notch.app` with Apple's Command Line Tools installed. The script targets your Mac's native architecture and copies the BSD-licensed media adapter from the installed Notch app or Boring Notch. Use `NOTCH_ADAPTER_SOURCE` to point to a compatible app's `Contents` directory if necessary. The build should print the test result and `built` before you replace your existing app. Quit the previous copy, keep a backup, copy the new bundle to Applications, and open it. In System Settings, verify it is still in General → Login Items & Extensions.
+Run `./build.sh build/Clyra’s Notch.app` with Apple's Command Line Tools installed. The script targets your Mac's native architecture and copies the BSD-licensed media adapter from the installed Notch app or Boring Notch. Use `NOTCH_ADAPTER_SOURCE` to point to a compatible app's `Contents` directory if necessary. The build should print the test result and `built` before you replace your existing app. Quit the previous copy, keep a backup, copy the new bundle to Applications, and open it. In System Settings, verify it is still in General → Login Items & Extensions.
 
 ## Mac smoke tests
 

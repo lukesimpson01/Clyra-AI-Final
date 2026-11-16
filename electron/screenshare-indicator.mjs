@@ -16,7 +16,7 @@ export class ScreenShareIndicator {
     try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* older Electron */ }
   }
 
-  async show() {
+  async show({ pill = true } = {}) {
     if (this.on) return;
     this.on = true;
     const primary = screen.getPrimaryDisplay();
@@ -26,6 +26,7 @@ export class ScreenShareIndicator {
       void win.loadFile(this.rimHtml).then(() => { if (!win.isDestroyed() && this.on) { win.showInactive(); void win.webContents.executeJavaScript("window.__on(true)").catch(() => {}); } });
       return win;
     });
+    if (!pill) return;
     const width = 300, height = 60;
     this.pill = new BrowserWindow({ x: Math.round(primary.bounds.x + (primary.bounds.width - width) / 2), y: primary.bounds.y + 34, width, height, frame: false, transparent: true, resizable: false, focusable: false, skipTaskbar: true, hasShadow: false, show: false, enableLargerThanScreen: true, ...(process.platform === "darwin" ? { type: "panel" } : {}), webPreferences: { preload: this.pillPreload, sandbox: false, contextIsolation: true } });
     this.pill.setAlwaysOnTop(true, process.platform === "darwin" ? "screen-saver" : "screen-saver", 3);

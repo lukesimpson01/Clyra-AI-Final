@@ -972,8 +972,8 @@ function startLocalService() {
  * Electron, which has no Bluetooth usage text, and Notch is killed on launch.
  */
 const notchDir = path.join(projectRoot, "apps", "notch");
-const notchBundle = path.join(notchDir, "build", "Notch.app");
-const notchExecutable = path.join(notchBundle, "Contents", "MacOS", "Notch");
+const notchBundle = path.join(notchDir, "build", "Clyra’s Notch.app");
+const notchExecutable = path.join(notchBundle, "Contents", "MacOS", "Clyra’s Notch");
 
 async function launchNotch() {
   if (process.platform !== "darwin") return;
@@ -981,7 +981,7 @@ async function launchNotch() {
   try {
     if (!isRunnableFile(notchExecutable)) {
       console.log("[notch] building Notch (first run)…");
-      await run("sh", [path.join(notchDir, "build.sh"), "build/Notch.app"], { cwd: notchDir, timeout: 300_000 });
+      await run("sh", [path.join(notchDir, "build.sh"), "build/Clyra’s Notch.app"], { cwd: notchDir, timeout: 300_000 });
     }
     const running = await run("pgrep", ["-f", notchExecutable]).then((r) => r.stdout.trim(), () => "");
     if (running) { console.log("[notch] already running"); return; }
@@ -1348,10 +1348,11 @@ function registerIpc() {
       pillPreload: path.join(here, "screenshare-pill-preload.cjs"),
       onStop: () => { try { if (uiView && !uiView.webContents.isDestroyed()) uiView.webContents.send("screenshare:stop-request"); } catch { /* window closing */ } void screenShareIndicator?.hide(); },
     });
-    void (on ? screenShareIndicator.show() : screenShareIndicator.hide());
+    // With the notch running, its own notification and controls say it; the floating pill is only for when it is not.
+    void (on ? screenShareIndicator.show({ pill: !dictationManager?.notch?.alive }) : screenShareIndicator.hide());
   });
   ipcMain.on("voiceapp:state", (event, state) => {
-    try { dictationManager?.notch?.send({ t: "app-call", active: Boolean(state?.active), state: String(state?.state || "Voice call").slice(0, 24), muted: Boolean(state?.muted) }); } catch { /* notch not running */ }
+    try { dictationManager?.notch?.send({ t: "app-call", active: Boolean(state?.active), state: String(state?.state || "Voice call").slice(0, 24), muted: Boolean(state?.muted), media: ["camera", "screen"].includes(state?.media) ? state.media : "none" }); } catch { /* notch not running */ }
   });
   ipcMain.handle("permissions:status", async (event) => { authorize(event); return { ok: true, status: dictationManager?.accessStatus() || {} }; });
   ipcMain.handle("permissions:ensure-all", async (event) => { authorize(event); return (await dictationManager?.ensureAllAccess({ open: true })) || { ok: false }; });

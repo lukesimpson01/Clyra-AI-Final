@@ -80,7 +80,7 @@ enum Metrics {
         case .stopwatch: return 255
         case .computer: return 300
         case .reply: return 290
-        case .voice: return 300
+        case .voice: return m.camera.wanted ? 360 : 212
         case .note: return 250
         case .settings: return maximumPanelHeight
         }
@@ -197,6 +197,18 @@ struct CollapsedContent: View {
                 }
                 .frame(maxWidth: 360)
                 .transition(.opacity)
+            } else if model.voice.live {
+                // On a call: plain white text with the audio graph on the right. No shimmer.
+                let label = model.voice.collapsedLabel
+                HStack(spacing: 8) {
+                    Image(systemName: label.symbol).font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
+                    Text(label.text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.white).lineLimit(1)
+                    Spacer(minLength: 6)
+                    MicBars(flow: model.flow, live: model.flow.phase == "listening")
+                        .frame(width: 44).scaleEffect(0.8)
+                }
+                .padding(.horizontal, 22)
+                .transaction { $0.animation = nil }
             } else if let work = model.working {
                 // Clyra is mid-reply: the same tool line the chat shows, so the notch says what it is doing even closed.
                 HStack(spacing: 8) {

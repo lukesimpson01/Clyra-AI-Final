@@ -16,6 +16,7 @@ final class VoiceCall: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published private(set) var appActive = false
     @Published private(set) var appState = "Listening"
     @Published private(set) var appMuted = false
+    @Published private(set) var appMedia = "none"   // none | camera | screen, as the app's call has it
     var live: Bool { active || appActive }
 
     func handleApp(_ o: [String: Any]) {
@@ -23,9 +24,34 @@ final class VoiceCall: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         appActive = o["active"] as? Bool ?? false
         appState = o["state"] as? String ?? "Voice call"
         appMuted = o["muted"] as? Bool ?? false
+        let previousMedia = appMedia
+        appMedia = o["media"] as? String ?? "none"
         if appActive && !was { startedAt = Date() }
+        if appActive, appMedia == "screen", previousMedia != "screen" { model?.announce("Screen sharing", "Clyra can see your screen", symbol: "rectangle.on.rectangle") }
+        // The app's camera and the notch's preview follow each other.
+        if appActive, let model {
+            if appMedia == "camera", !model.camera.wanted { model.camera.start() }
+            if appMedia != "camera", previousMedia == "camera", model.camera.wanted { model.camera.stop() }
+        }
+        if was && !appActive, let model, model.camera.wanted { model.camera.stop() }
         if was && !appActive { DispatchQueue.main.async { [weak model] in if let model, model.view == .voice { model.show(.home) } } }
         objectWillChange.send()
+    }
+
+    /// What the collapsed notch says during a call: plain white text, no shimmer.
+    var collapsedLabel: (symbol: String, text: String) {
+        if appActive {
+            if appMedia == "screen" { return ("rectangle.on.rectangle", "Screen sharing") }
+            if appMedia == "camera" { return ("video.fill", "Camera on") }
+            return ("phone.fill", appMuted ? "Muted" : "Voice call")
+        }
+        if speaking { return ("speaker.wave.2.fill", snippet) }
+        if thinking { return ("ellipsis", "Thinking") }
+        return ("phone.fill", muted ? "Muted" : "Voice call")
+    }
+
+    func toggleShare(_ kind: String) {
+        model?.flow.sendOp(["op": "app-call", "action": kind])
     }
 
     func endAny() {
@@ -180,62 +206,81 @@ struct VoiceView: View {
 
     private var call: some View {
         let reply = model.chat.chat.messages.last(where: { !$0.isUser })
-        return VStack(spacing: 10) {
+        let muted = voice.appActive ? voice.appMuted : voice.muted
+        let sharing = voice.appMedia == "screen"
+        return VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Circle().fill(status == "Listening" ? ClyraTint.blueSoft : .white.opacity(0.5)).frame(width: 7, height: 7)
                     .shadow(color: ClyraTint.blue.opacity(status == "Listening" ? 0.8 : 0), radius: 4)
                 ZStack { Text(status).id(status).font(.system(size: 13, weight: .semibold)).transition(.opacity.combined(with: .offset(y: 4))) }
                     .animation(model.reduceMotion ? nil : .easeOut(duration: 0.18), value: status)
-                Spacer()
                 TimelineView(.periodic(from: .now, by: 1)) { frame in
-                    Text(duration(frame.date)).font(.system(size: 12.5, weight: .medium).monospacedDigit()).foregroundStyle(.white.opacity(0.55))
+                    Text(duration(frame.date)).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(.white.opacity(0.5))
                 }
+                Spacer(minLength: 4)
+                MicBars(flow: flow, live: flow.phase == "listening" && !muted)
             }
             .frame(height: 24)
 
-            // Captions: what is being heard, then what Clyra answers, in text.
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 10) {
-                        if flow.phase == "listening", !flow.text.isEmpty {
-                            Text(flow.text).font(.system(size: 15, weight: .medium)).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
-                        }
-                        if let reply, !reply.text.isEmpty, !(flow.phase == "listening" && !flow.text.isEmpty) {
-                            Text(VoiceCall.spoken(reply.text)).font(.system(size: 16, weight: .medium)).foregroundStyle(.white.opacity(0.95)).multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
-                        }
-                        if voice.appActive {
-                            Text("On a call in Clyra").font(.system(size: 14)).foregroundStyle(.white.opacity(0.55))
-                        } else if flow.text.isEmpty, (reply?.text.isEmpty ?? true) {
-                            Text("Say something…").font(.system(size: 14)).foregroundStyle(.white.opacity(0.4))
-                        }
-                        Color.clear.frame(height: 1).id("end")
+            // Camera: the notch grows to show it, with a button to close it, as the app's call does.
+            if model.camera.wanted {
+                ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06))
+                    if model.camera.running {
+                        CameraPreview(session: model.camera.session).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)).transition(.opacity)
+                    } else {
+                        Text(model.camera.denied ? "Camera access is off for Clyra’s Notch" : "Starting camera…").font(.system(size: 12)).foregroundStyle(.white.opacity(0.55)).frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 6)
+                    Button { model.camera.stop(); if voice.appMedia == "camera" { voice.toggleShare("camera") } } label: {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: 24, height: 24).background(Circle().fill(Color.black.opacity(0.55)))
+                    }.buttonStyle(PillPress()).padding(8).accessibilityLabel("Close camera")
                 }
-                .scrollIndicators(.never)
-                .onChange(of: reply?.text) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+                .frame(height: 126)
+                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+            } else {
+                // Captions: what is being heard, then what Clyra answers, in text.
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            if flow.phase == "listening", !flow.text.isEmpty {
+                                Text(flow.text).font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
+                            }
+                            if let reply, !reply.text.isEmpty, !(flow.phase == "listening" && !flow.text.isEmpty) {
+                                Text(VoiceCall.spoken(reply.text)).font(.system(size: 14.5, weight: .medium)).foregroundStyle(.white.opacity(0.95)).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                            }
+                            if voice.appActive {
+                                Text(sharing ? "Clyra can see your screen" : "On a call in Clyra").font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
+                            } else if flow.text.isEmpty, (reply?.text.isEmpty ?? true) {
+                                Text("Say something…").font(.system(size: 13)).foregroundStyle(.white.opacity(0.4))
+                            }
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                        .frame(maxWidth: .infinity).padding(.horizontal, 6)
+                    }
+                    .scrollIndicators(.never)
+                    .onChange(of: reply?.text) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+                }
             }
 
-            MicBars(flow: flow, live: flow.phase == "listening" && !voice.muted).frame(height: 22)
-
-            HStack(spacing: 26) {
-                let muted = voice.appActive ? voice.appMuted : voice.muted
-                control(symbol: muted ? "mic.slash.fill" : "mic.fill", label: muted ? "Unmute" : "Mute", tint: muted ? Color(red: 0.95, green: 0.7, blue: 0.2) : .white.opacity(0.14)) { voice.muteAny() }
-                control(symbol: "phone.down.fill", label: "End", tint: Color(red: 0.9, green: 0.25, blue: 0.27)) { voice.endAny() }
+            HStack(spacing: 12) {
+                control(symbol: muted ? "mic.slash.fill" : "mic.fill", tip: muted ? "Unmute" : "Mute", on: muted, tint: Color(red: 0.95, green: 0.7, blue: 0.2)) { voice.muteAny() }
+                control(symbol: "rectangle.on.rectangle", tip: sharing ? "Stop sharing screen" : "Share screen", on: sharing, tint: ClyraTint.blue) { voice.toggleShare("screen") }
+                control(symbol: model.camera.wanted ? "video.fill" : "video", tip: model.camera.wanted ? "Turn camera off" : "Turn camera on", on: model.camera.wanted, tint: ClyraTint.blue) {
+                    model.camera.toggle()
+                    if voice.appActive { voice.toggleShare("camera") }
+                }
+                control(symbol: "phone.down.fill", tip: "End call", on: true, tint: Color(red: 0.9, green: 0.25, blue: 0.27)) { voice.endAny() }
             }
         }
+        .animation(model.reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.86), value: model.camera.wanted)
     }
 
-    private func control(symbol: String, label: String, tint: Color, action: @escaping () -> Void) -> some View {
-        VStack(spacing: 4) {
-            Button(action: action) {
-                Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 42, height: 42).background(Circle().fill(tint))
-            }.buttonStyle(PillPress()).accessibilityLabel(label)
-            Text(label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.white.opacity(0.55))
-        }
+    private func control(symbol: String, tip: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 38, height: 38).background(Circle().fill(on ? tint : Color.white.opacity(0.14)))
+        }.buttonStyle(PillPress()).accessibilityLabel(tip).help(tip)
     }
 
     private var dictation: some View {

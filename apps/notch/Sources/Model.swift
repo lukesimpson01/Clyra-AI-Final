@@ -61,6 +61,8 @@ final class NotchModel: ObservableObject {
     let flow = FlowBridge()
     let computer = ComputerSession()
     let voice = VoiceCall()
+    let camera = NotchCamera()
+    private var cameraBag: AnyCancellable?
     private var voiceBag: AnyCancellable?
     /// Clyra's Flow dictation is being shown in the notch.
     var flowActive: Bool { flow.active }
@@ -113,6 +115,7 @@ final class NotchModel: ObservableObject {
         flow.onComputer = { [weak self] payload in self?.computer.apply(payload) }
         flow.onNotchOp = { [weak self] payload in self?.handleNotchOp(payload) }
         voice.attach(self)
+        cameraBag = camera.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send(); self?.onLayoutChange?() } }
         voiceBag = voice.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send() } }
         flow.onVoiceCall = { [weak self] payload in self?.voice.handle(payload) }
         flow.onAppCall = { [weak self] payload in self?.voice.handleApp(payload) }
@@ -239,6 +242,9 @@ final class NotchModel: ObservableObject {
         bluetoothPanel.refresh()
         presentBanner(.init(title: name, detail: "Connected", symbol: deviceSymbol(name), deviceName: name))
     }
+
+    /// A short notification on the collapsed notch, in the same style as the others.
+    func announce(_ title: String, _ detail: String, symbol: String) { presentBanner(.init(title: title, detail: detail, symbol: symbol)) }
 
     private func presentBanner(_ value: NotchBanner) {
         bannerExpiry?.cancel()

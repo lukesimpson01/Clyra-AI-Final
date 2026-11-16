@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { patchClyraElectron } from "./patch-electron-macos-privacy.mjs";
+import { patchClyraElectron, CLYRA_DEV_APP } from "./patch-electron-macos-privacy.mjs";
 
 // Unique macOS TCC identity so Privacy → Microphone lists "Clyra". The renamed app has to be ad-hoc signed too: unsigned,
 // macOS ignores the new identity and Clyra never shows up in the Privacy lists. Opt out with CLYRA_ELECTRON_CODESIGN=0.
@@ -66,7 +66,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 let child;
 let followLog = null;
 if (process.platform === "darwin" && process.env.CLYRA_LAUNCH_VIA_OPEN !== "0") {
-  const appBundle = path.resolve("node_modules", "electron", "dist", "Electron.app");
+  const appBundle = CLYRA_DEV_APP;
   const logFile = process.env.CLYRA_DEV_LOG || path.join(os.homedir(), "Library", "Logs", "clyra-electron.log");
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, "");
@@ -76,7 +76,7 @@ if (process.platform === "darwin" && process.env.CLYRA_LAUNCH_VIA_OPEN !== "0") 
   child = spawn("open", ["-n", "-W", "--stdout", logFile, "--stderr", logFile, ...envArgs, "-a", appBundle, "--args", process.cwd()], { stdio: "inherit" });
   followLog = spawn("tail", ["-n", "+1", "-F", logFile], { stdio: "inherit" });
   for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => { try { spawn("pkill", ["-f", `${appBundle}/Contents/MacOS/Electron`]); } catch { /* already gone */ } });
+    process.on(signal, () => { try { spawn("pkill", ["-f", `${appBundle}/Contents/MacOS/Clyra`]); } catch { /* already gone */ } });
   }
   child.once("exit", () => { try { followLog?.kill(); } catch { /* done */ } });
 } else {

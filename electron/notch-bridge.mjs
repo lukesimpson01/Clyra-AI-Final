@@ -29,7 +29,7 @@ export class NotchBridge {
 
   check() {
     if (process.platform !== "darwin") return;
-    execFile("pgrep", ["-x", "Notch"], (error, stdout) => { this.alive = !error && Boolean(String(stdout).trim()); });
+    execFile("pgrep", ["-x", "Clyra’s Notch"], (error, stdout) => { this.alive = !error && Boolean(String(stdout).trim()); });
   }
 
   send(message) {

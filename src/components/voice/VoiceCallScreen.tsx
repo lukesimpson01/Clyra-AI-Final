@@ -1091,18 +1091,20 @@ export function VoiceCallScreen({ call, mediaMode = null, onMediaModeChange, scr
   // Mirror the call on the notch, and let the notch end or mute it.
   useEffect(() => {
     const bridge = getElectronDesktop()?.voiceApp;
-    bridge?.setState({ active: call.active, state: modeStatus, muted: call.muted });
-    return () => { if (!call.active) bridge?.setState({ active: false, state: "", muted: false }); };
-  }, [call.active, modeStatus, call.muted]);
+    bridge?.setState({ active: call.active, state: modeStatus, muted: call.muted, media: mediaMode });
+    return () => { if (!call.active) bridge?.setState({ active: false, state: "", muted: false, media: null }); };
+  }, [call.active, modeStatus, call.muted, mediaMode]);
   useEffect(() => {
     if (!call.active) return;
     return getElectronDesktop()?.voiceApp?.onCommand((action) => {
       if (action === "end") void call.endCall();
       else if (action === "mute" && !call.muted) call.toggleMute();
       else if (action === "unmute" && call.muted) call.toggleMute();
+      else if (action === "screen") onMediaModeChange?.(mediaMode === "screen" ? null : "screen");
+      else if (action === "camera") onMediaModeChange?.(mediaMode === "camera" ? null : "camera");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call.active, call.muted]);
+  }, [call.active, call.muted, mediaMode, onMediaModeChange]);
   // Sharing the screen: a soft rim around the display and a "Clyra can see your screen" pill with Stop, until it stops.
   useEffect(() => {
     const bridge = getElectronDesktop()?.voiceApp;

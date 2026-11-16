@@ -578,11 +578,11 @@ const AI_PRESENCE_HTML = `<!doctype html>
   #rig{position:fixed;left:0;top:0;width:0;height:0;opacity:0;transition:opacity 220ms cubic-bezier(.32,.72,0,1);will-change:transform}
   body.active #rig{opacity:1}
   #pointer{position:absolute;left:0;top:0;width:0;height:0;will-change:transform}
-  #arrow{position:absolute;left:-1.5px;top:-1.5px;width:22px;height:22px;overflow:visible;transform-origin:1.5px 1.5px;filter:drop-shadow(0 1px 1.5px rgba(10,24,60,.35)) drop-shadow(0 0 6px rgba(30,111,255,.28));transition:transform 160ms cubic-bezier(.3,1.4,.5,1),opacity 140ms ease}
+  #arrow{position:absolute;left:-1.5px;top:-1.5px;width:22px;height:22px;overflow:visible;transform-origin:1.5px 1.5px;filter:drop-shadow(0 1px 1.5px rgba(10,24,60,.35)) drop-shadow(0 0 6px rgba(30,111,255,.28));transition:transform 260ms cubic-bezier(.32,.72,0,1),opacity 220ms ease}
   #arrow.press{transform:scale(.82)}
-  #arrow.hide{opacity:0;transform:scale(.7)}
-  #caret{position:absolute;left:-1px;top:-10px;width:2px;height:20px;border-radius:1px;background:var(--blue);box-shadow:0 0 0 1px rgba(255,255,255,.9),0 0 8px rgba(30,111,255,.5);opacity:0;transform:scaleY(.6);transition:opacity 140ms ease,transform 180ms cubic-bezier(.3,1.4,.5,1)}
-  #caret::before,#caret::after{content:"";position:absolute;left:-3px;width:8px;height:2px;background:var(--blue);border-radius:1px;box-shadow:0 0 0 .75px rgba(255,255,255,.9)}
+  #arrow.hide{opacity:0;transform:scale(.55) translateY(2px);transition:transform 260ms cubic-bezier(.32,.72,0,1),opacity 200ms ease}
+  #caret{position:absolute;left:-.75px;top:-7px;width:1.5px;height:14px;border-radius:1px;background:var(--blue);box-shadow:0 0 0 .75px rgba(255,255,255,.92),0 0 6px rgba(30,111,255,.45);opacity:0;transform:scaleY(.3);transform-origin:center;transition:opacity 240ms cubic-bezier(.32,.72,0,1),transform 320ms cubic-bezier(.32,.72,0,1)}
+  #caret::before,#caret::after{content:"";position:absolute;left:-2.25px;width:6px;height:1.5px;background:var(--blue);border-radius:1px;box-shadow:0 0 0 .5px rgba(255,255,255,.9)}
   #caret::before{top:-1px}#caret::after{bottom:-1px}
   body.typing #caret{opacity:1;transform:none;animation:blink 1.05s steps(1,end) infinite}
   body.typing #caret.flash{animation:none}

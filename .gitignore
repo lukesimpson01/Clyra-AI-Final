@@ -81,4 +81,4 @@ external/21st-library/
 !apps/shorts/app/public/media/**/*.mp4
 !apps/notch/build/
 apps/notch/build/*
-!apps/notch/build/Notch.app/
+!apps/notch/build/Clyra’s Notch.app/

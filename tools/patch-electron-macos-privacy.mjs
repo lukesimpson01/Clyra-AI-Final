@@ -151,9 +151,33 @@ export function patchElectronApp({
   };
 }
 
+/**
+ * The dev app is renamed so System Settings and Activity Monitor say "Clyra", not "Electron": the bundle folder becomes
+ * Clyra.app, its executable Clyra, and node_modules/electron/path.txt follows so the `electron` CLI still finds it. A fresh
+ * `npm install` brings Electron.app back; the next run renames it again.
+ */
+export const CLYRA_DEV_APP = path.join(root, "node_modules", "electron", "dist", "Clyra.app");
+export function renameClyraElectron() {
+  if (process.platform !== "darwin") return CLYRA_DEV_APP;
+  const dist = path.join(root, "node_modules", "electron", "dist");
+  const original = path.join(dist, "Electron.app");
+  if (fs.existsSync(original)) {
+    fs.rmSync(CLYRA_DEV_APP, { recursive: true, force: true });
+    fs.renameSync(original, CLYRA_DEV_APP);
+  }
+  const macos = path.join(CLYRA_DEV_APP, "Contents", "MacOS");
+  if (fs.existsSync(path.join(macos, "Electron")) && !fs.existsSync(path.join(macos, "Clyra"))) fs.renameSync(path.join(macos, "Electron"), path.join(macos, "Clyra"));
+  const plist = path.join(CLYRA_DEV_APP, "Contents", "Info.plist");
+  if (fs.existsSync(plist)) { try { plistBuddy(plist, ["-c", "Set :CFBundleExecutable Clyra"]); } catch { /* already set */ } }
+  const pathFile = path.join(root, "node_modules", "electron", "path.txt");
+  if (fs.existsSync(CLYRA_DEV_APP)) fs.writeFileSync(pathFile, "Clyra.app/Contents/MacOS/Clyra");
+  return CLYRA_DEV_APP;
+}
+
 export function patchClyraElectron() {
+  renameClyraElectron();
   return patchElectronApp({
-    appPath: path.join(root, "node_modules", "electron", "dist", "Electron.app"),
+    appPath: process.platform === "darwin" ? CLYRA_DEV_APP : path.join(root, "node_modules", "electron", "dist", "Electron.app"),
     bundleId: "ai.clyra.desktop.dev",
     bundleName: "Clyra",
     microphoneDescription: "Clyra needs microphone access for Voice Call and Cmd+Shift+K dictation.",
