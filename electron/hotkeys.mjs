@@ -25,8 +25,8 @@ export class HotkeyManager {
     this.registered = new Map(); // id -> accelerator actually registered
     this.suspended = false;
     this.registry = [
-      { id: "front", label: "Bring Clyra to the front", group: "General", default: "CommandOrControl+/" },
-      { id: "hotkeys", label: "Show all hotkeys", group: "General", default: "CommandOrControl+Shift+/" },
+      { id: "front", label: "Bring Clyra to the front", group: "General", default: "CommandOrControl+Alt+/" },
+      { id: "hotkeys", label: "Show all hotkeys", group: "General", default: "CommandOrControl+/" },
       { id: "taskview", label: "Task View", group: "General", default: "CommandOrControl+J" },
       { id: "launcher", label: "App launcher", group: "General", default: "CommandOrControl+K" },
       { id: "newChat", label: "New chat", group: "Chat", default: "CommandOrControl+Alt+N" },
