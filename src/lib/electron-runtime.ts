@@ -254,6 +254,7 @@ export type ClyraDesktopBridge = {
     suspend: (on: boolean) => Promise<{ ok: boolean }>;
     onOpen: (callback: () => void) => () => void;
     onNewChat: (callback: () => void) => () => void;
+    onSidebarToggle: (callback: () => void) => () => void;
   };
   appIcon?: (name: string) => Promise<string | null>;
   voiceApp?: { requestMedia: (mode: "camera" | "screen" | null) => Promise<{ ok: boolean }>; pointAt: (payload: { image: string; width?: number; height?: number; question: string }) => Promise<{ ok: boolean; pointer?: { label: string } | null; error?: string }>; setScreenShare: (on: boolean) => void; onScreenShareStop: (callback: () => void) => () => void; setState: (state: { active: boolean; state: string; muted: boolean; media?: "camera" | "screen" | null }) => void; onCommand: (callback: (action: string, text?: string) => void) => () => void };

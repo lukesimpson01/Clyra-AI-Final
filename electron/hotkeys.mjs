@@ -29,6 +29,7 @@ export class HotkeyManager {
       { id: "hotkeys", label: "Show all hotkeys", group: "General", default: "CommandOrControl+/" },
       { id: "taskview", label: "Task View", group: "General", default: "CommandOrControl+J" },
       { id: "launcher", label: "App launcher", group: "General", default: "CommandOrControl+K" },
+      { id: "sidebar", label: "Open or close the chat sidebar", group: "Chat", default: "Alt+B" },
       { id: "newChat", label: "New chat", group: "Chat", default: "Alt+N" },
       { id: "voiceCall", label: "Start or end a voice call", group: "Voice", default: "Alt+V" },
       { id: "callMute", label: "Mute or unmute the call", group: "Voice", default: "Alt+M" },

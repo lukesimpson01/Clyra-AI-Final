@@ -232,6 +232,8 @@ export interface ClyraComposerShellProps {
    * the shell's own Settings button morphs the bar open (like Manage) and
    * renders this inside it instead of calling `onOpenSettings`. */
   settingsSheet?: ReactNode;
+  /** The hotkeys list, mounted inside the same composer morph as Settings. */
+  hotkeysSheet?: ReactNode;
   chats: ComposerChatRow[];
   onNewChat: () => void;
   onOpenChat: (id: string) => void;
@@ -254,13 +256,13 @@ export interface ClyraComposerShellProps {
 const EASE = "cubic-bezier(.2,.8,.3,1)";
 const SHELL_EASE = "cubic-bezier(.32,.72,0,1)";
 /** Manage/Settings morph: one duration and one gently springy curve for the bar, the greeting and the sheet, so they move as a single object. */
-const MORPH_MS = 460;
-const MORPH_EASE = "linear(0, 0.041, 0.14, 0.271, 0.412, 0.55, 0.676, 0.783, 0.87, 0.937, 0.987, 1.02, 1.041, 1.051, 1.054, 1.052, 1.047, 1.04, 1.032, 1.025, 1.018, 1.012, 1.007, 1.003, 1.001, 0.999, 0.998, 0.997, 0.997, 0.997, 0.997, 0.998, 0.998, 0.999, 0.999, 0.999, 1)";
+const MORPH_MS = 880;
+const MORPH_EASE = "cubic-bezier(.25, .8, .2, 1)";
 /** The docked sidebar's slide, and the stillness kept on either side of Manage/Settings. */
 const SIDEBAR_SLIDE_MS = 320;
 const SEQUENCE_PAUSE_MS = 500;
 /** Manage/Settings collapsing back to the composer: the 0.7s hold plus the longest grow-back (0.95s). */
-const MORPH_COLLAPSE_MS = 520;
+const MORPH_COLLAPSE_MS = 900;
 /** The docked sidebar slides back while the shell is settling its last stretch, not after a further pause. */
 const SIDEBAR_RETURN_MS = 300;
 
@@ -440,6 +442,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     onMorphChange,
     onOpenSettings,
     settingsSheet,
+    hotkeysSheet,
     chats,
     onNewChat,
     onOpenChat,
@@ -536,6 +539,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // Settings morphs the composer exactly like Manage: the bar grows to fit
   // the sheet, the compose face slides out, and the sheet slides in.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hotkeysOpen, setHotkeysOpen] = useState(false);
   // Mirrors the artboard's `collapsing` state: for 2s after Manage/Settings
   // closes, the surrounding content's grow-back transitions (welcome text,
   // transcript, stage padding) carry a .7s delay so the composer bar finishes
@@ -628,7 +632,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const currentEffortOption =
     efforts.find((e) => e.value === currentEffort) ?? efforts[0];
   const mg = manageOpen;
-  const st = settingsOpen;
+  // The hotkeys sheet is sized and animated exactly like Settings, so it shares the same geometry flag.
+  const st = settingsOpen || hotkeysOpen;
   const morphOpen = mg || st;
   const dt = connectionsStep === "detail";
   const webOff = !connections.webSearchEnabled;
@@ -671,10 +676,11 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   const backDelay = "0s";
 
   /** Opens Manage or Settings. A docked sidebar leaves first; the morph waits for it to be fully gone, plus a beat. */
-  const openMorph = (kind: "manage" | "settings") => {
+  const openMorph = (kind: "manage" | "settings" | "hotkeys") => {
     const apply = () => {
       setManageOpen(kind === "manage");
       setSettingsOpen(kind === "settings");
+      setHotkeysOpen(kind === "hotkeys");
       setConnectionsStep(null);
     };
     // The sidebar stays where it is; the composer reshapes in place.
@@ -682,10 +688,24 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
     apply();
   };
 
+  const hotkeysOpenRef = useRef(false);
+  const openMorphRef = useRef<(kind: "manage" | "settings" | "hotkeys") => void>(() => undefined);
+  const closeMorphRef = useRef<() => void>(() => undefined);
+  // The hotkeys palette opens as this same morph; the palette tells us when to toggle it.
+  useEffect(() => {
+    if (!hotkeysSheet) return;
+    const flag = window as unknown as { __clyraHotkeyMorph?: boolean };
+    flag.__clyraHotkeyMorph = true;
+    const toggle = () => { if (hotkeysOpenRef.current) closeMorphRef.current(); else openMorphRef.current("hotkeys"); };
+    window.addEventListener("clyra:hotkeys-morph", toggle);
+    return () => { flag.__clyraHotkeyMorph = false; window.removeEventListener("clyra:hotkeys-morph", toggle); };
+  }, [hotkeysSheet]);
+
   const closeMorph = () => {
     clearSequence();
     setManageOpen(false);
     setSettingsOpen(false);
+    setHotkeysOpen(false);
     setConnectionsStep(null);
     setCollapsing(true);
     if (collapseTimerRef.current != null)
@@ -695,6 +715,9 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       MORPH_COLLAPSE_MS,
     );
   };
+  hotkeysOpenRef.current = hotkeysOpen;
+  openMorphRef.current = openMorph;
+  closeMorphRef.current = closeMorph;
   useEffect(() => {
     return () => {
       if (collapseTimerRef.current != null)
@@ -719,8 +742,8 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // across that sub-switch too and the bar's height transition carries the
   // same .7s delay every time it moves while mg is true. So both cases use
   // the same 950ms mount delay here, not a quick one for the sub-switch.
-  type PanelKind = "manage" | "detail" | "settings" | null;
-  const targetPanel: PanelKind = dt ? "detail" : st ? "settings" : mg ? "manage" : null;
+  type PanelKind = "manage" | "detail" | "settings" | "hotkeys" | null;
+  const targetPanel: PanelKind = dt ? "detail" : hotkeysOpen ? "hotkeys" : st ? "settings" : mg ? "manage" : null;
   const [mountedPanel, setMountedPanel] = useState<PanelKind>(null);
   const [exitingPanel, setExitingPanel] = useState<PanelKind>(null);
   const panelTimerRef = useRef<number | null>(null);
@@ -736,7 +759,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
       panelTimerRef.current = window.setTimeout(() => {
         setMountedPanel(targetPanel);
         setExitingPanel(null);
-      }, 240);
+      }, 300);
     } else {
       setExitingPanel(mountedPanel);
       panelTimerRef.current = window.setTimeout(() => {
@@ -765,7 +788,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
   // On close the compose face waits for the bar to finish shrinking (the same
   // .7s pause + .7s move as the grow) before fading back in, so collapse is
   // the mirror of the open rather than a quick fade.
-  const faceDelay = morphOpen ? ".08s" : ".16s";
+  const faceDelay = morphOpen ? ".3s" : ".3s";
   const faceStyle = (
     on: boolean,
     y: number,
@@ -1726,7 +1749,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
               pointerEvents: sent || morphOpen ? "none" : "auto",
               transition: sent
                 ? `max-height .62s ${SHELL_EASE}, margin-bottom .62s ${SHELL_EASE}, opacity .3s ease, transform .62s ${SHELL_EASE}`
-                : `max-height ${MORPH_MS}ms ${SHELL_EASE}, margin-bottom ${MORPH_MS}ms ${SHELL_EASE}, opacity ${morphOpen ? ".16s" : ".28s"} ease ${morphOpen ? "0s" : ".08s"}, transform ${MORPH_MS}ms ${SHELL_EASE}`,
+                : `max-height ${MORPH_MS}ms ${SHELL_EASE}, margin-bottom ${MORPH_MS}ms ${SHELL_EASE}, opacity ${morphOpen ? ".26s" : ".36s"} ease ${morphOpen ? "0s" : ".12s"}, transform ${MORPH_MS}ms ${SHELL_EASE}`,
             }}
           >
             {/* Clyra's orb: the same living face the voice call uses. It is the
@@ -2703,7 +2726,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 animation:
                   exitingPanel === "manage"
                     ? `clyraMorphOut .22s ease both`
-                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
+                    : `clyraMorphIn .7s ${SHELL_EASE} both`,
               }}
             >
               <ConnectionsPanel
@@ -2722,7 +2745,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 animation:
                   exitingPanel === "detail"
                     ? `clyraMorphOut .22s ease both`
-                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
+                    : `clyraMorphIn .7s ${SHELL_EASE} both`,
               }}
             >
               <ConnectionsDetail
@@ -2735,6 +2758,25 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
           {/* Settings face — the composer morphs into the full settings sheet
               with the same grow/slide choreography as Manage. The sheet keeps
               its own natural size; the bar above frames it. */}
+          {mountedPanel === "hotkeys" || exitingPanel === "hotkeys" ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                animation:
+                  exitingPanel === "hotkeys"
+                    ? `clyraMorphOut .22s ease both`
+                    : `clyraMorphIn .7s ${SHELL_EASE} both`,
+              }}
+            >
+              {hotkeysSheet
+                ? React.cloneElement(hotkeysSheet as React.ReactElement<{ onClose: () => void }>, { onClose: closeMorph })
+                : null}
+            </div>
+          ) : null}
           {mountedPanel === "settings" || exitingPanel === "settings" ? (
             <div
               style={{
@@ -2746,7 +2788,7 @@ export default function ClyraComposerShell(props: ClyraComposerShellProps) {
                 animation:
                   exitingPanel === "settings"
                     ? `clyraMorphOut .22s ease both`
-                    : `clyraMorphIn .62s ${SHELL_EASE} both`,
+                    : `clyraMorphIn .7s ${SHELL_EASE} both`,
               }}
             >
               {settingsSheet

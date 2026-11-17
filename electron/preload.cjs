@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld("clyraDesktop", {
     reset: (id) => ipcRenderer.invoke("hotkeys:reset", id),
     suspend: (on) => ipcRenderer.invoke("hotkeys:suspend", Boolean(on)),
     onOpen: (callback) => { const h = () => callback(); ipcRenderer.on("hotkeys:toggle", h); return () => ipcRenderer.removeListener("hotkeys:toggle", h); },
+    onSidebarToggle: (callback) => { const h = () => callback(); ipcRenderer.on("sidebar:toggle", h); return () => ipcRenderer.removeListener("sidebar:toggle", h); },
     onNewChat: (callback) => { const h = () => callback(); ipcRenderer.on("chat:new", h); return () => ipcRenderer.removeListener("chat:new", h); },
   },
   appIcon: (name) => ipcRenderer.invoke("app:icon", String(name || "")),

@@ -2010,6 +2010,7 @@ async function createWindow() {
       taskview: () => activateClyraShortcut("taskview:toggle"),
       launcher: () => activateClyraShortcut("launcher:toggle"),
       newChat: () => activateClyraShortcut("chat:new"),
+      sidebar: () => activateClyraShortcut("sidebar:toggle"),
       voiceCall: () => dictationManager?.toggleVoiceCall(),
       callMute: () => {
         if (dictationManager?.callMode) {

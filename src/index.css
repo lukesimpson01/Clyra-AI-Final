@@ -160,7 +160,7 @@
 @keyframes clyraShine { from { background-position:200% 0; } to { background-position:-200% 0; } }
 @keyframes clyraSwap { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 
-@keyframes clyraMorphIn { from { opacity:0; transform:translateY(18px) scale(.985); filter:blur(6px); } 55% { opacity:1; filter:blur(0); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
+@keyframes clyraMorphIn { from { opacity:0; transform:translateY(10px) scale(.992); filter:blur(4px); } 60% { opacity:1; filter:blur(0); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
 @keyframes clyraMorphOut { from { opacity:1; transform:translateY(0) scale(1); } to { opacity:0; transform:translateY(-8px) scale(.99); } }
 @keyframes clyraManageIn {
   from { opacity: 0; transform: translateX(-34px); }
@@ -12256,3 +12256,157 @@ textarea::selection{background:rgba(26,107,255,.22)}
 .clyra-has-bubble .clyra-sidebar-action:hover,
 .clyra-has-bubble .clyra-sidebar-footer:hover { background: transparent; transform: none; }
 .clyra-has-bubble .clyra-sidebar-action > *, .clyra-has-bubble .clyra-sidebar-action--active > *, .clyra-has-bubble .clyra-sidebar-footer > * { position: relative; z-index: 1; }
+
+/* ── Settings, remade: one compact scale, hairlines instead of boxes, quick 120–160ms responses ───────────────
+   Type: 20 title / 13 label / 12 detail. Rows 44px. Radii: 10 controls, 14 groups. Accent used sparingly. */
+.clys-window { grid-template-columns: 224px minmax(0, 1fr); border-radius: 24px; border-color: rgba(16, 18, 24, 0.07); }
+.clys-sidebar { padding: 14px 8px 10px; background: #FBFBFC; border-right: 1px solid rgba(16, 18, 24, 0.06); }
+.clys-search { height: 32px; background: rgba(16, 18, 24, 0.04); transition: background-color 120ms ease, box-shadow 120ms ease; }
+.clys-search:hover { background: rgba(16, 18, 24, 0.06); }
+.clys-search:focus-within { background: #fff; border-color: transparent; box-shadow: 0 0 0 1.5px rgba(37, 99, 235, 0.45); }
+.clys-nav { gap: 1px; padding: 10px 0 2px; }
+.clys-nav-group { margin-bottom: 8px; gap: 1px; }
+.clys-nav-group__label { padding: 0 10px 4px; font-size: 10px; letter-spacing: 0.08em; }
+.clys-nav-item { height: 32px; gap: 9px; padding: 0 10px; border-radius: 10px; font-size: 13px; font-weight: 500; transition: background-color 100ms ease, color 100ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clys-nav-item svg { width: 16px; height: 16px; stroke-width: 1.6; transition: color 100ms ease; }
+.clys-nav-item:hover { background: rgba(16, 18, 24, 0.045); }
+.clys-nav-item:active { transform: scale(0.985); }
+.clys-nav-item[data-active="true"] { background: rgba(16, 18, 24, 0.065); font-weight: 600; }
+.clys-header { height: 48px; padding: 0 14px 0 28px; border-bottom: 1px solid rgba(16, 18, 24, 0.06); }
+.clys-header__title { font-size: 13px; font-weight: 600; color: #6b7078; letter-spacing: -0.005em; }
+.clys-header__close { width: 28px; height: 28px; border-radius: 50%; transition: background-color 100ms ease, color 100ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clys-header__close:hover { background: rgba(16, 18, 24, 0.07); }
+.clys-header__close:active { transform: scale(0.9); }
+.clys-content__inner { max-width: 600px; padding: 22px 28px 40px; }
+.clys-section-title { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2; }
+.clys-section-detail { margin-top: 4px; font-size: 13px; color: #6b7078; }
+.clys-lead-gap { height: 16px; }
+.clys-settings-card { margin-bottom: 14px; }
+.clys-settings-card__head { padding: 0 2px 8px; }
+.clys-subtitle { font-size: 13px; font-weight: 600; letter-spacing: -0.006em; }
+.clys-subdetail { margin-top: 2px; font-size: 12px; color: #7b8089; }
+.clys-card { border-color: rgba(16, 18, 24, 0.08); border-radius: 14px; }
+.clys-card--muted { background: #FBFBFC; }
+.clys-settings-card__body > * + * { border-top: 1px solid rgba(16, 18, 24, 0.06); }
+.clys-settings-card__body > .clys-row, .clys-settings-card__body > .clys-range-row { padding: 11px 16px; }
+.clys-settings-card__body > .clys-block, .clys-settings-card__body > .clys-profile { padding: 14px 16px; }
+.clys-row { padding: 11px 16px; gap: 20px; }
+.clys-row__label { font-size: 13px; font-weight: 500; }
+.clys-row__detail { margin-top: 2px; font-size: 12px; color: #7b8089; max-width: 380px; }
+.clys-group__title { font-size: 13px; }
+.clys-group__detail { font-size: 12px; }
+.clys-profile__avatar { transform: scale(0.88); transform-origin: left center; }
+.clys-profile__name { font-size: 15px; }
+.clys-theme-cards { gap: 10px; max-width: 240px; }
+.clys-theme-card { padding: 6px; gap: 6px; border-width: 1px; border-radius: 12px; border-color: rgba(16, 18, 24, 0.1); transition: border-color 120ms ease, box-shadow 160ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clys-theme-card:hover { border-color: rgba(16, 18, 24, 0.2); transform: translateY(-1px); }
+.clys-theme-card[data-active="true"] { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14); }
+.clys-theme-card__label { font-size: 12px; font-weight: 550; }
+.clys-swatches { gap: 9px; }
+.clys-swatch { width: 24px; height: 24px; transition: transform 160ms cubic-bezier(.16, 1, .3, 1), box-shadow 160ms ease; }
+.clys-swatch[data-selected="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #2563eb; }
+.clys-hex { font-size: 11.5px; }
+.clys-option-grid { gap: 8px; }
+.clys-option-card { padding: 11px 12px; border-radius: 12px; transition: border-color 120ms ease, background-color 120ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clys-option-card:active { transform: scale(0.985); }
+.clys-option-card__label { margin-top: 8px; font-size: 12.5px; }
+.clys-segmented__option { transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease; }
+.clys-btn { height: 30px; padding: 0 12px; border-radius: 10px; font-size: 12.5px; font-weight: 550; transition: background-color 100ms ease, border-color 100ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clys-btn:active { transform: scale(0.97); }
+.clys-input, .clys-select { height: 32px; border-radius: 10px; font-size: 13px; transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease; }
+.clys-textarea { border-radius: 12px; font-size: 13px; }
+.clys-content { scrollbar-width: thin; scrollbar-color: rgba(16, 18, 24, 0.14) transparent; }
+@media (prefers-reduced-motion: reduce) { .clys-nav-item, .clys-btn, .clys-theme-card, .clys-option-card, .clys-swatch, .clys-header__close { transition: none; } }
+
+/* Task View · 3D: a shallow arc of the real mounted apps, one centred and facing you. One transform per window, so it
+   reaches full screen exactly as the 2D grid does. */
+.clyra-task-view[data-mode="3d"] { perspective: 2200px; perspective-origin: 50% 42%; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__backdrop { background: radial-gradient(120% 90% at 50% 30%, #f6f7f9 0%, #e9ecf1 58%, #dde1e8 100%); }
+.clyra-task-view[data-mode="3d"][data-task-view-phase="open"] .clyra-task-view__window { transition: transform 720ms cubic-bezier(.22, 1, .36, 1), opacity 260ms var(--tv-expo); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.08), 0 calc(24px / var(--task-view-target-scale, 1)) calc(60px / var(--task-view-target-scale, 1)) rgba(15,23,42,.2); }
+.clyra-task-view__mode { position: absolute; top: 14px; left: 50%; z-index: 20; display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(16, 18, 24, .06); transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity 260ms var(--tv-expo); }
+.clyra-task-view__mode[data-open="true"] { opacity: 1; pointer-events: auto; }
+.clyra-task-view__mode button { height: 26px; min-width: 40px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: #6b7079; font: 600 11.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; letter-spacing: .02em; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease; }
+.clyra-task-view__mode button:hover { color: #15171c; }
+.clyra-task-view__mode button[data-active="true"] { background: #fff; color: #15171c; box-shadow: 0 0 0 .5px rgba(15, 23, 42, .1), 0 1px 3px rgba(15, 23, 42, .1); }
+.clyra-task-view__mode button:focus-visible { outline: 2px solid rgba(30, 111, 255, .5); outline-offset: 1px; }
+
+/* Task View · 3D, spatial detail: hover tilt, lifted drag, depth shadows and eased pose changes. */
+.clyra-task-view[data-mode="3d"][data-task-view-phase="open"] .clyra-task-view__window { transition: transform 760ms cubic-bezier(.22, 1, .36, 1), opacity 260ms var(--tv-expo); }
+.clyra-task-view[data-mode="3d"][data-task-view-phase="opening"] .clyra-task-view__window { transition: transform 820ms cubic-bezier(.22, 1, .36, 1) calc(min(var(--tv-i, 0), 7) * 18ms), opacity 320ms var(--tv-expo); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-hovered::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.1), 0 calc(34px / var(--task-view-target-scale, 1)) calc(80px / var(--task-view-target-scale, 1)) rgba(15,23,42,.24); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-dragging { z-index: 60 !important; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-dragging::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.1), 0 calc(56px / var(--task-view-target-scale, 1)) calc(120px / var(--task-view-target-scale, 1)) rgba(15,23,42,.3); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-dragging .clyra-task-view__surface { transition: none; transform: none; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window::after { display: none; }
+@media (prefers-reduced-motion: reduce) { .clyra-task-view[data-mode="3d"] .clyra-task-view__surface { transition: none; transform: none; } }
+
+/* Task View · layout: split panes, floating windows, the side dock, the arrange toolbar and saved workspaces. */
+.clyra-task-view[data-layout-motion="true"] .clyra-task-view__window { transition: transform 520ms cubic-bezier(.22, 1, .36, 1), width 460ms cubic-bezier(.22, 1, .36, 1), height 460ms cubic-bezier(.22, 1, .36, 1), opacity 260ms var(--tv-expo); }
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window.is-peek { pointer-events: auto; cursor: pointer; }
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window.is-peek .clyra-task-view__surface { border-radius: 40px; box-shadow: 0 0 0 4px rgba(15,23,42,.1), 0 20px 60px rgba(15,23,42,.3); pointer-events: none; }
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window.is-float .clyra-task-view__surface { border-radius: 12px; background: #fbfbfa; }
+.clyra-task-view[data-task-view-phase="closed"] .clyra-task-view__window.is-float .clyra-task-view__surface { box-shadow: 0 0 0 1px rgba(15,23,42,.1), 0 24px 60px -12px rgba(15,23,42,.35), 0 8px 20px rgba(15,23,42,.12); }
+.clyra-tv-float-bar { position: absolute; left: 0; right: 0; top: 0; z-index: 6; display: flex; align-items: center; justify-content: flex-end; gap: 2px; height: 26px; padding: 0 6px; border-radius: 12px 12px 0 0; background: linear-gradient(180deg, rgba(251,251,250,.96), rgba(251,251,250,.78)); cursor: grab; touch-action: none; }
+.clyra-tv-float-bar:active { cursor: grabbing; }
+.clyra-tv-float-bar__grip { position: absolute; left: 50%; top: 9px; width: 36px; height: 4px; border-radius: 4px; background: rgba(15,23,42,.18); transform: translateX(-50%); }
+.clyra-tv-float-bar button, .clyra-tv-float-bar button:hover, .clyra-tv-float-bar svg, .clyra-tv-float-resize { position: absolute; right: 0; bottom: 0; z-index: 6; width: 22px; height: 22px; cursor: nwse-resize; touch-action: none; }
+.clyra-tv-float-resize::after { content: ""; position: absolute; right: 5px; bottom: 5px; width: 8px; height: 8px; border-right: 2px solid rgba(15,23,42,.28); border-bottom: 2px solid rgba(15,23,42,.28); border-radius: 0 0 4px 0; }
+.clyra-tv-toolbar { position: absolute; left: 50%; bottom: 26px; z-index: 20; display: inline-flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(255,255,255,.97); box-shadow: 0 0 0 1px rgba(15,23,42,.08), 0 12px 32px -8px rgba(15,23,42,.22); transform: translate(-50%, 10px); opacity: 0; pointer-events: none; transition: opacity 260ms var(--tv-expo), transform 360ms var(--tv-expo); }
+.clyra-tv-toolbar[data-open="true"] { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.clyra-tv-toolbar > button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: #3b3f47; font: 550 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; cursor: pointer; transition: background-color 100ms ease, color 100ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clyra-tv-toolbar > button:hover { background: rgba(15,23,42,.06); color: #15171c; }
+.clyra-tv-toolbar > button:active { transform: scale(.96); }
+.clyra-tv-toolbar > button[data-on="true"] { background: rgba(37,99,235,.1); color: #1d4ed8; }
+.clyra-tv-toolbar svg { width: 14px; height: 14px; }
+.clyra-tv-toolbar__rule { width: 1px; height: 16px; margin: 0 3px; background: rgba(15,23,42,.12); }
+.clyra-tv-menu { position: absolute; left: 50%; bottom: calc(100% + 10px); width: 250px; padding: 6px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px rgba(15,23,42,.08), 0 18px 48px -10px rgba(15,23,42,.28); transform: translateX(-50%); }
+.clyra-tv-menu__row { display: flex; align-items: center; border-radius: 10px; }
+.clyra-tv-menu__row:hover { background: rgba(15,23,42,.05); }
+.clyra-tv-menu__row button { height: 30px; border: 0; background: transparent; color: #25282e; font: 500 12.5px/1 -apple-system, sans-serif; cursor: pointer; }
+.clyra-tv-menu__row button:first-child { flex: 1; padding: 0 10px; text-align: left; }
+.clyra-tv-menu__row button:last-child { display: grid; place-items: center; width: 28px; color: #8a8f98; }
+.clyra-tv-menu__row svg { width: 13px; height: 13px; }
+.clyra-tv-menu__empty { margin: 0; padding: 8px 10px; color: #7b8089; font-size: 12px; }
+.clyra-tv-menu__save { display: flex; gap: 4px; margin-top: 4px; padding-top: 6px; border-top: 1px solid rgba(15,23,42,.07); }
+.clyra-tv-menu__save input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: rgba(15,23,42,.05); font: 500 12.5px/1 -apple-system, sans-serif; outline: none; }
+.clyra-tv-menu__save input:focus { box-shadow: 0 0 0 1.5px rgba(37,99,235,.45); background: #fff; }
+.clyra-tv-menu__save button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 50%; background: #1d4ed8; color: #fff; cursor: pointer; }
+.clyra-tv-menu__save button:disabled { opacity: .35; cursor: default; }
+.clyra-tv-menu__save svg { width: 14px; height: 14px; }
+.clyra-tv-dock-zone { position: absolute; left: 0; top: 0; bottom: 0; z-index: 18; width: 18px; pointer-events: none; }
+.clyra-task-view[data-task-view-phase="open"] .clyra-tv-dock-zone { pointer-events: auto; }
+.clyra-tv-dock-zone[data-open="true"] { width: 230px; }
+.clyra-tv-dock-zone__handle { position: absolute; left: 5px; top: 50%; width: 4px; height: 56px; border-radius: 4px; background: rgba(15,23,42,.2); transform: translateY(-50%); transition: opacity 160ms ease; }
+.clyra-tv-dock-zone[data-open="true"] .clyra-tv-dock-zone__handle { opacity: 0; }
+.clyra-tv-dock { position: absolute; left: 12px; top: 50%; display: flex; flex-direction: column; gap: 2px; width: 196px; padding: 6px; border-radius: 18px; background: rgba(255,255,255,.97); box-shadow: 0 0 0 1px rgba(15,23,42,.08), 0 18px 48px -10px rgba(15,23,42,.26); transform: translate(-24px, -50%) scale(.96); opacity: 0; pointer-events: none; transition: opacity 200ms var(--tv-expo), transform 360ms var(--tv-expo); }
+.clyra-tv-dock-zone[data-open="true"] .clyra-tv-dock { opacity: 1; transform: translate(0, -50%) scale(1); pointer-events: auto; }
+.clyra-tv-dock__item { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent; color: #25282e; font: 550 12.5px/1 -apple-system, sans-serif; text-align: left; cursor: grab; touch-action: none; transition: background-color 100ms ease, transform 160ms cubic-bezier(.16, 1, .3, 1); }
+.clyra-tv-dock__item:hover { background: rgba(15,23,42,.06); }
+.clyra-tv-dock__item:active { transform: scale(.98); }
+.clyra-tv-dock__dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: rgba(15,23,42,.16); }
+.clyra-tv-dock__item[data-open="true"] .clyra-tv-dock__dot { background: #2563eb; }
+.clyra-tv-dock__label { flex: 1; }
+.clyra-tv-dock__state { color: #7b8089; font-size: 10.5px; font-weight: 500; }
+.clyra-tv-ghost { position: fixed; z-index: 500; padding: 8px 14px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px rgba(15,23,42,.1), 0 20px 40px rgba(15,23,42,.3); color: #15171c; font: 600 12.5px/1 -apple-system, sans-serif; transform: translate(-50%, -50%) scale(1.04) rotate(-2deg); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .clyra-task-view[data-layout-motion="true"] .clyra-task-view__window, .clyra-tv-toolbar, .clyra-tv-dock { transition: none; } }
+.clyra-task-view[data-task-view-phase="open"] .clyra-task-view__chrome, .clyra-task-view[data-task-view-phase="opening"] .clyra-task-view__chrome { z-index: 80; }
+
+/* Task View · 3D track: frames come from the swipe engine, so CSS transitions step aside while it runs. */
+.clyra-task-view[data-mode="3d"][data-swiping="true"] .clyra-task-view__window { transition: none !important; }
+.clyra-task-view[data-mode="3d"][data-task-view-phase="open"] .clyra-task-view__window { will-change: transform; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__surface { background: #fff; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__hit-area, .clyra-task-view__dismiss { touch-action: none; }
+
+/* Task View · light frames. --tv-t is the per-frame property; registered as non-inheriting so writing it restyles only
+   the window, never the thousands of nodes of the app inside it. */
+@property --tv-t { syntax: "*"; inherits: false; }
+@property --tv-closed { syntax: "*"; inherits: false; }
+/* Hover is a quiet glow and a slight grow of the app itself. No overlay, no outline, no change of angle. */
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window::after { display: none !important; }
+.clyra-task-view[data-mode="3d"][data-task-view-phase="open"] .clyra-task-view__surface { transition: transform 240ms cubic-bezier(.16, 1, .3, 1); transform-origin: 50% 50%; }
+.clyra-task-view[data-mode="3d"][data-task-view-phase="open"][data-swiping="false"] .clyra-task-view__window.is-hovered .clyra-task-view__surface { transform: scale(1.025); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-hovered::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(37,99,235,.18), 0 0 calc(34px / var(--task-view-target-scale, 1)) rgba(37,99,235,.2), 0 calc(18px / var(--task-view-target-scale, 1)) calc(44px / var(--task-view-target-scale, 1)) rgba(15,23,42,.14); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window.is-hovered .clyra-task-view__label { color: #15171c; background: rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(15,23,42,.08); }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__surface { transform: none; }
+.clyra-task-view[data-mode="3d"] .clyra-task-view__window::before { box-shadow: 0 0 0 calc(1px / var(--task-view-target-scale, 1)) rgba(15,23,42,.08), 0 calc(14px / var(--task-view-target-scale, 1)) calc(36px / var(--task-view-target-scale, 1)) rgba(15,23,42,.16); }

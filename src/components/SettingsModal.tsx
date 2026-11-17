@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from "react";
+import { HotkeyPanel } from "./hotkeys/HotkeyPalette";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowLeft,
@@ -11,6 +12,7 @@ import {
   Download,
   Grid3X3,
   Headphones,
+  Keyboard,
   MessageCircle,
   Palette,
   PanelLeft,
@@ -96,6 +98,7 @@ const sections = [
   { id: "look", label: "Appearance", detail: "Adjust how Clyra looks and feels.", icon: Palette, category: "Preferences" },
   { id: "chat", label: "Conversation", detail: "Keep Clyra’s replies and composer behaviour in sync with you.", icon: MessageCircle, category: "Preferences" },
   { id: "memory", label: "Memory", detail: "Clyra’s identity, what it knows about you, what it has learned, and its skills.", icon: BrainCircuit, category: "Preferences" },
+  { id: "hotkeys", label: "Hotkeys", detail: "Every shortcut in one place. Press one to change it.", icon: Keyboard, category: "Preferences" },
   { id: "voice", label: "Voice", detail: "Tune the sound and pace of spoken conversations.", icon: AudioLines, category: "Preferences" },
   { id: "advanced", label: "Model", detail: "Set the response character for your everyday chat.", icon: Cpu, category: "Preferences" },
   { id: "usage", label: "Usage", detail: "See the current status of your connected Clyra services.", icon: ChartNoAxesCombined, category: "Data & Privacy" },
@@ -146,6 +149,7 @@ const SETTINGS_INDEX: Array<{ section: string; title: string; detail: string }> 
   { section: "look", title: "Accent color", detail: "Used for highlights and interactive elements." },
   { section: "look", title: "Text size", detail: "Adjust the reading size across your conversations. Small medium large font." },
   { section: "look", title: "Message color", detail: "Choose a color for your chat messages. Bubble." },
+  { section: "hotkeys", title: "Hotkeys", detail: "Keyboard shortcuts for chat, voice, the Notch and the sidebar." },
   { section: "chat", title: "Send on Enter", detail: "Shift + Enter for a new line. Return key submit." },
   { section: "chat", title: "Auto-scroll", detail: "Keep the latest response in view." },
   { section: "chat", title: "Markdown", detail: "Render headings, lists, and links." },
@@ -854,7 +858,7 @@ export function SettingsSheet({
 
                   {activeSection === "look" ? (
                     <>
-                      <SettingsCard title="Appearance" description="Choose how Clyra looks on this device.">
+                      <SettingsCard title="Display" description="Theme, accent color and text size.">
                         <div className="clys-block">
                           <p className="clys-row__label">Theme</p>
                           <p className="clys-row__detail">Choose the look that's comfortable for you.</p>
@@ -1078,6 +1082,8 @@ export function SettingsSheet({
                       </SettingsCard>
                     </>
                   ) : null}
+
+                  {activeSection === "hotkeys" ? <HotkeyPanel inline /> : null}
 
                   {activeSection === "usage" ? (
                     <>

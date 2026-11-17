@@ -181,7 +181,7 @@ import {
   type StatusKind,
 } from "./components/chat/assistant";
 import { deriveAgentEvents, type AgentEvent, type RunSnapshot } from "../lib/agent-events/agent-event";
-import { HotkeyPalette } from "./components/hotkeys/HotkeyPalette";
+import { HotkeyPalette, HotkeyPanel } from "./components/hotkeys/HotkeyPalette";
 import { InputPerformanceMonitor } from "./components/text-engine/InputPerformanceMonitor";
 import { VoiceCallHost } from "./components/voice/VoiceCallHost";
 import { requestVoiceCall } from "./components/voice/voiceCallTrigger";
@@ -5083,6 +5083,11 @@ export default function App() {
   }, []);
   // The "New chat" hotkey (⌘⌥N by default; see the hotkey palette) works from anywhere on the machine.
   useEffect(() => getElectronDesktop()?.hotkeys?.onNewChat(() => handleNewChat()), [handleNewChat]);
+  useEffect(() => getElectronDesktop()?.hotkeys?.onSidebarToggle(() => {
+    // The welcome shell has its own docked sidebar; every other screen uses the app rail.
+    if ((window as unknown as { __clyraHotkeyMorph?: boolean }).__clyraHotkeyMorph) setShellSidebarOpen((value) => !value);
+    else setIsSidebarOpen((value) => !value);
+  }), []);
 
   const showVibeLivePreview =
     !!vibePreviewFiles &&
@@ -9611,6 +9616,8 @@ Please analyze the code you just wrote and fix this error.`;
     setContentTabTracker((prev) => ({ current: activeContentTab, retained: [prev.current, ...prev.retained.filter((id) => id !== activeContentTab && id !== prev.current)].slice(0, RETAINED_APPS - 1) }));
   }
   const [taskViewMountedTabs, setTaskViewMountedTabs] = useState<WorkspaceTabId[]>([]);
+  // Apps the Task View layout keeps on screen (split panes, floating windows, docked peeks) stay mounted and live.
+  const [pinnedTabs, setPinnedTabs] = useState<WorkspaceTabId[]>([]);
   useEffect(() => {
     if (isTaskViewOpen) {
       const pending = visitedWorkspaceTabs.filter((id) => id !== activeContentTab && !contentTabTracker.retained.includes(id) && !taskViewMountedTabs.includes(id));
@@ -9636,9 +9643,9 @@ Please analyze the code you just wrote and fix this error.`;
   }, [isTaskViewOpen, taskViewMountedTabs, visitedWorkspaceTabs]);
   const mountedWorkspaceTabs = useMemo(() => {
     const ids: WorkspaceTabId[] = [activeContentTab];
-    for (const id of [...contentTabTracker.retained, ...taskViewMountedTabs]) if (!ids.includes(id) && visitedWorkspaceTabs.includes(id)) ids.push(id);
+    for (const id of [...contentTabTracker.retained, ...taskViewMountedTabs, ...pinnedTabs]) if (!ids.includes(id) && visitedWorkspaceTabs.includes(id)) ids.push(id);
     return ids;
-  }, [activeContentTab, contentTabTracker.retained, taskViewMountedTabs, visitedWorkspaceTabs]);
+  }, [activeContentTab, contentTabTracker.retained, pinnedTabs, taskViewMountedTabs, visitedWorkspaceTabs]);
   const activeInputCommand =
     selectedCommand && selectedCommand.id !== "vibe" ? selectedCommand : null;
   const recentChat = chats.find((chat) => chat.title.trim() && chat.messages.length > 0) ?? null;
@@ -10780,6 +10787,7 @@ Please analyze the code you just wrote and fix this error.`;
                             onMorphChange={setComposerMorphOpen}
                             onOpenSettings={() => { setSettingsSection(undefined); setIsSettingsOpen(true); }}
                             onOpenProfile={() => { setSettingsSection("account"); setIsSettingsOpen(true); }}
+                            hotkeysSheet={<HotkeyPanel onClose={() => undefined} />}
                             settingsSheet={
                               <SettingsSheet
                                 embedded
@@ -10911,6 +10919,17 @@ Please analyze the code you just wrote and fix this error.`;
       return { id: tabId, label, content };
     });
   }, [activeContentTab, mountedWorkspaceTabs, visitedWorkspaceTabs, workspacePortalNode]);
+  const workspaceLaunchable = useMemo(() => {
+    const labels: Array<[WorkspaceTabId, string]> = [["chat", "Chat"], ["vibe", "Vibe Coder"], ["clip", "AI Clipper"], ["browser", "Browser"], ["study", "Study Pal"], ["spotify", "Clyra Music"], ["maps", "Clyra Maps"]];
+    return labels.map(([id, label]) => ({ id: id as string, label, open: visitedWorkspaceTabs.includes(id) }));
+  }, [visitedWorkspaceTabs]);
+  const handleTaskViewOpenApp = useCallback((id: string) => {
+    if (id === "vibe") void loadVibeCoderWorkspace();
+    setVisitedWorkspaceTabs((current) => (current.includes(id as WorkspaceTabId) ? current : [...current, id as WorkspaceTabId]));
+  }, []);
+  const handleTaskViewPinned = useCallback((ids: string[]) => {
+    setPinnedTabs((current) => (current.length === ids.length && current.every((id, index) => id === ids[index]) ? current : (ids as WorkspaceTabId[])));
+  }, []);
   const taskViewHandlersRef = useRef({ onClose: () => {}, onSelect: (_id: string) => {}, onCloseTab: (_id: string) => {}, onReorder: (_ids: string[]) => {} });
   taskViewHandlersRef.current = {
     onClose: () => { taskViewOpenRef.current = false; setIsTaskViewOpen(false); },
@@ -12029,6 +12048,9 @@ Please analyze the code you just wrote and fix this error.`;
                       onClose={taskViewHandlers.onClose}
                       onCloseTab={taskViewHandlers.onCloseTab}
                       onReorder={taskViewHandlers.onReorder}
+                      launchable={workspaceLaunchable}
+                      onOpenApp={handleTaskViewOpenApp}
+                      onPinnedChange={handleTaskViewPinned}
                       onSelect={taskViewHandlers.onSelect}
                     />
                   ) : null}
